@@ -1,0 +1,338 @@
+<!-- =============================================================
+     Deck_Fuel.html — the Fuel Recovery EXEC TABLES, in one place.
+
+     Included by THREE files:
+       Page_FuelSurcharge.html   (AGG Fuel Recovery)
+       Page_RmxFuel.html         (RMX Fuel Recovery)
+       Page_DeckBuilder.html     (the deck)
+
+     WHY ONE FILE FOR BOTH PAGES
+     The AGG and RMX exec tables were separate near-identical copies. Same
+     key scheme, same maths, same markup — they differed only in the units
+     in the column headers and where the year came from. A fix to one was a
+     fix owed to the other, and that is exactly the kind of debt that goes
+     unpaid. So the engine is shared and the differences live in a UNITS
+     descriptor: two small objects at the top of this file.
+
+     WHAT MOVED, AND WHAT DELIBERATELY DID NOT
+     Only the exec path moved — the compute for exec cells, the exec table
+     markup, and the fitting. The pages keep their own STATE, their own
+     editable-cell overrides, their own summary and by-month tables and all
+     their UI wiring. The deck never touches any of that: it wants the same
+     tables with nothing typed over them.
+
+     The page keeps its function names and signatures (buildExecTable,
+     buildExecTables, computeExec, fscFit) and delegates the body here, so
+     the blast radius of the extraction is four one-line function bodies per
+     page rather than a rewrite of a file that already works.
+
+     EVERYTHING HERE IS PURE
+     No global reads. State arrives as ctx:
+
+       ctx = { numOv  : cellKey -> user-typed number   ({} for the deck)
+               txtOv  : cellKey -> user-typed label    ({} for the deck)
+               hidden : market  -> true when unticked  ({} for the deck)
+               derived: cellKey -> {txt, cls}          filled by computeExec }
+
+     That is what lets the report page render WITH the user's edits and the
+     deck render without them, from one copy of the code.
+     ============================================================= -->
+<script>
+var AmrFuelExec = (function(){
+
+  /* ---- the only real difference between the two pages ---- */
+  var UNITS = {
+    /* AGG — tonnes */
+    agg: {
+      vol:'TONNES', per:'PER TONNE', perAll:'ALL TONNES', yoy:'YOY $/t',
+      barApplied:'ON APPLIED TONNES ONLY', barAll:'OVER ALL TONNES',
+      /* The AGG page hard-coded 2026/2025 in its headers. Reading cyYear when
+         the backend sends it keeps today's output identical and stops this
+         being a silent landmine the next time the year rolls. */
+      cy: function(d){ return (d && d.cyYear) || 2026; }
+    },
+    /* RMX — cubic metres */
+    rmx: {
+      vol:'VOLUME m³', per:'PER m³', perAll:'ALL m³', yoy:'YOY $/m³',
+      barApplied:'ON APPLIED m³ ONLY', barAll:'OVER ALL m³',
+      cy: function(d){ return (d && d.cyYear) || new Date().getFullYear(); }
+    }
+  };
+
+  /* ---- formatters (byte-identical to the ones the pages used) ---- */
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function fInt(n){ return Math.round(Number(n)||0).toLocaleString('en-US'); }
+  function fMoney(n){ var v=Math.round(Number(n)||0); return (v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US'); }
+  function fRate(n){ var v=Number(n)||0; return (v<0?'-$':'$')+Math.abs(v).toFixed(2); }
+  function fYoy(v){ var x=Number(v)||0; return (x>=0?'+$':'-$')+Math.abs(x).toFixed(2); }
+  function sgn(v){ var x=Number(v)||0; return x>0?'pos':(x<0?'neg':''); }
+  function cents(x){ return Math.round((Number(x)||0)*100)/100; }
+  var FMT = { i:fInt, m:fMoney, r:fRate };
+
+  /* Exec cell key. Same scheme both pages already used, so a page's saved
+     overrides keep pointing at the same cells after the extraction. */
+  function xk(p,b,mk){ return 'EXEC|'+p+'|'+b+'|'+mk+'|'; }
+
+  function ctx_(c){
+    c = c || {};
+    return { numOv:c.numOv||{}, txtOv:c.txtOv||{},
+             hidden:c.hidden||{}, derived:c.derived||{} };
+  }
+  function effN(ctx, key, base){
+    return (key in ctx.numOv) ? ctx.numOv[key] : (Number(base)||0);
+  }
+
+  /* ---- cell renderers ----
+     They still emit contenteditable + data-* even for the deck. The deck
+     strips the attribute in content() — exactly as the pages' own
+     buildContent() has always done — so there is ONE markup path and the
+     picture can never drift from what the page shows. */
+  function inCell(ctx, key, base, f){
+    var v = effN(ctx, key, base);
+    var cls = (f==='r') ? (sgn(v)?' '+sgn(v):'') : '';
+    return '<td contenteditable="true" class="fsc-cell fsc-in'+cls+'" data-k="'+esc(key)
+         + '" data-f="'+f+'" data-b="'+(Number(base)||0)+'">'+esc(FMT[f](v))+'</td>';
+  }
+  function lbCell(ctx, key, text){
+    var shown = (key in ctx.txtOv) ? ctx.txtOv[key] : text;
+    return '<td contenteditable="true" class="fsc-cell fsc-in lft" data-k="'+esc(key)+'" data-t="1">'+esc(shown)+'</td>';
+  }
+  function dCell(ctx, key){
+    var m = ctx.derived[key] || { txt:'', cls:'' };
+    return '<td class="fsc-calc'+(m.cls?' '+m.cls:'')+'" data-d="'+esc(key)+'">'+esc(m.txt)+'</td>';
+  }
+
+  /* ======================= compute =======================
+     Per unit = FSC / volume · YOY = CY $/unit - PY $/unit, both rounded to
+     the two cents actually shown so the column ties out by eye. Totals sum
+     the raw components and re-derive the ratios — they are NOT the sum of
+     the per-unit column, and they include hidden markets on purpose.     */
+  function computeExec(data, period, basis, ctx, derived){
+    ctx = ctx_(ctx);
+    derived = derived || ctx.derived;
+    var base = (data && data.exec && data.exec[period] && data.exec[period][basis]) || [];
+    var T = { t26:0, t25:0, f26:0, f25:0 };
+
+    base.forEach(function(r){
+      if(r.isTotal) return;
+      var P = xk(period, basis, r.market);
+      var t26 = effN(ctx, P+'t26', r.tonnes26), t25 = effN(ctx, P+'t25', r.tonnes25);
+      var f26 = effN(ctx, P+'f26', r.fsc26),    f25 = effN(ctx, P+'f25', r.fsc25);
+      var p26 = t26 ? f26/t26 : 0, p25 = t25 ? f25/t25 : 0;
+      var yoy = cents(p26) - cents(p25);
+      derived[P+'p26'] = { txt:fRate(p26), cls:sgn(p26) };
+      derived[P+'p25'] = { txt:fRate(p25), cls:sgn(p25) };
+      derived[P+'yoy'] = { txt:fYoy(yoy),  cls:sgn(yoy) };
+      T.t26+=t26; T.t25+=t25; T.f26+=f26; T.f25+=f25;
+    });
+
+    var G = xk(period, basis, '__total');
+    var gp26 = T.t26 ? T.f26/T.t26 : 0, gp25 = T.t25 ? T.f25/T.t25 : 0;
+    var gy = cents(gp26) - cents(gp25);
+    derived[G+'t26'] = { txt:fInt(T.t26) };   derived[G+'t25'] = { txt:fInt(T.t25) };
+    derived[G+'f26'] = { txt:fMoney(T.f26) }; derived[G+'f25'] = { txt:fMoney(T.f25) };
+    derived[G+'p26'] = { txt:fRate(gp26), cls:sgn(gp26) };
+    derived[G+'p25'] = { txt:fRate(gp25), cls:sgn(gp25) };
+    derived[G+'yoy'] = { txt:fYoy(gy),   cls:sgn(gy) };
+    return derived;
+  }
+
+  /* ======================= one exec table ======================= */
+  function execTable(data, period, basis, ctx, unitId){
+    ctx = ctx_(ctx);
+    var u = UNITS[unitId] || UNITS.agg;
+    var cy = u.cy(data), py = cy - 1;
+    var rows = (data && data.exec && data.exec[period] && data.exec[period][basis]) || [];
+    var applied = (basis === 'applied');
+
+    var head = '<thead><tr>'
+      +'<th rowspan="2" class="mid">Row Labels</th>'
+      +'<th class="grp" colspan="2">'+u.vol+' ('+(applied?'APPLIED':'ALL')+')</th>'
+      +'<th class="grp" colspan="2">FUEL RECOVERY (PROD)</th>'
+      +'<th class="grp" colspan="2">'+u.per+' ('+(applied?'APPLIED':u.perAll)+')</th>'
+      +'<th rowspan="2" class="mid">'+u.yoy+'</th></tr>'
+      +'<tr><th>'+cy+'</th><th>'+py+'</th><th>'+cy+'</th><th>'+py+'</th><th>'+cy+'</th><th>'+py+'</th></tr></thead>';
+
+    var body = '';
+    rows.forEach(function(r){
+      if(r.isTotal) return;                      // rebuilt from the components below
+      if(ctx.hidden[r.market]) return;
+      var P = xk(period, basis, r.market);
+      body += '<tr>'
+        + lbCell(ctx, P+'mkt', r.market)
+        + inCell(ctx, P+'t26', r.tonnes26, 'i')
+        + inCell(ctx, P+'t25', r.tonnes25, 'i')
+        + inCell(ctx, P+'f26', r.fsc26,    'm')
+        + inCell(ctx, P+'f25', r.fsc25,    'm')
+        + dCell(ctx, P+'p26') + dCell(ctx, P+'p25') + dCell(ctx, P+'yoy')
+        + '</tr>';
+    });
+
+    var G = xk(period, basis, '__total');
+    body += '<tr class="totrow"><td class="lft fsc-calc">Grand Total</td>'
+      + dCell(ctx, G+'t26') + dCell(ctx, G+'t25') + dCell(ctx, G+'f26') + dCell(ctx, G+'f25')
+      + dCell(ctx, G+'p26') + dCell(ctx, G+'p25') + dCell(ctx, G+'yoy')
+      + '</tr>';
+
+    var bar = '<div class="fsc-secbar">FUEL RECOVERY ('
+      +(applied ? u.barApplied : u.barAll)+')</div>';
+    return bar + '<table class="fsc-t exec">'+head+'<tbody>'+body+'</tbody></table>';
+  }
+
+  /* ======================= the exec stack =======================
+       period ''    -> MTD all/applied then YTD all/applied (the page's view)
+       period 'MTD' -> just the two MTD tables
+       period 'YTD' -> just the two YTD tables
+     One period at a time is what the deck wants: each Fuel Recovery slide
+     covers one period, and four tables on a slide are unreadable.        */
+  function execTables(data, period, ctx, unitId){
+    ctx = ctx_(ctx);
+    var u = UNITS[unitId] || UNITS.agg;
+    var cy = u.cy(data);
+    var lm = String((data && data.latestMonth) || '').toUpperCase();
+    var ytdLbl = (lm==='JAN') ? ('JAN '+cy) : ('JAN TO '+esc(lm)+' '+cy);
+    var want = (period==='MTD' || period==='YTD') ? period : '';
+
+    var out = '<div class="fsc-exec">';
+    if(!want || want==='MTD'){
+      out += '<div class="fsc-period">MONTH TO DATE — '+esc(lm)+' '+cy+'</div>'
+          +  execTable(data,'MTD','all',ctx,unitId)
+          +  execTable(data,'MTD','applied',ctx,unitId);
+    }
+    if(!want || want==='YTD'){
+      out += '<div class="fsc-period">YEAR TO DATE — '+ytdLbl+'</div>'
+          +  execTable(data,'YTD','all',ctx,unitId)
+          +  execTable(data,'YTD','applied',ctx,unitId);
+    }
+    return out + '</div>';
+  }
+
+  /* The block the deck photographs: the same tables, read-only. Derived cells
+     are computed here from the data alone — no page state, nothing typed
+     over. */
+  function content(data, period, unitId){
+    if(!data) return null;
+    var ctx = ctx_({});
+    ['MTD','YTD'].forEach(function(p){
+      computeExec(data, p, 'all', ctx, ctx.derived);
+      computeExec(data, p, 'applied', ctx, ctx.derived);
+    });
+    var wrap = document.createElement('div');
+    wrap.className = 'fsc-wrap';
+    wrap.innerHTML = execTables(data, period, ctx, unitId);
+    [].forEach.call(wrap.querySelectorAll('[contenteditable]'), function(el){
+      el.removeAttribute('contenteditable');
+    });
+    return wrap;
+  }
+
+  /* ---- fitting, on the 1600x900 slide frame (the pages' PNG export) ----
+     By LAYOUT (font-size) only, never by transform: AmrSlide clamps on
+     scrollHeight, which a transform does not change, so a transform here
+     would make the content scale twice. */
+  function fitSlide(box){
+    var center = box.querySelector('.slide-center');
+    var bodyR  = center ? center.parentElement : null;
+    var availW = 0, availH = 0;
+    if(bodyR){
+      availH = bodyR.clientHeight;
+      availW = bodyR.clientWidth
+             - (bodyR.firstElementChild ? bodyR.firstElementChild.offsetWidth : 0)
+             - (bodyR.lastElementChild  ? bodyR.lastElementChild.offsetWidth  : 0);
+    }
+    [].forEach.call(box.querySelectorAll('table.fsc-t:not(.exec)'), function(t){
+      var avail = t.parentElement ? t.parentElement.clientWidth : 0; if(!avail) return;
+      var sz=15, guard=0; t.style.fontSize=sz+'px';
+      while(t.scrollWidth>avail && sz>7 && guard<90){ sz-=0.5; t.style.fontSize=sz+'px'; guard++; }
+    });
+    var ex = box.querySelector('.fsc-exec');
+    if(ex && availW && availH){
+      if(ex.parentElement) ex.parentElement.style.width = availW+'px';
+      var fs=13, guard2=0; ex.style.fontSize=fs+'px';
+      while((ex.scrollHeight>availH || ex.scrollWidth>availW) && fs>6 && guard2<40){
+        fs-=0.25; ex.style.fontSize=fs+'px'; guard2++;
+      }
+    }
+  }
+
+  /* ---- fitting for a BARE capture (the deck) ----
+     There is no .slide-center here and no fixed height to respect: the deck
+     drops the picture into the template's image box scaled by RATIO, so the
+     only thing that has to fit is the width. Height is free, and letting the
+     stack run tall keeps the type large instead of shrinking it to hit a
+     height nobody imposed. */
+  function fitBare(box){
+    var ex = box.querySelector('.fsc-exec'); if(!ex) return;
+    var availW = box.clientWidth || 0; if(!availW) return;
+    var fs=13, guard=0; ex.style.fontSize=fs+'px';
+    while(ex.scrollWidth > availW && fs > 6 && guard < 40){
+      fs-=0.25; ex.style.fontSize=fs+'px'; guard++;
+    }
+  }
+
+  return { UNITS:UNITS, computeExec:computeExec, execTable:execTable,
+           execTables:execTables, content:content,
+           fitSlide:fitSlide, fitBare:fitBare };
+})();
+
+
+/* ===========================================================================
+ * Deck Builder adapters — registered ONLY on the Deck Builder page.
+ * ---------------------------------------------------------------------------
+ * The report pages include this file too, but they never create
+ * AmrDeckSource, so nothing below runs there and each page keeps working
+ * standalone. On the Deck Builder there is no page DATA to borrow, so each
+ * adapter fetches its own model once and both of its slides (MTD and YTD)
+ * reuse it — which is why prepare() is cheap on the second call.
+ * ========================================================================= */
+(function(){
+  if(!window.AmrDeckSource) return;
+
+  var MODEL = { fsc:null, rfsc:null };
+
+  function srv(fn, args){
+    return new Promise(function(resolve, reject){
+      if(typeof google==='undefined' || !google.script || !google.script.run){
+        return reject(new Error('Fuel Recovery data needs the live web app.'));
+      }
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn]
+        .apply(null, args || []);
+    });
+  }
+
+  function loader(key, fn, args, label){
+    return function(){
+      if(MODEL[key]) return null;                 // already loaded — nothing to wait for
+      return srv(fn, args).then(function(d){
+        if(!d || !d.markets) throw new Error(label+' returned no data.');
+        MODEL[key] = d;
+      });
+    };
+  }
+
+  function contentFor(key, unitId, label){
+    return function(spec){
+      var d = MODEL[key];
+      if(!d) throw new Error(label+' data is not loaded yet.');
+      var el = AmrFuelExec.content(d, spec && spec.period, unitId);
+      if(!el) throw new Error('Could not build '+label+' content.');
+      return el;
+    };
+  }
+
+  AmrDeckSource.register('fsc', {
+    prepare: loader('fsc', 'getFscData', [], 'AGG Fuel Recovery'),
+    content: contentFor('fsc', 'agg', 'AGG Fuel Recovery'),
+    fit: AmrFuelExec.fitBare
+  });
+
+  /* month:0 = "last closed month", the same default the RMX Fuel page opens
+     on. The deck always reports the closed month, never a part-billed one. */
+  AmrDeckSource.register('rfsc', {
+    prepare: loader('rfsc', 'getRmxFuelData', [{ month:0 }], 'RMX Fuel Recovery'),
+    content: contentFor('rfsc', 'rmx', 'RMX Fuel Recovery'),
+    fit: AmrFuelExec.fitBare
+  });
+})();
+</script>

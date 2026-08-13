@@ -257,29 +257,14 @@ function xk(p,b,mk){ return 'EXEC|'+p+'|'+b+'|'+mk+'|'; }
 function sk(p,mk){  return 'SUM|'+p+'|'+mk+'|'; }
 function bk(mk,mo){ return 'BM|'+mk+'|'+mo+'|'; }
 
+/* The exec compute + markup live in Deck_Fuel.html, shared with the AGG Fuel
+   Recovery page and the Deck Builder. This page keeps the function names, the
+   signatures and all of its own state; only the body moved. */
+function fscCtx(){
+  return { numOv:NUM_OV, txtOv:TXT_OV, hidden:STATE.hidden, derived:DERIVED };
+}
 function computeExec(period, basis){
-  var base = (DATA.exec && DATA.exec[period] && DATA.exec[period][basis]) || [];
-  var T = { t26:0, t25:0, f26:0, f25:0 };
-  base.forEach(function(r){
-    if(r.isTotal) return;
-    var P = xk(period, basis, r.market);
-    var t26 = effN(P+'t26', r.tonnes26), t25 = effN(P+'t25', r.tonnes25);
-    var f26 = effN(P+'f26', r.fsc26),   f25 = effN(P+'f25', r.fsc25);
-    var p26 = t26 ? f26/t26 : 0, p25 = t25 ? f25/t25 : 0;
-    var yoy = cents(p26) - cents(p25);       // ties out to the two cents shown
-    DERIVED[P+'p26'] = { txt:fRate(p26), cls:sgn(p26) };
-    DERIVED[P+'p25'] = { txt:fRate(p25), cls:sgn(p25) };
-    DERIVED[P+'yoy'] = { txt:fYoy(yoy),  cls:sgn(yoy) };
-    T.t26+=t26; T.t25+=t25; T.f26+=f26; T.f25+=f25;   // totals include every market, hidden or not
-  });
-  var G = xk(period, basis, '__total');
-  var gp26 = T.t26 ? T.f26/T.t26 : 0, gp25 = T.t25 ? T.f25/T.t25 : 0;
-  var gy = cents(gp26) - cents(gp25);
-  DERIVED[G+'t26'] = { txt:fInt(T.t26) };   DERIVED[G+'t25'] = { txt:fInt(T.t25) };
-  DERIVED[G+'f26'] = { txt:fMoney(T.f26) }; DERIVED[G+'f25'] = { txt:fMoney(T.f25) };
-  DERIVED[G+'p26'] = { txt:fRate(gp26), cls:sgn(gp26) };
-  DERIVED[G+'p25'] = { txt:fRate(gp25), cls:sgn(gp25) };
-  DERIVED[G+'yoy'] = { txt:fYoy(gy),   cls:sgn(gy) };
+  AmrFuelExec.computeExec(DATA, period, basis, fscCtx(), DERIVED);
 }
 
 function computeSummary(period){
@@ -411,62 +396,14 @@ function buildByMonthTable(mk){
 }
 
 /* Executive view: one of the four Excel-replica tables. */
+/* Both delegate to Deck_Fuel.html — this page, the AGG Fuel Recovery page and
+   the deck render the exec tables from one copy of the code. The 'rmx' units
+   descriptor there carries the m³ column headings and the YOY $/m³ label. */
 function buildExecTable(period, basis){
-  var rows = (DATA.exec && DATA.exec[period] && DATA.exec[period][basis]) || [];
-  var applied = (basis === 'applied');
-  var head = '<thead><tr>'
-    +'<th rowspan="2" class="mid">Row Labels</th>'
-    +'<th class="grp" colspan="2">VOLUME m³ ('+(applied?'APPLIED':'ALL')+')</th>'
-    +'<th class="grp" colspan="2">FUEL RECOVERY (PROD)</th>'
-    +'<th class="grp" colspan="2">PER m³ ('+(applied?'APPLIED':'ALL m³')+')</th>'
-    +'<th rowspan="2" class="mid">YOY $/m³</th></tr>'
-    +'<tr><th>'+cyY()+'</th><th>'+pyY()+'</th><th>'+cyY()+'</th><th>'+pyY()+'</th><th>'+cyY()+'</th><th>'+pyY()+'</th></tr></thead>';
-  var body = '';
-  rows.forEach(function(r){
-    if(r.isTotal) return;                       // Grand Total is rebuilt from the components below
-    if(STATE.hidden[r.market]) return;
-    var P = xk(period, basis, r.market);
-    body += '<tr>'
-      + lbCell(P+'mkt', r.market)
-      + inCell(P+'t26', r.tonnes26, 'i')
-      + inCell(P+'t25', r.tonnes25, 'i')
-      + inCell(P+'f26', r.fsc26,    'm')
-      + inCell(P+'f25', r.fsc25,    'm')
-      + dCell(P+'p26') + dCell(P+'p25') + dCell(P+'yoy')
-      + '</tr>';
-  });
-  var G = xk(period, basis, '__total');
-  body += '<tr class="totrow"><td class="lft fsc-calc">Grand Total</td>'
-    + dCell(G+'t26') + dCell(G+'t25') + dCell(G+'f26') + dCell(G+'f25')
-    + dCell(G+'p26') + dCell(G+'p25') + dCell(G+'yoy')
-    + '</tr>';
-  var bar = '<div class="fsc-secbar">FUEL RECOVERY ('
-    +(applied ? 'ON APPLIED m³ ONLY' : 'OVER ALL m³')+')</div>';
-  return bar + '<table class="fsc-t exec">'+head+'<tbody>'+body+'</tbody></table>';
+  return AmrFuelExec.execTable(DATA, period, basis, fscCtx(), 'rmx');
 }
-
-/* The exec tables, for one period or both.
-     period ''    -> MTD all/applied then YTD all/applied  (the original view)
-     period 'MTD' -> just the two MTD tables
-     period 'YTD' -> just the two YTD tables
-   Mirrors the AGG Fuel Recovery page exactly. One period at a time is what the
-   monthly deck wants: four tables on one slide are unreadable. */
 function buildExecTables(period){
-  var lm = String(DATA.latestMonth||'').toUpperCase();
-  var ytdLbl = (lm==='JAN') ? ('JAN '+cyY()) : ('JAN TO '+esc(lm)+' '+cyY());
-  var want = (period==='MTD' || period==='YTD') ? period : '';
-  var out = '<div class="fsc-exec">';
-  if(!want || want==='MTD'){
-    out += '<div class="fsc-period">MONTH TO DATE — '+esc(lm)+' '+cyY()+'</div>'
-        +  buildExecTable('MTD','all')
-        +  buildExecTable('MTD','applied');
-  }
-  if(!want || want==='YTD'){
-    out += '<div class="fsc-period">YEAR TO DATE — '+ytdLbl+'</div>'
-        +  buildExecTable('YTD','all')
-        +  buildExecTable('YTD','applied');
-  }
-  return out + '</div>';
+  return AmrFuelExec.execTables(DATA, period, fscCtx(), 'rmx');
 }
 
 /* Which exec period a view means. '' for the non-exec views. */
@@ -495,72 +432,17 @@ function buildContent(){
   return wrap;
 }
 
-/* The same content for an EXPLICIT period, without touching STATE. The Deck
-   Builder asks for MTD and YTD back to back; switching the page's view to get
-   them would leave the user staring at whichever was captured last. */
-function buildContentFor(period){
-  if(!DATA) return null;
-  computeAll();
-  var wrap = document.createElement('div'); wrap.className='fsc-wrap';
-  wrap.innerHTML = buildExecTables(period);
-  wrap.querySelectorAll('[contenteditable]').forEach(function(el){ el.removeAttribute('contenteditable'); });
-  return wrap;
-}
+/* buildContentFor(period) used to sit here — the read-only block for an
+   explicit period, built for the Deck Builder. Its one caller was the adapter
+   that moved to Deck_Fuel.html, and that module now builds the same block from
+   the data alone (AmrFuelExec.content), so keeping a second copy here would
+   only be somewhere for the two to drift apart. Removed deliberately. */
 
-/* Deck Builder adapter. Guarded, so this page still works standalone. */
-if(window.AmrDeckSource){
-  window.AmrDeckSource.register('rfsc', {
-    prepare: function(){
-      if(DATA) return null;
-      return new Promise(function(resolve, reject){
-        var tries = 0;
-        (function wait(){
-          if(DATA) return resolve();
-          if(++tries > 200) return reject(new Error('RMX Fuel Recovery data did not load.'));
-          setTimeout(wait, 100);
-        })();
-      });
-    },
-    content: function(spec){
-      var el = buildContentFor(spec && spec.period);
-      if(!el) throw new Error('RMX Fuel Recovery data is not loaded yet.');
-      return el;
-    }
-  });
-}
-
-/* Fit the content onto the 1600x900 slide. Fit by LAYOUT only (font-size),
-   never by transform — the shared engine clamps on scrollHeight, which
-   transforms don't change, so a transform would make it scale twice. */
-function fscFit(box){
-  var center = box.querySelector('.slide-center');
-  var bodyR  = center ? center.parentElement : null;
-  var availW = 0, availH = 0;
-  if(bodyR){
-    availH = bodyR.clientHeight;
-    availW = bodyR.clientWidth
-           - (bodyR.firstElementChild ? bodyR.firstElementChild.offsetWidth : 0)
-           - (bodyR.lastElementChild  ? bodyR.lastElementChild.offsetWidth  : 0);
-  }
-
-  // single-table views: step the font down until the table fits the width
-  [].forEach.call(box.querySelectorAll('table.fsc-t:not(.exec)'), function(t){
-    var avail = t.parentElement ? t.parentElement.clientWidth : 0; if(!avail) return;
-    var sz=15, guard=0; t.style.fontSize=sz+'px';
-    while(t.scrollWidth>avail && sz>7 && guard<90){ sz-=0.5; t.style.fontSize=sz+'px'; guard++; }
-  });
-
-  // exec view: pin to the available width, then step the stack's base font
-  // down until both dimensions fit
-  var ex = box.querySelector('.fsc-exec');
-  if(ex && availW && availH){
-    if(ex.parentElement) ex.parentElement.style.width = availW+'px';
-    var fs=13, guard=0; ex.style.fontSize=fs+'px';
-    while((ex.scrollHeight>availH || ex.scrollWidth>availW) && fs>6 && guard<40){
-      fs-=0.25; ex.style.fontSize=fs+'px'; guard++;
-    }
-  }
-}
+/* The Deck Builder adapter used to live here, guarded on a registry this page
+   never creates — so it never actually ran. It now lives in Deck_Fuel.html,
+   which the Deck Builder includes and which fetches its own data rather than
+   waiting on this page's globals. Fitting moved with it. */
+function fscFit(box){ return AmrFuelExec.fitSlide(box); }
 
 function slideOpts(){
   return { title:STATE.title, subtitle:STATE.sub, logo:STATE.logo, logoSVG:STATE.logoSVG,
@@ -890,6 +772,7 @@ window.HELP_HTML = '<h3>What this page does</h3>'
  +'(a posting and its reversal, say) is left out entirely rather than shown as a row of zeroes.</p>';
 </script>
 <?!= include('SlideExport') ?>
+<?!= include('Deck_Fuel') ?>
 <?!= include('Shell') ?>
 <!-- Always-open guide: how to download the QlikView files. Pinned on wide
      screens; floating button below 1720px. Edit the QLIK_GUIDE array below. -->

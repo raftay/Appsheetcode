@@ -114,6 +114,7 @@ Shared partials, pulled in with `<?!= include('Name') ?>`:
 | `KpiShared.html` | 373 | `AmrKpi` — upload/parse/share the EBITDA workbooks; used by three pages |
 | `Cube.html` | 622 | `AmrCube` — the month fact table in typed arrays, backed by IndexedDB |
 | `Deck_Sources.html` | 104 | `AmrDeckSource` — the content-source registry the Deck Builder asks for tables. Included **only** by the Deck Builder |
+| `Deck_Fuel.html` | 298 | `AmrFuelExec` — the Fuel Recovery exec tables, shared by **both** fuel pages and the deck. Also holds the `fsc` / `rfsc` adapters |
 
 Page files: `Landing.html`, `Page_Overview.html` (5602 lines), `Page_PriceVolume.html`
 (2543), `Page_Rmx.html` (1666), `Page_Segment.html` (1381), `Page_FuelSurcharge.html`
@@ -417,9 +418,8 @@ so nobody has to guess.
 | `?page=deckbuilder` route in `Code.gs` | ✅ wired |
 | Page-switcher entry in `Shell.html` `AMR_PAGES` | ✅ wired |
 | Two `Landing.html` cards | ✅ wired |
-| `fsc` adapter in `Page_FuelSurcharge.html` | ✅ registered (guarded) |
-| `rfsc` adapter in `Page_RmxFuel.html` | ✅ registered (guarded) |
-| `buildContentFor(period)` on both fuel pages | ✅ built — returns content for an explicit period without touching `STATE` |
+| `fsc` + `rfsc` adapters | ✅ moved into `Deck_Fuel.html`, where the deck can actually reach them |
+| Shared exec-table engine (`AmrFuelExec`) | ✅ one copy serving both fuel pages and the deck |
 | Exec views (`EXEC` / `EXEC_MTD` / `EXEC_YTD`) on both fuel pages | ✅ built |
 | `Page_DeckBuilder.html` | ✅ built — Plan / Render / Publish, previews from template geometry |
 | `AmrDeckSource` registry (`Deck_Sources.html`) | ✅ built — the two guarded adapters now have something to register into |
@@ -429,9 +429,9 @@ so nobody has to guess.
 | **`DECK_CONFIG.TEMPLATE_ID` / `FOLDER_ID`** | ❌ **still `PUT_..._HERE` placeholders — set these before anything runs** |
 | **`pv` / `cust` / `seg` / `rmx` adapters** | ❌ Phases 3–4. Those 39 rows report "no content source registered" |
 
-So: the pipeline is complete end to end, but only `fsc` and `rfsc` can currently produce
-content — and their adapters still live inside their own page files, so Phase 2 (moving
-them into shared includes) is what makes the first four slides actually build.
+So: the pipeline is complete end to end and the four Fuel Recovery slides build all the way
+through. The remaining 39 rows are waiting on their adapters, and the Plan stage names the
+missing sources up front rather than failing 39 times.
 
 ### Bugs found and fixed
 
@@ -564,32 +564,48 @@ needs a decision.
 | 0 | `Deck_Backend.gs`; template into Drive; `DECK_validateTemplate` + `DECK_smokeTest` pass | ✅ code written; smoke test run by Rafay |
 | 0b | Fix the known bugs; commit the `.pptx` template | ✅ done — six fixed, template validated offline |
 | 1 | `Page_DeckBuilder.html` + `AmrDeckSource` + `AmrSlide.captureBare` + `Deck_Recipe.gs`; previews from template geometry, no data yet | ✅ done |
-| 2 | Fuel Recovery adapters (AGG + RMX) into shared `Deck_FSC.html` / `Deck_RFSC.html` → first 4 slides end to end | ☐ **next** |
-| 3 | AGG P&V adapter (`pv` + `cust`) → 14 summary + 5 customer slides | ☐ |
+| 2 | Fuel Recovery adapters into shared `Deck_Fuel.html` → first 4 slides end to end | ✅ done |
+| 3 | AGG P&V adapter (`pv` + `cust`) → 14 summary + 5 customer slides | ☐ **next** |
 | 4 | RMX P&V + Segment adapters (`rmx` + `seg`) → 20 slides | ☐ |
 | 5 | Optional: remember last month's comment text per slide id and pre-fill | ☐ |
 
-**Phase 2 is the proof.** If four Fuel Recovery slides land clean, the rest is repetition.
+### How Phase 2 was done — the pattern Phases 3–4 should copy
 
-### Phase 2, concretely
+The plan called for two files, `Deck_FSC.html` and `Deck_RFSC.html`. It shipped as **one**,
+`Deck_Fuel.html`, because the two pages' exec paths turned out to be near-identical: same key
+scheme, same maths, same markup, differing only in the units in the column headings and where
+the year came from. Two files would have meant two copies of one algorithm and a standing
+invitation to fix a bug in one and not the other. The differences now live in a **UNITS
+descriptor** — two small objects, `agg` (tonnes) and `rmx` (m³).
 
-The two fuel adapters already exist and are already correct — they just live in the wrong
-file. `Page_FuelSurcharge.html` and `Page_RmxFuel.html` each hold a `buildContentFor(period)`
-plus an `AmrDeckSource.register(...)` block, and the Deck Builder cannot include a whole
-page. So:
+The extraction pattern, which Phases 3–4 should follow:
 
-1. Cut the calc + render layer and the adapter out of each page into `Deck_FSC.html` /
-   `Deck_RFSC.html`. Because `include()` inlines into the same document, the moved functions
-   still see the page's globals — this is a move, not a rewrite.
-2. Have both the report page **and** `Page_DeckBuilder.html` include the new file. The
-   include lines go where the marked comment sits at the bottom of the Deck Builder page —
-   as real scriptlets, **not** inside an HTML comment (Apps Script evaluates a scriptlet
-   wherever it appears, so a commented-out `include()` of a missing file still throws).
-3. Pass/fail test: **the page's existing PNG export must look identical before and after.**
+1. **Everything moved is pure.** No global reads. Page state arrives as one `ctx` object —
+   `{ numOv, txtOv, hidden, derived }`. That is exactly what lets the report page render
+   *with* the user's typed overrides and the deck render *without* them, from one copy of
+   the code.
+2. **The page keeps its function names and signatures** (`computeExec`, `buildExecTable`,
+   `buildExecTables`, `fscFit`) and delegates the body. The blast radius is four one-line
+   function bodies per page, not a rewrite of a file that already works.
+3. **The module fetches its own data.** On the Deck Builder there is no page `DATA` to
+   borrow, so each adapter calls its own backend once and both of its slides reuse it —
+   which is why `prepare()` returns `null` on the second call.
+4. **Only the exec path moved.** The pages keep their own `STATE`, editable-cell overrides,
+   summary and by-month tables, and all UI wiring. The deck wants none of it.
+5. **`fit` comes in two flavours.** `fitSlide(box)` for the 1600×900 PNG frame (what the
+   pages always used) and `fitBare(box)` for the deck's capture, which has no `.slide-center`
+   and no imposed height — only width has to fit, so the type stays large. The adapter
+   exposes `fit`, and `captureBare` calls it exactly as `AmrSlide.build()` does.
 
-Each adapter may also expose an optional `fit(box)` — the deck's capture path calls it the
-same way `AmrSlide.build()` does, so a page's existing table-fitting logic (`fscFit`) carries
-over unchanged.
+One thing that came out in the wash: the old adapters were guarded on
+`if(window.AmrDeckSource)` inside the report pages — a registry those pages never create. So
+they had never actually run. Moving them into a file the Deck Builder includes is what made
+them live.
+
+**Pass/fail test — and it passed.** A Node harness ran the pre-extraction page code and the
+post-extraction module over the same model and diffed the HTML: **12 comparisons byte-identical**
+(both pages × both periods and "both" × clean and edited state, where "edited" means typed
+numeric overrides, a renamed label, and a hidden market). See §10.
 
 ### Recipe shape
 
@@ -691,8 +707,8 @@ before assuming it is finished.**
 | 2026-08-13 | Audit repo against the chat-memory README; rewrite it as a project document reflecting the actual code | ✅ done |
 | 2026-08-13 | Deck Builder Phase 0b — fix the `Deck_Backend.gs` bugs (6 found, 6 fixed); validate the committed template offline | ✅ done |
 | 2026-08-13 | Deck Builder Phase 1 — `Page_DeckBuilder.html`, `Deck_Sources.html`, `AmrSlide.captureBare`, `Deck_Recipe.gs` (43 rows) | ✅ done |
+| 2026-08-13 | Deck Builder Phase 2 — extract the fuel exec tables into shared `Deck_Fuel.html`; both fuel pages delegate; `fsc` + `rfsc` adapters live | ✅ done |
 | | **Set `DECK_CONFIG.TEMPLATE_ID` and `FOLDER_ID`, add the Slides + Drive scopes, serve `?page=deckbuilder` from the execute-as-user deployment.** Nothing runs until this is done | ☐ |
-| | Deck Builder Phase 2 — move the fuel adapters into `Deck_FSC.html` / `Deck_RFSC.html`; first 4 slides end to end | ☐ |
 | | Deck Builder Phase 3 — `pv` + `cust` adapters (19 slides) | ☐ |
 | | Deck Builder Phase 4 — `rmx` + `seg` adapters (20 slides) | ☐ |
 
@@ -707,8 +723,21 @@ executed outside the deployment. What was actually verified for the work above:
   `DECK_validateTemplate` enforces — page size, layout tags, token uniqueness, no tokens
   nested inside groups, slot geometry.
 - ✅ Every layout the recipe asks for confirmed present in the template.
-- ❌ **Not run:** `DECK_create` / `addSlide` / `finish`, the Deck Builder page in a browser,
-  and any capture through html2canvas. Those need the live deployment.
+- ✅ **Phase 2 extraction proved behaviour-preserving.** Pre- and post-extraction code run
+  over the same model, HTML diffed: 12/12 byte-identical, across both pages, all three period
+  modes, with and without user overrides + a hidden market.
+- ✅ **The deck's own path exercised under jsdom** (`Deck_Sources` → `Deck_Fuel` →
+  `AmrDeckSource.build`): both adapters register, all four fuel slides produce two exec
+  tables with `contenteditable` stripped and the right period heading, an unregistered
+  source rejects with a readable sentence, and each backend is called exactly **once**
+  across its two slides.
+- ✅ Every `include('X')` in every page resolves to a file that exists.
+- ❌ **Not run:** `DECK_create` / `addSlide` / `finish`, the page in a real browser, and any
+  capture through html2canvas. Those need the live deployment.
+
+The two harnesses are worth keeping — they are the regression gate for Phases 3–4. Rebuild
+them as `regress.js` (pre/post HTML diff) and `deckpath.js` (jsdom adapter run); both take a
+synthetic model and need no Google access.
 
 ### Corrections made to the previous README
 

@@ -634,13 +634,14 @@ document.addEventListener('DOMContentLoaded', function(){
 <?!= include('SlideExport') ?>
 <?!= include('Deck_Sources') ?>
 <!-- Report-page content modules register into AmrDeckSource here, one per page.
-     They must come AFTER Deck_Sources (which creates the registry) and AFTER
-     SlideExport (they lean on AmrSlide for fitting).
-     Phase 2 adds the first two, as include lines for Deck_FSC and Deck_RFSC.
-     Write them as real scriptlets — NOT inside a comment like this one.
-     Apps Script evaluates a scriptlet wherever it appears, HTML comment or
-     not, so a commented-out include of a file that does not exist yet still
-     throws and takes the whole page down. -->
+     They must come AFTER Deck_Sources, which creates the registry.
+
+     A NOTE FOR WHOEVER ADDS THE NEXT ONE: write the include as a real
+     scriptlet, never inside an HTML comment. Apps Script evaluates a
+     scriptlet wherever it appears, comment or not, so a commented-out
+     include of a file that does not exist yet still throws and takes the
+     whole page down. -->
+<?!= include('Deck_Fuel') ?>
 <?!= include('Shell') ?>
 </body>
 </html>
