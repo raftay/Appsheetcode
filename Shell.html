@@ -723,9 +723,16 @@ window.AmrQlik = (function(){
       .qlikSyncNow(scope || 'all');
   }
 
-  /* One line summarising what happened, for the pill and the status line. */
+  /* One line summarising what happened, for the pill and the status line.
+     A run that ran out of time is not a failure with nothing to show: it says
+     what it did land before stopping, so the tabs already updated are not
+     mistaken for lost work. */
   function summary(res){
-    if (!res.ok && res.error) return res.error;
+    if (!res.ok && res.error){
+      var got = (res.done || []).length;
+      return res.error + (got ? ' (' + got + ' tab' + (got === 1 ? '' : 's') +
+                                ' updated before it stopped.)' : '');
+    }
     var n = (res.done || []).length;
     var t = n + ' tab' + (n === 1 ? '' : 's') + ' updated';
     var r = 0;
