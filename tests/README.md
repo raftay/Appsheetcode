@@ -79,3 +79,9 @@ OLD_DIR=/tmp/old node tests/pvcheck.js
 
 Extend it as Phase 3 lifts more (`custSlideSpec` next). The chart paths cannot be diffed
 this way — Chart.js needs a real canvas — so those are checked in the browser.
+
+`deckpath.js` stubs `Chart` and `HTMLCanvasElement.getContext` — jsdom has neither, and the
+PV slides need both. That exercises the block's *assembly* (tables, KPI cards, chart slots);
+whether a chart looks right is a browser check. The `google.script.run` stub returns a fresh
+runner per access on purpose: `cust` asks for MTD and YTD in parallel, and a shared success
+handler silently hangs the second call.

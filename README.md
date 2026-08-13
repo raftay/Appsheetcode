@@ -64,8 +64,8 @@ PDF), Gmail (TP01 only). Slides will be added for the Deck Builder.
 | `inventoryreport` | `Page_InventoryReport.html` | `IR_Backend.gs` | a Drive PDF (file ID in Script Properties) |
 | `deckbuilder` | `Page_DeckBuilder.html` | `Deck_Backend.gs`, `Deck_Recipe.gs` | the other pages |
 
-> The Deck Builder page exists and runs, but only the two Fuel Recovery sources can
-> currently produce content — the other four adapters are Phases 3–4. See
+> The Deck Builder runs, and 23 of the 43 recipe rows build end to end (Fuel Recovery, AGG
+> Price & Volume, Top 10 Customers). The `seg` and `rmx` adapters are Phase 4. See
 > [§8](#8-next-major-project--deck-builder).
 
 Three pages have **no sheet of their own** and read another page's: `fuelsurcharge` reads
@@ -115,6 +115,7 @@ Shared partials, pulled in with `<?!= include('Name') ?>`:
 | `Cube.html` | 622 | `AmrCube` — the month fact table in typed arrays, backed by IndexedDB |
 | `Deck_Sources.html` | 104 | `AmrDeckSource` — the content-source registry the Deck Builder asks for tables. Included **only** by the Deck Builder |
 | `Deck_Fuel.html` | 298 | `AmrFuelExec` — the Fuel Recovery exec tables, shared by **both** fuel pages and the deck. Also holds the `fsc` / `rfsc` adapters |
+| `Deck_PV.html` | 869 | `AmrPvSlide` — the AGG Price & Volume slide content (KPI strip, dimension tables, waterfall charts) and the customer block. Shared by the PV page and the deck; holds the `pv` / `cust` adapters |
 
 Page files: `Landing.html`, `Page_Overview.html` (5602 lines), `Page_PriceVolume.html`
 (2543), `Page_Rmx.html` (1666), `Page_Segment.html` (1381), `Page_FuelSurcharge.html`
@@ -427,7 +428,8 @@ so nobody has to guess.
 | Recipe (`Deck_Recipe.gs`) | ✅ built — 43 rows, transcribed from the July 2026 pack |
 | `Amrize_Deck_Template.pptx` + sample-deck PDF | ✅ committed to the repo |
 | **`DECK_CONFIG.TEMPLATE_ID` / `FOLDER_ID`** | ❌ **still `PUT_..._HERE` placeholders — set these before anything runs** |
-| **`pv` / `cust` / `seg` / `rmx` adapters** | ❌ Phases 3–4. Those 39 rows report "no content source registered" |
+| `pv` / `cust` adapters (`Deck_PV.html`) | ✅ live — 19 more rows build |
+| **`seg` / `rmx` adapters** | ❌ Phase 4. Those 20 rows report "no content source registered" |
 
 So: the pipeline is complete end to end and the four Fuel Recovery slides build all the way
 through. The remaining 39 rows are waiting on their adapters, and the Plan stage names the
@@ -565,47 +567,50 @@ needs a decision.
 | 0b | Fix the known bugs; commit the `.pptx` template | ✅ done — six fixed, template validated offline |
 | 1 | `Page_DeckBuilder.html` + `AmrDeckSource` + `AmrSlide.captureBare` + `Deck_Recipe.gs`; previews from template geometry, no data yet | ✅ done |
 | 2 | Fuel Recovery adapters into shared `Deck_Fuel.html` → first 4 slides end to end | ✅ done |
-| 3 | AGG P&V adapter (`pv` + `cust`) → 14 summary + 5 customer slides | ◐ **in progress** — see below |
-| 4 | RMX P&V + Segment adapters (`rmx` + `seg`) → 20 slides | ☐ |
+| 3 | AGG P&V adapter (`pv` + `cust`) → 14 summary + 5 customer slides | ✅ done |
+| 4 | RMX P&V + Segment adapters (`rmx` + `seg`) → 20 slides | ☐ **next** |
 | 5 | Optional: remember last month's comment text per slide id and pre-fill | ☐ |
 
-### Phase 3 — where it actually stands
+### Phase 3 — done
 
-**Done, and verified:**
+`Deck_PV.html` holds the Price & Volume slide-content path; the page delegates to it and the
+`pv` + `cust` adapters are live, so 19 more recipe rows build.
 
-- The dependency closure was computed rather than eyeballed. `buildPvSlideContent(d)` and
-  `slideTitle(d)` turned out to touch **no page state at all**, and the whole closure reads
-  only **14** context fields — listed on `ctx_()` in `Deck_PV.html`.
-- **`Deck_PV.html` is built** — ~480 lines lifted *mechanically* out of
-  `Page_PriceVolume.html` (a script pulled the definitions verbatim and applied two uniform
-  rewrites, `STATE.x → CTX.x` and `CONFIG.slide → CTX.slide`), wrapped in an `AmrPvSlide`
-  module with a `withCtx` entry layer so the lifted bodies stay byte-for-byte unchanged.
-  Threading a ctx parameter through ~30 call sites would have meant editing all 30, and every
-  edit is a chance to change behaviour.
-- **Proven faithful on every path that does not need Chart.js**: `tests/pvcheck.js` diffs the
-  old page code against the module — 11/11 identical across `tableInnerHtml`, `monthTag_`,
-  `slideTitle`, and `buildCustTable` over every combination of secondary dimension, sort
-  direction and top-N.
-- `renderChartsOffscreen()` is written: the deck has no `#revChart` / `#aspChart`, so it makes
-  a throwaway canvas pair, draws, captures, destroys. The canvases must be parked **off-screen,
-  not `display:none`** — Chart.js draws nothing into a zero-size canvas.
+- The closure was **computed, not eyeballed**. `buildPvSlideContent(d)` and `slideTitle(d)`
+  turned out to touch no page state at all; the whole closure reads only **14** context
+  fields, listed on `ctx_()`.
+- ~480 lines were lifted **mechanically** (a script pulled each definition verbatim and
+  applied two uniform rewrites, `STATE.x → CTX.x` and `CONFIG.slide → CTX.slide`), then
+  wrapped in an `AmrPvSlide` module with a `withCtx` entry layer so the lifted bodies stay
+  byte-for-byte unchanged.
+- **Delegate, do not delete.** A first pass at deleting the lifted definitions from the page
+  was wrong: `esc` alone has 30 call sites, most outside the slide path, and a nested `esc`
+  definition fooled the span finder. The page therefore keeps every name and signature and
+  only the slide-content *entry points* were repointed. The page's own `esc`/formatters stay;
+  the module carries private copies. That duplication is deliberate — trivial pure functions,
+  versus breaking a working page.
+- **Charts.** The page photographs its visible `#revChart` / `#aspChart`;
+  `renderChartsOffscreen()` gives the deck a throwaway pair, draws, captures, destroys. The
+  canvases are parked off-screen, **not** `display:none` — Chart.js draws nothing into a
+  zero-size canvas.
+- **The KPI region picker is now on the Deck Builder too.** Which EBITDA region sheet a
+  market's KPI cards read is a per-device choice in `localStorage` under `pvKpiViewMap`,
+  keyed by `filterField:filterValue`. The Deck Builder shows a Region dropdown on any row
+  whose source declares a `kpiPicker`, reads and writes **that same map**, and drops the
+  row's rendered picture when it changes — so a market whose region was never set, or set
+  wrong, is fixed without leaving the page, and the report page sees the change too.
+- **Central Canada** resolves to the backend's `__ALL__`; it is a rollup with no market tab.
 
-**Not done — what Phase 3 still needs:**
+**Verified:** `tests/pvcheck.js` — 11/11 byte-identical between old page code and the module
+across `tableInnerHtml`, `monthTag_`, `slideTitle` and `buildCustTable` for every secondary
+dimension, sort direction and top-N. `tests/deckpath.js` — all four sources register and all
+seven sampled slides build, with the KPI strip populated (5 cards), both waterfalls captured,
+and the customer slide carrying its two stacked blocks; each backend is called once per
+market+period, not once per slide.
 
-1. **`custSlideSpec` is not lifted.** It builds the combined *Month to date* over *Year to
-   date* block that the Top-10 slide actually is; the module can currently build one customer
-   table, not the pair. It needs splitting into content (moves) and slide options (stays).
-2. **`Page_PriceVolume.html` is not rewired.** It still holds its own copies, and nothing
-   includes `Deck_PV.html` — so the module is inert and the page is untouched. The repo is in
-   a safe half-state, not a broken one.
-3. **No `pv` / `cust` adapters registered**, so those 19 recipe rows still report "no content
-   source registered".
-4. The KPI strip picks its region sheet from a **per-device `localStorage` map**
-   (`pvKpiViewMap`) the PV page writes when someone uses the Region dropdown. The module takes
-   it via `ctx.kpi` so the deck can reuse that mapping — but the wiring is not written, and on
-   a device that has never used the PV page for a given market the row would degrade to empty
-   (exactly as the page behaves today with no workbook). **Worth confirming that is acceptable**
-   before Phase 3 closes.
+**A bug the harness caught:** `buildPvSlideContent` captured the hardcoded `revChart` /
+`aspChart` ids, so deck slides came out with **no charts at all** — the offscreen canvases
+have generated ids. The ids now travel on the ctx.
 
 ### How Phase 2 was done — the pattern Phases 3–4 should copy
 
@@ -746,6 +751,7 @@ before assuming it is finished.**
 | 2026-08-13 | Deck Builder Phase 0b — fix the `Deck_Backend.gs` bugs (6 found, 6 fixed); validate the committed template offline | ✅ done |
 | 2026-08-13 | Deck Builder Phase 1 — `Page_DeckBuilder.html`, `Deck_Sources.html`, `AmrSlide.captureBare`, `Deck_Recipe.gs` (43 rows) | ✅ done |
 | 2026-08-13 | Deck Builder Phase 2 — extract the fuel exec tables into shared `Deck_Fuel.html`; both fuel pages delegate; `fsc` + `rfsc` adapters live | ✅ done |
+| 2026-08-13 | Deck Builder Phase 3 — `Deck_PV.html`; PV page delegates; `pv` + `cust` adapters live; per-row KPI Region picker on the Deck Builder | ✅ done |
 | | **Set `DECK_CONFIG.TEMPLATE_ID` and `FOLDER_ID`, add the Slides + Drive scopes, serve `?page=deckbuilder` from the execute-as-user deployment.** Nothing runs until this is done | ☐ |
 | | Deck Builder Phase 3 — `pv` + `cust` adapters (19 slides) | ☐ |
 | | Deck Builder Phase 4 — `rmx` + `seg` adapters (20 slides) | ☐ |

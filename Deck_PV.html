@@ -296,8 +296,12 @@ var AmrPvSlide = (function(){
 
   function buildPvSlideContent(d){
     var S = CTX.slide;
-    var revImg = captureChart('revChart', S.chartCaptureW, S.chartCaptureH);
-    var aspImg = captureChart('aspChart', S.chartCaptureW, S.chartCaptureH);
+    /* The page photographs its two visible canvases; the deck has none, so
+       renderChartsOffscreen() puts the ids of its throwaway pair on the ctx.
+       Capturing the hardcoded ids here is why deck slides first came out with
+       no charts at all. */
+    var revImg = captureChart(CTX.revId || 'revChart', S.chartCaptureW, S.chartCaptureH);
+    var aspImg = captureChart(CTX.aspId || 'aspChart', S.chartCaptureW, S.chartCaptureH);
 
     var tableCards = (d.tables||[]).map(function(tb){
       var up=tb.volMix>=0;
@@ -601,10 +605,13 @@ var AmrPvSlide = (function(){
       '<canvas id="' + idR + '" width="' + SLIDE.chartCaptureW + '" height="' + SLIDE.chartCaptureH + '"></canvas>'
     + '<canvas id="' + idA + '" width="' + SLIDE.chartCaptureW + '" height="' + SLIDE.chartCaptureH + '"></canvas>';
     document.body.appendChild(host);
+    var prevR = CTX.revId, prevA = CTX.aspId;
     try {
+      CTX.revId = idR; CTX.aspId = idA;      // buildPvSlideContent reads these
       renderCharts(d, idR, idA);
       return run(idR, idA);
     } finally {
+      CTX.revId = prevR; CTX.aspId = prevA;
       [idR, idA].forEach(function(id){
         if(charts[id]){ try { charts[id].destroy(); } catch(e){} delete charts[id]; }
       });
@@ -643,12 +650,104 @@ var AmrPvSlide = (function(){
     fitExportTables(box);
   }
 
+  /* The TOP 10 CUSTOMERS block. When both periods are loaded and a Top-N is in
+     force it is MTD stacked over YTD as ONE block — which is what the page's
+     combined export already produces, and what the deck's L_FULL_IMAGE row
+     expects. Otherwise it falls back to the single current period.
+
+     Lifted from the page's custSlideSpec(); only the CONTENT moved. The slide
+     title, subtitle, margins and filename are the page's PNG-export concern
+     and stayed there. */
+  function custContent(cd){
+    if(!cd) return null;
+    var limited = CTX.custTopN !== 'all';
+
+    if(limited && cd.MTD && cd.YTD){
+      var combined = document.createElement('div');
+      combined.className = 'exp';
+      combined.style.cssText = 'width:100%;display:flex;flex-direction:column';
+      combined.innerHTML =
+          '<div class="cust-blk">'
+            +'<div class="cust-blk-lbl" style="font:800 15px Archivo,Arial;color:var(--blue-100);letter-spacing:.04em;margin:0 0 4px 2px">Month to date</div>'
+            +'<div class="ctbl-wrap" style="overflow:visible;padding:0">'+buildCustTable(cd.MTD)+'</div>'
+          +'</div>'
+          +'<div style="flex:none;height:12px"></div>'
+          +'<div class="cust-blk">'
+            +'<div class="cust-blk-lbl" style="font:800 15px Archivo,Arial;color:var(--blue-100);letter-spacing:.04em;margin:0 0 4px 2px">Year to date</div>'
+            +'<div class="ctbl-wrap" style="overflow:visible;padding:0">'+buildCustTable(cd.YTD)+'</div>'
+          +'</div>';
+      return combined;
+    }
+
+    var d = cd[CTX.period]; if(!d) return null;
+    var content = document.createElement('div');
+    content.className = 'exp';
+    content.style.cssText = 'width:100%';
+    content.innerHTML =
+      '<div class="ctbl-wrap" style="overflow:visible;padding:0">'+buildCustTable(d)+'</div>';
+    return content;
+  }
+
+  /* =======================================================================
+   * KPI region sheets — shared with the Price & Volume page, on purpose
+   * ----------------------------------------------------------------------
+   * Which EBITDA region sheet a market's KPI cards read is a PER-DEVICE
+   * choice, remembered in localStorage under 'pvKpiViewMap' and keyed by the
+   * page view (filterField:filterValue). The Deck Builder reads and writes
+   * THE SAME map, so a market someone has already set up on the Price &
+   * Volume page comes out right in the deck with nothing to redo — and a
+   * change made in the deck shows up on that page too.
+   * ===================================================================== */
+  var KPI_MAP_KEY = 'pvKpiViewMap';
+
+  function kpiLoadMap(){
+    try { return JSON.parse(localStorage.getItem(KPI_MAP_KEY) || '{}'); }
+    catch(e){ return {}; }
+  }
+  function kpiSaveMap(map){
+    try { localStorage.setItem(KPI_MAP_KEY, JSON.stringify(map || {})); } catch(e){}
+  }
+  function kpiViewKeyFor(filterField, filterValue){
+    return (filterField||'') + ':' + (filterValue||'__ALL__');
+  }
+  /* Every region sheet the shared workbook offers. [] when no workbook has
+     been uploaded, which is exactly when the KPI row is omitted. */
+  function kpiSheets(vals){
+    var list = window.AmrKpi ? AmrKpi.plantIndex(vals) : [];
+    return (list || []).map(function(e){ return e.label; });
+  }
+  /* Assemble the ctx.kpi a slide needs: the shared values, the sheet chosen
+     for this market, and the index kpiExtract() looks the sheet up in. */
+  function kpiFor(vals, filterField, filterValue, override){
+    var list = window.AmrKpi ? (AmrKpi.plantIndex(vals) || []) : [];
+    var index = {}, sheets = [];
+    list.forEach(function(e){ index[e.label] = e; sheets.push(e.label); });
+    var map = kpiLoadMap();
+    var remembered = map[kpiViewKeyFor(filterField, filterValue)];
+    var sheet = (override && sheets.indexOf(override) !== -1) ? override
+              : (remembered && sheets.indexOf(remembered) !== -1) ? remembered
+              : (sheets[0] || '');
+    return { vals:vals || null, sheet:sheet, index:index, sheets:sheets, map:map };
+  }
+  function kpiRemember(filterField, filterValue, sheet){
+    var map = kpiLoadMap();
+    map[kpiViewKeyFor(filterField, filterValue)] = sheet;
+    kpiSaveMap(map);
+  }
+
   /* =======================================================================
    * public entry points — each sets CTX, does the work, restores it
    * ===================================================================== */
   return {
     SLIDE: SLIDE,
     charts: charts,
+
+    custContent: function(cd, ctx){ return withCtx(ctx, function(){ return custContent(cd); }); },
+
+    kpiSheets: kpiSheets,
+    kpiFor: kpiFor,
+    kpiRemember: kpiRemember,
+    kpiViewKeyFor: kpiViewKeyFor,
 
     /* used by the report page's own live rendering */
     waterfall: waterfall,
@@ -678,5 +777,146 @@ var AmrPvSlide = (function(){
     fitCombinedCustomerSlide: fitCombinedCustomerSlide,
     fitBare: fitBare
   };
+})();
+
+
+/* ===========================================================================
+ * Deck Builder adapters — registered ONLY on the Deck Builder page.
+ * ---------------------------------------------------------------------------
+ * The Price & Volume page includes this file too but never creates
+ * AmrDeckSource, so nothing below runs there.
+ *
+ *   'pv'    one market x one period -> the composite slide
+ *   'cust'  one market, BOTH periods -> the Top 10 block
+ *
+ * Reports are cached per market+period, so the 14 market slides and the 5
+ * customer slides between them cost one server call each, not one per slide.
+ * ========================================================================= */
+(function(){
+  if(!window.AmrDeckSource) return;
+
+  var RPT = {};      // 'market|period'  -> getReport payload
+  var CUST = {};     // 'market|period'  -> getCustomerReport payload
+  var KPIVALS = { loaded:false, vals:null };
+
+  function srv(fn, args){
+    return new Promise(function(resolve, reject){
+      if(typeof google==='undefined' || !google.script || !google.script.run){
+        return reject(new Error('Price & Volume data needs the live web app.'));
+      }
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn]
+        .apply(null, args || []);
+    });
+  }
+
+  /* '__ALL__' is how the backend spells "every market" — the deck's
+     "Central Canada" rollup is exactly that, and it has no market tab. */
+  function filterValueOf(market){
+    var m = String(market || '').trim();
+    return (!m || /^central\s*canada$/i.test(m)) ? '__ALL__' : m;
+  }
+
+  /* The shared EBITDA values, once per session. A missing workbook is NOT an
+     error: the KPI row is simply omitted, exactly as the page behaves. */
+  function loadKpi(){
+    if(KPIVALS.loaded) return Promise.resolve(KPIVALS.vals);
+    if(!window.AmrKpi){ KPIVALS.loaded = true; return Promise.resolve(null); }
+    return new Promise(function(resolve){
+      try {
+        AmrKpi.load(function(vals){
+          KPIVALS.loaded = true; KPIVALS.vals = vals || null; resolve(KPIVALS.vals);
+        });
+      } catch(e){ KPIVALS.loaded = true; resolve(null); }
+    });
+  }
+
+  function reportKey(spec){ return filterValueOf(spec.market) + '|' + (spec.period || 'MTD'); }
+
+  function loadReport(spec){
+    var key = reportKey(spec);
+    if(RPT[key]) return Promise.resolve(RPT[key]);
+    return srv('getReport', [{
+      period: spec.period || 'MTD',
+      dimensions: ['SUBMARKET1', 'PLANT_TYPE', 'PROD_CLASS'],
+      filterField: 'MARKET',
+      filterValue: filterValueOf(spec.market),
+      refineValue: '__ALL__',
+      refineMode: 'include',
+      month: 0,                 // 0 = the server's report month (last closed)
+      upload: null
+    }]).then(function(d){
+      if(!d) throw new Error('No Price & Volume data for ' + (spec.market || 'Central Canada') + '.');
+      RPT[key] = d; return d;
+    });
+  }
+
+  function loadCust(market, period){
+    var key = filterValueOf(market) + '|' + period;
+    if(CUST[key]) return Promise.resolve(CUST[key]);
+    return srv('getCustomerReport', [{
+      period: period, secondary: 'CUST_SEGMENT',
+      market: filterValueOf(market), month: 0, upload: null
+    }]).then(function(d){ CUST[key] = d; return d; });
+  }
+
+  /* The ctx a slide is rendered with. spec.kpiSheet is the per-row override
+     the Deck Builder's Region dropdown sets; absent, the remembered per-device
+     choice wins, then the first sheet. */
+  function ctxFor(spec, d){
+    var fv = filterValueOf(spec.market);
+    return {
+      slide: AmrPvSlide.SLIDE,
+      data: d || null,
+      period: spec.period || 'MTD',
+      month: 0, latestMonth: (d && d.latestMonth) || 0,
+      filterField: 'MARKET', filterValue: fv,
+      custSecondary: 'CUST_SEGMENT', custSort: 'cyVol', custDir: 'top',
+      custTopN: '10', custSearch: '', collapsed: {},
+      kpi: AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET', fv, spec.kpiSheet)
+    };
+  }
+
+  AmrDeckSource.register('pv', {
+    /* Both the report and the KPI workbook; the KPI half never fails the
+       slide, it just leaves the strip off. */
+    prepare: function(spec){
+      return Promise.all([loadReport(spec), loadKpi()]);
+    },
+    content: function(spec){
+      var d = RPT[reportKey(spec)];
+      if(!d) throw new Error('Price & Volume data is not loaded yet.');
+      var el = AmrPvSlide.contentOffscreen(d, ctxFor(spec, d));
+      if(!el) throw new Error('Could not build the Price & Volume block.');
+      return el;
+    },
+    fit: AmrPvSlide.fitBare,
+    /* The Deck Builder shows a Region dropdown on rows whose source declares
+       one. Everything it needs is here, so the page stays generic. */
+    kpiPicker: {
+      sheets: function(){ return AmrPvSlide.kpiSheets(KPIVALS.vals); },
+      current: function(spec){
+        return AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET',
+          filterValueOf(spec.market), spec.kpiSheet).sheet;
+      },
+      choose: function(spec, sheet){
+        AmrPvSlide.kpiRemember('MARKET', filterValueOf(spec.market), sheet);
+      }
+    }
+  });
+
+  AmrDeckSource.register('cust', {
+    prepare: function(spec){
+      return Promise.all([loadCust(spec.market, 'MTD'), loadCust(spec.market, 'YTD')]);
+    },
+    content: function(spec){
+      var cd = { MTD: CUST[filterValueOf(spec.market) + '|MTD'],
+                 YTD: CUST[filterValueOf(spec.market) + '|YTD'] };
+      if(!cd.MTD && !cd.YTD) throw new Error('Customer data is not loaded yet.');
+      var el = AmrPvSlide.custContent(cd, ctxFor(spec, null));
+      if(!el) throw new Error('Could not build the customer block.');
+      return el;
+    },
+    fit: AmrPvSlide.fitCombinedCustomerSlide
+  });
 })();
 </script>

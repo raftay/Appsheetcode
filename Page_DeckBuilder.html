@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <?!= include('Styles') ?>
 <style>
@@ -58,11 +59,19 @@
   border-bottom:1px solid var(--line); padding:7px 14px;
   font:800 11px Archivo; letter-spacing:.06em; text-transform:uppercase; color:var(--blue-100)}
 .db-group:first-child{border-top:0}
-.db-row{display:grid; grid-template-columns:30px 34px minmax(0,1fr) 150px 96px 176px;
+.db-row{display:grid; grid-template-columns:30px 34px minmax(0,1fr) 128px 132px 96px 176px;
   gap:12px; align-items:center; padding:9px 14px; border-bottom:1px solid #F0F4FA}
 .db-row:last-child{border-bottom:0}
-@media (max-width:980px){ .db-row{grid-template-columns:30px 34px minmax(0,1fr) 96px; }
-  .db-row .db-layout, .db-row .db-thumb{display:none} }
+@media (max-width:1180px){ .db-row{grid-template-columns:30px 34px minmax(0,1fr) 132px 96px 176px}
+  .db-row .db-layout{display:none} }
+@media (max-width:980px){ .db-row{grid-template-columns:30px 34px minmax(0,1fr) 96px}
+  .db-row .db-layout, .db-row .db-kpi, .db-row .db-kpi-none, .db-row .db-thumb{display:none} }
+
+/* the per-row Region picker, on slides that carry a KPI strip */
+.db-kpi{width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:7px;
+  background:#F4F7FC; padding:5px 7px; font:600 11px Inter; color:var(--ink); cursor:pointer}
+.db-kpi:hover{border-color:var(--blue-40)}
+.db-kpi-none{font:500 10.5px Inter; color:var(--muted); font-style:italic}
 .db-row.off{opacity:.45}
 .db-num{font:600 11px Inter; color:var(--muted); text-align:right}
 .db-ttl{font:600 12.5px Inter; color:var(--ink); overflow:hidden; text-overflow:ellipsis;
@@ -496,6 +505,47 @@ function redraw(){
   ROWS.forEach(function(r, i){ paintThumb(i); });
 }
 
+/* Some slides carry a KPI strip whose numbers come from ONE region sheet of
+   the EBITDA workbook. Which sheet is a per-device choice, normally made on
+   the report page. Showing the picker here too means a market whose region
+   was never set — or was set wrong — can be fixed without leaving the Deck
+   Builder, and the choice is remembered in the same place the report page
+   reads, so it is not a second setting to keep in sync.
+   The source declares the picker; this page stays generic. */
+function kpiPickerHtml(r, i){
+  var src = window.AmrDeckSource ? AmrDeckSource.get(r.spec.source) : null;
+  var p = src && src.kpiPicker;
+  if(!p) return '<div></div>';
+  var sheets = [];
+  try { sheets = p.sheets() || []; } catch(e){ sheets = []; }
+  if(!sheets.length){
+    return '<div class="db-kpi-none" title="Upload the EBITDA workbook on the '+
+      'Price &amp; Volume page to fill the KPI cards">no workbook</div>';
+  }
+  var cur = '';
+  try { cur = p.current(r.spec) || ''; } catch(e){}
+  return '<select class="db-kpi" title="Which region sheet the KPI cards read" '+
+    'onchange="dbPickKpi('+i+',this.value)">'+
+    sheets.map(function(s){
+      return '<option value="'+esc(s)+'"'+(s===cur?' selected':'')+'>'+esc(s)+'</option>';
+    }).join('')+'</select>';
+}
+
+/* Remember it where the report page looks, pin it on the row, and drop any
+   picture already rendered — the KPI numbers on it are now the wrong ones. */
+function dbPickKpi(i, sheet){
+  var r = ROWS[i];
+  var src = window.AmrDeckSource ? AmrDeckSource.get(r.spec.source) : null;
+  if(src && src.kpiPicker && src.kpiPicker.choose){
+    try { src.kpiPicker.choose(r.spec, sheet); } catch(e){}
+  }
+  r.spec.kpiSheet = sheet;
+  if(r.png){ r.png = null; r.w = r.h = 0; r.status = 'pending'; }
+  drawRow(r);
+  prog('Region set to ' + sheet + ' · re-render that slide to pick it up');
+  setBusy(false);
+}
+
 function rowHtml(r, i){
   var sub = [r.spec.source, r.spec.market, r.spec.period].filter(Boolean).join(' · ');
   return '<div class="db-row'+(r.on?'':' off')+'" id="dbRow'+i+'">'+
@@ -505,6 +555,7 @@ function rowHtml(r, i){
       '<div class="db-sub">'+esc(sub)+'</div>'+
       (r.err ? '<div class="db-err">'+esc(r.err)+'</div>' : '')+'</div>'+
     '<div class="db-layout">'+esc(r.spec.layout)+'</div>'+
+    kpiPickerHtml(r, i)+
     '<div class="db-st '+stCls(r.status)+'">'+stTxt(r.status)+'</div>'+
     '<div class="db-thumb'+(r.png?'':' empty')+'" id="dbThumb'+i+'" '+
       'onclick="dbOpenLb('+i+')" title="Click for a full-size look"></div>'+
@@ -632,6 +683,7 @@ document.addEventListener('DOMContentLoaded', function(){
     'array.</p>';
 </script>
 <?!= include('SlideExport') ?>
+<?!= include('KpiShared') ?>
 <?!= include('Deck_Sources') ?>
 <!-- Report-page content modules register into AmrDeckSource here, one per page.
      They must come AFTER Deck_Sources, which creates the registry.
@@ -642,6 +694,7 @@ document.addEventListener('DOMContentLoaded', function(){
      include of a file that does not exist yet still throws and takes the
      whole page down. -->
 <?!= include('Deck_Fuel') ?>
+<?!= include('Deck_PV') ?>
 <?!= include('Shell') ?>
 </body>
 </html>
