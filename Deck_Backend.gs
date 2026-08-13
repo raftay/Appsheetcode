@@ -66,10 +66,10 @@
 var DECK_CONFIG = {
 
   /* The template deck, as a GOOGLE SLIDES file (not the .pptx). */
-  TEMPLATE_ID: 'PUT_TEMPLATE_FILE_ID_HERE',
+  TEMPLATE_ID: '1_VsyemKcWKipvi9pKttwotZcJH8sz3s7iKRgvxd3OQo',
 
   /* Every generated deck is moved here. Share as Editor with the team. */
-  FOLDER_ID: 'PUT_DECK_FOLDER_ID_HERE',
+  FOLDER_ID: '1WRHFhA3e_1KO30sUpGaF6W35VCN5AToS',
 
   /* Script Property overrides, so the ⚙ Settings modal can point these
      somewhere else later without a code push. Same pattern as the per-page

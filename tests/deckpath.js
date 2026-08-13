@@ -50,6 +50,28 @@ const PVREPORT = { period:'MTD', filterValue:'GTA', latestMonth:7,
 const CUSTREP = { rows:[{label:'Amrize RMX',secondary:'INTERNAL RMX',cyVol:28680,pyVol:29575,
   volPct:-0.03,cyAsp:25.6,pyAsp:24.04,aspPct:0.065,cyFsc:12333,ppi:0.088,deltaApplied:0.43}],
   total:{cyVol:99001,pyVol:141871,volPct:-0.302,cyAsp:24.74,pyAsp:23.39,aspPct:0.058,cyFsc:28426,ppi:0.06,deltaApplied:0.45} };
+/* RMX_getSlideTables shape (Segment page) and RMX_getKeys/getExtras (RMX page) */
+const SEGREP = { market:'SASKATCHEWAN', period:'MTD', latestMonth:7,
+  segment:{ rows:[{label:'Res - Low Rise',cyVol:8458,cyPct:.48,pyVol:6754,pyPct:.45,volPct:.25,cyAspVa:314.98,pyAspVa:305.38,aspIncVa:.031}],
+            total:{cyVol:17673,pyVol:14948,volPct:.18,cyAspVa:351.36,pyAspVa:337.20,aspIncVa:.042} },
+  extras:{ extras:[{label:'Performance',cyVol:2429,volInc:.061,volChg:-.016,cyAsp:365.23,aspInc:.053,cm2:118.44,cm2Inc:0}],
+           vap:[{label:'General Purpose',cyVol:7985,volInc:.486,volChg:.092,cyAsp:326.96,aspInc:.03,cm2:69.32,cm2Inc:-.39}] } };
+const RMXKEYS = { market:'SASKATCHEWAN', period:'MTD', latestMonth:7, rows:[], plants:[], keys:[] };
+/* the Extras payload shape renderExtras() consumes: two streams plus their
+   subtotals, and the merged detail list */
+const XR = (label,cyRev,pyRev,cyAsp,pyAsp) => ({ label, cyRev, pyRev,
+  revPct:(cyRev-pyRev)/pyRev, cyAsp, pyAsp, aspChg:cyAsp-pyAsp });
+const RMXEXTRAS = { market:'SASKATCHEWAN', period:'MTD',
+  byTypeExtras:[ XR('Standard Fees',774945,632407,43.85,42.31) ],
+  byTypeExtrasTotal: XR('EXTRAS',774945,632407,43.85,42.31),
+  byTypeVap:[ XR('Other VAP',177009,135567,10.02,9.07) ],
+  byTypeVapTotal: XR('VAP',177009,135567,10.02,9.07),
+  byTypeTotal: XR('Total',1425417,1021567,80.66,68.34),
+  /* the merged detail table reads these two directly */
+  extras:[ { label:'Standard Fees', cyVol:0, cyRev:774945, pyRev:632407,
+             revPct:.225, cyAsp:43.85, pyAsp:42.31, aspChg:1.54 } ],
+  vap:[ { label:'Other VAP', cyVol:0, cyRev:177009, pyRev:135567,
+          revPct:.306, cyAsp:10.02, pyAsp:9.07, aspChg:.95 } ] };
 let calls = [];
 /* google.script.run, stubbed. Each property access returns a FRESH runner:
    the real thing lets two chains be in flight at once, and 'cust' relies on
@@ -70,6 +92,9 @@ win.google = {
       api.getRmxFuelData = reply('getRmxFuelData', MODEL);
       api.getReport = reply('getReport', PVREPORT);
       api.getCustomerReport = reply('getCustomerReport', CUSTREP);
+      api.RMX_getSlideTables = reply('RMX_getSlideTables', SEGREP);
+      api.RMX_getKeys = reply('RMX_getKeys', RMXKEYS);
+      api.RMX_getExtras = reply('RMX_getExtras', RMXEXTRAS);
       return api;
     },
   },
@@ -94,11 +119,18 @@ win.AmrKpi = {
   plant: (vals, entry, period) => entry
     ? { aspCy:16.23, aspPy:15.57, salesCy:31790, salesPy:32500, volCy:1960, volPy:2090 }
     : null,
+  /* the RMX side of the same workbook, for the Product Segment KPI row */
+  rmx: (vals, market, period) => vals
+    ? { aspCy:277.71, aspPy:273.37, salesCy:4908, salesPy:4086, volCy:17673, volPy:14948,
+        cm2Cy:121.09, cm2Py:133.2 }
+    : null,
 };
 win.localStorage = (function(){ var m={}; return {
   getItem:k=>(k in m?m[k]:null), setItem:(k,v)=>{m[k]=String(v);}, removeItem:k=>{delete m[k];} }; })();
 vm.runInContext(scriptOf('Deck_Fuel.html'), win);
 vm.runInContext(scriptOf('Deck_PV.html'), win);
+vm.runInContext(scriptOf('Deck_SEG.html'), win);
+vm.runInContext(scriptOf('Deck_RMX.html'), win);
 
 const R = win.AmrDeckSource;
 console.log('registered sources:', R.list().join(', '));
@@ -113,6 +145,8 @@ const specs = [
   { id: 'pv_gta_mtd', source: 'pv', market: 'GTA', period: 'MTD', layout: 'L_COMMENT_IMAGE' },
   { id: 'pv_cc_ytd', source: 'pv', market: 'Central Canada', period: 'YTD', layout: 'L_COMMENT_IMAGE' },
   { id: 'cust_gta', source: 'cust', market: 'GTA', layout: 'L_FULL_IMAGE' },
+  { id: 'seg_sk_mtd', source: 'seg', market: 'SASKATCHEWAN', period: 'MTD', layout: 'L_COMMENT_IMAGE_NO_KPI' },
+  { id: 'rmx_sk_mtd', source: 'rmx', market: 'SASKATCHEWAN', period: 'MTD', layout: 'L_FULL_IMAGE' },
 ];
 
 let bad = 0;
@@ -142,7 +176,7 @@ let bad = 0;
 
   // an unregistered source must fail with a sentence, not a stack trace
   try {
-    await R.build({ id: 'seg_x', source: 'seg' });
+    await R.build({ id: 'nope_x', source: 'nope' });
     console.log('  FAIL unregistered source resolved (should reject)'); bad++;
   } catch (e) {
     console.log(`  ok   unregistered source rejects: "${e.message.slice(0, 62)}…"`);
@@ -151,9 +185,10 @@ let bad = 0;
   // each backend must be hit ONCE even though two slides use it
   const counts = calls.reduce((o, [f]) => (o[f] = (o[f] || 0) + 1, o), {});
   const cached = counts.getFscData === 1 && counts.getRmxFuelData === 1
-    && counts.getReport === 2 && counts.getCustomerReport === 2;
+    && counts.getReport === 2 && counts.getCustomerReport === 2
+    && counts.RMX_getSlideTables === 1 && counts.RMX_getKeys === 1;
   if (!cached) bad++;
-  console.log(`  ${cached ? 'ok  ' : 'FAIL'} backend calls: ${JSON.stringify(counts)} (want fsc/rfsc 1, getReport 2, getCustomerReport 2)`);
+  console.log(`  ${cached ? 'ok  ' : 'FAIL'} backend calls: ${JSON.stringify(counts)} (one per market+period, never per slide)`);
   console.log(`       args: ${JSON.stringify(calls.map(c => c[1]))}`);
 
   console.log(bad ? `\n${bad} FAILURE(S).` : '\nDECK PATH OK.');

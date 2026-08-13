@@ -1,0 +1,535 @@
+<!-- =============================================================
+     Deck_SEG.html — the RMX Product Segment SLIDE CONTENT, in one place.
+
+     Included by TWO files:
+       Page_Segment.html       (the report page)
+       Page_DeckBuilder.html   (the deck)
+
+     Produces the 'seg' source: RMX Segment / Product for one market and one
+     period — the KPI row, then the Segment, By-extra-type and Extras/VAP
+     tables. Ten of the deck's slides.
+
+     THE EXTRACTION
+       Lifted VERBATIM out of Page_Segment.html with three uniform rewrites:
+
+         STATE.<field>  ->  CTX.<field>
+         SEGKPI.<field> ->  CTX.kpi.<field>
+         DATA           ->  CTX.data
+
+       Safe because the closure was computed first: it reads only five context
+       fields (data, market, period, kpi, exportSel). Same pattern, and the
+       same reasoning, as Deck_Fuel.html and Deck_PV.html — see those files.
+
+     WHAT STAYED ON THE PAGE
+       STATE, data loading, the live DOM rendering, the export checkboxes and
+       all UI wiring. Only the slide-content path moved.
+
+     WHICH TABLES APPEAR
+       The page has a checkbox per table and remembers the choice; the deck
+       wants all of them, every month, with nothing to forget to tick. So
+       exportSel is a ctx field: the page passes its live selection, and the
+       deck passes {} — which isOn() reads as "the default for this table",
+       and every table defaults on.
+     ============================================================= -->
+<script>
+var AmrSegSlide = (function(){
+
+  var CTX = {};
+
+  function ctx_(c){
+    c = c || {};
+    return {
+      data:      c.data || null,
+      market:    c.market || '',
+      period:    c.period || 'MTD',
+      /* {} = "no explicit choice", so every table falls back to its default */
+      exportSel: c.exportSel || {},
+      kpi:       c.kpi || { vals:null, sheet:'', index:{}, sheets:[], map:{} }
+    };
+  }
+  function withCtx(ctx, fn){
+    var prev = CTX; CTX = ctx_(ctx);
+    try { return fn(); } finally { CTX = prev; }
+  }
+
+/* ---------------------------------------------------------------------------
+ * Lifted verbatim from Page_Segment.html. Keep it that way: fix bugs here and
+ * let the page delegate.
+ * ------------------------------------------------------------------------- */
+  var DASH = '\u2013';
+
+  var ALL_MKT = '__ALL__';
+
+  var CY_YEAR = 2026, PY_YEAR = 2025;
+
+  var MARKET_LABEL = { '__ALL__':'Central Canada', HNS_SW:'HNS', Innocon:'Innocon',
+                       Manitoba:'Manitoba', North:'North', Saskatchewan:'Saskatchewan' };
+
+  var EXPORT_DEFAULT_OFF = { 'seg:byType':1, 'seg:detail':1 };
+
+  var SEGKPI_FMT = {
+    units:{ v:function(n){return (n==null?0:n).toLocaleString('en-CA',{minimumFractionDigits:2,maximumFractionDigits:2});},
+            d:function(n){return Math.abs(n).toFixed(2);} },
+    krc:  { v:function(n){return Math.round(n==null?0:n).toLocaleString('en-CA');},
+            d:function(n){return Math.abs(n).toFixed(2);} }
+  };
+
+  var TABLES = [
+    { key:'seg:segment', eb:'Main Raw Data',  title:'Segment',              cap:'Segment',
+      build:function(d){ return segmentTable(d); } },
+    { key:'seg:byType',  eb:'Summary',        title:'By extra type',        cap:'By extra type',
+      build:function(d){ return extrasTypeTable(d); } },
+    { key:'seg:detail',  eb:'EXTRAS LOOKUP',  title:'Extras & VAP detail',  cap:'Extras & VAP detail',
+      build:function(d){ return extrasDetailTable(d); } }
+  ];
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  function fInt(n){ return (n==null)?DASH:Math.round(n).toLocaleString('en-CA'); }
+
+  function f$(n){ return (n==null)?DASH:'$'+Number(n).toLocaleString('en-CA',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+  function f$0(n){ return (n==null)?DASH:'$'+Math.round(n).toLocaleString('en-CA'); }
+
+  function f$S(n){ return (n==null)?'n/a':((n<0?'-$':'+$')+Math.abs(n).toFixed(2)); }
+
+  function pct0(n){ return (n==null)?'n/a':Math.round(n*100)+'%'; }
+
+  function pct1(n){ return (n==null)?'n/a':(n*100).toFixed(1)+'%'; }
+
+  function pctS(n){ if(n==null) return 'n/a'; var v=n*100; return (v>=0?'+':'-')+Math.abs(v).toFixed(1)+'%'; }
+
+  function cellSign(c){
+    var t=String(c==null?'':c).trim();
+    if(/^\(.*\)$/.test(t)) return -1;
+    var s=t.replace(/[$,%()\s]/g,'').replace(/[\u2013\u2014\u2212]/g,'-');
+    if(/^-?\d*\.?\d+$/.test(s)&&s!==''){ var v=parseFloat(s); return v<0?-1:(v>0?1:0); }
+    return 0;
+  }
+
+  function cellClasses(t, r, ci){
+    var lc = t.leftCols || 1, cls = [];
+    if(ci < lc){ cls.push('tlbl'); return cls; }
+    if(!r.total){
+      var sg = cellSign(r.cells[ci]);
+      if((t.signed||[]).indexOf(ci) !== -1){ if(sg>0) cls.push('pos'); else if(sg<0) cls.push('neg'); }
+      else if(sg < 0){ cls.push('neg'); }
+    }
+    return cls;
+  }
+
+  function marketLabel(m){ return MARKET_LABEL[m] || m || ''; }
+
+  function isOn(key){
+    var saved = CTX.exportSel[key];
+    return (saved === undefined) ? !EXPORT_DEFAULT_OFF[key] : saved;
+  }
+
+  function renderTable(t){
+    var lc = t.leftCols || 1;
+
+    /* Even columns: one share each, two for the row-name column. */
+    var wsum = 0, weights = t.header.map(function(_, i){
+      var w = (i === lc - 1) ? 2 : 1; wsum += w; return w; });
+    var cols = '<colgroup>' + weights.map(function(w){
+      return '<col style="width:' + (w * 100 / wsum).toFixed(3) + '%">'; }).join('') + '</colgroup>';
+
+    /* header - label columns left, everything after them right */
+    var thead = '<tr>' + t.header.map(function(h, i){
+      var c = [];
+      if(i < lc) c.push('tlbl');
+      var g = (t.groups || {})[i]; if(g) c.push(g);
+      return '<th' + (c.length ? ' class="' + c.join(' ') + '"' : '') + '>' + esc(h) + '</th>';
+    }).join('') + '</tr>';
+
+    /* the repeated first cell becomes one merged EXTRAS / VAP spine cell */
+    var spine = {}, run = null;
+    t.rows.forEach(function(r, i){
+      if(lc < 2 || r.total){ run = null; return; }
+      var v = r.cells[0];
+      if(v){ run = { n:1, label:v }; spine[i] = run; }
+      else if(run){ run.n++; }
+    });
+
+    var body = t.rows.map(function(r, ri){
+      var tds = '';
+      for(var ci = 0; ci < r.cells.length; ci++){
+        if(lc >= 2 && ci === 0){
+          /* spine cell, or nothing at all: on a total row the label below spans
+             both label columns, which is what closes the white notch that used
+             to sit under the spine. */
+          if(spine[ri]) tds += '<td class="section" rowspan="' + spine[ri].n + '">' + esc(spine[ri].label) + '</td>';
+          continue;
+        }
+        if(lc >= 2 && ci === 1 && r.total){
+          tds += '<td class="tlbl" colspan="2">' + esc(r.cells[ci]) + '</td>';
+          continue;
+        }
+        var cls = cellClasses(t, r, ci);
+        tds += '<td' + (cls.length ? ' class="' + cls.join(' ') + '"' : '') + '>' + esc(r.cells[ci]) + '</td>';
+      }
+      var rowCls = r.grand ? ' class="grand"' : (r.total ? ' class="subtot"' : '');
+      return '<tr' + rowCls + '>' + tds + '</tr>';
+    }).join('');
+
+    return '<table class="gt">' + cols + '<thead>' + thead + '</thead><tbody>' + body + '</tbody></table>';
+  }
+
+  function renderComputedTable(t){ return renderTable(t); }
+
+  function computedCard(cap, table, missing){
+    var wrap=document.createElement('div');
+    wrap.innerHTML='<p class="ccap">'+esc(cap)+'</p>'+(table? renderComputedTable(table)
+        : '<div class="phold">Waiting for '+esc(missing)+'</div>');
+    return wrap;
+  }
+
+  function segmentTable(d){
+    var S = d && d.segment;
+    if(!S || !S.rows || !S.rows.length) return null;
+    var t = S.total;
+    var header = ['Major Project Segment','CY Vol','CY Vol %','PY Vol','PY Vol %','\u0394 YOY %',
+                  'CY ASP Inc VA','PY ASP Inc VA','\u0394 ASP Inc VA'];
+    var out = [];
+    out.push({ total:true, grand:true, cells:['Total', fInt(t.cyVol), '100%', fInt(t.pyVol), '100%',
+      pct0(t.volPct), f$(t.aspCY), f$(t.aspPY), pct1(t.aspPct)] });
+    S.rows.forEach(function(r){
+      out.push({ cells:[ r.label, fInt(r.cyVol), pct0(r.cyShare), fInt(r.pyVol), pct0(r.pyShare),
+        pct0(r.volPct), f$(r.aspCY), f$(r.aspPY), pct1(r.aspPct) ] });
+    });
+    return { header:header, rows:out, leftCols:1, signed:[5,8],
+             groups:{ 6:'gB', 7:'gB', 8:'gB' } };
+  }
+
+  function extrasTypeTable(d){
+    var e = d && d.extras;
+    if(!e || (!(e.byTypeExtras||[]).length && !(e.byTypeVap||[]).length)) return null;
+    var header = ['Stream','Type', CY_YEAR+' Rev', PY_YEAR+' Rev','Rev % chg',
+                  CY_YEAR+' ASP/m\u00B3', PY_YEAR+' ASP/m\u00B3','ASP change'];
+    function cells(stream, r){
+      return [ stream, r.label, f$0(r.cyRev), f$0(r.pyRev), pctS(r.revPct),
+               f$(r.aspCY), f$(r.aspPY), f$S(r.aspChg) ];
+    }
+    var rows = [];
+    function block(list, tot, name){
+      if(!list || !list.length) return;
+      list.forEach(function(r,i){ rows.push({ cells:cells(i===0?name:'', r) }); });
+      if(tot) rows.push({ total:true, cells:cells('', { label:name+' Total', cyRev:tot.cyRev,
+        pyRev:tot.pyRev, revPct:tot.revPct, aspCY:tot.aspCY, aspPY:tot.aspPY, aspChg:tot.aspChg }) });
+    }
+    block(e.byTypeExtras, e.byTypeExtrasTotal, 'EXTRAS');
+    block(e.byTypeVap,    e.byTypeVapTotal,    'VAP');
+    if(e.byTypeTotal) rows.push({ total:true, grand:true, cells:cells('', { label:'Total',
+      cyRev:e.byTypeTotal.cyRev, pyRev:e.byTypeTotal.pyRev, revPct:e.byTypeTotal.revPct,
+      aspCY:e.byTypeTotal.aspCY, aspPY:e.byTypeTotal.aspPY, aspChg:e.byTypeTotal.aspChg }) });
+    return { header:header, rows:rows, leftCols:2, signed:[4,7],
+             groups:{ 2:'gA', 3:'gA', 4:'gA', 5:'gB', 6:'gB', 7:'gB' } };
+  }
+
+  function extrasDetailTable(d){
+    var e = d && d.extras;
+    if(!e || (!(e.extras||[]).length && !(e.vap||[]).length)) return null;
+    var header = ['Stream','Type',
+      CY_YEAR+' vol applied', CY_YEAR+' appl. rate',
+      PY_YEAR+' vol applied', PY_YEAR+' appl. rate','\u0394 appl. rate',
+      CY_YEAR+' Rev', PY_YEAR+' Rev','Rev % chg',
+      CY_YEAR+' Applied ASP', PY_YEAR+' Applied ASP','ASP change'];
+    function cells(stream, r){
+      return [ stream, r.label,
+        fInt(r.cyM3), pct1(r.rateCY), fInt(r.pyM3), pct1(r.ratePY), pctS(r.rateChg),
+        f$0(r.cyRev), f$0(r.pyRev), pctS(r.revPct),
+        f$(r.aspCY), f$(r.aspPY), f$S(r.aspChg) ];
+    }
+    /* NO TOTAL ROWS ON THIS TABLE - APPLIED VOLUME DOES NOT ADD UP.
+       One pour is counted once PER EXTRA TYPE: a m3 that took a standard fee, a
+       cooling charge and a fibre dose sits in all three rows. Summing the applied
+       volume counts the same concrete several times over, and everything priced
+       off it - applied rate, applied ASP, their deltas - inherits that (it is why
+       the old penetration total came out above 100%). Only revenue would have
+       totalled, and "By extra type" above already carries EXTRAS Total, VAP Total
+       and Total revenue - so there is nothing left for a total row here to say. */
+    var rows = [];
+    function block(list, name){
+      if(!list || !list.length) return;
+      list.forEach(function(r,i){ rows.push({ cells:cells(i===0?name:'', r) }); });
+    }
+    block(e.extras, 'EXTRAS');
+    block(e.vap,    'VAP');
+    return { header:header, rows:rows, leftCols:2, signed:[6,9,12],
+             groups:{ 2:'gV', 3:'gV', 4:'gV', 5:'gV', 6:'gV', 7:'gA', 8:'gA', 9:'gA', 10:'gB', 11:'gB', 12:'gB' } };
+  }
+
+  function segKpiExtract(market){
+    if(!window.AmrKpi) return null;
+    return AmrKpi.rmx(CTX.kpi.vals, market || CTX.market, CTX.period);
+  }
+
+  function segKpiCard(eyebrow, pill, m, fmt, sub, invert){
+    var dp=(m.dp==null)?((m.py&&m.cy!=null)?(m.cy-m.py)/m.py:0):m.dp;
+    var dn=(m.dn==null)?((m.cy||0)-(m.py||0)):m.dn;
+    var up=dp>=0, good=invert?!up:up;
+    var arrow=up?'\u25B2':'\u25BC', col=good?'var(--blue-80)':'var(--neg)';
+    var sign=up?'+':'\u2212';
+    return segKpiCardShell(eyebrow, pill,
+        '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:8px;margin:5px 0 2px">'
+          +'<span style="font:800 24px Archivo,Arial;color:var(--blue-80)">'+fmt.v(m.cy)+'</span>'
+          +'<span style="font:700 11px Inter;color:'+col+';white-space:nowrap">'+arrow+' '+sign+fmt.d(dn)+' / '+sign+(Math.abs(dp)*100).toFixed(1)+'%</span>'
+        +'</div>'
+       +'<div style="font:500 10.5px Inter;color:var(--muted)">Prior Yr: '+fmt.v(m.py)+(sub?' \u00B7 '+sub:'')+'</div>');
+  }
+
+  function segKpiCardShell(eyebrow, pill, body){
+    return '<div style="flex:1 1 0;min-width:130px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:8px 11px">'
+      +'<div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px">'
+        +'<span style="font:700 9.5px Archivo,Arial;letter-spacing:.08em;text-transform:uppercase;color:var(--blue-100);white-space:nowrap">'+esc(eyebrow)+'</span>'
+        +'<span style="background:var(--blue-10);border:1px solid var(--blue-20);color:var(--blue-80);font:700 8px Archivo,Arial;letter-spacing:.06em;text-transform:uppercase;border-radius:5px;padding:2px 6px">'+esc(pill)+'</span>'
+      +'</div>'
+      + body + '</div>';
+  }
+
+  function segKpiMoneyCard(eyebrow, pill, m, invert){
+    var dp=(m.dp==null)?(((m.pyU||0)&&m.cyU!=null)?((m.cyU-m.pyU)/m.pyU):0):m.dp;
+    var dn=(m.dn==null)?((m.cyU||0)-(m.pyU||0)):m.dn;
+    var up=dp>=0, good=invert?!up:up;
+    var arrow=up?'\u25B2':'\u25BC', col=good?'var(--blue-80)':'var(--neg)';
+    var sign=up?'+':'\u2212';
+    var f=SEGKPI_FMT.krc;
+    return segKpiCardShell(eyebrow, pill,
+        '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:14px;margin:5px 0 2px;flex-wrap:nowrap">'
+          +'<span style="white-space:nowrap"><span style="font:800 24px Archivo,Arial;color:var(--blue-80)">'+f.v(m.cy)+'</span>'
+            +'<span style="font:700 9.5px Archivo,Arial;letter-spacing:.04em;color:var(--muted);margin-left:4px">kRC</span></span>'
+          +'<span style="white-space:nowrap"><span style="font:800 20px Archivo,Arial;color:var(--blue-100)">'+(m.cyU==null?'\u2013':m.cyU.toFixed(2))+'</span>'
+            +'<span style="font:700 9.5px Archivo,Arial;letter-spacing:.04em;color:var(--muted);margin-left:4px">RC/m\u00B3</span></span>'
+        +'</div>'
+       +'<div style="font:500 10.5px Inter;color:var(--muted);white-space:nowrap">Prior Yr: '+f.v(m.py)+' kRC \u00B7 '
+          +(m.pyU==null?'\u2013':m.pyU.toFixed(2))+' RC/m\u00B3'
+          +' \u00B7 <span style="font-weight:700;color:'+col+'">'+arrow+' '+sign+Math.abs(dn).toFixed(2)+' / '+sign+(Math.abs(dp)*100).toFixed(1)+'%</span>'
+        +'</div>');
+  }
+
+  function segKpiCardsHtml(){
+    var x=segKpiExtract(); if(!x) return '';
+    var h='';
+    if(x.units) h+=segKpiCard('Units Sold (Km\u00B3)',   'SAP / USGAAP', x.units, SEGKPI_FMT.units, '');
+    if(x.rev)   h+=segKpiMoneyCard('Total Revenue',      'SAP / USGAAP', x.rev);
+    if(x.conc)  h+=segKpiMoneyCard('Concrete Sales',     'SAP / USGAAP', x.conc);
+    if(x.raw)   h+=segKpiMoneyCard('Total Raw Materials','SAP / USGAAP', x.raw, true);
+    return h;
+  }
+
+  function buildSlideContent(){
+    var picked = TABLES.filter(function(T){ return isOn(T.key); });
+    if(!picked.length) return null;
+
+    var frag=document.createDocumentFragment();
+    var ml=marketLabel(CTX.market), p=CTX.period;
+    var kHtml=segKpiCardsHtml();
+    if(kHtml){
+      var krow=document.createElement('div');
+      krow.className='seg-kpi-row';
+      krow.style.cssText='display:flex;gap:12px;flex-wrap:nowrap;width:100%;flex:none;margin:0 0 12px';
+      krow.innerHTML=kHtml;
+      frag.appendChild(krow);
+    }
+    function addRow(cards){
+      var rowEl=document.createElement('div'); rowEl.className='crow';
+      cards.forEach(function(card){ var cell=document.createElement('div'); cell.className='ccell'; cell.appendChild(card); rowEl.appendChild(cell); });
+      frag.appendChild(rowEl);
+    }
+    picked.forEach(function(T){
+      var t=null; try{ t=T.build(CTX.data); }catch(e){ t=null; }
+      addRow([ computedCard(T.cap+' \u00B7 '+p, t, 'Ready-Mix data for '+ml) ]);
+    });
+    return frag;
+  }
+
+  function fitTables(box){
+    // Let the spacers decide where the content sits (like RMX / Price & Volume):
+    // the shared frame vertically centres the body row, which pushes short
+    // content to the middle. Anchor it to the top instead, so the Top slider is
+    // the real gap below the header and the Bottom slider the real reserved band.
+    var center=box.querySelector('.slide-center');
+    if(center && center.parentElement) center.parentElement.style.alignItems='flex-start';
+
+    // The shared frame pads the whole slide; that padding is invisible extra
+    // blank space the sliders can't remove. Pull the body row out to the slide
+    // edges (the header keeps its padding), so 0px blank space really means
+    // "right at the edge" and the sliders account for ALL the space.
+    if(center && center.parentElement){
+      var pad=parseFloat(getComputedStyle(box).paddingLeft)||0;
+      center.parentElement.style.marginLeft=(-pad)+'px';
+      center.parentElement.style.marginRight=(-pad)+'px';
+      box.style.paddingBottom='0px';
+    }
+
+    var tables=[].slice.call(box.querySelectorAll('table.gt'));
+
+    function fitOne(t, capFont, wrap, startFont){
+      var avail=t.parentElement?t.parentElement.clientWidth:0; if(!avail) return 0;
+      var maxF=capFont||parseFloat(t.getAttribute('data-maxf'))||30;
+      var padX=7, font=startFont||11, guard;
+      t.classList.toggle('wrapText', !!wrap);
+      t.style.transform=''; t.style.setProperty('--px',padX+'px'); t.style.fontSize=font+'px';
+      guard=0;
+      while(font<maxF && guard<120){ t.style.fontSize=(font+0.5)+'px'; if(t.scrollWidth>avail){ t.style.fontSize=font+'px'; break; } font+=0.5; guard++; }
+      guard=0;
+      while(t.scrollWidth>avail+1 && padX>2 && guard<40){ padX-=1; t.style.setProperty('--px',padX+'px'); guard++; }
+      if(!capFont){
+        guard=0;
+        while(t.scrollWidth>avail+1 && font>7 && guard<80){ font-=0.5; t.style.fontSize=font+'px'; guard++; }
+        if(t.scrollWidth>avail+1){ var s=avail/t.scrollWidth; t.style.transformOrigin='top left'; t.style.transform='scale('+s+')'; }
+      }
+      return font;
+    }
+
+    // pass 1 — natural fit for each table; remember the largest value-font reached
+    var natural=tables.map(function(t){ return fitOne(t, null, false, 11); });
+    var target=natural.reduce(function(a,b){ return Math.max(a,b); }, 0) || 11;
+
+    // pass 2 — lift the smaller tables to that value-font via wrapping
+    tables.forEach(function(t,i){
+      if(natural[i] < target-0.25){ fitOne(t, target, true, natural[i]); }
+    });
+
+    // scale each "SEGMENT · MTD" / "BY EXTRA TYPE · MTD" caption with its table's font
+    tables.forEach(function(t){
+      var cap=t.previousElementSibling;
+      if(cap && cap.classList && cap.classList.contains('ccap')){
+        cap.style.fontSize=Math.max(10.5, Math.round(parseFloat(t.style.fontSize)*0.85*10)/10)+'px';
+      }
+    });
+  }
+
+/* ---------------------------------------------------------------------------
+ * end of the lifted block
+ * ------------------------------------------------------------------------- */
+
+  /* The block the deck photographs. buildSlideContent returns a
+     DocumentFragment; a fragment cannot be measured or captured, so it is
+     wrapped in a real element first. */
+  function content(){
+    var frag = buildSlideContent();
+    if(!frag) return null;
+    var wrap = document.createElement('div');
+    wrap.className = 'seg-slide-wrap';
+    wrap.style.cssText = 'width:100%;display:flex;flex-direction:column';
+    wrap.appendChild(frag);
+    return wrap;
+  }
+
+  /* Bare-capture fitting: no .slide-center and no imposed height, so only the
+     width has to work out and the type stays large. */
+  function fitBare(box){
+    var w = box.clientWidth || 0; if(!w) return;
+    [].forEach.call(box.querySelectorAll('table'), function(t){
+      var avail = t.parentElement ? t.parentElement.clientWidth : w;
+      if(!avail) return;
+      var sz = 14, guard = 0; t.style.fontSize = sz + 'px';
+      while(t.scrollWidth > avail && sz > 7 && guard < 90){
+        sz -= 0.5; t.style.fontSize = sz + 'px'; guard++;
+      }
+    });
+  }
+
+  return {
+    TABLES: TABLES,
+    marketLabel: function(m){ return marketLabel(m); },
+    tableHtml: function(key, ctx){
+      return withCtx(ctx, function(){
+        for(var i=0;i<TABLES.length;i++){
+          if(TABLES[i].key === key) return TABLES[i].build(CTX.data);
+        }
+        return null;
+      });
+    },
+    content: function(ctx){ return withCtx(ctx, function(){ return content(); }); },
+    slideContent: function(ctx){ return withCtx(ctx, function(){ return buildSlideContent(); }); },
+    kpiCardsHtml: function(ctx){ return withCtx(ctx, function(){ return segKpiCardsHtml(); }); },
+    fitSlide: function(box, ctx){ return withCtx(ctx, function(){ return fitTables(box); }); },
+    fitBare: fitBare
+  };
+})();
+
+
+/* ===========================================================================
+ * Deck Builder adapter — 'seg'. Registered only on the Deck Builder page.
+ * ---------------------------------------------------------------------------
+ * One call per market+period, cached, so the ten slides cost ten calls rather
+ * than one per render attempt.
+ * ========================================================================= */
+(function(){
+  if(!window.AmrDeckSource) return;
+
+  var CACHE = {};
+  var KPIVALS = { loaded:false, vals:null };
+
+  function srv(fn, args){
+    return new Promise(function(resolve, reject){
+      if(typeof google==='undefined' || !google.script || !google.script.run){
+        return reject(new Error('Product Segment data needs the live web app.'));
+      }
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn]
+        .apply(null, args || []);
+    });
+  }
+  function key(spec){ return (spec.market||'') + '|' + (spec.period||'MTD'); }
+
+  function loadKpi(){
+    if(KPIVALS.loaded) return Promise.resolve(KPIVALS.vals);
+    if(!window.AmrKpi){ KPIVALS.loaded = true; return Promise.resolve(null); }
+    return new Promise(function(resolve){
+      try { AmrKpi.load(function(v){ KPIVALS.loaded=true; KPIVALS.vals=v||null; resolve(v); }); }
+      catch(e){ KPIVALS.loaded = true; resolve(null); }
+    });
+  }
+
+  /* The Segment page reads the Ready-Mix workbook through RMX_getSlideTables:
+     one call per market + period + month. month 0 = the server's report month. */
+  function loadSeg(spec){
+    var k = key(spec);
+    if(CACHE[k]) return Promise.resolve(CACHE[k]);
+    return srv('RMX_getSlideTables', [{
+      market: spec.market, period: spec.period || 'MTD', month: 0, upload: null
+    }]).then(function(d){
+      if(!d) throw new Error('No Product Segment data for ' + (spec.market||'?') + '.');
+      CACHE[k] = d; return d;
+    });
+  }
+
+  function ctxFor(spec){
+    return {
+      data: CACHE[key(spec)] || null,
+      market: spec.market || '',
+      period: spec.period || 'MTD',
+      exportSel: {},                       // every table on
+      kpi: (window.AmrPvSlide && AmrPvSlide.kpiFor)
+        ? AmrPvSlide.kpiFor(KPIVALS.vals, 'RMX_MARKET', spec.market || '', spec.kpiSheet)
+        : { vals:KPIVALS.vals, sheet:'', index:{}, sheets:[], map:{} }
+    };
+  }
+
+  AmrDeckSource.register('seg', {
+    prepare: function(spec){ return Promise.all([loadSeg(spec), loadKpi()]); },
+    content: function(spec){
+      if(!CACHE[key(spec)]) throw new Error('Product Segment data is not loaded yet.');
+      var el = AmrSegSlide.content(ctxFor(spec));
+      if(!el) throw new Error('Could not build the Product Segment block.');
+      return el;
+    },
+    fit: AmrSegSlide.fitBare,
+    /* Same per-device region map as the Price & Volume slides, under its own
+       key prefix so an RMX market and an AGG market of the same name do not
+       fight over one setting. */
+    kpiPicker: (window.AmrPvSlide && AmrPvSlide.kpiSheets) ? {
+      sheets: function(){ return AmrPvSlide.kpiSheets(KPIVALS.vals); },
+      current: function(spec){
+        return AmrPvSlide.kpiFor(KPIVALS.vals, 'RMX_MARKET', spec.market||'', spec.kpiSheet).sheet;
+      },
+      choose: function(spec, sheet){
+        AmrPvSlide.kpiRemember('RMX_MARKET', spec.market||'', sheet);
+      }
+    } : null
+  });
+})();
+</script>

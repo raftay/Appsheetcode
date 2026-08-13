@@ -44,13 +44,13 @@
 var DECK_RECIPE = [
 
   /* ---- Fuel Recovery (4) ------------------------------------------------ */
-  { id:'fsc_mtd',   source:'fsc',  period:'MTD', layout:'L_FULL_IMAGE',
+  { id:'fsc_mtd',   source:'fsc',  period:'MTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
     group:'Fuel Recovery', title:'Agg - Fuel Recovery MTD' },
-  { id:'fsc_ytd',   source:'fsc',  period:'YTD', layout:'L_FULL_IMAGE',
+  { id:'fsc_ytd',   source:'fsc',  period:'YTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
     group:'Fuel Recovery', title:'Agg - Fuel Recovery YTD' },
-  { id:'rfsc_mtd',  source:'rfsc', period:'MTD', layout:'L_FULL_IMAGE',
+  { id:'rfsc_mtd',  source:'rfsc', period:'MTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
     group:'Fuel Recovery', title:'Rmx - Fuel Recovery MTD' },
-  { id:'rfsc_ytd',  source:'rfsc', period:'YTD', layout:'L_FULL_IMAGE',
+  { id:'rfsc_ytd',  source:'rfsc', period:'YTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
     group:'Fuel Recovery', title:'Rmx - Fuel Recovery YTD' },
 
   /* ---- AGG Price & Volume, with the Top 10 slide after each market ------ */
@@ -109,52 +109,52 @@ var DECK_RECIPE = [
 
   /* ---- Ready-Mix. Per market: Segment/Product (commented), then P&V ----- */
   { id:'seg_sk_mtd',  source:'seg', market:'SASKATCHEWAN', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - SASKATCHEWAN - Commercial MTD' },
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - SASKATCHEWAN - Commercial MTD' },
   { id:'seg_sk_ytd',  source:'seg', market:'SASKATCHEWAN', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - SASKATCHEWAN - Commercial YTD' },
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - SASKATCHEWAN - Commercial YTD' },
   { id:'rmx_sk_mtd',  source:'rmx', market:'SASKATCHEWAN', period:'MTD',
     layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Saskatchewan - Commercial MTD' },
   { id:'rmx_sk_ytd',  source:'rmx', market:'SASKATCHEWAN', period:'YTD',
     layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Saskatchewan - Commercial YTD' },
 
   { id:'seg_mb_mtd',  source:'seg', market:'MANITOBA', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - MANITOBA - Commercial MTD' },
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - MANITOBA - Commercial MTD' },
   { id:'seg_mb_ytd',  source:'seg', market:'MANITOBA', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - MANITOBA - Commercial YTD' },
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - MANITOBA - Commercial YTD' },
   { id:'rmx_mb_mtd',  source:'rmx', market:'MANITOBA', period:'MTD',
     layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Manitoba - Commercial MTD' },
   { id:'rmx_mb_ytd',  source:'rmx', market:'MANITOBA', period:'YTD',
     layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Manitoba - Commercial YTD' },
 
   { id:'seg_sw_mtd',  source:'seg', market:'HNS_SW', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - HNS SW - Commercial MTD' },
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - HNS SW - Commercial MTD' },
   { id:'seg_sw_ytd',  source:'seg', market:'HNS_SW', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - HNS SW - Commercial YTD' },
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - HNS SW - Commercial YTD' },
   { id:'rmx_sw_mtd',  source:'rmx', market:'HNS_SW', period:'MTD',
     layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - HNS_SW - Commercial MTD' },
   { id:'rmx_sw_ytd',  source:'rmx', market:'HNS_SW', period:'YTD',
     layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - HNS_SW - Commercial YTD' },
 
   { id:'seg_inn_mtd', source:'seg', market:'Innocon', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - INNOCON - Commercial MTD' },
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - INNOCON - Commercial MTD' },
   { id:'seg_inn_ytd', source:'seg', market:'Innocon', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - INNOCON - Commercial YTD' },
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - INNOCON - Commercial YTD' },
   { id:'rmx_inn_mtd', source:'rmx', market:'Innocon', period:'MTD',
     layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Innocon - Commercial MTD' },
   { id:'rmx_inn_ytd', source:'rmx', market:'Innocon', period:'YTD',
     layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Innocon - Commercial YTD' },
 
   { id:'seg_no_mtd',  source:'seg', market:'North', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - NORTH - Commercial MTD' },
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - NORTH - Commercial MTD' },
   { id:'seg_no_ytd',  source:'seg', market:'North', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - NORTH - Commercial YTD' },
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - NORTH - Commercial YTD' },
   { id:'rmx_no_mtd',  source:'rmx', market:'North', period:'MTD',
     layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - North - Commercial MTD' },
   { id:'rmx_no_ytd',  source:'rmx', market:'North', period:'YTD',
     layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - North - Commercial YTD' },
 
   { id:'cust_no',     source:'cust', market:'North',
-    layout:'L_FULL_IMAGE', group:'AGG',
+    layout:'L_FULL_IMAGE_SMALL_OR_FSC', group:'AGG',
     title:'TOP 10 CUSTOMERS MTD & YTD - North' }
 ];
 

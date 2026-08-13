@@ -1,0 +1,585 @@
+<!-- =============================================================
+     Deck_RMX.html — the RMX Price & Volume SLIDE CONTENT, in one place.
+
+     Included by TWO files:
+       Page_Rmx.html           (the report page)
+       Page_DeckBuilder.html   (the deck)
+
+     Produces the 'rmx' source: RMX Commercial for one market and one period —
+     the by-submarket, by-strength-class and by-extra-type tables. Ten of the
+     deck's slides.
+
+     THE ONE THING THAT IS DIFFERENT HERE
+       The other modules build their block from DATA. This page's does not:
+       buildRmxContent() SCRAPES THE RENDERED DOM — it walks '#tablesHost .card'
+       and '#extrasHost .card' and keeps whichever have their export checkbox
+       ticked. That is a reasonable design for a page where the user picks
+       tables by eye, but the deck has no such DOM.
+
+       So renderOffscreen() builds the hosts the renderers expect, parked
+       off-screen, runs renderReport() and renderExtras() into them, ticks
+       every export checkbox, scrapes, and tears the hosts down. Same shape as
+       the offscreen canvases in Deck_PV.html, and the same reason: the page's
+       code is right, it just needs its stage built for it.
+
+       The hosts genuinely reuse the ids 'tablesHost' / 'extrasHost'. That is
+       safe because only the DECK renders offscreen, and the Deck Builder page
+       has no elements of its own by those names.
+
+     THE EXTRACTION
+       Lifted VERBATIM out of Page_Rmx.html with two uniform rewrites:
+         STATE.<field> -> CTX.<field>
+         DATA          -> CTX.data
+       Five context fields: data, month, latestMonth, extraCards, exportSel,
+       mapCounts. Same pattern as Deck_Fuel / Deck_PV / Deck_SEG.
+     ============================================================= -->
+<script>
+var AmrRmxSlide = (function(){
+
+  var CTX = {};
+
+  function ctx_(c){
+    c = c || {};
+    return {
+      data:       c.data || null,
+      month:      c.month || 0,
+      latestMonth: c.latestMonth || 0,
+      /* which Extras/VAP tables to show. The page starts with NONE and the
+         user picks; the deck wants both, every month. */
+      extraCards: c.extraCards || [],
+      /* Others / #N/A handling. 'separate' is the page's default and matches
+         Qlik; the merge toggle only moves labels, never PPI numbers. */
+      naMode:     c.naMode || 'separate',
+      breakdowns: c.breakdowns || [],
+      /* {} = "no explicit choice", so every table falls back to its default */
+      exportSel:  c.exportSel || {},
+      /* mapping-miss counts drive the "Fix mapping" strip. The deck passes
+         none, so no strip is painted onto a slide - which is what you want:
+         it is a call to action for the page, not something to present. */
+      mapCounts:  c.mapCounts || null
+    };
+  }
+  function withCtx(ctx, fn){
+    var prev = CTX; CTX = ctx_(ctx);
+    try { return fn(); } finally { CTX = prev; }
+  }
+
+  function $(id){ return document.getElementById(id); }
+
+  /* The rendered cards carry a "Fix mapping" button that navigates the report
+     page. Nothing navigates from an off-screen copy, but the lifted markup
+     references it, so it has to exist. The page keeps the real one. */
+  function jumpToMapping(){ if(window.rmxJumpToMapping) window.rmxJumpToMapping(); }
+
+  /* renderReport() and renderExtras() both end by refreshing the report page's
+     live slide preview. That is the page's business, not the module's, and on
+     the Deck Builder there is nothing to refresh - so this is a no-op unless
+     the page has installed the real one. Without it, every RMX slide died on
+     "renderRmxPreview is not defined". */
+  function renderRmxPreview(){
+    if(typeof window.rmxRenderPreview === 'function') window.rmxRenderPreview();
+  }
+
+/* ---------------------------------------------------------------------------
+ * Lifted verbatim from Page_Rmx.html. Keep it that way: fix bugs here and let
+ * the page delegate.
+ * ------------------------------------------------------------------------- */
+  var ALL_MKT = '__ALL__', ALL_MKT_LABEL = 'Central Canada';
+
+  var MONTH_NAMES = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
+
+  var EXPORT_DEFAULT_OFF = { 'extras:detail':1 };
+
+  var _mkSrc=null, _mkOut=null;
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+  function fInt(n){ return Math.round(n||0).toLocaleString('en-CA'); }
+
+  function f$(n){ return '$'+(n||0).toLocaleString('en-CA',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+  function f$0(n){ return '$'+Math.round(n||0).toLocaleString('en-CA'); }
+
+  function f$S(n){ return (n>=0?'+':'-')+'$'+Math.abs(n||0).toFixed(2); }
+
+  function fPct(n){ return ((n||0)*100).toFixed(1)+'%'; }
+
+  function fPctS(n){ var v=(n||0)*100; return (v>=0?'+':'')+v.toFixed(1)+'%'; }
+
+  function mktLabel(m){ return (m===ALL_MKT) ? ALL_MKT_LABEL : (m||''); }
+
+  function monthTag_(){
+    var m = CTX.month || CTX.latestMonth || 0;
+    return m ? ' \u00b7 ' + MONTH_NAMES[m-1].slice(0,3) : '';
+  }
+
+  function labelForDim(k){
+    var b=CTX.breakdowns.filter(function(x){return x.key===k;})[0];
+    return b?b.label:k;
+  }
+
+  function naLabel(v){ return String(v)==='#N/A' ? 'Others' : v; }
+
+  function naModeFor(){ return CTX.naMode==='separate' ? 'separate' : 'merged'; }
+
+  function cFld(d, dimKey){
+    return dimKey==='SUBMARKET'?d.submarket : dimKey==='SEGMENT'?d.segment : dimKey==='STRENGTH'?d.strength : d.cls;
+  }
+
+  function cGroupBy(keys, dimKey, ppiMap){
+    var map={}, order=[];
+    keys.forEach(function(r){
+      var label=String(cFld(r.dims,dimKey)||'(blank)').trim()||'(blank)';
+      if(!map[label]){ 
+        map[label]={label:label,pyVol:0,cyVol:0,baseCY:0,basePY:0}; 
+        order.push(label); 
+      }
+      var g=map[label];
+      g.pyVol+=r.pyVol; g.cyVol+=r.cyVol; g.baseCY+=r.baseCY; g.basePY+=r.basePY;
+    });
+    return order.map(function(l){ return cFinalize(map[l], (ppiMap||{})[l]); });
+  }
+
+  function cMergedKeys(keys){
+    if (_mkSrc===keys && _mkOut) return _mkOut;
+    var map={}, order=[];
+    keys.forEach(function(r){
+      var d=r.dims;
+      var dd={submarket:d.submarket, segment:d.segment,
+              app:naLabel(d.app), cls:naLabel(d.cls), strength:naLabel(d.strength)};
+      var kk=[dd.submarket,dd.segment,dd.app,dd.cls,dd.strength].join('|');
+      var g=map[kk];
+      if(!g){ g=map[kk]={dims:dd, pyVol:0,cyVol:0,basePY:0,baseCY:0}; order.push(kk); }
+      g.pyVol+=r.pyVol; g.cyVol+=r.cyVol; g.basePY+=r.basePY; g.baseCY+=r.baseCY;
+    });
+    _mkOut = order.map(function(kk){ return map[kk]; });
+    _mkSrc=keys;
+    return _mkOut;
+  }
+
+  function cMixEffect(groups, total){
+    if(!total.pyVol||!total.aspBasePY) return 0;
+    var sp=0; groups.forEach(function(g){ sp += (g.pyVol/total.pyVol)*g.aspBaseCY; });
+    var priceOnly=(sp-total.aspBasePY)/total.aspBasePY;
+    return total.aspIncBase-priceOnly;
+  }
+
+  function cPack(g){
+    return { 
+      label:g.label, cyVol:g.cyVol, pyVol:g.pyVol, volPct:g.pyVol?(g.cyVol-g.pyVol)/g.pyVol:0,
+      aspBaseCY:g.aspBaseCY, aspBasePY:g.aspBasePY, aspIncBase:g.aspIncBase, ppiBase:g.ppiBase 
+    };
+  }
+
+  function cPpi(wf){ return (wf && wf.w) ? wf.f/wf.w : 0; }
+
+  function cPpiDim(res, dimKey){
+    var src=(res && res.ppi && res.ppi[dimKey]) || {};
+    if (naModeFor()!=='merged') return src;
+    var out={};
+    for (var lbl in src){
+      var k=naLabel(lbl), o=out[k] || (out[k]={w:0,f:0});
+      o.w+=src[lbl].w||0; o.f+=src[lbl].f||0;
+    }
+    return out;
+  }
+
+  function cTotal(groups, totalWf){
+    var t={label:'Total',pyVol:0,cyVol:0,baseCY:0,basePY:0};
+    groups.forEach(function(g){ 
+      t.pyVol+=g.pyVol;t.cyVol+=g.cyVol;t.baseCY+=g.baseCY;t.basePY+=g.basePY;
+    });
+    return cFinalize(t, totalWf);   // plant x mix — identical on every breakdown
+  }
+
+  function cFinalize(g, wf){
+    g.aspBaseCY=g.cyVol?g.baseCY/g.cyVol:0;
+    g.aspBasePY=g.pyVol?g.basePY/g.pyVol:0;
+    g.aspIncBase=g.aspBasePY?(g.aspBaseCY-g.aspBasePY)/g.aspBasePY:0;
+    g.ppiBase=cPpi(wf);
+    return g;
+  }
+
+  function cPlantTable(res){
+    var plants = (res && res.plants) || [];
+    var ppiMap = (res && res.ppi && res.ppi.PLANT) || {};
+    var groups = plants.map(function(p){
+      return cFinalize({ label:p.label, pyVol:p.pyVol, cyVol:p.cyVol,
+                         baseCY:p.baseCY, basePY:p.basePY }, ppiMap[p.label]);
+    });
+    var total = cTotal(groups, (res && res.ppi && res.ppi.total) || null);   // all plants
+    groups.sort(function(a,b){ return b.cyVol-a.cyVol; });
+    return { key:'PLANT', label:labelForDim('PLANT'), noMix:true,
+             rows: groups.slice(0,10).map(cPack), total: cPack(total), mixEffect:0 };
+  }
+
+  function buildTables(res, dims){
+    var tables = dims.map(function(dim){
+      /* TOP 10 PLANTS. Plant is not one of the key-grain fields, so this table is
+         built from the pre-rolled `plants` list the server sends alongside the
+         key rows (see plantRows_ in RMX_Backend.gs for why it is separate).
+         The Others / #N/A toggle is a PRODUCT MASTER question and does not touch
+         plants, so the key-set choice below does not apply here. */
+      if (dim==='PLANT') return cPlantTable(res);
+      // global toggle: merged uses re-bucketed keys, separate uses the
+      // server's sheet-parity keys untouched
+      var keySet = (naModeFor()==='merged') ? cMergedKeys(res.keys) : res.keys;
+      var groups=cGroupBy(keySet,dim,cPpiDim(res,dim));
+      groups.sort(function(a,b){ return b.cyVol-a.cyVol; });
+      var total=cTotal(groups, (res.ppi&&res.ppi.total)||null);
+      return { key:dim, label:labelForDim(dim),
+               rows:groups.map(cPack), total:cPack(total), mixEffect:cMixEffect(groups,total) };
+    });
+    return { ok:true, market:res.market, period:res.period, dimensions:dims, tables:tables };
+  }
+
+  function cbHtml(key){
+    var saved = CTX.exportSel[key];
+    var on = (saved === undefined) ? !EXPORT_DEFAULT_OFF[key] : saved;   // default = checked, except above
+    return '<input type="checkbox" class="export-cb" data-key="'+key+'" '+(on?'checked ':'')
+      +'title="Include in Export" style="margin-right:10px;width:16px;height:16px;accent-color:#2A6EFF;cursor:pointer;">';
+  }
+
+  function colsHtml(n, labelAt){
+    var w = [], sum = 0, i;
+    for(i = 0; i < n; i++){ var x = (i === labelAt) ? 2 : 1; w.push(x); sum += x; }
+    return '<colgroup>' + w.map(function(x){
+      return '<col style="width:' + (x * 100 / sum).toFixed(3) + '%">'; }).join('') + '</colgroup>';
+  }
+
+  function byTypeRow(r){
+    return '<td class="tlbl">'+esc(r.label)+'</td>'
+      +'<td class="tnum">'+f$0(r.cyRev)+'</td><td class="tnum">'+f$0(r.pyRev)+'</td>'
+      +'<td class="tnum '+(r.revPct>=0?'pos':'neg')+'">'+fPctS(r.revPct)+'</td>'
+      +'<td class="tnum">'+f$(r.aspCY)+'</td><td class="tnum">'+f$(r.aspPY)+'</td>'
+      +'<td class="tnum '+(r.aspChg>=0?'pos':'neg')+'">'+f$S(r.aspChg)+'</td>';
+  }
+
+  function byTypeRowNoLabel(r){
+    /* whole dollars, exactly like the rows above it - the subtotal used to print
+       two decimals here while every data row printed none */
+    return '<td class="tnum">'+f$0(r.cyRev)+'</td><td class="tnum">'+f$0(r.pyRev)+'</td>'
+      +'<td class="tnum">'+fPctS(r.revPct)+'</td>'
+      +'<td class="tnum">'+f$(r.aspCY)+'</td><td class="tnum">'+f$(r.aspPY)+'</td>'
+      +'<td class="tnum">'+f$S(r.aspChg)+'</td>';
+  }
+
+  function byTypeHtml(d){
+    var head='<div class="card" data-imp="byType"><div class="card-head">'+cbHtml('extras:byType')+'<div><span class="eb">Summary</span>'
+      +'<h3>By extra type — '+esc(mktLabel(d.market))+' ('+esc(d.period)+')</h3></div>'
+      +'<div class="right">'+(window.AmrHint?AmrHint.btn('rmx_extras'):'')+'</div></div>'
+      +'<div class="tbl-scroll"><table class="rtbl">'+colsHtml(8, 1)+'<thead><tr>'
+      +'<th class="tlbl">Stream</th><th class="tlbl">Type</th>'
+      +'<th class="gA">2026 Rev</th><th class="gA">2025 Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">2026 ASP/m³</th><th class="gB">2025 ASP/m³</th><th class="gB">ASP change</th></tr></thead><tbody>';
+    var ex=d.byTypeExtras||[], vp=d.byTypeVap||[], body='';
+    if(ex.length){
+      body += '<tr><td class="section" rowspan="'+ex.length+'">EXTRAS</td>'+byTypeRow(ex[0])+'</tr>';
+      for(var i=1;i<ex.length;i++) body += '<tr>'+byTypeRow(ex[i])+'</tr>';
+      body += '<tr class="subtotal"><td class="tlbl" colspan="2">EXTRAS Total</td>'+byTypeRowNoLabel(d.byTypeExtrasTotal)+'</tr>';
+    }
+    if(vp.length){
+      body += '<tr><td class="section" rowspan="'+vp.length+'">VAP</td>'+byTypeRow(vp[0])+'</tr>';
+      for(var j=1;j<vp.length;j++) body += '<tr>'+byTypeRow(vp[j])+'</tr>';
+      body += '<tr class="subtotal"><td class="tlbl" colspan="2">VAP Total</td>'+byTypeRowNoLabel(d.byTypeVapTotal)+'</tr>';
+    }
+    var foot='<tfoot><tr><td class="tlbl" colspan="2">Total</td>'+byTypeRowNoLabel(d.byTypeTotal)+'</tr></tfoot>';
+    return head+body+'</tbody>'+foot+'</table></div></div>';
+  }
+
+  function detailRow(r){
+    return '<td class="tlbl">'+esc(r.label)+'</td>'
+      +'<td class="tnum">'+fInt(r.cyM3)+'</td><td class="tnum">'+fPct(r.rateCY)+'</td>'
+      +'<td class="tnum">'+fInt(r.pyM3)+'</td><td class="tnum">'+fPct(r.ratePY)+'</td>'
+      +'<td class="tnum '+(r.rateChg>=0?'pos':'neg')+'">'+fPctS(r.rateChg)+'</td>'
+      +'<td class="tnum">'+f$0(r.cyRev)+'</td><td class="tnum">'+f$0(r.pyRev)+'</td>'
+      +'<td class="tnum '+(r.revPct>=0?'pos':'neg')+'">'+fPctS(r.revPct)+'</td>'
+      +'<td class="tnum">'+f$(r.aspCY)+'</td><td class="tnum">'+f$(r.aspPY)+'</td>'
+      +'<td class="tnum '+(r.aspChg>=0?'pos':'neg')+'">'+f$S(r.aspChg)+'</td>';
+  }
+
+  function mergedDetailHtml(d){
+    var head='<div class="card" data-imp="detail"><div class="card-head">'+cbHtml('extras:detail')+'<div><span class="eb">EXTRAS LOOKUP</span>'
+      +'<h3>Extras &amp; VAP detail — '+esc(mktLabel(d.market))+' ('+esc(d.period)+')</h3></div>'
+      +'<div class="right">'+(window.AmrHint?AmrHint.btn('rmx_extras'):'')+'</div></div>'
+      +'<div class="tbl-scroll"><table class="rtbl">'+colsHtml(13, 1)+'<thead><tr>'
+      +'<th class="tlbl">Stream</th><th class="tlbl">Type</th>'
+      +'<th class="gV">2026 vol applied</th><th class="gV">2026 appl. rate</th>'
+      +'<th class="gV">2025 vol applied</th><th class="gV">2025 appl. rate</th><th class="gV">Δ appl. rate</th>'
+      +'<th class="gA">2026 Rev</th><th class="gA">2025 Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">2026 Applied ASP</th><th class="gB">2025 Applied ASP</th><th class="gB">ASP change</th></tr></thead><tbody>';
+    var body='';
+    if(d.extras.length){
+      body += '<tr><td class="section" rowspan="'+(d.extras.length)+'">EXTRAS</td>'+detailRow(d.extras[0])+'</tr>';
+      for(var i=1;i<d.extras.length;i++) body += '<tr>'+detailRow(d.extras[i])+'</tr>';
+    }
+    if(d.vap.length){
+      body += '<tr><td class="section" rowspan="'+(d.vap.length)+'">VAP</td>'+detailRow(d.vap[0])+'</tr>';
+      for(var j=1;j<d.vap.length;j++) body += '<tr>'+detailRow(d.vap[j])+'</tr>';
+    }
+    return head+body+'</tbody></table></div></div>';
+  }
+
+  function marketTableHtml(tbl, market, period){
+    var totCy=tbl.total.cyVol||1;
+    var totPy=tbl.total.pyVol||1;
+    var head='<div class="tbl-scroll"><table class="rtbl">'+colsHtml(10, 0)+'<thead><tr>'
+      +'<th class="tlbl">'+esc(tbl.label)+'</th>'
+      +'<th>CY Vol</th><th>%CY</th><th>PY Vol</th><th>%PY</th><th>Vol%</th>'
+      +'<th class="gB">CY ASP <small>BASE</small></th><th class="gB">PY ASP <small>BASE</small></th>'
+      +'<th class="gB">ASP% inc <small>BASE</small></th><th class="gB">PPI <small>BASE</small></th>'
+      + '</tr></thead><tbody>';
+    var body=tbl.rows.map(function(r){
+      return '<tr><td class="tlbl">'+esc(r.label)+'</td>'
+        +'<td class="tnum">'+fInt(r.cyVol)+'</td><td class="tnum">'+fPct(r.cyVol/totCy)+'</td>'
+        +'<td class="tnum">'+fInt(r.pyVol)+'</td><td class="tnum">'+fPct(r.pyVol/totPy)+'</td>'
+        +'<td class="tnum '+(r.volPct>=0?'pos':'neg')+'">'+fPctS(r.volPct)+'</td>'
+        +'<td class="tnum">'+f$(r.aspBaseCY)+'</td><td class="tnum">'+f$(r.aspBasePY)+'</td>'
+        +'<td class="tnum '+(r.aspIncBase>=0?'pos':'neg')+'">'+fPctS(r.aspIncBase)+'</td>'
+        +'<td class="tnum '+(r.ppiBase>=0?'pos':'neg')+'">'+fPctS(r.ppiBase)+'</td></tr>';
+    }).join('');
+    var t=tbl.total;
+    var foot='</tbody><tfoot><tr><td class="tlbl">Total</td>'
+      +'<td class="tnum">'+fInt(t.cyVol)+'</td><td class="tnum">100%</td>'
+      +'<td class="tnum">'+fInt(t.pyVol)+'</td><td class="tnum">100%</td><td class="tnum">'+fPctS(t.volPct)+'</td>'
+      +'<td class="tnum">'+f$(t.aspBaseCY)+'</td><td class="tnum">'+f$(t.aspBasePY)+'</td>'
+      +'<td class="tnum">'+fPctS(t.aspIncBase)+'</td><td class="tnum">'+fPctS(t.ppiBase)+'</td></tr></tfoot>';
+    return head+body+foot+'</table></div>';
+  }
+
+  function impactFor(scope){
+    var c = CTX.mapCounts; if(!c) return '';
+    if(scope==='main'  && c.product) return fInt(c.product)+' product'+(c.product===1?'':'s')+' aren\u2019t in PRODUCT MASTER, so their volume sits in the <b>N/A</b> row.';
+    if(scope==='byType'&& c.extras)  return fInt(c.extras)+' material'+(c.extras===1?'':'s')+' aren\u2019t in EXTRAS LOOKUP, so their revenue sits in <b>Unclassified</b>.';
+    if(scope==='detail'){
+      var bits=[];
+      if(c.extras) bits.push(fInt(c.extras)+' not in EXTRAS LOOKUP (\u2192 <b>Unclassified</b>)');
+      if(bits.length) return bits.join(' and ')+'.';
+    }
+    return '';
+  }
+
+  function paintImpact(){
+    [].forEach.call(document.querySelectorAll('#tablesHost .card'), function(c){
+      setStrip(c, impactFor('main'));
+    });
+    /* keyed off the card, not its position - either Extras table can be showing
+       on its own now that they hang off their own chips */
+    [].forEach.call(document.querySelectorAll('#extrasHost .card'), function(c){
+      setStrip(c, impactFor(c.getAttribute('data-imp') || ''));
+    });
+  }
+
+  function setStrip(card, html){
+    if(!card) return;
+    var old = card.querySelector('.impact');
+    if(!html){ if(old && old.parentNode===card) card.removeChild(old); return; }
+    if(old){ old.querySelector('.impact-t').innerHTML = html; return; }
+    var el = document.createElement('div');
+    el.className='impact';
+    el.innerHTML = '<span class="impact-i">!</span><span class="impact-t">'+html+'</span>'
+      + '<button class="impact-go">Fix mapping</button>';
+    var head = card.querySelector('.card-head');
+    if(head && head.nextSibling) card.insertBefore(el, head.nextSibling); else card.appendChild(el);
+    el.querySelector('.impact-go').onclick = jumpToMapping;
+  }
+
+  function renderReport(d){
+    var html = d.tables.map(function(tbl){
+      var up=tbl.mixEffect>=0;
+      /* Top 10 Plants is a slice, not a complete set of rows — mix effect would
+         be meaningless, and the heading reads "Top 10 Plants", not "By ...". */
+      var badge = tbl.noMix ? ''
+        : '<span class="badge '+(up?'up':'down')+'"><span class="k">MIX EFFECT</span>'+fPctS(tbl.mixEffect)+'</span>';
+      return '<div class="card mkt-card">'
+        +'<div class="card-head">'+cbHtml('main:'+tbl.key)
+        +'<div><span class="eb">'+esc(mktLabel(d.market))+' · '+esc(d.period)+'</span>'
+        +'<h3>'+(tbl.noMix?'':'By ')+esc(tbl.label)+'</h3></div>'
+        +'<div class="right">'+(window.AmrHint?AmrHint.btn('rmx_main'):'')
+        + badge + '</div></div>'
+        + marketTableHtml(tbl, d.market, d.period)
+        + (tbl.noMix ? '<p class="hint" style="padding:0 16px 12px;margin:0">Ordered by CY volume. '
+            + 'Shares are of the whole selection, so the ten rows add to less than 100% &mdash; the rest is every other plant.</p>' : '')
+        + '</div>';
+    }).join('');
+    $('tablesHost').innerHTML = html || '<div class="card"><div class="empty">No data.</div></div>';
+
+    if(window.paintImpact) paintImpact();
+    renderRmxPreview();
+  }
+
+  function renderExtras(d){
+    var html='';
+    if(d){
+      if(CTX.extraCards.indexOf('BYTYPE')>=0) html += byTypeHtml(d);
+      if(CTX.extraCards.indexOf('DETAIL')>=0) html += mergedDetailHtml(d);
+    }
+    $('extrasHost').innerHTML = html;
+
+    if(window.paintImpact) paintImpact();
+    renderRmxPreview();
+  }
+
+  function buildRmxContent(){
+    var cards = [].slice.call(document.querySelectorAll('#tablesHost .card, #extrasHost .card')).filter(function(c){
+      var cb = c.querySelector('.export-cb'); return cb && cb.checked;
+    });
+    if(cards.length === 0) return null;
+
+    var inner = document.createElement('div'); inner.className='rmx-exp-inner';
+    inner.style.cssText = 'transform-origin:top left;width:100%;display:flex;flex-direction:column;gap:16px';
+    cards.forEach(function(c){
+      var h3=c.querySelector('h3'), badge=c.querySelector('.badge'), t=c.querySelector('table');
+      var block=document.createElement('div'); block.className='rmx-export-block';
+      block.innerHTML =
+        '<div class="rmx-eb-head"><span class="rmx-eb-title">'+esc(h3?h3.textContent:'')+'</span>'
+        + (badge ? '<span class="rmx-eb-badge '+(badge.classList.contains('down')?'neg':'pos')+'">'+esc(badge.textContent)+'</span>' : '')
+        + '</div>'
+        + (t ? t.outerHTML : '');
+      inner.appendChild(block);
+    });
+
+    var row = document.createElement('div'); row.className='rmx-exp-row';
+    row.style.cssText = 'width:100%;overflow:hidden';
+    row.appendChild(inner);
+    return row;
+  }
+
+  function rmxFitTables(box){
+    // 1) per-table width fit — GROW the font to fill the box (like the Slide Builder),
+    //    only shrinking if even the smallest step still overflows.
+    [].forEach.call(box.querySelectorAll('.rmx-export-block table'), function(t){
+      var avail = t.parentElement ? t.parentElement.clientWidth : 0; if(!avail) return;
+      var sz=13, MAX=30, guard=0; t.style.transform=''; t.style.fontSize=sz+'px';
+      // grow while it still fits
+      while(sz<MAX && guard<80){ t.style.fontSize=(sz+0.5)+'px'; if(t.scrollWidth>avail){ t.style.fontSize=sz+'px'; break; } sz+=0.5; guard++; }
+      // shrink if we started already too wide
+      guard=0;
+      while(t.scrollWidth>avail && sz>6 && guard<60){ sz-=0.5; t.style.fontSize=sz+'px'; guard++; }
+      if(t.scrollWidth>avail+1){ var s=avail/t.scrollWidth; t.style.transformOrigin='top left'; t.style.transform='scale('+s+')'; }
+    });
+
+    // 2) whole-stack height fit
+    var center = box.querySelector('.slide-center'); if(!center) return;
+    var bodyR  = center.parentElement; var availH = bodyR ? bodyR.clientHeight : 0; if(!availH) return;
+    var row = box.querySelector('.rmx-exp-row'), inner = box.querySelector('.rmx-exp-inner');
+    if(!row || !inner) return;
+
+    inner.style.transform=''; inner.style.width='100%';
+    var natH = inner.scrollHeight;
+    if(natH > availH){
+      var s = availH / natH;
+      var colW = row.clientWidth;
+      inner.style.width = Math.round(colW / s) + 'px';   // pre-widen so the scaled stack still fills the width
+      inner.style.transform = 'scale('+s+')';
+    }
+    row.style.height = availH + 'px';   // pin → AmrSlide's generic centring/scaling becomes a no-op
+  }
+
+/* ---------------------------------------------------------------------------
+ * end of the lifted block
+ * ------------------------------------------------------------------------- */
+
+  /* Build the stage the renderers expect, run them, scrape, tear it down.
+     Off-screen rather than display:none so the tables actually lay out and
+     scrollWidth means something to the fitter. */
+  function renderOffscreen(d, extras){
+    var host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:-99999px;top:0;width:1400px';
+    host.innerHTML = '<div id="tablesHost"></div><div id="extrasHost"></div>';
+    document.body.appendChild(host);
+    try {
+      renderReport(d);
+      renderExtras(extras || null);
+      /* the deck takes every table; there is no one here to tick the boxes */
+      [].forEach.call(host.querySelectorAll('.export-cb'), function(cb){
+        cb.checked = true;
+      });
+      var el = buildRmxContent();
+      /* buildRmxContent copies outerHTML into a fresh tree, so the result does
+         not point back at anything we are about to remove. */
+      return el;
+    } finally {
+      if(host.parentNode) host.parentNode.removeChild(host);
+    }
+  }
+
+  function fitBare(box){
+    var w = box.clientWidth || 0; if(!w) return;
+    [].forEach.call(box.querySelectorAll('table'), function(t){
+      var avail = t.parentElement ? t.parentElement.clientWidth : w;
+      if(!avail) return;
+      var sz = 14, guard = 0; t.style.fontSize = sz + 'px';
+      while(t.scrollWidth > avail && sz > 7 && guard < 90){
+        sz -= 0.5; t.style.fontSize = sz + 'px'; guard++;
+      }
+    });
+  }
+
+  return {
+    buildTables:   function(res, dims, ctx){
+      return withCtx(ctx, function(){ return buildTables(res, dims); });
+    },
+    DEFAULT_DIMS: ['SUBMARKET','STRENGTH','PLANT'],
+    renderReport:  function(ctx){ return withCtx(ctx, function(){ return renderReport(); }); },
+    renderExtras:  function(ctx){ return withCtx(ctx, function(){ return renderExtras(); }); },
+    content:       function(ctx){ return withCtx(ctx, function(){ return buildRmxContent(); }); },
+    contentOffscreen: function(d, extras, ctx){
+      return withCtx(ctx, function(){ return renderOffscreen(d, extras); });
+    },
+    fitSlide:      function(box, ctx){ return withCtx(ctx, function(){ return rmxFitTables(box); }); },
+    fitBare: fitBare
+  };
+})();
+
+
+/* ===========================================================================
+ * Deck Builder adapter — 'rmx'. Registered only on the Deck Builder page.
+ * ========================================================================= */
+(function(){
+  if(!window.AmrDeckSource) return;
+
+  var KEYS = {}, EXTRAS = {};
+
+  function srv(fn, args){
+    return new Promise(function(resolve, reject){
+      if(typeof google==='undefined' || !google.script || !google.script.run){
+        return reject(new Error('Ready-Mix data needs the live web app.'));
+      }
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn]
+        .apply(null, args || []);
+    });
+  }
+  function key(spec){ return (spec.market||'') + '|' + (spec.period||'MTD'); }
+
+  /* This page does NOT get finished tables from the server. RMX_getKeys sends
+     key rows and the browser builds every table from them - which is why the
+     compute layer had to come across with the renderers. month 0 = the
+     server's report month (last closed). */
+  function load(spec){
+    var k = key(spec), opts = { market:spec.market, period:spec.period||'MTD', month:0, upload:null };
+    var need = [];
+    if(!KEYS[k])   need.push(srv('RMX_getKeys',   [opts]).then(function(d){ KEYS[k]=d; }));
+    if(!EXTRAS[k]) need.push(srv('RMX_getExtras', [opts]).then(function(d){ EXTRAS[k]=d; })
+                              .catch(function(){ EXTRAS[k] = null; }));  // extras are optional
+    return Promise.all(need);
+  }
+
+  AmrDeckSource.register('rmx', {
+    prepare: function(spec){ return load(spec); },
+    content: function(spec){
+      var k = key(spec), res = KEYS[k];
+      if(!res) throw new Error('Ready-Mix data is not loaded yet.');
+      var ctx = { month:0, latestMonth:res.latestMonth || 0,
+                  extraCards:['BYTYPE','DETAIL'], exportSel:{}, mapCounts:null,
+                  naMode:'separate', breakdowns:[] };
+      var d = AmrRmxSlide.buildTables(res, AmrRmxSlide.DEFAULT_DIMS, ctx);
+      var el = AmrRmxSlide.contentOffscreen(d, EXTRAS[k], ctx);
+      if(!el) throw new Error('Could not build the Ready-Mix block - no tables came back.');
+      return el;
+    },
+    fit: AmrRmxSlide.fitBare
+  });
+})();
+</script>
