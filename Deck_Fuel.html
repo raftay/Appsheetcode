@@ -256,24 +256,17 @@ var AmrFuelExec = (function(){
     }
   }
 
-  /* ---- fitting for a BARE capture (the deck) ----
-     There is no .slide-center here and no fixed height to respect: the deck
-     drops the picture into the template's image box scaled by RATIO, so the
-     only thing that has to fit is the width. Height is free, and letting the
-     stack run tall keeps the type large instead of shrinking it to hit a
-     height nobody imposed. */
-  function fitBare(box){
-    var ex = box.querySelector('.fsc-exec'); if(!ex) return;
-    var availW = box.clientWidth || 0; if(!availW) return;
-    var fs=13, guard=0; ex.style.fontSize=fs+'px';
-    while(ex.scrollWidth > availW && fs > 6 && guard < 40){
-      fs-=0.25; ex.style.fontSize=fs+'px'; guard++;
-    }
-  }
-
+  /* There is no fitBare any more. The deck used to have its own width-only
+     fitter, on the theory that "height is free" because the picture would be
+     scaled into the image box by ratio anyway. It was free in the wrong
+     direction: the stack ran as tall as it liked and then the whole picture was
+     shrunk to fit the box, so the type ended up SMALLER than if it had fitted a
+     height in the first place, and rows fell off the bottom. The deck now
+     photographs the same framed slide the page does, so fitSlide is the only
+     fitter — change it once, both are right. */
   return { UNITS:UNITS, computeExec:computeExec, execTable:execTable,
            execTables:execTables, content:content,
-           fitSlide:fitSlide, fitBare:fitBare };
+           fitSlide:fitSlide };
 })();
 
 
@@ -324,7 +317,8 @@ var AmrFuelExec = (function(){
   AmrDeckSource.register('fsc', {
     prepare: loader('fsc', 'getFscData', [], 'AGG Fuel Recovery'),
     content: contentFor('fsc', 'agg', 'AGG Fuel Recovery'),
-    fit: AmrFuelExec.fitBare
+    /* the page's own fitter, on the page's own frame */
+    fit: AmrFuelExec.fitSlide
   });
 
   /* month:0 = "last closed month", the same default the RMX Fuel page opens
@@ -332,7 +326,8 @@ var AmrFuelExec = (function(){
   AmrDeckSource.register('rfsc', {
     prepare: loader('rfsc', 'getRmxFuelData', [{ month:0 }], 'RMX Fuel Recovery'),
     content: contentFor('rfsc', 'rmx', 'RMX Fuel Recovery'),
-    fit: AmrFuelExec.fitBare
+    /* the page's own fitter, on the page's own frame */
+    fit: AmrFuelExec.fitSlide
   });
 })();
 </script>

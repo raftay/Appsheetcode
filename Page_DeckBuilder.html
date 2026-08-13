@@ -410,19 +410,30 @@ function renderOne(row){
   var slot = L.slots && L.slots.image;
   if(!slot) return Promise.reject(new Error('Layout "'+row.spec.layout+'" has no {{IMAGE}} box.'));
 
-  /* Lay the content out at a width proportional to the slot, so a narrow
-     right-hand slot does not get a table built for a full-width one and then
-     shrunk to illegibility. Capture resolution comes from the template. */
-  var cssW = Math.max(900, Math.min(1500, Math.round(slot.w * 2.2)));
+  /* THE FRAME IS THE SHAPE OF THE IMAGE BOX.
+     Width is the pages' own slide width, so a table is laid out at the size the
+     page lays it out at and the deck's tables read like the page's. Height is
+     that width in the slot's proportions, so the picture FILLS its box: no
+     letterboxing, and — the part that was actually breaking slides — the page's
+     fitter gets a real height to fit into instead of an unbounded column that
+     something downstream then had to shrink. */
+  var cssW = 1600;
+  var cssH = Math.max(200, Math.round(cssW * (slot.h || 1) / (slot.w || 1)));
 
+  var src = AmrDeckSource.get(row.spec.source) || {};
   return AmrDeckSource.build(row.spec).then(function(el){
     return AmrSlide.captureBare(el, {
       width: cssW,
+      height: cssH,
       capturePx: slot.capturePx || Math.round(slot.w * 4),
       /* the ceiling Google will enforce anyway - clamping here means the text
          is RENDERED at final size instead of resampled down to it */
       maxPx: slot.maxPx || 2048,
-      fit: (AmrDeckSource.get(row.spec.source)||{}).fit || null
+      /* the source's own fitter, given the row so it can rebuild its ctx —
+         the SAME function the page runs before a PNG download */
+      fit: (typeof src.fit === 'function')
+        ? function(box){ return src.fit(box, row.spec); }
+        : null
     });
   }).then(function(cap){
     row.png = cap.dataUrl; row.w = cap.w; row.h = cap.h;

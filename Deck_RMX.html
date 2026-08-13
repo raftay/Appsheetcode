@@ -505,17 +505,9 @@ var AmrRmxSlide = (function(){
     }
   }
 
-  function fitBare(box){
-    var w = box.clientWidth || 0; if(!w) return;
-    [].forEach.call(box.querySelectorAll('table'), function(t){
-      var avail = t.parentElement ? t.parentElement.clientWidth : w;
-      if(!avail) return;
-      var sz = 14, guard = 0; t.style.fontSize = sz + 'px';
-      while(t.scrollWidth > avail && sz > 7 && guard < 90){
-        sz -= 0.5; t.style.fontSize = sz + 'px'; guard++;
-      }
-    });
-  }
+  /* There is no fitBare any more - the deck photographs the same framed
+     slide the pages do, so fitSlide is the only fitter. See the note at the
+     bottom of Deck_Fuel.html for why the bare variant made slides worse. */
 
   return {
     buildTables:   function(res, dims, ctx){
@@ -528,8 +520,7 @@ var AmrRmxSlide = (function(){
     contentOffscreen: function(d, extras, ctx){
       return withCtx(ctx, function(){ return renderOffscreen(d, extras); });
     },
-    fitSlide:      function(box, ctx){ return withCtx(ctx, function(){ return rmxFitTables(box); }); },
-    fitBare: fitBare
+    fitSlide:      function(box, ctx){ return withCtx(ctx, function(){ return rmxFitTables(box); }); }
   };
 })();
 
@@ -591,7 +582,13 @@ var AmrRmxSlide = (function(){
       if(!el) throw new Error('Could not build the Ready-Mix block - no tables came back.');
       return el;
     },
-    fit: AmrRmxSlide.fitBare
+    fit: function(box, spec){
+      var res = KEYS[key(spec)];
+      return AmrRmxSlide.fitSlide(box, {
+        month:0, latestMonth:(res && res.latestMonth) || 0,
+        extraCards:[], exportSel:{}, mapCounts:null,
+        naMode:'separate', breakdowns:(res && res.breakdowns) || [] });
+    }
   });
 })();
 </script>

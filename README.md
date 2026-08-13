@@ -506,6 +506,33 @@ is every market at once, so the slide listed fourteen submarkets from five diffe
 (West GTA next to Regina next to Sask AGG) and left the reader to reassemble them. The
 rollup is cut by `MARKET` now; every other market keeps `SUBMARKET1`.
 
+#### Rows and columns disappeared into the scaling
+
+The one that made the slides unusable, and the reason for the others being hard to see.
+
+A page photographs its content **inside the 1600×900 slide frame**: `AmrSlide.build()` puts
+it there, runs the page's `fitSlide` — which fits the tables to the height the frame gives
+it — then clamps anything still too tall, and captures at exactly 1600×900. Nothing
+overflows because everything was fitted against a real height.
+
+The deck did the opposite. `captureBare` dropped the content into an **unbounded** div and
+ran a second, width-only fitter (`fitBare`) that each module carried a copy of. Its premise,
+written in the comments, was that "height is free" because the picture gets scaled into the
+image box by ratio anyway. Height was free in the wrong direction: the stack ran as tall as
+its content, and `fitRect_` then shrank the whole picture — a 1971×2048 image into a
+553×229 pt box — to get it in. Everything shrank together, and what did not survive was
+rows and columns. Worse, the two customer fitters open with `if(!center) return`, so on a
+frame with no `.slide-center` the Top 10 slides were never fitted at all.
+
+`captureBare` now builds the same frame through the same `build()`, in **bare** mode: no
+header, no logo, no whitespace bands (on a generated slide the title and the comment box are
+real Slides text), and everything else identical. It is sized to the **shape of the image
+box** — 1600 wide, `1600 × slotH/slotW` tall — so the picture fills its slot with no
+letterboxing and the fitter gets the real height to fit into.
+
+`fitBare` is gone from all four modules; `fitSlide` is the only fitter, which is what makes
+"change the format in one place" true. `tests/deckstatic.js` fails if a second one appears.
+
 #### Every picture was resampled on the way out
 
 Whatever resolution is inserted, an exported deck comes back with every picture capped at

@@ -638,17 +638,9 @@ var AmrPvSlide = (function(){
       function(v){ return (v*100).toFixed(0)+'%'; }, { size:9, maxChars:12 });
   }
 
-  /* ---- fitting for a BARE capture (the deck) ----
-     No .slide-center and no imposed height: the picture is fitted into the
-     template's image box by ratio, so only width has to work out. The chart
-     column keeps its natural size and the tables get the rest. */
-  function fitBare(box){
-    var row = box.querySelector('.pv-exp-row');
-    if(row){ row.style.height = 'auto'; row.style.overflow = 'visible'; }
-    var tInner = box.querySelector('.pv-exp-tables-inner');
-    if(tInner){ tInner.style.transform = ''; tInner.style.width = '100%'; }
-    fitExportTables(box);
-  }
+  /* There is no fitBare any more - the deck photographs the same framed
+     slide the pages do, so fitSlide is the only fitter. See the note at the
+     bottom of Deck_Fuel.html for why the bare variant made slides worse. */
 
   /* The TOP 10 CUSTOMERS block. When both periods are loaded and a Top-N is in
      force it is MTD stacked over YTD as ONE block — which is what the page's
@@ -774,8 +766,7 @@ var AmrPvSlide = (function(){
     fitSlide: function(box, ctx){ return withCtx(ctx, function(){ return pvFitSlide(box); }); },
     fitExportTables: fitExportTables,
     fitCustomerSlide: fitCustomerSlide,
-    fitCombinedCustomerSlide: fitCombinedCustomerSlide,
-    fitBare: fitBare
+    fitCombinedCustomerSlide: fitCombinedCustomerSlide
   };
 })();
 
@@ -956,7 +947,11 @@ var AmrPvSlide = (function(){
       if(!el) throw new Error('Could not build the Price & Volume block.');
       return el;
     },
-    fit: AmrPvSlide.fitBare,
+    /* the page's fitSlide, on the page's frame, with this row's ctx */
+    fit: function(box, spec){
+      var d = RPT[reportKey(spec, REFINED[refineCacheKey(spec)])] || null;
+      return AmrPvSlide.fitSlide(box, ctxFor(spec, d));
+    },
     /* The Deck Builder shows a Region dropdown on rows whose source declares
        one. Everything it needs is here, so the page stays generic. */
     kpiPicker: {

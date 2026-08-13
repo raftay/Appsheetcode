@@ -56,7 +56,10 @@
  * shared .slide* / .amr-ws CSS above.
  * ============================================================== */
 var AmrSlide = (function(){
-  var W = 1600, H = 900, PAD = 40;          // fixed 16:9 canvas
+  var W = 1600, H = 900, PAD = 40;          // the pages' 16:9 canvas
+  /* A bare frame keeps a hair of padding so a card's border and shadow are not
+     shaved off at the picture's edge. */
+  var BARE_PAD = 8;
   var MARGINS = { left:120, right:120, top:30, bottom:30 };  // current comment bands
 
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
@@ -95,25 +98,49 @@ var AmrSlide = (function(){
 
   function margins(){ return { left:MARGINS.left, right:MARGINS.right, top:MARGINS.top, bottom:MARGINS.bottom }; }
 
-  /* ---- build the off-screen 1600x900 slide around a content node ----
+  /* ---- build the off-screen slide around a content node ----
      contentEl : a DOM element holding the page's tables/charts
-     o : {title, subtitle, logo (dataURI), logoSVG, margins, fit(box)}
+     o : {title, subtitle, logo (dataURI), logoSVG, margins, fit(box),
+          width, height, bare, pad}
+
+     SIZE. 1600x900 by default — the pages' slide. The DECK passes the shape of
+     the template's image box instead, so the picture fills its slot exactly
+     rather than being letterboxed into it.
+
+     BARE (the deck). No header, no logo, no whitespace bands: on a generated
+     slide the title and the comment box are REAL Slides text, and baking them
+     into the picture is exactly what the deck exists to stop doing. Everything
+     else is identical, and that is the point — the frame is what gives a fitter
+     a HEIGHT to fit to. Without one the deck used to lay content out in an
+     unbounded box, so nothing ever fitted vertically: the stack ran as tall as
+     it liked, and the far side of the pipeline shrank the whole picture to get
+     it into the slot. Rows and columns disappeared into that shrink.
+
      Returns the slide box (attached at left:-99999px; caller removes it,
-     or download()/exportSlide() removes it automatically). */
+     or download()/exportSlide()/captureBare() removes it automatically). */
   function build(contentEl, o){
     o = o || {};
-    var m = o.margins || margins();
+    var bare = !!o.bare;
+    var w    = o.width  || W;
+    var h    = o.height || H;
+    var pad  = (o.pad != null) ? o.pad : (bare ? BARE_PAD : PAD);
+    /* the bands are the page's comment margins; on a deck slide that space is
+       a real text box beside the picture, so a bare frame has none */
+    var m = bare ? { left:0, right:0, top:0, bottom:0 } : (o.margins || margins());
 
-    var box = el('div','slide');
-    box.style.cssText = 'position:fixed;left:-99999px;top:0;width:'+W+'px;height:'+H+'px;padding:'+PAD+'px';
+    /* slide-bare is what Deck_Styles.html hangs the deck's slide CSS on */
+    var box = el('div', bare ? 'slide slide-bare' : 'slide');
+    box.style.cssText = 'position:fixed;left:-99999px;top:0;width:'+w+'px;height:'+h+'px;padding:'+pad+'px';
 
-    var head = el('div','slide-head');
-    head.innerHTML = '<div><div class="ttl">'+esc(o.title||'')+'</div>'
-      + (o.subtitle ? '<div class="subttl">'+esc(o.subtitle)+'</div>' : '') + '</div>'
-      + '<div class="hspace"></div>'
-      + (o.logoSVG ? '<span class="logosvg">'+o.logoSVG+'</span>'
-                   : (o.logo ? '<img class="logo" src="'+o.logo+'" alt="logo">' : ''));
-    box.appendChild(head);
+    if(!bare){
+      var head = el('div','slide-head');
+      head.innerHTML = '<div><div class="ttl">'+esc(o.title||'')+'</div>'
+        + (o.subtitle ? '<div class="subttl">'+esc(o.subtitle)+'</div>' : '') + '</div>'
+        + '<div class="hspace"></div>'
+        + (o.logoSVG ? '<span class="logosvg">'+o.logoSVG+'</span>'
+                     : (o.logo ? '<img class="logo" src="'+o.logo+'" alt="logo">' : ''));
+      box.appendChild(head);
+    }
 
     var content = el('div','slide-content');
     var inner   = el('div','content-inner');
@@ -131,7 +158,7 @@ var AmrSlide = (function(){
     inner.appendChild(topSp); inner.appendChild(bodyR); inner.appendChild(botSp);
     document.body.appendChild(box);
 
-    inner.style.width = (W - PAD*2) + 'px';
+    inner.style.width = (w - pad*2) + 'px';
     if(typeof o.fit === 'function'){ try{ o.fit(box); }catch(e){} }   // page-specific table fitting
 
     // scale the content down if it is taller than the available body height
@@ -141,7 +168,18 @@ var AmrSlide = (function(){
       center.style.transformOrigin = 'top center';
       center.style.transform = 'scale('+s+')';
     }
+    /* The frame carries its own size, so everything downstream — the PNG
+       capture, the preview scale, the full-window viewer — reads it from the
+       box instead of assuming 1600x900. Sizing lives in build() and nowhere
+       else. */
+    box.__amrW = w; box.__amrH = h;
     return box;
+  }
+
+  /* A built box's size, with the old fixed slide as the fallback for anything
+     that hands us a box it made itself. */
+  function sizeOf(box){
+    return { w: (box && box.__amrW) || W, h: (box && box.__amrH) || H };
   }
 
   /* ---- drop a scaled-down live preview into a host element ----
@@ -154,13 +192,14 @@ var AmrSlide = (function(){
     var sy = window.pageYOffset || document.documentElement.scrollTop || 0;   // remember scroll
 
     var box = build(contentEl, o);
+    var z = sizeOf(box);
     var avail = host.clientWidth || 1000;
-    var scale = Math.min(1, avail / W);
+    var scale = Math.min(1, avail / z.w);
     box.style.position='static'; box.style.left='auto'; box.style.top='auto';
     box.style.transform = 'scale('+scale+')'; box.style.transformOrigin='top left';
 
     var frame = el('div');
-    frame.style.cssText = 'width:'+Math.round(W*scale)+'px;height:'+Math.round(H*scale)+'px;'
+    frame.style.cssText = 'width:'+Math.round(z.w*scale)+'px;height:'+Math.round(z.h*scale)+'px;'
       + 'overflow:hidden;border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)';
     frame.appendChild(box);
 
@@ -173,9 +212,9 @@ var AmrSlide = (function(){
 
   /* ---- render a built slide box to PNG and download it ---- */
   function download(box, filename, o){
-    o = o || {}; var sc = o.scale || 2;
+    o = o || {}; var sc = o.scale || 2; var z = sizeOf(box);
     return html2canvas(box, {scale:sc, backgroundColor:'#ffffff', logging:false,
-        width:W, height:H, windowWidth:W, windowHeight:H,
+        width:z.w, height:z.h, windowWidth:z.w, windowHeight:z.h,
         ignoreElements:function(n){ return n.classList && n.classList.contains('amr-qm'); }})
       .then(function(cv){
         if(box.parentNode) box.parentNode.removeChild(box);
@@ -210,11 +249,12 @@ var AmrSlide = (function(){
 
     /* as large as the window allows, keeping the 16:9 shape */
     function fitToWindow(){
-      var s = Math.min((window.innerWidth - 32) / W, (window.innerHeight - 64) / H);
+      var z = sizeOf(box);
+      var s = Math.min((window.innerWidth - 32) / z.w, (window.innerHeight - 64) / z.h);
       if(!(s > 0.1)) s = 0.1;
       box.style.transform = 'scale('+s+')';
-      frame.style.width  = Math.round(W*s)+'px';
-      frame.style.height = Math.round(H*s)+'px';
+      frame.style.width  = Math.round(z.w*s)+'px';
+      frame.style.height = Math.round(z.h*s)+'px';
     }
     function close(){
       if(lb.parentNode) lb.parentNode.removeChild(lb);
@@ -246,17 +286,26 @@ var AmrSlide = (function(){
             function(){ if(btn) btn.classList.remove('busy'); });
   }
 
-  /* ---- capture JUST the content block, for the Deck Builder ----
-     This is the deliberate opposite of build(): no header, no title, no logo,
-     no whitespace bands. The Deck Builder needs the bare table/chart, because
-     the title and the comment box are REAL SLIDES TEXT on the generated slide
-     — baking them into the picture is exactly what the PNG export does and
-     exactly what the deck is meant to stop doing.
+  /* ---- capture a content block for the Deck Builder ----
+     THE SAME FRAME THE PAGES PHOTOGRAPH, minus the header and the whitespace
+     bands: on a generated slide the title and the comment box are real Slides
+     text, and baking them into the picture is what the deck exists to stop
+     doing. Everything else — the frame, the fitters, the height clamp — is the
+     page's, which is the whole point. A deck slide should be the page's slide.
+
+     It used to be the opposite of build(): content in an unbounded div, fitted
+     for width only. That box had no height, so nothing could fit vertically;
+     the stack ran as tall as its content and the server then scaled the whole
+     picture down to get it into the image box. Everything shrank together, and
+     what did not survive the shrink was rows and columns.
 
      contentEl : a DOM element (the same node a page hands previewInto)
-     o : { width    css px to lay the content out at, default 1200. Tables are
-                    width-driven, so this decides how many columns fit before
-                    anything wraps — it is a LAYOUT choice, not a quality one.
+     o : { width    the frame's CSS width, default 1600 — the pages' slide width,
+                    so a table is laid out at the size the page lays it out at.
+           height   the frame's CSS height. Pass the SHAPE OF THE IMAGE BOX
+                    (width x slotH/slotW) and the picture fills its slot with no
+                    letterboxing, and the fitters get the real height to fit to.
+                    Defaults to 16:9.
            capturePx target pixel width of the PNG. Quality. DECK_readTemplate
                     returns one per image slot (4 px per point of slot width),
                     so the deck asks for exactly what it needs.
@@ -266,43 +315,33 @@ var AmrSlide = (function(){
                     resampling of already-rendered text, which is what made deck
                     slides look softer than the same table screenshotted by
                     hand. Clamping here makes html2canvas render the text at its
-                    final size instead. The HEIGHT needs the clamp as much as
-                    the width: the cap is on the longest side, so a tall table
-                    that overshot had its width dragged down with it.
-           fit(box) the page's own table-fitting callback, as build() takes.
+                    final size instead.
+           fit(box) the page's own fitSlide, as build() takes.
            bg       background colour, default white. }
 
-     Resolves { dataUrl, w, h } — w/h are the PNG's real pixel size, which is
-     what DECK_addSlide fits into the template's image box. Only their ratio
-     matters server-side, so px-in / pt-out never has to be reconciled. */
+     Resolves { dataUrl, w, h } — the PNG's real pixel size, which is what
+     DECK_addSlide fits into the template's image box. */
   function captureBare(contentEl, o){
     o = o || {};
-    var cssW = o.width || 1200;
+    var cssW = o.width  || W;
+    var cssH = o.height || Math.round(cssW * H / W);
     var capW = o.capturePx || cssW;
 
-    var box = el('div','slide-bare');
-    box.style.cssText = 'position:fixed;left:-99999px;top:0;width:'+cssW+'px;'
-      + 'background:'+(o.bg||'#ffffff')+';font-family:Inter,Arial,sans-serif;'
-      + 'color:var(--ink);display:block';
-    box.appendChild(contentEl);
-    document.body.appendChild(box);
-
-    /* Let the page fit its own tables, exactly as build() does. */
-    if(typeof o.fit === 'function'){ try{ o.fit(box); }catch(e){} }
+    /* build() attaches it off-screen, runs the fit and applies the height clamp
+       — the same three steps, in the same order, as a PNG download. */
+    var box = build(contentEl, { bare:true, width:cssW, height:cssH, fit:o.fit });
 
     /* Charts need a frame to settle after any resize the fit triggered, or
        html2canvas photographs a blank canvas. */
     return new Promise(function(resolve, reject){
       requestAnimationFrame(function(){ requestAnimationFrame(function(){
-        var h = box.scrollHeight || box.offsetHeight || 1;
         var sc = capW / cssW;
-        /* Never hand the platform something it will resample: the height is
-           measured by now, so both dimensions can be held under the ceiling. */
+        /* Never hand the platform something it will resample. */
         var mx = o.maxPx || 0;
-        if(mx > 0) sc = Math.min(sc, mx / cssW, mx / h);
+        if(mx > 0) sc = Math.min(sc, mx / cssW, mx / cssH);
         html2canvas(box, { scale:sc, backgroundColor:(o.bg||'#ffffff'),
-            logging:false, width:cssW, height:h,
-            windowWidth:cssW, windowHeight:h,
+            logging:false, width:cssW, height:cssH,
+            windowWidth:cssW, windowHeight:cssH,
             ignoreElements:function(n){ return n.classList && n.classList.contains('amr-qm'); }})
           .then(function(cv){
             if(box.parentNode) box.parentNode.removeChild(box);

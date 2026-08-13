@@ -106,6 +106,25 @@ for (const [mod, page] of Object.entries(MODULES)) {
     /include\('Deck_Styles'\)/.test(read('Page_DeckBuilder.html')));
 }
 
+/* ---- ONE FITTER ----------------------------------------------------------
+ * The deck used to photograph content in an unbounded box and each module
+ * carried a second, width-only `fitBare` for it. With no height in the frame
+ * nothing could fit vertically, the stack ran as tall as it liked, and the
+ * server shrank the whole picture into the image box — taking rows and columns
+ * with it. The deck now builds the same framed slide the pages do, so fitSlide
+ * is the only fitter. A second one reintroduces the drift, and the two would
+ * disagree exactly where nobody is looking: in the generated deck.
+ *
+ * Prose may still explain it; a definition, export or reference may not.
+ */
+for (const mod of [...Object.keys(MODULES), 'SlideExport.html', 'Page_DeckBuilder.html']) {
+  const src = read(mod);
+  const code = [/function\s+fitBare/, /fitBare\s*:/, /\.fitBare\b/]
+    .filter(re => re.test(src)).map(String);
+  check(mod + ' · no second, bare-capture fitter', code.length === 0,
+    'found ' + code.join(', ') + ' — the deck and the pages must share fitSlide');
+}
+
 /* ---- the recipe ---------------------------------------------------------- */
 {
   const ctx = {};

@@ -422,19 +422,9 @@ var AmrSegSlide = (function(){
     return wrap;
   }
 
-  /* Bare-capture fitting: no .slide-center and no imposed height, so only the
-     width has to work out and the type stays large. */
-  function fitBare(box){
-    var w = box.clientWidth || 0; if(!w) return;
-    [].forEach.call(box.querySelectorAll('table'), function(t){
-      var avail = t.parentElement ? t.parentElement.clientWidth : w;
-      if(!avail) return;
-      var sz = 14, guard = 0; t.style.fontSize = sz + 'px';
-      while(t.scrollWidth > avail && sz > 7 && guard < 90){
-        sz -= 0.5; t.style.fontSize = sz + 'px'; guard++;
-      }
-    });
-  }
+  /* There is no fitBare any more - the deck photographs the same framed
+     slide the pages do, so fitSlide is the only fitter. See the note at the
+     bottom of Deck_Fuel.html for why the bare variant made slides worse. */
 
   return {
     TABLES: TABLES,
@@ -450,8 +440,7 @@ var AmrSegSlide = (function(){
     content: function(ctx){ return withCtx(ctx, function(){ return content(); }); },
     slideContent: function(ctx){ return withCtx(ctx, function(){ return buildSlideContent(); }); },
     kpiCardsHtml: function(ctx){ return withCtx(ctx, function(){ return segKpiCardsHtml(); }); },
-    fitSlide: function(box, ctx){ return withCtx(ctx, function(){ return fitTables(box); }); },
-    fitBare: fitBare
+    fitSlide: function(box, ctx){ return withCtx(ctx, function(){ return fitTables(box); }); }
   };
 })();
 
@@ -526,7 +515,7 @@ var AmrSegSlide = (function(){
       if(!el) throw new Error('Could not build the Product Segment block.');
       return el;
     },
-    fit: AmrSegSlide.fitBare,
+    fit: function(box, spec){ return AmrSegSlide.fitSlide(box, ctxFor(spec)); },
     /* Same per-device region map as the Price & Volume slides, under its own
        key prefix so an RMX market and an AGG market of the same name do not
        fight over one setting. */

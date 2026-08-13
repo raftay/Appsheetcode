@@ -96,6 +96,13 @@ page to copy the rule from. Classes positioned by inline styles, and interaction
 (`:hover`, `cursor`) that a still photograph cannot show, are listed in `INLINE_ONLY`
 — add to that list only when the class genuinely has nothing to render.
 
+**One fitter.** The deck used to capture into an unbounded box, so each module carried a
+second width-only `fitBare` for it — with no height in the frame nothing fitted vertically,
+and the far end of the pipeline shrank the whole picture into the image box, taking rows and
+columns with it. The deck builds the same framed slide the pages do now, so `fitSlide` is
+the only fitter and the harness fails on any `function fitBare`, `fitBare:` or `.fitBare`.
+Prose about it is fine; a definition is not.
+
 It also checks `Deck_Styles.html` is scoped (**every** selector under `.slide-bare`, the
 wrapper `captureBare` photographs, so the file can never reach a page or the Deck Builder's
 own UI) and included, and that the Southwest **Land / Docks** recipe rows filter the
