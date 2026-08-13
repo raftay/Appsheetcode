@@ -125,6 +125,23 @@ for (const mod of [...Object.keys(MODULES), 'SlideExport.html', 'Page_DeckBuilde
     'found ' + code.join(', ') + ' — the deck and the pages must share fitSlide');
 }
 
+/* ---- ONE MONTH ------------------------------------------------------------
+ * The deck is built for ONE report month — pick July and every slide is July,
+ * MTD and YTD, on all four backends. Every adapter used to hard-code `month: 0`
+ * in its server call, which meant "whatever the backend calls the last closed
+ * month" and could not be steered at all. A single `month: 0` left behind is a
+ * slide that quietly ignores the picker, and it looks right until someone
+ * builds last quarter's deck.
+ *
+ * Each backend resolves 0 to last calendar month itself, so the literal is only
+ * ever wrong here — in the layer that has a spec to read it from.
+ */
+for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
+  const hits = [...read(mod).matchAll(/month\s*:\s*0\b/g)].map(m => m[0]);
+  check(mod + ' · no adapter hard-codes the report month', hits.length === 0,
+    'found ' + hits.length + ' × "month: 0" — pass monthOf(spec) so the deck\'s picker reaches it');
+}
+
 /* ---- the recipe ---------------------------------------------------------- */
 {
   const ctx = {};

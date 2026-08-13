@@ -581,6 +581,36 @@ Only built slides are numbered: a parked layout is not page 44, and leaving its 
 token unfilled is what keeps it usable as a template. `finish()` returns
 `templateSlidesParked`, and `slides` is the count of the deck proper.
 
+#### The deck could not be built for a chosen month
+
+A deck is normally built *after* a month closes and all its data is in, so it needs to be
+buildable for whichever month you name — and every slide has to agree. Each adapter
+hard-coded `month: 0` in its server call, which meant "whatever the backend calls the last
+closed month" and could not be steered.
+
+The Deck Builder now has a **Report month** picker: one month for the whole deck, defaulting
+to **last month**, offering the running month but never defaulting to it (it is only
+part-billed, and a half-month reads as a collapse). The chosen month is stamped onto each
+spec, keys every adapter's cache, and rides in every backend call — so MTD is that month
+alone and YTD is January through it, on all four backends at once. Changing it invalidates
+anything already rendered. The list is months of the current reporting year only: the
+backends take a month 1-12 with no year and read it against the export's current year, so
+offering "August last year" would silently be read as August *this* year.
+`tests/deckstatic.js` fails on any `month: 0` left in an adapter.
+
+#### AGG Fuel Recovery reported a different month from everything else
+
+`FSC_Backend` resolved its report month to the **newest month in the file**, so on a sheet
+already carrying a part-billed August it published August while Price & Volume, Ready-Mix
+and RMX Fuel Recovery all published July — one deck, two months. The other three all resolve
+to **last calendar month**, falling back to the newest month present if last month is not in
+the export yet (`pvReportMonth_`, `reportMonth_`, `buildCells_`). This is the fourth catching
+up. It also gained the month argument the other three already took, a `months` /
+`defaultMonth` payload, and the **Report month** picker its page never had — the same picker,
+same wording, as the RMX Fuel Recovery page.
+
+So across every page the default is now last month, with the running month selectable.
+
 #### Table titles came out lower-case
 
 `fieldLabel()` lower-cased because its first caller put it mid-sentence ("all markets"), and

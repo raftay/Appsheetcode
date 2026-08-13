@@ -152,6 +152,12 @@
 
     <div class="db-panel">
       <h3>Deck</h3>
+      <label class="db-lbl" for="dbMonth">Report month</label>
+      <select class="db-in" id="dbMonth"></select>
+      <p class="db-note" style="margin-top:6px">Every slide is built for this month &mdash;
+        MTD is the month on its own, YTD is January through it. Defaults to
+        <b>last month</b>, because the deck is normally built once the month has
+        closed and the data is all in.</p>
       <label class="db-lbl">Deck name</label>
       <input class="db-in" id="dbName" type="text" placeholder="Amrize Commercial Deck">
       <label class="db-lbl">Cover subtitle</label>
@@ -308,6 +314,74 @@ function layoutOf(id){
 
 
 /* =========================================================================
+ * THE DECK'S REPORT MONTH
+ * -------------------------------------------------------------------------
+ * ONE month for the whole deck. Pick July and every slide is July: MTD is July
+ * on its own, YTD is January through July, on all four backends. The deck is
+ * normally built after a month has closed and all its data is in, so the
+ * default is LAST month and the running month is offered but never the default
+ * — it is only part-billed, and a half-month reads as a collapse.
+ *
+ * The backends take a month 1-12 with no year and read it against the export's
+ * current year (pvReportMonth_, reportMonth_, buildCells_ x2 — all four resolve
+ * 0 to last calendar month the same way). So the list is the months of the
+ * current reporting year only; offering "August last year" would silently be
+ * read as August THIS year.
+ * ======================================================================= */
+var DB_MON = ['January','February','March','April','May','June',
+              'July','August','September','October','November','December'];
+var DECK_MONTH = 0;                       // 1-12, set when the picker is built
+
+function dbPrevMonth(){ return (new Date()).getMonth() || 12; }   // Jan -> Dec, as the backends do
+function dbCurMonth(){  return (new Date()).getMonth() + 1; }
+
+/* Which year a chosen month belongs to. Only the January case moves it: there
+   "last month" is December of the year before. */
+function dbYearOf(m){
+  var now = new Date();
+  return (m > now.getMonth() + 1) ? now.getFullYear() - 1 : now.getFullYear();
+}
+
+function dbBuildMonthPicker(){
+  var sel = document.getElementById('dbMonth'); if(!sel) return;
+  var cur = dbCurMonth(), prev = dbPrevMonth();
+  DECK_MONTH = prev;
+
+  var list = [];
+  for(var m = 1; m <= cur; m++) list.push(m);
+  if(cur === 1) list.unshift(12);         // in January last month is December, and it is the default
+
+  sel.innerHTML = list.map(function(m){
+    var tag = (m === prev) ? ' — last month'
+            : (m === cur)  ? ' — this month, part-billed' : '';
+    return '<option value="'+m+'"'+(m===prev?' selected':'')+'>'
+         + DB_MON[m-1] + ' ' + dbYearOf(m) + tag + '</option>';
+  }).join('');
+
+  sel.addEventListener('change', function(){
+    DECK_MONTH = parseInt(this.value, 10) || prev;
+    dbSyncDeckName();
+    /* Anything already photographed was photographed for the OLD month. */
+    var n = 0;
+    ROWS.forEach(function(r){
+      if(r.png || r.status === 'ready'){ r.png = null; r.w = r.h = 0; r.status = 'pending'; n++; }
+    });
+    redraw(); updateStages();
+    prog(DB_MON[DECK_MONTH-1] + ' selected' + (n ? ' · re-render the ' + n + ' slide(s) already built' : ''));
+  });
+  dbSyncDeckName();
+}
+
+/* The deck name follows the month unless someone has typed their own. */
+function dbSyncDeckName(){
+  var el = document.getElementById('dbName'); if(!el) return;
+  if(el.getAttribute('data-touched')) return;
+  var m = DECK_MONTH || dbPrevMonth();
+  el.value = 'Amrize Commercial Deck — ' + DB_MON[m-1] + ' ' + dbYearOf(m);
+}
+
+
+/* =========================================================================
  * STAGE 1 — PLAN
  * ======================================================================= */
 function dbPlan(){
@@ -421,6 +495,10 @@ function renderOne(row){
   var cssH = Math.max(200, Math.round(cssW * (slot.h || 1) / (slot.w || 1)));
 
   var src = AmrDeckSource.get(row.spec.source) || {};
+  /* ONE month for the whole deck. Every adapter keys its cache on it and passes
+     it to its backend, so MTD and YTD on every slide are the same month. */
+  row.spec.month = DECK_MONTH || dbPrevMonth();
+
   return AmrDeckSource.build(row.spec).then(function(el){
     return AmrSlide.captureBare(el, {
       width: cssW,
@@ -669,11 +747,11 @@ document.addEventListener('DOMContentLoaded', function(){
       'The report pages still hold their content builders. Moving them into '+
       'shared includes is what lights this up, one page at a time.';
 
-  var d = new Date(); d.setMonth(d.getMonth() - 1);   // decks report last closed month
-  var MON = ['January','February','March','April','May','June','July',
-             'August','September','October','November','December'];
-  document.getElementById('dbName').value =
-    'Amrize Commercial Deck — ' + MON[d.getMonth()] + ' ' + d.getFullYear();
+  /* builds the Report month picker AND names the deck for the month it lands on */
+  dbBuildMonthPicker();
+  document.getElementById('dbName').addEventListener('input', function(){
+    this.setAttribute('data-touched', '1');       // a typed name stops following the month
+  });
 
   if(IS_LIVE) dbLoadTemplate();
   else document.getElementById('dbTplInfo').innerHTML =

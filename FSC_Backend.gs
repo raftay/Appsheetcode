@@ -237,7 +237,8 @@ var FSC = (function () {
       }
     }
 
-    var cells = {}, markets = [], seen = {}, latest = 0, unknown = {}, used = 0;
+    var cells = {}, markets = [], seen = {}, newest = 0, unknown = {}, used = 0;
+    var monthsCy = {};
     for (var r = first; r < grid.length; r++){
       var row = grid[r];
       var yr = Math.round(toNum_(row[c.year]));  if (!yr) continue;
@@ -277,7 +278,10 @@ var FSC = (function () {
 
       var applied = (fsc !== 0);                 // <> 0, matching the old flag rule
       if (!seen[mk]){ seen[mk] = true; markets.push(mk); }
-      if (yr === yMax && vol !== 0 && mo > latest) latest = mo;
+      if (yr === yMax && vol !== 0){
+        monthsCy[mo] = 1;                        // what the picker may offer
+        if (mo > newest) newest = mo;
+      }
 
       var key = mk + '|' + yr + '|' + mo;
       var b = cells[key] || (cells[key] = { vol:0, ns:0, fsc:0, avol:0, ans:0, afsc:0 });
@@ -288,8 +292,23 @@ var FSC = (function () {
     if (!used) throw new Error('No usable rows were found in Combined Data CPI Raw \u2014 '
       + 'every row needs a Year, a Month and a volume, revenue or surcharge figure.');
 
+    /* THE DEFAULT MONTH IS LAST CALENDAR MONTH, NOT THE NEWEST IN THE FILE.
+       This page used to report whichever month the export happened to reach,
+       so on a sheet already carrying a part-billed August it published August
+       while Price & Volume, Ready-Mix and RMX Fuel Recovery all published July
+       — one deck, two months, and the half-month read as a collapse. Every
+       other backend already resolves it this way (pvReportMonth_ in
+       PV_Backend, reportMonth_ in RMX_Backend, buildCells_ in RFSC_Backend);
+       this is the fourth catching up. If last month is not in the export yet,
+       fall back to the newest month that is. */
+    var prevCal = (new Date()).getMonth();       // 0-based month = last month, 1-12
+    if (!prevCal) prevCal = 12;                  // in January, last month is December
+    var monthList = Object.keys(monthsCy).map(Number).sort(function(a,b){ return a-b; });
+    var latest = monthsCy[prevCal] ? prevCal : (newest || prevCal);
+
     var un = Object.keys(unknown);
     return { cells: cells, markets: markets, latest: latest || 1,
+             monthList: monthList,
              unknownPlants: un.sort(), rows: used };
   }
 
@@ -559,11 +578,19 @@ var FSC = (function () {
     return rows;
   }
 
-  /* ---------- build the full page payload from a data bundle ---------- */
-  function output_(D, win){
+  /* ---------- build the full page payload from a data bundle ----------
+     `sel` is the Report month picker: 1-12 pins the report to that month, 0 or
+     absent uses the default worked out in buildCells_ (last calendar month).
+     MTD is that month alone, YTD is January through it, and the by-month table
+     stops there too — nothing past the report month counts towards anything.
+     Same contract, field for field, as RFSC_Backend's output_. */
+  function output_(D, win, sel){
+    var rpt = Number(sel) || 0;
+    if (rpt < 1 || rpt > 12) rpt = D.latest;
+
     var sask = applySask_(D);
-    var ytd = []; for (var m = 1; m <= D.latest; m++) ytd.push(m);
-    var mtd = [D.latest];
+    var ytd = []; for (var m = 1; m <= rpt; m++) ytd.push(m);
+    var mtd = [rpt];
     var pairs = windowMonths_(D, win);
 
     var byMonth = {};
@@ -571,7 +598,11 @@ var FSC = (function () {
 
     return {
       markets:     D.markets,
-      latestMonth: MONTHS[D.latest - 1],
+      latestMonth: MONTHS[rpt - 1],
+      month:       rpt,                       // the month this payload is for
+      defaultMonth: D.latest,                 // what "last closed" resolves to
+      months:      D.monthList || [],         // what the picker may offer
+      monthNames:  MONTHS,
       summary: { MTD: summaryFor_(D, mtd), YTD: summaryFor_(D, ytd) },
       exec: {
         MTD: { all: execTable_(D, mtd, 'all'), applied: execTable_(D, mtd, 'applied') },
@@ -594,14 +625,14 @@ var FSC = (function () {
   /* ---------- the two calls the page makes ---------- */
   function getFscData(opts){
     opts = opts || {};
-    return output_(readData_(), opts.window || (opts.from ? opts : null));
+    return output_(readData_(), opts.window || (opts.from ? opts : null), opts.month);
   }
   /* The page may still send { combined, other } from the old two-file uploader;
      only the combined grid is used now, and a lone grid is accepted too. */
   function getFscDataFromUpload(p){
     var grid = p && (p.combined || p.grid || p.cpi);
     if (!grid) throw new Error('Upload the Combined CPI export.');
-    return output_(readUpload_(grid, p.other), p.window || null);
+    return output_(readUpload_(grid, p.other), p.window || null, p && p.month);
   }
 
   return { getFscData: getFscData, getFscDataFromUpload: getFscDataFromUpload };

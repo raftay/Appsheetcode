@@ -282,7 +282,14 @@ var AmrFuelExec = (function(){
 (function(){
   if(!window.AmrDeckSource) return;
 
-  var MODEL = { fsc:null, rfsc:null };
+  /* keyed by month: one deck is one month, but a session can build July and
+     then August without either serving the other */
+  var MODEL = { fsc:{}, rfsc:{} };
+
+  function monthOf(spec){
+    var m = Number(spec && spec.month) || 0;
+    return (m >= 1 && m <= 12) ? m : 0;          // 0 = let the backend decide
+  }
 
   function srv(fn, args){
     return new Promise(function(resolve, reject){
@@ -294,19 +301,23 @@ var AmrFuelExec = (function(){
     });
   }
 
-  function loader(key, fn, args, label){
-    return function(){
-      if(MODEL[key]) return null;                 // already loaded — nothing to wait for
-      return srv(fn, args).then(function(d){
+  /* Both backends take the SAME month argument and resolve 0 to last calendar
+     month, so one loader serves them. That is what makes "select July" mean
+     July on the AGG and the RMX fuel slides alike. */
+  function loader(key, fn, label){
+    return function(spec){
+      var m = monthOf(spec);
+      if(MODEL[key][m]) return null;              // already loaded — nothing to wait for
+      return srv(fn, [{ month: m }]).then(function(d){
         if(!d || !d.markets) throw new Error(label+' returned no data.');
-        MODEL[key] = d;
+        MODEL[key][m] = d;
       });
     };
   }
 
   function contentFor(key, unitId, label){
     return function(spec){
-      var d = MODEL[key];
+      var d = MODEL[key][monthOf(spec)];
       if(!d) throw new Error(label+' data is not loaded yet.');
       var el = AmrFuelExec.content(d, spec && spec.period, unitId);
       if(!el) throw new Error('Could not build '+label+' content.');
@@ -315,16 +326,14 @@ var AmrFuelExec = (function(){
   }
 
   AmrDeckSource.register('fsc', {
-    prepare: loader('fsc', 'getFscData', [], 'AGG Fuel Recovery'),
+    prepare: loader('fsc', 'getFscData', 'AGG Fuel Recovery'),
     content: contentFor('fsc', 'agg', 'AGG Fuel Recovery'),
     /* the page's own fitter, on the page's own frame */
     fit: AmrFuelExec.fitSlide
   });
 
-  /* month:0 = "last closed month", the same default the RMX Fuel page opens
-     on. The deck always reports the closed month, never a part-billed one. */
   AmrDeckSource.register('rfsc', {
-    prepare: loader('rfsc', 'getRmxFuelData', [{ month:0 }], 'RMX Fuel Recovery'),
+    prepare: loader('rfsc', 'getRmxFuelData', 'RMX Fuel Recovery'),
     content: contentFor('rfsc', 'rmx', 'RMX Fuel Recovery'),
     /* the page's own fitter, on the page's own frame */
     fit: AmrFuelExec.fitSlide

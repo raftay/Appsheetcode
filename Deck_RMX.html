@@ -542,7 +542,13 @@ var AmrRmxSlide = (function(){
         .apply(null, args || []);
     });
   }
-  function key(spec){ return (spec.market||'') + '|' + (spec.period||'MTD'); }
+  /* the month keys the cache too: one deck is one month, but a session can
+     build July and then August without either serving the other */
+  function monthOf(spec){
+    var m = Number(spec && spec.month) || 0;
+    return (m >= 1 && m <= 12) ? m : 0;          // 0 = let the backend decide
+  }
+  function key(spec){ return (spec.market||'') + '|' + (spec.period||'MTD') + '|m' + monthOf(spec); }
 
   /* This page does NOT get finished tables from the server. RMX_getKeys sends
      key rows and the browser builds every table from them - which is why the
@@ -554,7 +560,7 @@ var AmrRmxSlide = (function(){
      back - renderExtras takes null and renders nothing, so the slide is right
      either way, but a table with no data behind it is not. */
   function load(spec){
-    var k = key(spec), opts = { market:spec.market, period:spec.period||'MTD', month:0, upload:null };
+    var k = key(spec), opts = { market:spec.market, period:spec.period||'MTD', month:monthOf(spec), upload:null };
     if(KEYS[k]) return Promise.resolve();
     return srv('RMX_getKeys', [opts]).then(function(d){ KEYS[k]=d; });
   }
@@ -574,7 +580,7 @@ var AmrRmxSlide = (function(){
          falling back to the RAW DIMENSION KEY, which is why these slides said
          "By SUBMARKET" and "PLANT" where the page says "By Submarket" and
          "Top 10 Plants". RMX_getKeys already returns the list. */
-      var ctx = { month:0, latestMonth:res.latestMonth || 0,
+      var ctx = { month:monthOf(spec), latestMonth:res.latestMonth || 0,
                   extraCards:[], exportSel:{}, mapCounts:null,
                   naMode:'separate', breakdowns:res.breakdowns || [] };
       var d = AmrRmxSlide.buildTables(res, AmrRmxSlide.DEFAULT_DIMS, ctx);
@@ -585,7 +591,7 @@ var AmrRmxSlide = (function(){
     fit: function(box, spec){
       var res = KEYS[key(spec)];
       return AmrRmxSlide.fitSlide(box, {
-        month:0, latestMonth:(res && res.latestMonth) || 0,
+        month:monthOf(spec), latestMonth:(res && res.latestMonth) || 0,
         extraCards:[], exportSel:{}, mapCounts:null,
         naMode:'separate', breakdowns:(res && res.breakdowns) || [] });
     }

@@ -117,5 +117,45 @@ function check(label, got, want) {
   check('bad header · lists what it found', /plant, year, month/.test(msg), true);
 }
 
+/* 5. THE REPORT MONTH IS LAST CALENDAR MONTH, NOT THE NEWEST IN THE FILE.
+ *
+ * This page used to report whichever month the export happened to reach, so
+ * once the sheet carried a part-billed running month it published that one
+ * while Price & Volume, Ready-Mix and RMX Fuel Recovery all published last
+ * month — one deck, two months. The other three backends already resolve it
+ * this way; the assertion is that this one now agrees.
+ *
+ * Built relative to today so the harness cannot rot: a full LAST month and a
+ * part-billed CURRENT month, which is exactly the shape that used to break it.
+ */
+{
+  const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const cur = new Date().getMonth() + 1;
+  const prev = cur - 1 || 12;                     // January -> December, as the backend does
+
+  const row = (mo, vol, fsc) => ['K' + mo, 'P1', 2026, MON[mo - 1], vol, 0, vol * 10, 0, fsc, 0];
+  const grid = [BAND, HEADER, row(prev, 100, 300), row(cur, 40, 80)];
+  const of = out => out.summary.YTD.filter(r => r.market === 'Greater Toronto Area')[0];
+
+  const dflt = load(grid).getFscData();
+  check('report month · defaults to LAST month, not the part-billed one',
+    dflt.latestMonth, MON[prev - 1]);
+  check('report month · MTD is that month alone',
+    dflt.summary.MTD.filter(r => r.market === 'Greater Toronto Area')[0].totalFSC, 300);
+  check('report month · YTD stops there, the running month is excluded', of(dflt).totalFSC, 300);
+  check('report month · echoed back for the picker', dflt.month, prev);
+  check('report month · picker is offered both months', dflt.months, [prev, cur].sort((a, b) => a - b));
+
+  const pinned = load(grid).getFscData({ month: cur });
+  check('report month · an explicit month pins it', pinned.latestMonth, MON[cur - 1]);
+  check('report month · and YTD then runs through it', of(pinned).totalFSC, 380);
+  check('report month · the default is still reported alongside', pinned.defaultMonth, prev);
+
+  /* last month not exported yet -> fall back to the newest month that is */
+  const early = load([BAND, HEADER, row(prev === 1 ? 12 : prev - 1, 70, 210)]).getFscData();
+  check('report month · falls back when last month is not in the export yet',
+    early.month, prev === 1 ? 12 : prev - 1);
+}
+
 console.log(failed ? '\n' + failed + ' check(s) FAILED' : '\nall checks passed');
 process.exit(failed ? 1 : 0);

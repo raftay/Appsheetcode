@@ -866,9 +866,15 @@ var AmrPvSlide = (function(){
 
   /* The refine value belongs in the key: Southwest, Southwest·Land and
      Southwest·Docks are three different reports off the same market. */
+  /* The month is part of the key too: July and August are different reports off
+     the same market, and the deck can be built for either. */
+  function monthOf(spec){
+    var m = Number(spec && spec.month) || 0;
+    return (m >= 1 && m <= 12) ? m : 0;          // 0 = let the backend decide
+  }
   function reportKey(spec, refineValue){
     return filterValueOf(spec.market) + '|' + (spec.period || 'MTD')
-         + '|' + (refineValue || '__ALL__');
+         + '|' + (refineValue || '__ALL__') + '|m' + monthOf(spec);
   }
 
   function loadReport(spec, refineValue){
@@ -882,7 +888,7 @@ var AmrPvSlide = (function(){
       filterValue: filterValueOf(spec.market),
       refineValue: rv,
       refineMode: 'include',
-      month: 0,                 // 0 = the server's report month (last closed)
+      month: monthOf(spec),     // 0 = the server's report month (last closed)
       upload: null
     }]).then(function(d){
       if(!d) throw new Error('No Price & Volume data for ' + (spec.market || 'Central Canada') + '.');
@@ -903,12 +909,15 @@ var AmrPvSlide = (function(){
     return resolveRefine(spec).then(function(rv){ REFINED[k] = rv; return rv; });
   }
 
-  function loadCust(market, period){
-    var key = filterValueOf(market) + '|' + period;
+  function custKey(spec, period){
+    return filterValueOf(spec.market) + '|' + period + '|m' + monthOf(spec);
+  }
+  function loadCust(spec, period){
+    var key = custKey(spec, period);
     if(CUST[key]) return Promise.resolve(CUST[key]);
     return srv('getCustomerReport', [{
       period: period, secondary: 'CUST_SEGMENT',
-      market: filterValueOf(market), month: 0, upload: null
+      market: filterValueOf(spec.market), month: monthOf(spec), upload: null
     }]).then(function(d){ CUST[key] = d; return d; });
   }
 
@@ -921,7 +930,7 @@ var AmrPvSlide = (function(){
       slide: AmrPvSlide.SLIDE,
       data: d || null,
       period: spec.period || 'MTD',
-      month: 0, latestMonth: (d && d.latestMonth) || 0,
+      month: monthOf(spec), latestMonth: (d && d.latestMonth) || 0,
       filterField: 'MARKET', filterValue: fv,
       custSecondary: 'CUST_SEGMENT', custSort: 'cyVol', custDir: 'top',
       custTopN: '10', custSearch: '', collapsed: {},
@@ -968,11 +977,10 @@ var AmrPvSlide = (function(){
 
   AmrDeckSource.register('cust', {
     prepare: function(spec){
-      return Promise.all([loadCust(spec.market, 'MTD'), loadCust(spec.market, 'YTD')]);
+      return Promise.all([loadCust(spec, 'MTD'), loadCust(spec, 'YTD')]);
     },
     content: function(spec){
-      var cd = { MTD: CUST[filterValueOf(spec.market) + '|MTD'],
-                 YTD: CUST[filterValueOf(spec.market) + '|YTD'] };
+      var cd = { MTD: CUST[custKey(spec, 'MTD')], YTD: CUST[custKey(spec, 'YTD')] };
       if(!cd.MTD && !cd.YTD) throw new Error('Customer data is not loaded yet.');
       var el = AmrPvSlide.custContent(cd, ctxFor(spec, null));
       if(!el) throw new Error('Could not build the customer block.');

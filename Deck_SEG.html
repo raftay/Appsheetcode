@@ -466,7 +466,11 @@ var AmrSegSlide = (function(){
         .apply(null, args || []);
     });
   }
-  function key(spec){ return (spec.market||'') + '|' + (spec.period||'MTD'); }
+  function monthOf(spec){
+    var m = Number(spec && spec.month) || 0;
+    return (m >= 1 && m <= 12) ? m : 0;          // 0 = let the backend decide
+  }
+  function key(spec){ return (spec.market||'') + '|' + (spec.period||'MTD') + '|m' + monthOf(spec); }
 
   function loadKpi(){
     if(KPIVALS.loaded) return Promise.resolve(KPIVALS.vals);
@@ -483,7 +487,7 @@ var AmrSegSlide = (function(){
     var k = key(spec);
     if(CACHE[k]) return Promise.resolve(CACHE[k]);
     return srv('RMX_getSlideTables', [{
-      market: spec.market, period: spec.period || 'MTD', month: 0, upload: null
+      market: spec.market, period: spec.period || 'MTD', month: monthOf(spec), upload: null
     }]).then(function(d){
       if(!d) throw new Error('No Product Segment data for ' + (spec.market||'?') + '.');
       CACHE[k] = d; return d;

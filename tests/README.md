@@ -71,6 +71,12 @@ node tests/fscheader.js          # no dependencies
 Covers the band layout, a band-less file, prior-year rows landing on the PY revenue and PY
 volume columns, and a genuinely wrong header still failing — with the row number it read.
 
+It also covers the **report month**, built relative to today so it cannot rot: this backend
+used to resolve to the newest month in the file, so once the sheet carried a part-billed
+running month it published that one while the other three backends published last month.
+The cases assert the default lands on last month, that an explicit month pins it, and that
+it falls back to the newest month present when last month is not exported yet.
+
 ## `deckstatic.js` — the CSS the deck can actually see, and the recipe
 
 No browser, no Google, no dependencies. Run it after touching a deck module, a report
@@ -102,6 +108,11 @@ and the far end of the pipeline shrank the whole picture into the image box, tak
 columns with it. The deck builds the same framed slide the pages do now, so `fitSlide` is
 the only fitter and the harness fails on any `function fitBare`, `fitBare:` or `.fitBare`.
 Prose about it is fine; a definition is not.
+
+**One month.** The deck is built for one report month — pick July and every slide is July,
+MTD and YTD, on all four backends. Each adapter used to hard-code `month: 0` in its server
+call, so the picker could not reach it; the harness fails on any `month: 0` left in an
+adapter or in the Deck Builder.
 
 It also checks `Deck_Styles.html` is scoped (**every** selector under `.slide-bare`, the
 wrapper `captureBare` photographs, so the file can never reach a page or the Deck Builder's

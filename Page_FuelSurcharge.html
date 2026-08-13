@@ -106,6 +106,14 @@ table.fsc-t.exec tbody td{padding:.34em .75em}
         <button data-v="BYMONTH">By Month</button>
       </div>
 
+      <div class="field" style="margin-top:12px">
+        <label class="lbl" for="fscMonthSel">Report month</label>
+        <select id="fscMonthSel"></select>
+        <p class="hint" style="margin:6px 0 0">MTD is this month on its own; YTD is January
+          through it. Defaults to <b>last calendar month</b> &mdash; the running month is only
+          part-billed.</p>
+      </div>
+
       <div class="field" id="bymonthField" style="margin-top:12px; display:none">
         <label class="lbl" for="bmMarket">Market (by month)</label>
         <select id="bmMarket"></select>
@@ -179,7 +187,10 @@ var DATA = null;                    // model from getFscData()
 var NUM_OV = {};                    // cellKey -> user-typed NUMBER (raw inputs only)
 var TXT_OV = {};                    // cellKey -> user-typed TEXT   (labels only)
 var DERIVED = {};                   // cellKey -> {txt, cls} for every calculated cell
-var STATE = { view:'EXEC', byMonthMarket:'', hidden:{},
+/* month: 0 = last closed month (the backend decides), 1-12 pins it. It rides
+   in every read, so the whole payload - MTD, YTD and the by-month table - is
+   for the month the picker names. */
+var STATE = { view:'EXEC', month:0, byMonthMarket:'', hidden:{},
               title:'', titleDirty:false, sub:'Per applied tonne · $CAD', logo:'', logoSVG:'' };
 
 /* ======================= helpers ======================= */
@@ -570,6 +581,7 @@ function loadData(){
       }
       loadDone(true);
       DATA = data;
+      buildMonthPicker();
       buildMarketControls();
       autoTitle();
       if(st){ st.className='dzstat ok';
@@ -583,7 +595,41 @@ function loadData(){
       showProblem(msg + ' \u2014 If the sheet looks right, try Reload from sheet. '
         + 'To point at a different sheet, use \u2699 Data sheet at the top.');
     })
-    .getFscData();
+    .getFscData({ month: STATE.month });
+}
+
+/* Fill the Report-month picker from the months the sheet actually holds.
+   Only current-year months with volume are offered - the export carries every
+   month of the year, and the ones past the reporting point hold last year's
+   figures against nothing, so picking one would only ever read -100%. The
+   first option is last calendar month and moves on its own as months turn.
+   Same picker, same wording, as the RMX Fuel Recovery page. */
+function buildMonthPicker(){
+  var sel = document.getElementById('fscMonthSel'); if (!sel) return;
+  var names = (DATA && DATA.monthNames) || [];
+  var list  = (DATA && DATA.months) || [];
+  var def   = (DATA && DATA.defaultMonth) || 0;
+
+  var defTxt = (def && names[def-1]) ? ' (' + names[def-1] + ')' : '';
+  var html = ['<option value="0"' + (STATE.month ? '' : ' selected') + '>Last closed month'
+              + defTxt + '</option>'];
+  list.forEach(function(m){
+    var nm = names[m-1] || ('Month ' + m);
+    html.push('<option value="' + m + '"' + (STATE.month === m ? ' selected' : '') + '>'
+              + nm + '</option>');
+  });
+  sel.innerHTML = html.join('');
+
+  if (!sel.getAttribute('data-wired')){
+    sel.setAttribute('data-wired', '1');
+    sel.addEventListener('change', function(){
+      STATE.month = parseInt(this.value, 10) || 0;
+      /* Typed-in edits belong to the month they were made on - carrying a
+         July override onto May's numbers would be silently wrong. */
+      NUM_OV = {}; TXT_OV = {}; DERIVED = {};
+      loadData();
+    });
+  }
 }
 
 /* ======================= UI wiring ======================= */
@@ -930,7 +976,7 @@ var QLIK_GUIDE = [
         document.getElementById('upStatus').style.display='block'; go.style.display='none';
       }).withFailureHandler(function(e){
         go.disabled=false; stat((e&&e.message)||String(e),'err');
-      }).getFscDataFromUpload({ combined:sane(v[0]), other:sane(v[1]) });
+      }).getFscDataFromUpload({ combined:sane(v[0]), other:sane(v[1]), month:STATE.month });
     }).catch(function(e){ go.disabled=false; stat('Could not read the Excel file: '+(e&&e.message||e),'err'); });
   };
   document.getElementById('upReset').onclick=function(){ upOff(); loadData(); };
