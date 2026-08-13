@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amrize &middot; Inventory Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<?!= include('Styles') ?>
+<style>
+/* ---- Inventory Report page-only rules (tokens/base/header from Styles.html) ---- */
+html,body{height:100%}
+body{display:flex; flex-direction:column}
+
+.irwrap{flex:1; display:flex; flex-direction:column; max-width:1560px; width:100%;
+  margin:0 auto; padding:14px 20px 18px; box-sizing:border-box; min-height:0}
+
+/* ---- toolbar above the viewer ---- */
+.ir-toolbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  background:var(--white); border:1px solid var(--line); border-bottom:0;
+  border-radius:var(--r) var(--r) 0 0; padding:10px 14px; box-shadow:var(--shadow)}
+.ir-file{font:700 13.5px Archivo; color:var(--ink); line-height:1.2}
+.ir-sub{font:500 11px Inter; color:var(--muted); margin-top:1px}
+.ir-spacer{flex:1}
+
+.irbtn{display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line);
+  background:#fff; color:var(--blue-80); cursor:pointer; text-decoration:none;
+  font:600 12px Inter; padding:0 13px; height:34px; border-radius:9px; transition:.14s; white-space:nowrap}
+.irbtn:hover{background:var(--blue-10); border-color:var(--blue-40)}
+.irbtn.primary{background:var(--blue-100); border-color:var(--blue-100); color:#fff}
+.irbtn.primary:hover{background:var(--blue-90)}
+.irbtn .ico{font-size:14px; line-height:1}
+
+/* ---- the viewer ---- */
+.ir-frame-wrap{flex:1; min-height:0; background:#3c4859;
+  border:1px solid var(--line); border-radius:0 0 var(--r) var(--r);
+  box-shadow:var(--shadow); overflow:hidden; position:relative}
+.ir-frame-wrap iframe{position:absolute; inset:0; width:100%; height:100%; border:0; display:block; background:#3c4859}
+
+/* ---- empty / loading states ---- */
+.ir-empty{flex:1; display:flex; align-items:center; justify-content:center; padding:40px 20px}
+.ir-empty .card{background:var(--white); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); padding:34px 38px; max-width:520px; text-align:center}
+.ir-empty h2{font:800 18px Archivo; color:var(--ink); margin:0 0 8px}
+.ir-empty p{font:500 13px Inter; color:var(--muted); line-height:1.55; margin:0 0 18px}
+
+/* ---- source modal ---- */
+.ir-modal{position:fixed; inset:0; z-index:9200; display:none; align-items:center; justify-content:center;
+  background:rgba(1,30,106,.34); padding:20px}
+.ir-modal.open{display:flex}
+.ir-card{background:#fff; border-radius:16px; max-width:620px; width:100%;
+  box-shadow:0 24px 60px rgba(1,30,106,.30)}
+.ir-card .head{display:flex; align-items:center; gap:12px; padding:18px 22px; border-bottom:1px solid #EEF3F9}
+.ir-card .head h2{font:800 17px Archivo; margin:0; color:var(--blue-100); flex:1}
+.ir-x{border:0; background:var(--blue-10); color:var(--blue-100); width:30px; height:30px;
+  border-radius:8px; cursor:pointer; font:700 16px Inter; line-height:1}
+.ir-card .body{padding:20px 22px; font:400 13.5px Inter; color:var(--ink); line-height:1.55}
+.ir-cur{background:var(--blue-10); border:1px solid #D7E9FB; border-radius:10px; padding:10px 12px;
+  font:500 12.5px Inter; color:var(--ink); margin-bottom:14px; word-break:break-word}
+.ir-label{display:block; font:600 12px Inter; color:var(--muted); margin:12px 0 6px}
+.ir-label:first-of-type{margin-top:0}
+.ir-input{width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:10px;
+  background:#F4F7FC; padding:10px 12px; font:500 13px Inter; color:var(--ink)}
+.ir-save{margin-top:14px; border:0; background:var(--blue-100); color:#fff; font:700 13px Inter;
+  padding:10px 18px; border-radius:10px; cursor:pointer}
+.ir-save:hover{background:var(--blue-90)}
+.ir-save:disabled{opacity:.55; cursor:default}
+.ir-status{margin-top:10px; font:600 12px Inter}
+.ir-status.ok{color:var(--pos)} .ir-status.err{color:var(--neg)} .ir-status.muted{color:var(--muted)}
+
+.spinner{display:inline-block; width:13px; height:13px; border:2px solid var(--blue-20);
+  border-top-color:var(--blue-70); border-radius:50%; animation:irspin .7s linear infinite;
+  vertical-align:middle; margin-right:6px}
+@keyframes irspin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">
+    <span class="mark">AMRIZE</span>
+    <span>
+      <span class="title">Inventory Report</span>
+      <span class="sub">Monthly inventory report PDF &mdash; served from Google Drive</span>
+    </span>
+  </div>
+  <button class="ghost" onclick="window.amrGoHome&&amrGoHome()" title="Back to the suite home">&#8962; Home</button>
+  <button class="ghost" onclick="irOpenModal()" title="Point this page at a different Drive file">&#9881; Report source</button>
+</header>
+
+<div class="irwrap" id="irWrap">
+  <!-- filled by JS: toolbar + viewer, or an empty state -->
+</div>
+
+<!-- source-change modal -->
+<div class="ir-modal" id="irModal">
+  <div class="ir-card">
+    <div class="head">
+      <h2>Report source &middot; Google Drive</h2>
+      <button class="ir-x" onclick="irCloseModal()">&times;</button>
+    </div>
+    <div class="body">
+      <p style="margin-top:0">This page displays a PDF stored on Google Drive. Paste the file's Drive link
+        below and click Save &mdash; the setting is stored permanently and everyone using this page will see
+        the new file. To publish a new month upload the new PDF and paste its link.</p>
+      <div class="ir-cur" id="irCurrent">Checking current setting&hellip;</div>
+      <label class="ir-label">Google Drive link or file ID</label>
+      <input class="ir-input" id="irInput" type="text"
+             placeholder="https://drive.google.com/file/d/XXXXXXXX/view">
+      <label class="ir-label">Display name <span style="font-weight:500">(optional &mdash; shown above the report, e.g. &ldquo;Central Region &mdash; June 2026&rdquo;)</span></label>
+      <input class="ir-input" id="irLabelInput" type="text" placeholder="Monthly Central Region Report">
+      <button class="ir-save" id="irSaveBtn" onclick="irSave()">Save &amp; display</button>
+      <div class="ir-status muted" id="irStatus"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+var IS_LIVE = (typeof google !== 'undefined' && google.script && google.script.run);
+var IR_CUR  = null;                                   // last settings object from the server
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+/* ---------- render ---------- */
+function irRender(s){
+  IR_CUR = s || { configured:false };
+  var w = document.getElementById('irWrap');
+
+  if (!IR_CUR.configured){
+    w.innerHTML =
+      '<div class="ir-empty"><div class="card">'+
+        '<h2>No report selected yet</h2>'+
+        (IR_CUR.error ? '<p style="color:var(--neg);font-weight:600">'+esc(IR_CUR.error)+'</p>' : '')+
+        '<p>Point this page at the inventory report PDF on Google Drive. '+
+        'The choice is saved permanently and shared with everyone using this app.</p>'+
+        '<button class="irbtn primary" onclick="irOpenModal()" style="margin:0 auto"><span class="ico">&#9881;</span> Set the report file</button>'+
+      '</div></div>';
+    return;
+  }
+
+  w.innerHTML =
+    '<div class="ir-toolbar">'+
+      '<div>'+
+        '<div class="ir-file">'+esc(IR_CUR.label || 'Inventory Report')+'</div>'+
+        '<div class="ir-sub">Source set '+esc(IR_CUR.savedAt || '')+'</div>'+
+      '</div>'+
+      '<div class="ir-spacer"></div>'+
+      '<a class="irbtn" href="'+esc(IR_CUR.viewUrl)+'" target="_blank" rel="noopener" title="Open full-screen in Google Drive"><span class="ico">&#8599;</span> Open in new tab</a>'+
+      '<button class="irbtn" onclick="irReload()" title="Re-load the file (picks up an overwritten PDF)"><span class="ico">&#8635;</span> Refresh</button>'+
+      '<button class="irbtn" onclick="irOpenModal()"><span class="ico">&#9881;</span> Change source</button>'+
+    '</div>'+
+    '<div class="ir-frame-wrap" id="irFrameWrap">'+
+      '<iframe id="irFrame" src="'+esc(IR_CUR.previewUrl)+'" allow="autoplay" allowfullscreen></iframe>'+
+    '</div>';
+}
+
+
+/* ---------- load ---------- */
+function irReload(){
+  var w = document.getElementById('irWrap');
+  w.innerHTML = '<div class="ir-empty"><div class="card"><p style="margin:0"><span class="spinner"></span>Loading report&hellip;</p></div></div>';
+  if (!IS_LIVE){ irRender({ configured:false }); return; }
+  google.script.run
+    .withSuccessHandler(irRender)
+    .withFailureHandler(function(e){
+      irRender({ configured:false, error:(e && e.message) || String(e) });
+    })
+    .IR_getSettings();
+}
+
+/* ---------- source modal ---------- */
+function irOpenModal(){
+  document.getElementById('irModal').classList.add('open');
+  var cur = document.getElementById('irCurrent');
+  var st  = document.getElementById('irStatus');
+  st.className='ir-status muted'; st.textContent='';
+  if (!IS_LIVE){ cur.textContent='The source can only be changed inside the live web app.'; return; }
+  if (IR_CUR && IR_CUR.configured){
+    cur.innerHTML = '<b>Currently showing:</b> '+esc(IR_CUR.label || IR_CUR.fileId)+
+      (IR_CUR.savedAt ? ' &middot; set '+esc(IR_CUR.savedAt) : '');
+    document.getElementById('irInput').value = IR_CUR.viewUrl || IR_CUR.fileId || '';
+    document.getElementById('irLabelInput').value = IR_CUR.label || '';
+  } else {
+    cur.innerHTML = '<b>No file selected yet.</b>'+(IR_CUR && IR_CUR.error ? '<br>'+esc(IR_CUR.error) : '');
+  }
+}
+function irCloseModal(){ document.getElementById('irModal').classList.remove('open'); }
+
+document.getElementById('irModal').addEventListener('click', function(e){
+  if (e.target === this) irCloseModal();
+});
+document.addEventListener('keydown', function(e){ if (e.key==='Escape') irCloseModal(); });
+
+function irSave(){
+  if (!IS_LIVE) return;
+  var btn = document.getElementById('irSaveBtn');
+  var st  = document.getElementById('irStatus');
+  var val = document.getElementById('irInput').value;
+  var lbl = document.getElementById('irLabelInput').value;
+  st.className='ir-status muted'; st.innerHTML='<span class="spinner"></span>Saving\u2026';
+  btn.disabled = true;
+  google.script.run
+    .withSuccessHandler(function(r){
+      btn.disabled = false;
+      st.className='ir-status ok'; st.textContent='Saved.';
+      irRender(r);
+      setTimeout(irCloseModal, 600);
+    })
+    .withFailureHandler(function(e){
+      btn.disabled = false;
+      st.className='ir-status err'; st.textContent = (e && e.message) || String(e);
+    })
+    .IR_saveSource(val, lbl);
+}
+
+/* ---------- boot ---------- */
+irReload();
+</script>
+
+<!-- shared toolbar + settings/help modals -->
+<script>
+  window.APP_URL  = '<?= appUrl ?>';
+  window.APP_PAGE = 'inventoryreport';
+  window.HELP_HTML =
+    '<h3>What is this?</h3><p>Displays the monthly inventory report PDF stored on Google Drive, right inside the suite.</p>'+
+    '<h3>Reading it</h3><p>Use the zoom controls at the bottom of the viewer (they appear on hover) if the text is small</p>'+
+    'or <b>&#8599; Open in new tab</b> for the full-screen Drive viewer.</p>'+
+    '<h3>Changing the report</h3><p>Click <b>&#9881; Report source</b> and paste the Drive link of the PDF. '+
+    'The setting is saved permanently and shared with everyone using this app.</p>'+
+    '<h3>Publishing a new month</h3><p>Easiest: in Drive, right-click the existing file &rarr; <b>Manage versions</b> '+
+    '&rarr; upload the new PDF. The link stays the same, so this page updates automatically \u2014 just hit '+
+    '<b>&#8635; Refresh</b>. Alternatively, upload a new file and paste its link into Report source.</p>'+
+    '<h3>Access</h3><p>The PDF is loaded through Drive in your own browser session, so viewers need at least view access to the file itself.</p>';
+</script>
+<?!= include('Shell') ?>
+</body>
+</html>

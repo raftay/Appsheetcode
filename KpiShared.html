@@ -1,0 +1,374 @@
+<!-- ===================================================================
+     KpiShared.html — the SHARED KPI workbooks, in one place
+     -------------------------------------------------------------------
+     The two EBITDA workbooks (main "AGG & RMX EBITDA Report" and the
+     "Manitoba / Saskatchewan" one) feed KPI cards on three pages:
+
+       • AGG - Price & Volume   → per-region plant-statement tabs
+       • RMX - Product Segment  → RMX Summary market blocks
+       • Overview               → both of the above
+
+     HOW IT WORKS NOW
+     Upload once, on any page that offers it, and the file is stored in
+     the suite's shared Drive folder — so EVERY user, on every device,
+     sees the same numbers. The heavy Excel parsing happens once, in the
+     uploader's browser; only the handful of numbers behind the cards
+     travels to the server and gets cached (server + device), exactly
+     the way the report tables are cached. Nobody else ever downloads
+     or re-parses the workbook.
+
+     WHAT PAGES USE
+       AmrKpi.load(cb)              → cb(values) — cached, instant on repeat visits
+       AmrKpi.upload(book, file, cb)→ parse + share (book = 'main' | 'mbsk')
+       AmrKpi.clear(book, cb)       → remove that workbook for everyone
+       AmrKpi.plantIndex(values)    → merged Region dropdown: [{label, book, tab}]
+       AmrKpi.plant(values, entry, period)  → {aspCy,aspPy,salesCy,salesPy,volCy,volPy}
+       AmrKpi.rmx(values, marketKey, period)→ {tab, units, rev, conc, raw}
+       AmrKpi.rmxHeaders(values)    → block header text found (for status lines)
+       AmrKpi.sig(values)           → identity of the current files
+       AmrKpi.files(values)         → {main:{name,ts}|null, mbsk:{...}|null}
+
+     Market keys for AmrKpi.rmx(): HNS_SW · North · Innocon · Manitoba ·
+     Saskatchewan  (pages map their own names onto these).
+     =================================================================== -->
+<script>
+window.AmrKpi = (function(){
+
+  var LS_KEY = 'amrKpiValues';        // device copy: { gen, values }
+  var VALUES = null, GEN = null, LOADING = false, WAITING = [];
+
+  function live(){ return typeof google!=='undefined' && google.script && google.script.run; }
+
+  /* ================= shape 1: per-region plant statements =================
+     Key rows sit in column B between rows 3 and 31; the value columns are
+     fixed:  MTD  C=Actual · D=$/t · I=Prior Yr · J=PY $/t
+             YTD  O        · P     · U          · V                        */
+  var PLANT_ROWS = { vol:'Total Sales Volume - Aggregates', rev:'Total Product Revenue' };
+  var PLANT_COLS = { MTD:{a:'C',t:'D',p:'I',pt:'J'}, YTD:{a:'O',t:'P',p:'U',pt:'V'} };
+
+  function cellNum(ws, addr){ var c=ws[addr]; return (c && typeof c.v==='number') ? c.v : 0; }
+
+  function plantRowsOf(ws){
+    if(!ws) return null;
+    var out={vol:0, rev:0};
+    for(var r=3; r<=31; r++){
+      var c=ws['B'+r]; if(!c || typeof c.v!=='string') continue;
+      var t=c.v.trim();
+      if(t===PLANT_ROWS.vol) out.vol=r;
+      if(t===PLANT_ROWS.rev) out.rev=r;
+    }
+    return (out.vol && out.rev) ? out : null;
+  }
+
+  function plantValues(ws, rows, period){
+    var col = PLANT_COLS[period];
+    return {
+      aspCy:   cellNum(ws, col.t  + rows.rev), aspPy:   cellNum(ws, col.pt + rows.rev),
+      salesCy: cellNum(ws, col.a  + rows.rev), salesPy: cellNum(ws, col.p  + rows.rev),
+      volCy:   cellNum(ws, col.a  + rows.vol), volPy:   cellNum(ws, col.p  + rows.vol)
+    };
+  }
+
+  /* ================= shape 2: RMX Summary market blocks =================
+     One tab ("RMX Summary") holds every market as a stacked block. The
+     block header cell reads e.g. "HNSSW  RMX". Relative to each label's
+     own column:  MTD −6 CY kRC · −5 CY RC/m3 · −4 PY kRC · −3 PY RC/m3 ·
+     −2 delta# · −1 delta%       YTD  +1 · +2 · +3 · +4 · +5 · +6         */
+  var RMX_MARKETS = {
+    HNS_SW:       { book:'main', tokens:['hnssw','hnsw','hns'] },
+    North:        { book:'main', tokens:['north','nrth'] },
+    Innocon:      { book:'main', tokens:['innocon','inno'] },
+    Manitoba:     { book:'mbsk', tokens:['manitoba'] },
+    Saskatchewan: { book:'mbsk', tokens:['saskatchewan','sask'] }
+  };
+  var RMX_ROWS = [
+    { key:'units', re:/units\s*sold/i },
+    { key:'rev',   re:/total\s*revenue/i },
+    { key:'conc',  re:/concrete\s*sales/i },
+    { key:'raw',   re:/total\s*raw\s*material/i }
+  ];
+  var RMX_OFF = {
+    MTD:{ cy:-6, cyU:-5, py:-4, pyU:-3, dn:-2, dp:-1 },
+    YTD:{ cy:+1, cyU:+2, py:+3, pyU:+4, dn:+5, dp:+6 }
+  };
+
+  function norm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+
+  /* The monthly workbook has 60+ tabs, several carrying decoy header cells
+     ("HNS/ SW RMX" on per-market tabs). Scan ONLY the RMX Summary tab when
+     it exists; fall back to everything when it doesn't (copied-out files). */
+  function rmxSheetNames(wb){
+    for(var i=0;i<wb.SheetNames.length;i++){
+      if(norm(wb.SheetNames[i])==='rmxsummary') return [wb.SheetNames[i]];
+    }
+    return wb.SheetNames.slice();
+  }
+
+  function rmxBlock(wb, tokens){
+    var names=rmxSheetNames(wb);
+    for(var i=0;i<names.length;i++){
+      var ws=wb.Sheets[names[i]];
+      for(var addr in ws){
+        if(addr[0]==='!') continue;
+        var c=ws[addr]; if(!c || typeof c.v!=='string') continue;
+        var n=norm(c.v);
+        if(n.indexOf('rmx')===-1) continue;
+        for(var t=0;t<tokens.length;t++){
+          if(n.indexOf(tokens[t])!==-1){
+            var rc=XLSX.utils.decode_cell(addr);
+            return { ws:ws, name:c.v.trim(), row:rc.r, col:rc.c };
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function num(ws, r, c){
+    var cell=ws[XLSX.utils.encode_cell({r:r, c:c})];
+    return (cell && typeof cell.v==='number') ? cell.v : null;
+  }
+
+  /* The four labels are searched in ANY column of the ~30 rows below the
+     header (merged header cells can sit in a different column than the
+     labels); offsets are taken relative to EACH label's own column. */
+  function rmxValues(blk, period){
+    var ws=blk.ws, o=RMX_OFF[period], x={};
+    var ref=ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : null;
+    var maxRow=Math.min(blk.row+30, ref?ref.e.r:blk.row+30);
+    var maxCol=ref?ref.e.c:blk.col+8;
+    for(var r=blk.row+1; r<=maxRow; r++){
+      for(var c=0; c<=maxCol; c++){
+        var cell=ws[XLSX.utils.encode_cell({r:r, c:c})];
+        if(!cell || typeof cell.v!=='string') continue;
+        var t=cell.v.trim(); if(!t) continue;
+        for(var k=0;k<RMX_ROWS.length;k++){
+          var def=RMX_ROWS[k];
+          if(x[def.key] || !def.re.test(t)) continue;
+          x[def.key]={ cy:num(ws,r,c+o.cy),  py:num(ws,r,c+o.py),
+                       cyU:num(ws,r,c+o.cyU), pyU:num(ws,r,c+o.pyU),
+                       dn:num(ws,r,c+o.dn),  dp:num(ws,r,c+o.dp) };
+        }
+      }
+      if(x.units && x.rev && x.conc && x.raw) break;
+    }
+    return (x.units||x.rev||x.conc||x.raw) ? x : null;
+  }
+
+  function rmxAllHeaders(wb){
+    var out=[], seen={};
+    rmxSheetNames(wb).forEach(function(sn){
+      var ws=wb.Sheets[sn];
+      for(var addr in ws){
+        if(addr[0]==='!') continue;
+        var c=ws[addr]; if(!c || typeof c.v!=='string') continue;
+        if(norm(c.v).indexOf('rmx')===-1) continue;
+        var nm=c.v.trim(); if(seen[nm]) continue; seen[nm]=1; out.push(nm);
+      }
+    });
+    return out;
+  }
+
+  /* ---------- turn ONE workbook into the small values slice ---------- */
+  function extractBook(wb, fileName){
+    var slice = { name:String(fileName||''), ts:Date.now(), plant:{}, rmx:{}, headers:[] };
+
+    wb.SheetNames.forEach(function(n){
+      var ws=wb.Sheets[n], rows=plantRowsOf(ws); if(!rows) return;
+      slice.plant[n] = { MTD:plantValues(ws, rows, 'MTD'), YTD:plantValues(ws, rows, 'YTD') };
+    });
+
+    Object.keys(RMX_MARKETS).forEach(function(key){
+      var blk = rmxBlock(wb, RMX_MARKETS[key].tokens); if(!blk) return;
+      var mtd = rmxValues(blk, 'MTD'), ytd = rmxValues(blk, 'YTD');
+      if(!mtd && !ytd) return;
+      slice.rmx[key] = { tab:blk.name, MTD:mtd, YTD:ytd };
+    });
+
+    slice.headers = rmxAllHeaders(wb);
+    return slice;
+  }
+
+  /* ---------- reading the shared values ---------- */
+  function books(v){ return (v && (v.main || v.mbsk)) ? v : null; }
+
+  /* Merged Region dropdown, same labels as before: a " · MB/SK" suffix is
+     added only when the same tab name exists in BOTH workbooks. */
+  function plantIndex(v){
+    var found=[];
+    ['main','mbsk'].forEach(function(bk){
+      var b = v && v[bk]; if(!b || !b.plant) return;
+      Object.keys(b.plant).forEach(function(tab){ found.push({book:bk, tab:tab}); });
+    });
+    var counts={}; found.forEach(function(f){ counts[f.tab]=(counts[f.tab]||0)+1; });
+    var SUF={main:'', mbsk:' \u00b7 MB/SK'};
+    return found.map(function(f){
+      return { label: f.tab + (counts[f.tab]>1 ? SUF[f.book] : ''), book:f.book, tab:f.tab };
+    });
+  }
+
+  function plant(v, entry, period){
+    if(!v || !entry) return null;
+    var b=v[entry.book]; if(!b || !b.plant) return null;
+    var t=b.plant[entry.tab]; if(!t) return null;
+    return t[period==='YTD' ? 'YTD' : 'MTD'] || null;
+  }
+
+  /* Own workbook first, the other as a fallback — as before. */
+  function rmx(v, marketKey, period){
+    var cfg=RMX_MARKETS[marketKey]; if(!v || !cfg) return null;
+    var order = cfg.book==='mbsk' ? ['mbsk','main'] : ['main','mbsk'];
+    for(var i=0;i<order.length;i++){
+      var b=v[order[i]]; if(!b || !b.rmx) continue;
+      var m=b.rmx[marketKey]; if(!m) continue;
+      var x=m[period==='YTD' ? 'YTD' : 'MTD']; if(!x) continue;
+      var out={ tab:m.tab };
+      ['units','rev','conc','raw'].forEach(function(k){ if(x[k]) out[k]=x[k]; });
+      return out;
+    }
+    return null;
+  }
+
+  function rmxHeaders(v){
+    var out=[], seen={};
+    ['main','mbsk'].forEach(function(bk){
+      var b=v && v[bk]; if(!b || !b.headers) return;
+      b.headers.forEach(function(h){ if(!seen[h]){ seen[h]=1; out.push(h); } });
+    });
+    return out;
+  }
+
+  function files(v){
+    return { main: (v&&v.main) ? {name:v.main.name, ts:v.main.ts} : null,
+             mbsk: (v&&v.mbsk) ? {name:v.mbsk.name, ts:v.mbsk.ts} : null };
+  }
+  function sig(v){
+    var f=files(v);
+    return ['main','mbsk'].map(function(k){
+      return f[k] ? k+':'+f[k].name+':'+f[k].ts : k+':';
+    }).join('|');
+  }
+
+  /* ---------- device copy (shared by every page, keyed by version) ---------- */
+  function devGet(gen){
+    try{
+      var raw=localStorage.getItem(LS_KEY); if(!raw) return null;
+      var o=JSON.parse(raw);
+      return (o && String(o.gen)===String(gen)) ? o.values : null;
+    }catch(e){ return null; }
+  }
+  function devSet(gen, values){
+    try{ localStorage.setItem(LS_KEY, JSON.stringify({gen:String(gen), values:values})); }catch(e){}
+  }
+
+  function settle(v){
+    VALUES = v; LOADING = false;
+    var q=WAITING; WAITING=[];
+    q.forEach(function(cb){ try{ cb(VALUES); }catch(e){} });
+  }
+
+  /* ---------- the API pages use ---------- */
+  var api = {
+    MARKETS: RMX_MARKETS,
+
+    /* Values for the cards. Served from this device when the version
+       matches, otherwise fetched once and saved. cb always runs. */
+    load: function(cb){
+      if(VALUES !== null){ cb && cb(VALUES); return; }
+      if(cb) WAITING.push(cb);
+      if(LOADING) return;
+      LOADING = true;
+      if(!live()){ settle(null); return; }
+      var known = localGen();
+      google.script.run
+        .withSuccessHandler(function(r){
+          GEN = r && r.generation;
+          if(r && r.cached){                    // unchanged since our last visit
+            var dev = devGet(GEN);
+            if(dev){ settle(dev); return; }     // normal path: nothing downloaded at all
+            google.script.run
+              .withSuccessHandler(function(r2){
+                if(r2 && r2.values){ devSet(r2.generation, r2.values); settle(r2.values); }
+                else settle(null);
+              })
+              .withFailureHandler(function(){ settle(null); })
+              .getKpiValues('');
+            return;
+          }
+          if(r && r.values){ devSet(GEN, r.values); settle(r.values); return; }
+          settle(null);                          // nothing uploaded yet
+        })
+        .withFailureHandler(function(){ settle(devGet(localGen())); })
+        .getKpiValues(String(known||''));
+    },
+
+    /* Parse a workbook in this browser and share it with everyone.
+       cb(ok, valuesOrMessage) */
+    upload: function(book, file, cb){
+      if(!live()){ cb && cb(false, 'Uploads only work in the live web app.'); return; }
+      var rd=new FileReader();
+      rd.onload=function(e){
+        var buf=e.target.result, wb, slice;
+        try{ wb = XLSX.read(new Uint8Array(buf), {type:'array'}); }
+        catch(err){ cb && cb(false, 'Could not read that workbook: '+((err&&err.message)||err)); return; }
+        try{ slice = extractBook(wb, file.name); }
+        catch(err2){ cb && cb(false, 'Could not read the KPI rows: '+((err2&&err2.message)||err2)); return; }
+        if(!Object.keys(slice.plant).length && !Object.keys(slice.rmx).length){
+          cb && cb(false, 'No KPI data was found in that workbook \u2014 expected the plant-statement '
+            +'rows (Total Sales Volume / Total Product Revenue in column B) or the RMX Summary market '
+            +'blocks. Nothing was shared.');
+          return;
+        }
+        google.script.run
+          .withSuccessHandler(function(r){
+            GEN = r && r.generation;
+            VALUES = r && r.values;
+            devSet(GEN, VALUES);
+            cb && cb(true, VALUES);
+            /* then, best effort: keep the actual .xlsx in the shared folder */
+            google.script.run.withSuccessHandler(function(){}).withFailureHandler(function(){})
+              .archiveKpiFile(book, file.name, bytesToB64(buf));
+          })
+          .withFailureHandler(function(err){ cb && cb(false, (err&&err.message)||String(err)); })
+          .saveKpiBook(book, JSON.stringify(slice));
+      };
+      rd.onerror=function(){ cb && cb(false, 'Could not read '+file.name); };
+      rd.readAsArrayBuffer(file);
+    },
+
+    /* Remove one workbook for everyone. cb(ok, valuesOrMessage) */
+    clear: function(book, cb){
+      if(!live()){ cb && cb(false, 'Only works in the live web app.'); return; }
+      google.script.run
+        .withSuccessHandler(function(r){
+          GEN = r && r.generation; VALUES = r && r.values;
+          devSet(GEN, VALUES); cb && cb(true, VALUES);
+        })
+        .withFailureHandler(function(err){ cb && cb(false, (err&&err.message)||String(err)); })
+        .clearKpiBook(book);
+    },
+
+    plantIndex: plantIndex,
+    plant: plant,
+    rmx: rmx,
+    rmxHeaders: rmxHeaders,
+    files: files,
+    sig: sig,
+    extractBook: extractBook,
+    generation: function(){ return GEN; }
+  };
+
+  function localGen(){
+    try{ var o=JSON.parse(localStorage.getItem(LS_KEY)||'null'); return o?o.gen:''; }catch(e){ return ''; }
+  }
+
+  /* xlsx bytes -> base64 (the file itself is archived in Drive for reference) */
+  function bytesToB64(buf){
+    var u=new Uint8Array(buf), s='', CH=0x8000;
+    for(var i=0;i<u.length;i+=CH) s+=String.fromCharCode.apply(null, u.subarray(i,i+CH));
+    return btoa(s);
+  }
+
+  return api;
+})();
+</script>

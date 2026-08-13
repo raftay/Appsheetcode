@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amrize Commercial Suite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<?!= include('Styles') ?>
+<style>
+/* landing top-right nav (replaces the old floating buttons) */
+.land-topnav{display:flex; justify-content:flex-end; gap:8px; margin-bottom:10px}
+.land-heroRow{display:flex;align-items:center;gap:64px}
+.land-feat{flex:none;display:flex;flex-direction:column;align-items:flex-start;
+  background:linear-gradient(115deg,#2A6EFF 0%,#24A0FF 60%,#5FC0FF 100%);
+  border-radius:16px;padding:24px 28px;min-width:280px;text-decoration:none;color:#fff;
+  box-shadow:0 10px 30px rgba(42,110,255,.4);transition:transform .15s,box-shadow .15s}
+.land-feat:hover{transform:translateY(-3px);box-shadow:0 16px 40px rgba(42,110,255,.55)}
+.land-feat .tag{font:700 11px Archivo,sans-serif;letter-spacing:.18em;text-transform:uppercase;color:#EEF7FF;opacity:.9}
+.land-feat h2{font:800 24px Archivo,sans-serif;margin:6px 0 16px;color:#fff}
+.land-feat .go{background:#fff;color:#0F4FD6;font:700 13.5px Inter;
+  padding:10px 18px;border-radius:999px;box-shadow:0 4px 12px rgba(1,30,106,.25)}
+@media (max-width:900px){.land-heroRow{flex-direction:column;align-items:flex-start}}</style>
+</head>
+<body>
+
+<div class="land-hero">
+  <div class="inner">
+    <div class="land-topnav">
+      <button class="ghost" onclick="window.amrOpenHelp && window.amrOpenHelp()" title="How this suite works">? Help</button>
+      <button class="ghost" onclick="window.amrOpenSettings && window.amrOpenSettings()" title="Choose each tool's Google Sheet">&#9881; Settings</button>
+    </div>
+    <div class="land-heroRow">
+      <div>
+        <div class="mark">AMRIZE</div>
+        <h1>Commercial Suite</h1>
+        <p>Every reporting tool in one place. Pick a tool below. Each reads from a Google Sheet you choose
+           in Settings &mdash; use one sheet for everything, or give each tool its own. When the month is
+           closed, the Deck Builder turns all of them into one Google Slides deck.</p>
+      </div>
+      <a class="land-feat" href="<?= appUrl ?>?page=overview" target="_top">
+        <div class="tag">Dashboard</div>
+        <h2>Executive Overview</h2>
+        <span class="go">Open &rarr;</span>
+      </a>
+      <a class="land-feat" href="<?= appUrl ?>?page=deckbuilder" target="_top">
+        <div class="tag">Google Slides</div>
+        <h2>Deck Builder</h2>
+        <span class="go">Open &rarr;</span>
+      </a>
+    </div>
+  </div>
+</div>
+
+<div class="land-wrap">
+  <a class="land-card" href="<?= appUrl ?>?page=pricevolume" target="_top">
+    <div class="tag">Markets &amp; Customers</div>
+    <h2>Price &amp; Volume Analysis</h2>
+    <p>Volume / ASP / PPI growth bridges, market breakdowns by any dimension, and a customer drill-down.
+       Reads the <code>Combined Data CPI Raw</code> tab.</p>
+    <span class="go">Open &rarr;</span>
+  </a>
+
+  <a class="land-card" href="<?= appUrl ?>?page=rmx" target="_top">
+    <div class="tag">Ready-Mix</div>
+    <h2>Amrize RMX</h2>
+    <p>BASE vs ALL-IN ASP, PPI and mix effect by submarket / segment / strength / class, plus the Extras &amp;
+       VAP analysis. Reads the <code>Main / Extra / Associate Raw Data</code> tabs.</p>
+    <span class="go">Open &rarr;</span>
+  </a>
+
+  <a class="land-card" href="<?= appUrl ?>?page=segment" target="_top">
+    <div class="tag">Ready-Mix slide</div>
+    <h2>Commercial Product Segment</h2>
+    <p>Builds a finished 16:9 RMX commercial slide as a PNG, with adjustable blank bands for comments.
+       Reads the <code>Slide Segment / Product</code> tabs.</p>
+    <span class="go">Open &rarr;</span>
+  </a>
+
+  <a class="land-card" href="<?= appUrl ?>?page=fuelsurcharge" target="_top">
+    <div class="tag">Editable slide</div>
+    <h2>Fuel Recovery</h2>
+    <p>Fuel recovery summary (MTD / YTD) and a market&rsquo;s month-by-month FSC/t &mdash; every cell editable
+       before export. Reads the <code>Data</code> tab.</p>
+    <span class="go">Open &rarr;</span>
+  </a>
+
+  <a class="land-card" href="<?= appUrl ?>?page=rmxfuel" target="_top">
+    <div class="tag">Ready-Mix</div>
+    <h2>RMX Fuel Recovery</h2>
+    <p>Flex Fuel surcharge per m&sup3; by market and month, against the same months last year, plus where the
+       dollars sit by segment, class and plant. Reads the <code>Main / Extra Raw Data</code> tabs.</p>
+    <span class="go">Open &rarr;</span>
+  </a>
+
+  <a class="land-card" href="<?= appUrl ?>?page=tp01" target="_top">
+    <div class="tag">Transfer Pricing</div>
+    <h2>Transfer Price Tool</h2>
+    <p>Drop the SAP TP01-ZIPR file and the QlikView report &mdash; builds the comparison with
+       revenue corrections, splits it by market, and emails each market its own file.</p>
+    <span class="go">Open &rarr;</span>
+  </a>
+
+  <a class="land-card" href="<?= appUrl ?>?page=deckbuilder" target="_top">
+    <div class="tag">Google Slides</div>
+    <h2>Deck Builder</h2>
+    <p>Builds the monthly deck in Google Slides &mdash; every market and period from the other tools, each
+       table dropped into the template with the title and comment box left as real, editable text.</p>
+    <span class="go">Open &rarr;</span>
+  </a>
+
+  <a class="land-card" href="<?= appUrl ?>?page=inventoryreport" target="_top">
+    <div class="tag">Inventory</div>
+    <h2>Inventory Report</h2>
+    <p>The monthly Central Region inventory report PDF, served straight from Google Drive.
+      Change which file is shown from the page itself.</p>
+    <span class="go">Open &rarr;</span>
+  </a>
+
+
+</div>
+
+<div class="land-note">
+  <div class="panel">
+    <h3>First time here?</h3>
+    <p>Each tool reads its raw data from a Google Sheet. You can point them all at the <b>same</b> sheet, or give
+       each tool its <b>own</b>. Click the button below (or the &#9881;&nbsp;<b>Settings</b> button at the top of this
+       page, or the &#9881;&nbsp;<b>Data&nbsp;sheet</b> button at the top of each tool) and paste your sheet link(s).
+       You can change them any time.</p>
+    <button class="land-setbtn" onclick="window.amrOpenSettings && window.amrOpenSettings()">&#9881;&nbsp; Set the data sheets</button>
+  </div>
+
+  <div class="panel" id="qsPanel">
+    <h3>Pull the data from QlikView</h3>
+    <p>Drop the QlikView exports into their Drive folders, then press the button. Every row in every
+       Google Sheet is replaced with what the exports say &mdash; formulas, lookups and anything the
+       export does not send are left exactly as they are. You do <b>not</b> need to pick a file:
+       whatever is sitting in the folders is used. <b>This takes a minute or two</b>; leave the page open.</p>
+    <p style="margin-top:8px">This does all three sheets at once. Each tool also has its own
+       <b>&#8675; Pull from QlikView</b> button at the top of its page, which updates just that tool.</p>
+    <button class="land-setbtn" id="qsBtn">&#8675;&nbsp; Pull from QlikView</button>
+    <div class="qs-out" id="qsOut"></div>
+  </div>
+</div>
+
+<style>
+.qs-out{display:none; margin-top:14px; border-top:1px solid var(--line); padding-top:12px}
+.qs-out.show{display:block}
+.qs-out .qs-head{font:700 12px Archivo,sans-serif; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--blue-100); margin-bottom:8px}
+.qs-out ul{list-style:none; margin:0 0 10px; padding:0}
+.qs-out li{display:flex; align-items:baseline; gap:8px; font:500 12px Inter; color:var(--ink);
+  padding:4px 0; border-bottom:1px solid var(--blue-10)}
+.qs-out li:last-child{border-bottom:0}
+.qs-out .nm{flex:1; min-width:0}
+.qs-out .ct{font-variant-numeric:tabular-nums; color:var(--muted); font-size:11.5px; white-space:nowrap}
+.qs-out .ok{color:var(--pos); font-weight:700}
+.qs-out .er{color:var(--neg); font-weight:700}
+.qs-out .qs-msg{font:500 12px Inter; color:var(--muted); line-height:1.5}
+.qs-out .qs-bad{background:var(--neg-bg); border:1px solid #EBC9CE; border-radius:10px;
+  padding:10px 12px; font:500 12px Inter; color:var(--neg); line-height:1.5; margin-bottom:10px}
+</style>
+
+<!-- shared toolbar + settings/help modals -->
+<script>
+  window.APP_URL  = '<?= appUrl ?>';
+  window.APP_PAGE = 'landing';
+  window.HELP_HTML =
+    '<h3>What is this?</h3><p>A home page that links to the four Amrize reporting tools. Open any card to start.</p>'+
+    '<h3>Setting the data sheets</h3><p>Click the <b>&#9881; Settings</b> button (top of this page) and paste a '+
+    'Google Sheet link for each tool. Use one sheet for everything, or give each its own.</p>'+
+    '<h3>Month end guide</h3><p>The step-by-step month-end walkthrough is behind the <b>&#128229; Month End Guide</b> button at the bottom-right.</p>';
+</script>
+<?!= include('Shell') ?>
+
+<!-- Month-end guide: opens from the floating button (bottom-right).
+     Edit the QLIK_GUIDE array below. -->
+<aside class="qlikGuide" id="qlikGuide" aria-label="Month end guide">
+  <div id="qlikGuideSteps"></div>
+  <button class="qgHide" id="qgHide">Close guide</button>
+</aside>
+<button class="qgFab" id="qgFab" title="Month end guide">&#128229; Month End Guide</button>
+<style>
+.qlikGuide{position:fixed; top:96px; right:18px; width:250px; max-height:calc(100vh - 120px);
+  overflow:auto; background:var(--card,#fff); border:1px solid var(--line); border-radius:14px;
+  padding:14px 14px 10px; box-shadow:0 8px 24px rgba(1,30,106,.08); z-index:5; display:none}
+.qlikGuide h4{margin:0 0 4px; font:800 12px Archivo; letter-spacing:.08em; text-transform:uppercase; color:var(--navy,#011E6A)}
+.qlikGuide p{margin:8px 0 6px; font:500 12px/1.5 Inter; color:var(--ink,#16243B)}
+.qlikGuide .qg-sub{margin:0 0 4px; font:500 11px/1.5 Inter; color:var(--muted)}
+.qlikGuide img{width:100%; border:1px solid var(--line); border-radius:8px; display:block}
+.qlikGuide .ph{border:1.5px dashed var(--line); border-radius:8px; padding:22px 8px; text-align:center;
+  font:600 11px Inter; color:var(--muted)}
+.qlikGuide .qgImgWrap{position:relative}
+.qlikGuide .qgImgWrap img{cursor:zoom-in}
+.qlikGuide .qgExpand{position:absolute;top:6px;right:6px;width:24px;height:24px;border:0;border-radius:6px;
+  background:rgba(1,30,106,.75);color:#fff;font:700 13px Inter;cursor:pointer;line-height:1}
+.qgLightbox{position:fixed;inset:0;z-index:9999;background:rgba(1,30,106,.82);display:flex;
+  align-items:center;justify-content:center;padding:28px;cursor:zoom-out}
+.qgLightbox img{max-width:96vw;max-height:92vh;border-radius:10px;background:#fff;
+  box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.qgLightbox .qgClose{position:absolute;top:14px;right:18px;border:0;background:transparent;
+  color:#fff;font:700 30px Inter;cursor:pointer;line-height:1}
+/* wide screens: guide always visible, no button (the centred 1080px content
+   leaves >=320px on each side at 1720px, so it never overlaps the cards) */
+/* narrow screens: hidden until toggled by the floating button */
+.qlikGuide.open{display:block; z-index:60; box-shadow:0 16px 48px rgba(1,30,106,.28)}
+.qgFab{position:fixed; right:18px; bottom:66px; z-index:59;
+  border:0; border-radius:999px; padding:12px 18px; cursor:pointer;
+  background:var(--navy,#011E6A); color:#fff; font:700 12.5px Archivo;
+  letter-spacing:.04em; box-shadow:0 8px 24px rgba(1,30,106,.35)}
+.qgFab:hover{background:var(--blue-80,#185CB5)}
+.qlikGuide .qgHide{display:none; width:100%; margin-top:12px; border:1px solid var(--line);
+  background:#fff; color:var(--navy,#011E6A); font:600 12px Inter; padding:8px;
+  border-radius:9px; cursor:pointer}
+.qlikGuide.open .qgHide{display:block}
+</style>
+<script>
+/* ---- EDIT ME: guide steps. text = what to do; img = paste ANY Google Drive
+   share link (or a file id) for the screenshot — the file must be shared as
+   "anyone with the link". Leave img '' to show a dashed placeholder. ---- */
+var QLIK_GUIDE_TITLE = 'Month End Guide';
+var QLIK_GUIDE_SUB   = 'A walkthrough of setting up the google slides for month end reports.';
+var QLIK_GUIDE = [
+  { text: 'Step 1 - Open the Data Sheet for the corresponding tab', img: 'https://drive.google.com/file/d/1gjTTgnwShQgOX2QijvqJGQXrM7jdVELI/view?usp=sharing' },
+  { text: 'Step 2 - Make a Copy of the Google Sheet and store in the appropriate location', img: 'https://drive.google.com/file/d/1NPZuuuvWqYp8G0T5eNH5Pkec2acMAvF7/view?usp=sharing' },
+  { text: 'Step 3 - Download Qlik View Data (See Qlikview Guide)', img: 'https://drive.google.com/file/d/1GzmBNCByS05zo3SBjsPbKKivGxYpwZet/view?usp=sharing' },
+  { text: 'Step 4 - Delete the columns with blue background fill and replace with the data downloaded from Qlikview', img: 'https://drive.google.com/file/d/1Nv54pEMNn4NeGP2Yw5w5fmkX2oPRKvxp/view?usp=sharing' },
+  { text: 'Step 5 - Copy Spreadsheet link and paste into Data Sheet tab to update the source.', img: 'https://drive.google.com/file/d/1js9FnLqqVq9Ty5KtFj9LSWfrMH9L2Qov/view?usp=sharing' }
+];
+(function(){
+  var host = document.getElementById('qlikGuideSteps'); if(!host) return;
+  function openLb(src){
+    var lb=document.createElement('div');
+    lb.className='qgLightbox';
+    lb.innerHTML='<button class="qgClose" title="Close">&times;</button><img src="'+src+'" alt="">';
+    function close(){ lb.remove(); document.removeEventListener('keydown', onKey); }
+    function onKey(e){ if(e.key==='Escape') close(); }
+    lb.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(lb);
+  }
+  function slot(i, uri){
+    var el=document.getElementById('qg'+i); if(!el) return;
+    if(!uri){ el.outerHTML='<div class="ph">screenshot goes here</div>'; return; }
+    var w=document.createElement('div');
+    w.className='qgImgWrap';
+    w.innerHTML='<img src="'+uri+'" alt=""><button class="qgExpand" title="Expand">&#x26F6;</button>';
+    el.replaceWith(w);
+    w.addEventListener('click', function(){ openLb(uri); });
+  }
+  host.innerHTML = '<h4>'+QLIK_GUIDE_TITLE+'</h4>'
+    + (QLIK_GUIDE_SUB ? '<p class="qg-sub">'+QLIK_GUIDE_SUB+'</p>' : '')
+    + QLIK_GUIDE.map(function(s,i){
+        return '<p>'+s.text+'</p><div class="ph" id="qg'+i+'">loading…</div>';
+      }).join('');
+  var ids = QLIK_GUIDE.map(function(s){ var m=String(s.img||'').match(/[-\w]{25,}/); return m?m[0]:''; });
+  if (typeof google!=='undefined' && google.script && google.script.run)
+    google.script.run.withSuccessHandler(function(uris){ uris.forEach(function(u,i){ slot(i,u); }); })
+      .withFailureHandler(function(){ ids.forEach(function(_,i){ slot(i,''); }); })
+      .getGuideImages(ids);
+  else
+    ids.forEach(function(_,i){ slot(i,''); });
+  var fab=document.getElementById('qgFab'), aside=document.getElementById('qlikGuide');
+  if(fab && aside){
+    fab.addEventListener('click', function(){ aside.classList.toggle('open'); });
+    var hide=document.getElementById('qgHide');
+    if(hide) hide.addEventListener('click', function(){ aside.classList.remove('open'); });
+    document.addEventListener('click', function(e){
+      if(!aside.classList.contains('open')) return;
+      if(aside.contains(e.target) || fab.contains(e.target) || e.target.closest('.qgLightbox')) return;
+      aside.classList.remove('open');
+    });
+  }
+})();
+</script>
+<script>
+/* ---- "Update data from QlikView" -------------------------------------
+   One press: QlikSync.gs opens both Drive folders, works out which export
+   is which from what is inside it, and replaces the data in all three
+   workbooks. Every cached copy is invalidated at the end, so the tools
+   pick the new data up on their next open. ------------------------------ */
+document.addEventListener('DOMContentLoaded', function () {
+  var btn = document.getElementById('qsBtn');
+  var out = document.getElementById('qsOut');
+  if (!btn || !out) return;
+
+  var LABEL = btn.innerHTML;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function show(html) { out.innerHTML = html; out.className = 'qs-out show'; }
+
+  function done(res) {
+    btn.disabled = false;
+    btn.innerHTML = LABEL;
+
+    if (!res) { show('<div class="qs-bad">No answer came back. Try again.</div>'); return; }
+    if (res.error) { show('<div class="qs-bad">' + esc(res.error) + '</div>'); return; }
+
+    var html = '';
+
+    if (res.failed && res.failed.length) {
+      html += '<div class="qs-bad"><b>' + res.failed.length + ' tab' +
+              (res.failed.length > 1 ? 's' : '') + ' could not be updated.</b><br>';
+      html += res.failed.map(function (f) {
+        return esc(f.tab) + ' &mdash; ' + esc(f.error);
+      }).join('<br>');
+      html += '</div>';
+    }
+
+    html += '<div class="qs-head">' + (res.done ? res.done.length : 0) + ' tab' +
+            ((res.done && res.done.length === 1) ? '' : 's') + ' updated' +
+            (res.seconds ? ' in ' + esc(res.seconds) + 's' : '') + '</div><ul>';
+
+    (res.done || []).forEach(function (d) {
+      var note = d.unmatched && d.unmatched.length
+        ? ' &middot; <span class="er">' + d.unmatched.length + ' column' +
+          (d.unmatched.length > 1 ? 's' : '') + ' not placed</span>'
+        : '';
+      html += '<li><span class="ok">&#10003;</span><span class="nm">' + esc(d.tab) +
+              '<br><span class="ct">from ' + esc(d.from) + '</span></span>' +
+              '<span class="ct">' + Number(d.rows).toLocaleString() + ' rows &middot; ' +
+              esc(d.columns) + ' cols' + note + '</span></li>';
+    });
+    html += '</ul>';
+
+    (res.skipped || []).forEach(function (s) {
+      html += '<div class="qs-msg">Skipped ' + esc(s.tab) + ' &mdash; ' + esc(s.error) + '</div>';
+    });
+
+    if (res.files && res.files.length) {
+      html += '<div class="qs-msg" style="margin-top:8px">Read: ' +
+              res.files.map(esc).join(' &middot; ') + '</div>';
+    }
+    html += '<div class="qs-msg" style="margin-top:8px">Every tool now reloads its data next time you open it.</div>';
+
+    show(html);
+  }
+
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    btn.innerHTML = '&#8675;&nbsp; Reading the exports&hellip;';
+    show('<div class="qs-msg">Opening the Drive folders and replacing the data. ' +
+         'This usually takes a minute or two &mdash; leave the page open.</div>');
+    /* the call itself lives in Shell.html, shared with every tool's own
+       \u21e3 Pull from QlikView button \u2014 only the reporting differs here */
+    window.AmrQlik.run('all', done);
+  });
+});
+</script>
+</body>
+</html>

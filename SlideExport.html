@@ -1,0 +1,253 @@
+<!-- ============================================================= -->
+<!-- SlideExport.html — the ONE reusable "slide builder" engine.   -->
+<!--                                                               -->
+<!-- Pulled into a page with  <?!= include('SlideExport') ?>       -->
+<!-- (place it just before </body>, after html2canvas is loaded).  -->
+<!--                                                               -->
+<!-- It turns any block of content into a branded 16:9 slide       -->
+<!-- (1600x900) with a title/subtitle/logo header and adjustable   -->
+<!-- BLANK comment bands on all four sides, then exports it to PNG  -->
+<!-- with html2canvas. This used to be duplicated inside each page; -->
+<!-- now every tool shares this single implementation.             -->
+<!--                                                               -->
+<!-- Quick use:                                                    -->
+<!--   AmrSlide.mountControls('wsBox', {onChange:redraw});  // sliders -->
+<!--   var content = buildMyContent();      // a DOM element       -->
+<!--   AmrSlide.previewInto(hostEl, content, {title, subtitle, logo});-->
+<!--   AmrSlide.exportSlide(content, {title, filename, button:'btnId'});-->
+<!-- ============================================================= -->
+<style>
+/* ---- the slide surface (captured to PNG at 1600x900) ---- */
+.slide{position:relative; background:#fff; font-family:Inter,Arial,sans-serif; color:var(--ink);
+  display:flex; flex-direction:column; overflow:hidden}
+.slide-head{flex:none; display:flex; align-items:flex-start; gap:20px;
+  border-bottom:3px solid var(--blue-100); padding-bottom:12px; margin-bottom:6px}
+.slide-head .ttl{font:800 30px Archivo,Arial; color:var(--blue-100); letter-spacing:.01em; line-height:1.1}
+.slide-head .subttl{font:700 18px Archivo,Arial; color:var(--blue-80); margin-top:2px}
+.slide-head .hspace{flex:1}
+.slide-head img.logo{height:54px; width:auto; object-fit:contain}
+.slide-head .logosvg{display:inline-flex; align-items:center}
+.slide-head .logosvg svg{height:54px !important; width:auto !important; display:block}
+.slide-content{flex:1; min-height:0; overflow:hidden}
+.content-inner{transform-origin:top left}
+.slide-center{flex:1 1 0%; min-width:0; display:flex; flex-direction:column; gap:12px}
+
+/* ---- full-window slide viewer (the "Expand slide" button) ---- */
+.amr-sv{position:fixed; inset:0; z-index:9999; background:rgba(1,30,106,.86);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:10px; padding:16px}
+.amr-sv .amr-sv-frame{background:#fff; border-radius:10px; overflow:hidden;
+  box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.amr-sv .amr-sv-close{position:absolute; top:12px; right:18px; border:0; background:transparent;
+  color:#fff; font:700 30px Inter,Arial; cursor:pointer; line-height:1}
+.amr-sv .amr-sv-hint{color:#fff; font:600 12px Inter,Arial; opacity:.85}
+
+/* ---- the four whitespace sliders (rail control) ---- */
+.amr-ws .amr-ws-row{margin-bottom:12px}
+.amr-ws .amr-ws-row:last-child{margin-bottom:0}
+.amr-ws label{display:block; font:600 12px Inter; color:var(--muted); margin-bottom:6px}
+.amr-ws input[type=range]{accent-color:var(--blue-70); width:100%; cursor:pointer}
+</style>
+
+<script>
+/* ================================================================
+ * AmrSlide — shared slide-frame + whitespace + PNG export engine.
+ * Depends on html2canvas (each page already loads it) and the
+ * shared .slide* / .amr-ws CSS above.
+ * ============================================================== */
+var AmrSlide = (function(){
+  var W = 1600, H = 900, PAD = 40;          // fixed 16:9 canvas
+  var MARGINS = { left:120, right:120, top:30, bottom:30 };  // current comment bands
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function el(tag, cls){ var n=document.createElement(tag); if(cls) n.className=cls; return n; }
+
+  /* ---- mount the four L/R/T/B sliders into a rail container ----
+     opts: {left,right,top,bottom, maxLR, maxTB, onChange(margins)} */
+  function mountControls(containerId, opts){
+    opts = opts || {};
+    var host = document.getElementById(containerId); if(!host) return;
+    var v = { left:  opts.left  !=null ? opts.left  : MARGINS.left,
+              right: opts.right !=null ? opts.right : MARGINS.right,
+              top:   opts.top   !=null ? opts.top   : MARGINS.top,
+              bottom:opts.bottom!=null ? opts.bottom: MARGINS.bottom };
+    var maxLR = opts.maxLR || 650, maxTB = opts.maxTB || 320;
+    MARGINS = v;
+    host.classList.add('amr-ws');
+    function rowHtml(label, key, max){
+      return '<div class="amr-ws-row"><label>'+label+' &middot; <span data-v="'+key+'">'+v[key]+'</span> px</label>'+
+        '<input type="range" min="0" max="'+max+'" step="5" value="'+v[key]+'" data-k="'+key+'"></div>';
+    }
+    host.innerHTML = rowHtml('Left','left',maxLR) + rowHtml('Right','right',maxLR)
+                   + rowHtml('Top','top',maxTB)   + rowHtml('Bottom','bottom',maxTB);
+    [].forEach.call(host.querySelectorAll('input[type=range]'), function(r){
+      r.addEventListener('input', function(){
+        var k = this.getAttribute('data-k');
+        v[k] = parseInt(this.value,10) || 0;
+        MARGINS = v;
+        var span = host.querySelector('[data-v="'+k+'"]'); if(span) span.textContent = v[k];
+        if(typeof opts.onChange === 'function') opts.onChange(margins());
+      });
+    });
+    if(typeof opts.onChange === 'function') opts.onChange(margins());
+  }
+
+  function margins(){ return { left:MARGINS.left, right:MARGINS.right, top:MARGINS.top, bottom:MARGINS.bottom }; }
+
+  /* ---- build the off-screen 1600x900 slide around a content node ----
+     contentEl : a DOM element holding the page's tables/charts
+     o : {title, subtitle, logo (dataURI), logoSVG, margins, fit(box)}
+     Returns the slide box (attached at left:-99999px; caller removes it,
+     or download()/exportSlide() removes it automatically). */
+  function build(contentEl, o){
+    o = o || {};
+    var m = o.margins || margins();
+
+    var box = el('div','slide');
+    box.style.cssText = 'position:fixed;left:-99999px;top:0;width:'+W+'px;height:'+H+'px;padding:'+PAD+'px';
+
+    var head = el('div','slide-head');
+    head.innerHTML = '<div><div class="ttl">'+esc(o.title||'')+'</div>'
+      + (o.subtitle ? '<div class="subttl">'+esc(o.subtitle)+'</div>' : '') + '</div>'
+      + '<div class="hspace"></div>'
+      + (o.logoSVG ? '<span class="logosvg">'+o.logoSVG+'</span>'
+                   : (o.logo ? '<img class="logo" src="'+o.logo+'" alt="logo">' : ''));
+    box.appendChild(head);
+
+    var content = el('div','slide-content');
+    var inner   = el('div','content-inner');
+    inner.style.cssText = 'display:flex;flex-direction:column;height:100%';
+    content.appendChild(inner); box.appendChild(content);
+
+    var topSp = el('div'); topSp.style.cssText = 'flex:none;height:'+(m.top||0)+'px';
+    var botSp = el('div'); botSp.style.cssText = 'flex:none;height:'+(m.bottom||0)+'px';
+    var bodyR = el('div'); bodyR.style.cssText = 'flex:1 1 auto;min-height:0;display:flex;align-items:center';
+    var lsp   = el('div'); lsp.style.cssText   = 'flex:none;width:'+(m.left||0)+'px';
+    var rsp   = el('div'); rsp.style.cssText   = 'flex:none;width:'+(m.right||0)+'px';
+    var center= el('div','slide-center'); center.appendChild(contentEl);
+
+    bodyR.appendChild(lsp); bodyR.appendChild(center); bodyR.appendChild(rsp);
+    inner.appendChild(topSp); inner.appendChild(bodyR); inner.appendChild(botSp);
+    document.body.appendChild(box);
+
+    inner.style.width = (W - PAD*2) + 'px';
+    if(typeof o.fit === 'function'){ try{ o.fit(box); }catch(e){} }   // page-specific table fitting
+
+    // scale the content down if it is taller than the available body height
+    var bodyH = bodyR.clientHeight, gridH = center.scrollHeight;
+    if(gridH > bodyH && gridH > 0){
+      var s = bodyH / gridH;
+      center.style.transformOrigin = 'top center';
+      center.style.transform = 'scale('+s+')';
+    }
+    return box;
+  }
+
+  /* ---- drop a scaled-down live preview into a host element ----
+     Builds the slide OFF the page first, then swaps it in atomically and
+     restores the window scroll position, so dragging the spacing sliders
+     (which re-renders the preview on every input) no longer jumps the page
+     back to the top. */
+  function previewInto(host, contentEl, o){
+    if(!host) return;
+    var sy = window.pageYOffset || document.documentElement.scrollTop || 0;   // remember scroll
+
+    var box = build(contentEl, o);
+    var avail = host.clientWidth || 1000;
+    var scale = Math.min(1, avail / W);
+    box.style.position='static'; box.style.left='auto'; box.style.top='auto';
+    box.style.transform = 'scale('+scale+')'; box.style.transformOrigin='top left';
+
+    var frame = el('div');
+    frame.style.cssText = 'width:'+Math.round(W*scale)+'px;height:'+Math.round(H*scale)+'px;'
+      + 'overflow:hidden;border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)';
+    frame.appendChild(box);
+
+    // atomic swap (no intermediate empty state that would collapse the page height)
+    if(host.replaceChildren) host.replaceChildren(frame);
+    else { while(host.firstChild) host.removeChild(host.firstChild); host.appendChild(frame); }
+
+    if((window.pageYOffset||0) !== sy) window.scrollTo(0, sy);   // restore if the swap nudged it
+  }
+
+  /* ---- render a built slide box to PNG and download it ---- */
+  function download(box, filename, o){
+    o = o || {}; var sc = o.scale || 2;
+    return html2canvas(box, {scale:sc, backgroundColor:'#ffffff', logging:false,
+        width:W, height:H, windowWidth:W, windowHeight:H,
+        ignoreElements:function(n){ return n.classList && n.classList.contains('amr-qm'); }})
+      .then(function(cv){
+        if(box.parentNode) box.parentNode.removeChild(box);
+        var a = document.createElement('a');
+        a.href = cv.toDataURL('image/png');
+        a.download = (filename || 'amrize_slide').replace(/[^a-z0-9_\-]+/gi,'_').replace(/^_+|_+$/g,'') + '.png';
+        document.body.appendChild(a); a.click(); a.remove();
+      })
+      .catch(function(e){ if(box.parentNode) box.parentNode.removeChild(box); throw e; });
+  }
+
+  /* ---- show the slide full-window, without downloading anything ----
+     The SAME 1600x900 slide the PNG export captures, scaled up to fill the
+     window instead of being saved to a file — so it can be read, shown in a
+     meeting or screenshotted straight from the browser. Esc, the ×, or a
+     click on the dark area closes it; resizing the window re-fits it. */
+  function viewSlide(contentEl, o){
+    o = o || {};
+    var box = build(contentEl, o);          // measured off-screen at full size
+
+    var frame = el('div','amr-sv-frame');
+    box.style.position='static'; box.style.left='auto'; box.style.top='auto';
+    box.style.transformOrigin='top left';
+    frame.appendChild(box);
+
+    var lb = el('div','amr-sv');
+    lb.innerHTML = '<button class="amr-sv-close" title="Close">&times;</button>';
+    lb.appendChild(frame);
+    var hint = el('div','amr-sv-hint');
+    hint.textContent = 'Press Esc or click outside the slide to close';
+    lb.appendChild(hint);
+
+    /* as large as the window allows, keeping the 16:9 shape */
+    function fitToWindow(){
+      var s = Math.min((window.innerWidth - 32) / W, (window.innerHeight - 64) / H);
+      if(!(s > 0.1)) s = 0.1;
+      box.style.transform = 'scale('+s+')';
+      frame.style.width  = Math.round(W*s)+'px';
+      frame.style.height = Math.round(H*s)+'px';
+    }
+    function close(){
+      if(lb.parentNode) lb.parentNode.removeChild(lb);
+      document.body.style.overflow = pageScroll;      // let the page scroll again
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', fitToWindow);
+    }
+    function onKey(e){ if(e.key==='Escape' || e.keyCode===27) close(); }
+    lb.addEventListener('click', function(e){ if(!frame.contains(e.target)) close(); });
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', fitToWindow);
+
+    var pageScroll = document.body.style.overflow;    // stop the page scrolling behind
+    document.body.style.overflow = 'hidden';
+    document.body.appendChild(lb);
+    fitToWindow();
+    return lb;
+  }
+
+  /* ---- convenience: build + download in one call ----
+     o adds {filename, scale, button:'idOfButtonToSpin'} to build()'s opts */
+  function exportSlide(contentEl, o){
+    o = o || {};
+    var btn = o.button ? document.getElementById(o.button) : null;
+    if(btn) btn.classList.add('busy');
+    var box = build(contentEl, o);
+    return download(box, o.filename, {scale:o.scale})
+      .then(function(){ if(btn) btn.classList.remove('busy'); },
+            function(){ if(btn) btn.classList.remove('busy'); });
+  }
+
+  return { mountControls:mountControls, margins:margins, build:build,
+           previewInto:previewInto, download:download, exportSlide:exportSlide,
+           viewSlide:viewSlide };
+})();
+</script>
