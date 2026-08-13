@@ -97,6 +97,15 @@ var DECK_CONFIG = {
   /* Layouts that are documentation, never used to build a slide. */
   DOC_LAYOUTS: ['L_README'],
 
+  /* The cover. It is a layout like any other, but it is FILLED IN PLACE by
+     create() rather than duplicated by addSlide, so it is not something a
+     recipe row can point at. readTemplate still returns it (tagged
+     role:'cover') so the page can preview it; the page builds its recipe
+     picker from role:'report' only. It also carries {{DECK_TITLE}} /
+     {{DECK_SUB}} instead of {{TITLE}}, which is why validateTemplate judges
+     it against a different checklist. */
+  COVER_LAYOUT: 'L_COVER',
+
   /* Capture resolution the page should aim for, expressed as pixels per POINT
      of slot width. Slides renders a 720pt-wide slide to ~1920px on a big
      screen (2.67 px/pt), so 4 leaves headroom without bloating the payload.
@@ -155,6 +164,9 @@ var DECK = (function () {
 
   function isDocLayout_(id) {
     return DECK_CONFIG.DOC_LAYOUTS.indexOf(id) !== -1;
+  }
+  function isCoverLayout_(id) {
+    return !!id && id === DECK_CONFIG.COVER_LAYOUT;
   }
 
   /* Text of a shape, '' when it has none. Shapes, images and lines all live in
@@ -272,6 +284,9 @@ var DECK = (function () {
       layouts.push({
         layoutId: lid,
         index: i,
+        /* 'cover' is filled in place by create(); only 'report' layouts can be
+           duplicated by addSlide, so only they belong in a recipe. */
+        role: isCoverLayout_(lid) ? 'cover' : 'report',
         slots: slots,
         has: {
           title: !!slots.title, comment: !!slots.comment,
@@ -287,11 +302,23 @@ var DECK = (function () {
         '"LAYOUT: <id>" in its speaker notes.');
     }
 
+    var reportCount = 0;
+    for (var r = 0; r < layouts.length; r++) {
+      if (layouts[r].role === 'report') reportCount++;
+    }
+    if (!reportCount) {
+      fail_('The template has a cover but no report layouts, so there is ' +
+        'nothing for a recipe row to point at. Add at least one slide with ' +
+        '"LAYOUT: <id>" in its speaker notes and an ' +
+        DECK_CONFIG.TOKENS.image + ' box on it.');
+    }
+
     return {
       templateId: id,
       name: pres.getName(),
       pageWidth: pw, pageHeight: ph,      // points; 720 x 405 for 16:9
       layouts: layouts,
+      reportCount: reportCount,
       slideCount: slides.length
     };
   }
@@ -396,18 +423,35 @@ var DECK = (function () {
     setToken_(slide, T.comment, spec.comment || '');   // '' = blank but styled
     setToken_(slide, T.label1, spec.label1 || '');
     setToken_(slide, T.label2, spec.label2 || '');
+    setToken_(slide, T.deckSub, spec.subtitle || '');  // section dividers use it
     /* {{PAGE}} is left alone here - it is stamped in finish(), when the final
        slide order is actually known. */
 
     placeImage_(slide, T.image, spec.png, spec.imgW, spec.imgH, spec.recipeId);
     placeImage_(slide, T.image2, spec.png2, spec.img2W, spec.img2H, spec.recipeId);
 
+    /* Blank every token the recipe did not fill, so a literal "{{TOKEN}}" can
+       never reach the finished deck. This is not hypothetical: L_SECTION
+       carries {{DECK_SUB}}, and create() only fills that on the cover - so a
+       divider slide used to ship the raw token text to the meeting.
+       {{PAGE}} is the one exception; finish() stamps it once the order is
+       final. The image tokens are already gone - placeImage_ removes the
+       shape whether or not a picture was supplied. */
+    for (var t in T) {
+      if (!T.hasOwnProperty(t) || t === 'page') continue;
+      setToken_(slide, T[t], '');
+    }
+
+    /* Read the index BEFORE closing. A Presentation cannot be touched after
+       saveAndClose() - getSlides() on a closed presentation throws, which used
+       to turn every successful slide into a failed one. */
+    var slideIndex = pres.getSlides().length - 1;
     pres.saveAndClose();
 
     return {
       recipeId: spec.recipeId || '',
       layoutId: spec.layoutId,
-      slideIndex: pres.getSlides().length - 1
+      slideIndex: slideIndex
     };
   }
 
@@ -544,20 +588,38 @@ var DECK = (function () {
         }
       }
 
-      if (tokens.indexOf('title') === -1) {
-        warnings.push(lid + ' (' + at + ') has no ' + TOK.title +
-          ', so its slides will have no heading.');
-      }
-      if (tokens.indexOf('image2') !== -1 && tokens.indexOf('image') === -1) {
-        warnings.push(lid + ' (' + at + ') has ' + TOK.image2 + ' but no ' +
-          TOK.image + '. Fill the first slot before adding a second.');
-      }
-      if (tokens.indexOf('page') === -1) {
-        warnings.push(lid + ' (' + at + ') has no ' + TOK.page +
-          ', so its slides will not be numbered.');
+      /* The cover is judged against a different checklist: it is filled in
+         place by create(), never duplicated, so {{TITLE}} and {{PAGE}} are not
+         things it is missing - they are things it should not have. */
+      if (isCoverLayout_(lid)) {
+        if (tokens.indexOf('deckTitle') === -1) {
+          warnings.push(lid + ' (' + at + ') has no ' + TOK.deckTitle +
+            ', so the deck name will not appear on the cover.');
+        }
+        if (tokens.indexOf('image') !== -1) {
+          warnings.push(lid + ' (' + at + ') has an ' + TOK.image + ' box. ' +
+            'The cover is never given a picture, so that box is deleted and ' +
+            'leaves a gap. Remove it from the template.');
+        }
+      } else {
+        if (tokens.indexOf('title') === -1) {
+          warnings.push(lid + ' (' + at + ') has no ' + TOK.title +
+            ', so its slides will have no heading.');
+        }
+        if (tokens.indexOf('image2') !== -1 && tokens.indexOf('image') === -1) {
+          warnings.push(lid + ' (' + at + ') has ' + TOK.image2 + ' but no ' +
+            TOK.image + '. Fill the first slot before adding a second.');
+        }
+        if (tokens.indexOf('page') === -1) {
+          warnings.push(lid + ' (' + at + ') has no ' + TOK.page +
+            ', so its slides will not be numbered.');
+        }
       }
 
-      layouts.push({ layoutId: lid, slide: i + 1, tokens: tokens });
+      layouts.push({
+        layoutId: lid, slide: i + 1, tokens: tokens,
+        role: isCoverLayout_(lid) ? 'cover' : 'report'
+      });
     }
 
     if (!layouts.length) {
@@ -658,7 +720,8 @@ function DECK_smokeTest() {
   });
 
   var out = DECK.finish(deck.deckId);
-  Logger.log('Finished: %s slides, %s layout slides removed', out.slides, out.layoutsRemoved);
+  Logger.log('Finished: %s slides, %s template slides removed',
+    out.slides, out.templateSlidesRemoved);
   Logger.log('OPEN THIS: %s', out.url);
   return out;
 }

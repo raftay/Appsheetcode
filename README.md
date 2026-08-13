@@ -62,12 +62,11 @@ PDF), Gmail (TP01 only). Slides will be added for the Deck Builder.
 | `rmxfuel` | `Page_RmxFuel.html` | `RFSC_Backend.gs` | `PAGES.rmx` |
 | `tp01` | `Page_TP01.html` | `TP01_Backend.gs` | `PAGES.pricevolume` |
 | `inventoryreport` | `Page_InventoryReport.html` | `IR_Backend.gs` | a Drive PDF (file ID in Script Properties) |
-| `deckbuilder` | **`Page_DeckBuilder.html` — DOES NOT EXIST YET** | `Deck_Backend.gs` | the other pages |
+| `deckbuilder` | `Page_DeckBuilder.html` | `Deck_Backend.gs`, `Deck_Recipe.gs` | the other pages |
 
-> ⚠️ **The `deckbuilder` route is live but broken.** `Code.gs` routes to
-> `Page_DeckBuilder`, `Shell.html` lists it in the page switcher, and `Landing.html`
-> advertises it on two cards — but the HTML file has never been written, so the route
-> throws. See [§8](#8-next-major-project--deck-builder).
+> The Deck Builder page exists and runs, but only the two Fuel Recovery sources can
+> currently produce content — the other four adapters are Phases 3–4. See
+> [§8](#8-next-major-project--deck-builder).
 
 Three pages have **no sheet of their own** and read another page's: `fuelsurcharge` reads
 Price & Volume (`readsFrom: 'pricevolume'`), `rmxfuel` reads the Ready-Mix workbook, and
@@ -100,7 +99,8 @@ namespace objects are captured at evaluation time.
 | `QlikSync.gs` | 898 | Pulls QlikView exports out of Drive and replaces sheet tabs; scheduled triggers |
 | `TP01_Backend.gs` | 72 | Transfer Price — per-market email send, recipients in User Properties |
 | `IR_Backend.gs` | 76 | Inventory Report — stores/derives a Drive PDF file ID (never touches DriveApp) |
-| `Deck_Backend.gs` | 664 | **Deck Builder server plumbing — Phase 0, unconfigured.** See §8 |
+| `Deck_Backend.gs` | 714 | Deck Builder server plumbing: template geometry, create/addSlide/finish/status, validator. See §8 |
+| `Deck_Recipe.gs` | 208 | **Config, not code** — which 43 slides the deck contains, in order, plus `DECK_getRecipe()` which checks them |
 
 ### Client (`.html`)
 
@@ -110,9 +110,10 @@ Shared partials, pulled in with `<?!= include('Name') ?>`:
 |---|---|---|
 | `Styles.html` | 215 | The one stylesheet — Amrize colour tokens (navy `#011E6A`), reset, every shared component. Goes in `<head>` |
 | `Shell.html` | 781 | Shared runtime: page switcher (`AMR_PAGES`), Help modal, ⚙ Settings modal, `AmrCache`, `AmrQlik`, `AmrProgress` |
-| `SlideExport.html` | 252 | `AmrSlide` — the 1600×900 slide frame, whitespace sliders, full-window viewer, html2canvas PNG export |
+| `SlideExport.html` | 305 | `AmrSlide` — the 1600×900 slide frame, whitespace sliders, full-window viewer, html2canvas PNG export, and `captureBare` for the deck |
 | `KpiShared.html` | 373 | `AmrKpi` — upload/parse/share the EBITDA workbooks; used by three pages |
 | `Cube.html` | 622 | `AmrCube` — the month fact table in typed arrays, backed by IndexedDB |
+| `Deck_Sources.html` | 104 | `AmrDeckSource` — the content-source registry the Deck Builder asks for tables. Included **only** by the Deck Builder |
 
 Page files: `Landing.html`, `Page_Overview.html` (5602 lines), `Page_PriceVolume.html`
 (2543), `Page_Rmx.html` (1666), `Page_Segment.html` (1381), `Page_FuelSurcharge.html`
@@ -420,34 +421,67 @@ so nobody has to guess.
 | `rfsc` adapter in `Page_RmxFuel.html` | ✅ registered (guarded) |
 | `buildContentFor(period)` on both fuel pages | ✅ built — returns content for an explicit period without touching `STATE` |
 | Exec views (`EXEC` / `EXEC_MTD` / `EXEC_YTD`) on both fuel pages | ✅ built |
-| **`Page_DeckBuilder.html`** | ❌ **missing — the route throws** |
-| **`AmrDeckSource` registry** | ❌ **never defined anywhere**; both adapter blocks are `if(window.AmrDeckSource){…}`, so they are currently dead |
-| **`AmrSlide.captureBare`** | ❌ not in `SlideExport.html` |
-| **Recipe array** | ❌ not in `Config.gs` (there is no `Deck_Recipe.gs` either) |
-| **`DECK_CONFIG.TEMPLATE_ID` / `FOLDER_ID`** | ❌ still `PUT_..._HERE` placeholders |
-| **`Amrize_Deck_Template.pptx`** and the sample-deck PDF | ❌ not in this repo — they were produced in chat and never committed |
+| `Page_DeckBuilder.html` | ✅ built — Plan / Render / Publish, previews from template geometry |
+| `AmrDeckSource` registry (`Deck_Sources.html`) | ✅ built — the two guarded adapters now have something to register into |
+| `AmrSlide.captureBare` | ✅ built in `SlideExport.html` |
+| Recipe (`Deck_Recipe.gs`) | ✅ built — 43 rows, transcribed from the July 2026 pack |
+| `Amrize_Deck_Template.pptx` + sample-deck PDF | ✅ committed to the repo |
+| **`DECK_CONFIG.TEMPLATE_ID` / `FOLDER_ID`** | ❌ **still `PUT_..._HERE` placeholders — set these before anything runs** |
+| **`pv` / `cust` / `seg` / `rmx` adapters** | ❌ Phases 3–4. Those 39 rows report "no content source registered" |
 
-So: the server half is written but has never been run against a real template, and the
-client half does not exist.
+So: the pipeline is complete end to end, but only `fsc` and `rfsc` can currently produce
+content — and their adapters still live inside their own page files, so Phase 2 (moving
+them into shared includes) is what makes the first four slides actually build.
 
-### Known bugs in `Deck_Backend.gs`
+### Bugs found and fixed
 
-Found by reading; none of this has been executed, because it needs a live Slides template.
+Found by reading the code and by validating the committed template offline against the
+same contract `DECK_validateTemplate` enforces.
 
-1. **`addSlide` uses the presentation after `saveAndClose()`.** The return statement calls
-   `pres.getSlides().length - 1` *after* `pres.saveAndClose()` (line ~410). Apps Script
-   throws on a closed presentation. Capture the index before closing.
-2. **`DECK_smokeTest` logs `out.layoutsRemoved`**, but `finish()` returns
-   `templateSlidesRemoved`. Logs `undefined`. Cosmetic.
-3. **`readTemplate` returns `L_COVER` as a usable layout.** It carries a `LAYOUT:` tag and is
-   not in `DOC_LAYOUTS`, so it appears in the layout list the page will draw previews from.
-   Either add it to `DOC_LAYOUTS` or have the page filter it.
-4. **`validateTemplate` will warn about `L_COVER`** having no `{{TITLE}}` and no `{{PAGE}}`.
-   Expected, but noisy — worth exempting cover-type layouts.
-5. `Code.gs` defines **`readTab_` twice** inside `SB` (lines 243 and 256). The second wins;
-   the first is dead. Harmless but confusing, and the second one's error message names a
-   config key (`APP_CONFIG.PAGES.slidebuilder`) that does not exist — it should say
-   `PAGES.segment`.
+1. **`addSlide` read the presentation after `saveAndClose()`** — the return statement called
+   `pres.getSlides().length - 1` on a closed presentation. Now the index is captured before
+   closing. *(Defensive: the smoke test reportedly ran fine, so this may not throw in
+   practice — but reading a closed handle is not something to rely on.)*
+2. **Unfilled tokens shipped as literal text.** `L_SECTION` carries `{{DECK_SUB}}`, which
+   only `create()` fills and only on the cover — so a divider slide put the raw text
+   `{{DECK_SUB}}` in front of the meeting. `addSlide` now accepts `spec.subtitle` for it and
+   then blanks every token the recipe did not fill. `{{PAGE}}` is the one exception; `finish()`
+   still stamps it once the slide order is final.
+3. **`DECK_smokeTest` logged `out.layoutsRemoved`**, but `finish()` returns
+   `templateSlidesRemoved` — it printed `undefined`.
+4. **`readTemplate` returned `L_COVER` as a usable layout.** Layouts now carry
+   `role: 'cover' | 'report'`; the page builds its recipe picker from `report` only, and
+   `readTemplate` fails loudly if a template has a cover but no report layouts.
+5. **`validateTemplate` judged the cover by the wrong checklist** — warning it had no
+   `{{TITLE}}` and no `{{PAGE}}`, neither of which a cover should have. It now checks the
+   cover for `{{DECK_TITLE}}` and warns if it carries a stray `{{IMAGE}}` box.
+6. **`Code.gs` defined `readTab_` twice** inside `SB`; the dead first copy is gone and the
+   survivor's error message no longer names a config key (`PAGES.slidebuilder`) that does
+   not exist.
+
+### What the committed template actually contains
+
+Validated offline with python-pptx against the same two contracts the builder relies on:
+
+- **720 × 405 pt** — exactly Google Slides 16:9. ✅
+- **Five tagged layouts**: `L_COVER`, `L_COMMENT_IMAGE`, `L_FULL_IMAGE`, `L_SECTION`,
+  `L_README`. Every token sits in exactly one top-level shape, so nothing is nested in a
+  group where `SlidesApp.getShapes()` could not reach it. ✅
+- **`L_FULL_STACK` and `L_COMMENT_STACK` are NOT in the template** (the plan assumed seven
+  layouts; five shipped). The recipe therefore routes the five Top-10 Customer slides to
+  `L_FULL_IMAGE` as one image containing both tables — which is what the Price & Volume PNG
+  export already produces. Every layout the recipe asks for exists. ✅
+- One cosmetic nit: in `L_COMMENT_IMAGE` the `{{IMAGE}}` box starts 0.8 pt above the bottom
+  of `{{TITLE}}`. Pictures are fitted and centred inside the box, so a normal wide table
+  never reaches that edge — but nudging the image box down a point in the template removes
+  the overlap entirely.
+
+Slot geometry, for reference:
+
+| Layout | `{{COMMENT}}` | `{{IMAGE}}` | capture width |
+|---|---|---|---|
+| `L_COMMENT_IMAGE` | 18, 57.6 · 194.4 × 298.8 | 223.2, 51.8 · 478.8 × 306 | 1915 px |
+| `L_FULL_IMAGE` | — | 18, 57.6 · 684 × 298.8 | 2400 px (capped) |
 
 ### Architecture — three stages, never one shot
 
@@ -503,30 +537,59 @@ the template puts them — with the captured PNG dropped in at `object-fit:conta
 preview is a faithful mock, it is instant, it needs no deck to exist yet, and moving a box in
 the template moves the previews after a *Reload template*. No Slides thumbnail round-trip.
 
-### Open questions — still unanswered
+### Open questions
 
-These were asked and never answered. Answer them before Phase 1.
+Three of the four are now answered by a default that is cheap to change. The first still
+needs a decision.
 
-1. Where do decks land — one fixed Drive folder, or the clicking user's My Drive?
-2. Top-10 customer slides: one image containing both tables (what the PNG export does today),
-   or two images in `L_FULL_STACK` with MTD/YTD labels?
-3. SW Land / SW Docks — always in the recipe, or only when ticked?
-4. Should the deck builder read live sheet data itself, or reuse whatever is already cached
-   on each page?
+1. **Where do decks land?** ❓ Still open. `DECK_CONFIG.FOLDER_ID` is a placeholder and
+   `create()` refuses to run until it is set — deliberately, so a half-built deck never
+   lands in a random My Drive. Set it to a shared folder (Editor access for everyone who
+   builds decks), or change `create()` to skip the `moveTo`.
+2. **Top-10 customer slides?** ✅ Defaulted to **one image** in `L_FULL_IMAGE` — matching what
+   the Price & Volume PNG export already produces, and needing no layout the template lacks.
+   To switch to two images: add `L_FULL_STACK` to the template, then change `layout` on the
+   five `cust_*` rows.
+3. **SW Land / SW Docks?** ✅ In the recipe, flagged `optional:true` — listed in the Plan
+   stage but **unticked by default**, so they are built only when someone asks. Default deck
+   is 39 slides; all 43 if both are ticked.
+4. **Live data or page cache?** ✅ Whatever the source page already has. `prepare(spec)`
+   returns `null` when the data is loaded, so the deck reuses the page's cache and never
+   re-reads a sheet it does not have to.
 
 ### Order of work
 
 | Phase | Scope | State |
 |---|---|---|
-| 0 | `Deck_Backend.gs`; template into Drive; `DECK_validateTemplate` + `DECK_smokeTest` pass | ⏳ code written, **never run** |
-| 0b | Fix the five known bugs above; commit the `.pptx` template to the repo | ☐ |
-| 1 | `Page_DeckBuilder.html` + `AmrDeckSource` registry + `AmrSlide.captureBare` + recipe in `Config.gs`; previews drawn from template geometry, no data yet | ☐ |
-| 2 | Fuel Recovery adapters (AGG + RMX) into shared includes → first 4 slides end to end | ☐ |
-| 3 | AGG P&V adapter → 14 summary + 5 customer slides | ☐ |
-| 4 | RMX P&V + Segment adapters → 20 slides | ☐ |
+| 0 | `Deck_Backend.gs`; template into Drive; `DECK_validateTemplate` + `DECK_smokeTest` pass | ✅ code written; smoke test run by Rafay |
+| 0b | Fix the known bugs; commit the `.pptx` template | ✅ done — six fixed, template validated offline |
+| 1 | `Page_DeckBuilder.html` + `AmrDeckSource` + `AmrSlide.captureBare` + `Deck_Recipe.gs`; previews from template geometry, no data yet | ✅ done |
+| 2 | Fuel Recovery adapters (AGG + RMX) into shared `Deck_FSC.html` / `Deck_RFSC.html` → first 4 slides end to end | ☐ **next** |
+| 3 | AGG P&V adapter (`pv` + `cust`) → 14 summary + 5 customer slides | ☐ |
+| 4 | RMX P&V + Segment adapters (`rmx` + `seg`) → 20 slides | ☐ |
 | 5 | Optional: remember last month's comment text per slide id and pre-fill | ☐ |
 
 **Phase 2 is the proof.** If four Fuel Recovery slides land clean, the rest is repetition.
+
+### Phase 2, concretely
+
+The two fuel adapters already exist and are already correct — they just live in the wrong
+file. `Page_FuelSurcharge.html` and `Page_RmxFuel.html` each hold a `buildContentFor(period)`
+plus an `AmrDeckSource.register(...)` block, and the Deck Builder cannot include a whole
+page. So:
+
+1. Cut the calc + render layer and the adapter out of each page into `Deck_FSC.html` /
+   `Deck_RFSC.html`. Because `include()` inlines into the same document, the moved functions
+   still see the page's globals — this is a move, not a rewrite.
+2. Have both the report page **and** `Page_DeckBuilder.html` include the new file. The
+   include lines go where the marked comment sits at the bottom of the Deck Builder page —
+   as real scriptlets, **not** inside an HTML comment (Apps Script evaluates a scriptlet
+   wherever it appears, so a commented-out `include()` of a missing file still throws).
+3. Pass/fail test: **the page's existing PNG export must look identical before and after.**
+
+Each adapter may also expose an optional `fit(box)` — the deck's capture path calls it the
+same way `AmrSlide.build()` does, so a page's existing table-fitting logic (`fscFit`) carries
+over unchanged.
 
 ### Recipe shape
 
@@ -626,8 +689,26 @@ before assuming it is finished.**
 | Date | Task | Status |
 |---|---|---|
 | 2026-08-13 | Audit repo against the chat-memory README; rewrite it as a project document reflecting the actual code | ✅ done |
-| | Deck Builder Phase 0b — fix the five known `Deck_Backend.gs` bugs; commit `Amrize_Deck_Template.pptx` to the repo | ☐ |
-| | Deck Builder Phase 1 — `Page_DeckBuilder.html`, `AmrDeckSource`, `AmrSlide.captureBare`, recipe array | ☐ |
+| 2026-08-13 | Deck Builder Phase 0b — fix the `Deck_Backend.gs` bugs (6 found, 6 fixed); validate the committed template offline | ✅ done |
+| 2026-08-13 | Deck Builder Phase 1 — `Page_DeckBuilder.html`, `Deck_Sources.html`, `AmrSlide.captureBare`, `Deck_Recipe.gs` (43 rows) | ✅ done |
+| | **Set `DECK_CONFIG.TEMPLATE_ID` and `FOLDER_ID`, add the Slides + Drive scopes, serve `?page=deckbuilder` from the execute-as-user deployment.** Nothing runs until this is done | ☐ |
+| | Deck Builder Phase 2 — move the fuel adapters into `Deck_FSC.html` / `Deck_RFSC.html`; first 4 slides end to end | ☐ |
+| | Deck Builder Phase 3 — `pv` + `cust` adapters (19 slides) | ☐ |
+| | Deck Builder Phase 4 — `rmx` + `seg` adapters (20 slides) | ☐ |
+
+### What has and has not been run
+
+This is Apps Script, so nothing touching SlidesApp, DriveApp or a spreadsheet can be
+executed outside the deployment. What was actually verified for the work above:
+
+- ✅ `node --check` on every changed `.gs` file and every inline `<script>` block.
+- ✅ `DECK_getRecipe()` executed in Node: 43 rows, no duplicate ids, no missing fields.
+- ✅ The committed `.pptx` parsed with python-pptx and checked against the same contract
+  `DECK_validateTemplate` enforces — page size, layout tags, token uniqueness, no tokens
+  nested inside groups, slot geometry.
+- ✅ Every layout the recipe asks for confirmed present in the template.
+- ❌ **Not run:** `DECK_create` / `addSlide` / `finish`, the Deck Builder page in a browser,
+  and any capture through html2canvas. Those need the live deployment.
 
 ### Corrections made to the previous README
 

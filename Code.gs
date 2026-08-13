@@ -240,25 +240,16 @@ var SB = (function () {
 
   // Read one tab as a grid of rows (header row first). Required tabs throw if
   // missing; optional tabs return null so a not-yet-created market is skipped.
-  function readTab_(name, required) {
-    var sh = APP_openSpreadsheet_('segment').getSheetByName(name);
-    if (!sh) {
-      if (required) {
-        throw new Error('Tab "' + name + '" was not found in the Slide Builder data sheet. ' +
-          'Check the tab name in your Google Sheet (or update APP_CONFIG.PAGES.segment in Config.gs).');
-      }
-      return null;
-    }
-    return sh.getDataRange().getValues();
-  }
-
-
+  //
+  // asText picks getDisplayValues() over getValues(). The Segment tabs are read
+  // that way because Sheets turns a Bill Month like JUL-26 into a Date object
+  // and only getDisplayValues() gives back the literal string.
   function readTab_(name, required, asText) {
     var sh = APP_openSpreadsheet_('segment').getSheetByName(name);
     if (!sh) {
       if (required) {
         throw new Error('Tab "' + name + '" was not found in the Slide Builder data sheet. ' +
-          'Check the tab name in your Google Sheet (or update APP_CONFIG.PAGES.slidebuilder in Config.gs).');
+          'Check the tab name in your Google Sheet (or update APP_CONFIG.PAGES.segment in Config.gs).');
       }
       return null;
     }

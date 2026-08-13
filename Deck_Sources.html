@@ -1,0 +1,100 @@
+<!-- =============================================================
+     Deck_Sources.html — the CONTENT-SOURCE REGISTRY for the Deck Builder.
+
+     Pull it in with  <?!= include('Deck_Sources') ?>  BEFORE any module
+     that registers into it.
+
+     WHAT THIS SOLVES
+     The Deck Builder must not re-implement a single table. Every report
+     page already knows how to build its own slide content; this is the
+     one small contract that lets the deck ask for it.
+
+     Each report module registers itself once:
+
+       AmrDeckSource.register('fsc', {
+         prepare: function(spec){ ... },   // optional. Promise or null.
+         content: function(spec){ ... }    // required. Returns a DOM element.
+       });
+
+       spec = { id, source, market, period, layout, title, ... }
+              — one row of DECK_RECIPE, passed through untouched.
+
+     prepare() loads whatever that market/period needs and may return a
+     Promise; the builder awaits it before calling content(). It is called
+     once per slide, so it MUST be cheap when the data is already there —
+     every adapter shipped so far returns null in that case.
+
+     content() returns the bare block: no page header, no logo, no
+     whitespace bands. AmrSlide.captureBare photographs exactly what it
+     hands back. It must NOT mutate the page's visible state — the deck
+     asks for MTD and YTD back to back, and a source that switched the
+     page's own view to answer would leave the user staring at whichever
+     period happened to be captured last. That is why the fuel pages grew
+     buildContentFor(period) instead of reusing buildContent().
+
+     WHY REGISTRATION IS GUARDED EVERYWHERE
+     Report pages do NOT include this file — only the Deck Builder does. So
+     every page wraps its registration in `if(window.AmrDeckSource){…}` and
+     keeps working standalone when the registry is absent.
+     ============================================================= -->
+<script>
+var AmrDeckSource = (function(){
+
+  var REG = {};
+
+  /* Register one source. Re-registering the same id replaces it and says so:
+     two modules claiming 'pv' is a real mistake (both pages included at once),
+     and silently keeping one of them would be near-impossible to spot. */
+  function register(id, impl){
+    id = String(id||'');
+    if(!id){ console.warn('AmrDeckSource.register called without an id'); return; }
+    if(!impl || typeof impl.content !== 'function'){
+      console.warn('AmrDeckSource: source "'+id+'" has no content() — ignored');
+      return;
+    }
+    if(REG[id]) console.warn('AmrDeckSource: source "'+id+'" registered twice; using the newer one');
+    REG[id] = impl;
+  }
+
+  function has(id){ return !!REG[String(id||'')]; }
+  function get(id){ return REG[String(id||'')] || null; }
+  function list(){ return Object.keys(REG).sort(); }
+
+  /* Which sources a recipe needs but nobody registered. The Deck Builder
+     shows this up front, so a missing adapter is a sentence on the page
+     rather than 43 rows that each fail on their own. */
+  function missingFor(rows){
+    var need = {}, out = [];
+    (rows||[]).forEach(function(r){ if(r && r.source) need[r.source]=1; });
+    Object.keys(need).sort().forEach(function(s){ if(!REG[s]) out.push(s); });
+    return out;
+  }
+
+  /* prepare + content for one recipe row, always as a Promise so the caller
+     has a single shape to await. A source that throws synchronously inside
+     content() is turned into a rejected promise rather than taking the whole
+     render loop down. */
+  function build(spec){
+    spec = spec || {};
+    var src = get(spec.source);
+    if(!src){
+      return Promise.reject(new Error('No content source registered for "'+
+        spec.source+'". The page that produces it is not included in the Deck '+
+        'Builder yet.'));
+    }
+    return Promise.resolve()
+      .then(function(){
+        return (typeof src.prepare === 'function') ? src.prepare(spec) : null;
+      })
+      .then(function(){
+        var el = src.content(spec);
+        if(!el) throw new Error('"'+spec.source+'" returned no content for '+
+          (spec.id||'this slide')+'.');
+        return el;
+      });
+  }
+
+  return { register:register, has:has, get:get, list:list,
+           missingFor:missingFor, build:build };
+})();
+</script>

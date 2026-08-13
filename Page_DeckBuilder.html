@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amrize &middot; Deck Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<?!= include('Styles') ?>
+<style>
+/* ---- Deck Builder page-only rules (tokens/base/header from Styles.html) ---- */
+.dbwrap{max-width:1560px; margin:0 auto; padding:14px 20px 28px; box-sizing:border-box;
+  display:grid; grid-template-columns:300px minmax(0,1fr); gap:16px; align-items:start}
+@media (max-width:1080px){ .dbwrap{grid-template-columns:1fr} }
+
+.db-rail{display:flex; flex-direction:column; gap:12px; position:sticky; top:12px}
+.db-panel{background:var(--white); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); padding:14px 15px}
+.db-panel h3{font:800 12px Archivo; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--blue-80); margin:0 0 10px}
+.db-lbl{display:block; font:600 11.5px Inter; color:var(--muted); margin:10px 0 5px}
+.db-lbl:first-of-type{margin-top:0}
+.db-in{width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:9px;
+  background:#F4F7FC; padding:8px 10px; font:500 12.5px Inter; color:var(--ink)}
+.db-note{font:500 11.5px Inter; color:var(--muted); line-height:1.5; margin:8px 0 0}
+.db-note b{color:var(--ink)}
+
+.dbbtn{display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  border:1px solid var(--line); background:#fff; color:var(--blue-80); cursor:pointer;
+  font:600 12px Inter; padding:0 13px; height:34px; border-radius:9px; transition:.14s;
+  white-space:nowrap}
+.dbbtn:hover:not(:disabled){background:var(--blue-10); border-color:var(--blue-40)}
+.dbbtn.primary{background:var(--blue-100); border-color:var(--blue-100); color:#fff}
+.dbbtn.primary:hover:not(:disabled){background:var(--blue-90)}
+.dbbtn:disabled{opacity:.45; cursor:default}
+.dbbtn.wide{width:100%}
+
+/* ---- stage bar ---- */
+.db-stages{display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+  background:var(--white); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); padding:12px 14px; margin-bottom:14px}
+.db-stage{display:flex; align-items:center; gap:8px}
+.db-step{width:22px; height:22px; border-radius:50%; background:var(--blue-10);
+  color:var(--blue-100); font:700 11px Inter; display:flex; align-items:center;
+  justify-content:center; flex:none}
+.db-stage.done .db-step{background:var(--pos); color:#fff}
+.db-arrow{color:var(--line); font:700 15px Inter}
+.db-spacer{flex:1}
+.db-prog{font:600 12px Inter; color:var(--muted)}
+
+/* ---- the slide list ---- */
+.db-list{background:var(--white); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); overflow:hidden}
+.db-group{background:var(--blue-10); border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line); padding:7px 14px;
+  font:800 11px Archivo; letter-spacing:.06em; text-transform:uppercase; color:var(--blue-100)}
+.db-group:first-child{border-top:0}
+.db-row{display:grid; grid-template-columns:30px 34px minmax(0,1fr) 150px 96px 176px;
+  gap:12px; align-items:center; padding:9px 14px; border-bottom:1px solid #F0F4FA}
+.db-row:last-child{border-bottom:0}
+@media (max-width:980px){ .db-row{grid-template-columns:30px 34px minmax(0,1fr) 96px; }
+  .db-row .db-layout, .db-row .db-thumb{display:none} }
+.db-row.off{opacity:.45}
+.db-num{font:600 11px Inter; color:var(--muted); text-align:right}
+.db-ttl{font:600 12.5px Inter; color:var(--ink); overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap}
+.db-sub{font:500 10.5px Inter; color:var(--muted); margin-top:1px}
+.db-layout{font:500 11px Inter; color:var(--muted); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap}
+.db-st{font:700 10.5px Inter; letter-spacing:.03em; text-transform:uppercase}
+.db-st.pending{color:var(--muted)}
+.db-st.working{color:var(--blue-70)}
+.db-st.ready{color:var(--pos)}
+.db-st.error{color:var(--neg)}
+.db-st.done{color:var(--pos)}
+.db-err{font:500 10.5px Inter; color:var(--neg); margin-top:2px; white-space:normal; line-height:1.35}
+
+/* ---- the in-page slide preview: a faithful mock built from template geometry ---- */
+.db-thumb{width:176px; height:99px; border:1px solid var(--line); border-radius:5px;
+  background:#fff; position:relative; overflow:hidden; cursor:pointer}
+.db-thumb.empty{background:#F7FAFE}
+.db-slot{position:absolute; box-sizing:border-box}
+.db-slot.title{background:transparent; color:var(--blue-100); font:800 5px Archivo;
+  display:flex; align-items:center; overflow:hidden; white-space:nowrap}
+.db-slot.comment{background:#DCEEFB; border:.5px solid #BBD9F2; border-radius:1px}
+.db-slot.image{background:#F0F4FA; border:.5px dashed #C6D5E8}
+.db-slot.image img{width:100%; height:100%; object-fit:contain; display:block}
+.db-slot.page{color:var(--muted); font:600 4px Inter; display:flex; align-items:flex-end}
+
+/* ---- lightbox for a full-size look at one slide mock ---- */
+.db-lb{position:fixed; inset:0; z-index:9999; background:rgba(1,30,106,.86); display:none;
+  align-items:center; justify-content:center; flex-direction:column; gap:12px; padding:20px}
+.db-lb.open{display:flex}
+.db-lb-close{position:absolute; top:12px; right:18px; border:0; background:transparent;
+  color:#fff; font:700 30px Inter; cursor:pointer; line-height:1}
+.db-lb-hint{color:#fff; font:600 12px Inter; opacity:.85}
+.db-big{background:#fff; border-radius:8px; position:relative; overflow:hidden;
+  box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.db-big .db-slot.title{font:800 20px Archivo}
+.db-big .db-slot.page{font:600 11px Inter}
+
+.db-banner{border-radius:var(--r); padding:11px 14px; font:600 12.5px Inter;
+  margin-bottom:12px; line-height:1.5}
+.db-banner.warn{background:#FFF6E5; border:1px solid #F5D08A; color:#7A5200}
+.db-banner.bad{background:#FDECEC; border:1px solid #F3B7B7; color:#8A1F1F}
+.db-banner.ok{background:#E9F8EF; border:1px solid #A9DFC0; color:#15653A}
+.db-banner a{color:inherit; font-weight:800}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">
+    <span class="mark">AMRIZE</span>
+    <span>
+      <span class="title">Deck Builder</span>
+      <span class="sub">Every page &rarr; one Google Slides deck &mdash; real text, real comment boxes</span>
+    </span>
+  </div>
+  <button class="ghost" onclick="window.amrGoHome&&amrGoHome()" title="Back to the suite home">&#8962; Home</button>
+  <button class="ghost" onclick="dbValidate()" title="Check the template before building on it">&#10003; Check template</button>
+</header>
+
+<div class="dbwrap">
+
+  <!-- ============ left rail ============ -->
+  <div class="db-rail">
+    <div class="db-panel">
+      <h3>Template</h3>
+      <div id="dbTplInfo" class="db-note">Reading the template&hellip;</div>
+      <button class="dbbtn wide" id="dbReloadTpl" onclick="dbLoadTemplate()" style="margin-top:10px">
+        &#8635; Reload template</button>
+      <p class="db-note">Move a box in the template and reload &mdash; the previews and the
+        generated slides both follow. No code change.</p>
+    </div>
+
+    <div class="db-panel">
+      <h3>Deck</h3>
+      <label class="db-lbl">Deck name</label>
+      <input class="db-in" id="dbName" type="text" placeholder="Amrize Commercial Deck">
+      <label class="db-lbl">Cover subtitle</label>
+      <input class="db-in" id="dbSub" type="text" placeholder="Central Canada &middot; Commercial">
+    </div>
+
+    <div class="db-panel">
+      <h3>Content sources</h3>
+      <div id="dbSources" class="db-note">&mdash;</div>
+    </div>
+  </div>
+
+  <!-- ============ main ============ -->
+  <div>
+    <div id="dbBanners"></div>
+
+    <div class="db-stages">
+      <div class="db-stage" id="dbStage1"><span class="db-step">1</span>
+        <button class="dbbtn" id="dbBtnPlan" onclick="dbPlan()">Plan</button></div>
+      <span class="db-arrow">&rarr;</span>
+      <div class="db-stage" id="dbStage2"><span class="db-step">2</span>
+        <button class="dbbtn" id="dbBtnRender" onclick="dbRenderAll()" disabled>Render</button></div>
+      <span class="db-arrow">&rarr;</span>
+      <div class="db-stage" id="dbStage3"><span class="db-step">3</span>
+        <button class="dbbtn primary" id="dbBtnPublish" onclick="dbPublish()" disabled>Publish to Slides</button></div>
+      <div class="db-spacer"></div>
+      <div class="db-prog" id="dbProg"></div>
+    </div>
+
+    <div class="db-list" id="dbList">
+      <div style="padding:26px 16px; text-align:center" class="db-note">
+        Press <b>Plan</b> to list the slides this month&rsquo;s deck will contain.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- full-size look at one slide mock -->
+<div class="db-lb" id="dbLb">
+  <button class="db-lb-close" onclick="dbCloseLb()">&times;</button>
+  <div class="db-big" id="dbBig"></div>
+  <div class="db-lb-hint">Press Esc or click outside to close</div>
+</div>
+
+<script>
+/* ===========================================================================
+ * Deck Builder — PLAN, then RENDER, then PUBLISH.
+ * ---------------------------------------------------------------------------
+ * Three stages, never one shot. 43 slides of client-side rendering plus 43
+ * Slides API round trips does not fit in one execution, and a failure at slide
+ * 40 must not cost the first 39. So:
+ *
+ *   PLAN     read the recipe. No data, instant. Untick what this month skips.
+ *   RENDER   one slide at a time, in the browser: ask the source page for its
+ *            content block, photograph it, keep the PNG. All the compute is
+ *            here. One slide per tick keeps the page responsive and lets you
+ *            watch it fill in.
+ *   PUBLISH  one google.script.run per slide. The server duplicates the
+ *            layout, fills the tokens and drops the picture in. ~2-4s each,
+ *            well inside the 6-minute limit because no call ever handles more
+ *            than one slide.
+ *
+ * A row that fails is marked red and left alone — press Render again and only
+ * the unfinished rows are retried. Nothing is ever redone from scratch.
+ * ========================================================================= */
+
+var IS_LIVE = (typeof google !== 'undefined' && google.script && google.script.run);
+
+var TPL   = null;    // DECK_readTemplate(): layouts + slot geometry, in points
+var ROWS  = [];      // recipe rows + per-row build state
+var DECKR = null;    // { deckId, url } once created
+var BUSY  = false;
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+/* google.script.run as a Promise, so the stages read as sequences. */
+function srv(fn, args){
+  return new Promise(function(resolve, reject){
+    if(!IS_LIVE) return reject(new Error('This page only works inside the live Apps Script web app.'));
+    google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn]
+      .apply(null, args || []);
+  });
+}
+
+function banner(kind, html){
+  var d = document.createElement('div');
+  d.className = 'db-banner ' + kind;
+  d.innerHTML = html;
+  document.getElementById('dbBanners').appendChild(d);
+}
+function clearBanners(){ document.getElementById('dbBanners').innerHTML = ''; }
+function prog(t){ document.getElementById('dbProg').textContent = t || ''; }
+
+function setBusy(b){
+  BUSY = b;
+  document.getElementById('dbBtnPlan').disabled    = b;
+  document.getElementById('dbBtnRender').disabled  = b || !ROWS.length;
+  document.getElementById('dbBtnPublish').disabled = b || !countReady();
+  document.getElementById('dbReloadTpl').disabled  = b;
+}
+
+function countOn(){ return ROWS.filter(function(r){ return r.on; }).length; }
+function countReady(){ return ROWS.filter(function(r){ return r.on && r.png; }).length; }
+function countDone(){ return ROWS.filter(function(r){ return r.status==='done'; }).length; }
+
+
+/* =========================================================================
+ * TEMPLATE — the geometry every preview and every capture size comes from
+ * ======================================================================= */
+function dbLoadTemplate(){
+  var host = document.getElementById('dbTplInfo');
+  host.textContent = 'Reading the template…';
+  return srv('DECK_readTemplate')
+    .then(function(t){
+      TPL = t;
+      var report = (t.layouts||[]).filter(function(L){ return L.role === 'report'; });
+      host.innerHTML =
+        '<b>'+esc(t.name)+'</b><br>'+
+        Math.round(t.pageWidth)+' &times; '+Math.round(t.pageHeight)+' pt &middot; '+
+        report.length+' report layout'+(report.length===1?'':'s')+'<br>'+
+        '<span style="color:var(--muted)">'+esc(report.map(function(L){ return L.layoutId; }).join(', '))+'</span>';
+      redraw();
+    })
+    .catch(function(e){
+      TPL = null;
+      host.innerHTML = '<span style="color:var(--neg);font-weight:700">'+
+        esc(e && e.message ? e.message : String(e))+'</span>';
+    });
+}
+
+function dbValidate(){
+  clearBanners();
+  prog('Checking the template…');
+  srv('DECK_validateTemplate')
+    .then(function(r){
+      prog('');
+      (r.errors||[]).forEach(function(m){ banner('bad', '<b>Template error:</b> '+esc(m)); });
+      (r.warnings||[]).forEach(function(m){ banner('warn', esc(m)); });
+      if(r.ok && !(r.warnings||[]).length){
+        banner('ok', 'Template checks out — '+ (r.layouts||[]).length +' layouts, no problems.');
+      } else if(r.ok){
+        banner('ok', 'Template is usable. The notes above are worth a look but will not stop a build.');
+      }
+    })
+    .catch(function(e){ prog(''); banner('bad', esc(e && e.message ? e.message : String(e))); });
+}
+
+function layoutOf(id){
+  if(!TPL) return null;
+  var L = (TPL.layouts||[]).filter(function(x){ return x.layoutId === id; });
+  return L.length ? L[0] : null;
+}
+
+
+/* =========================================================================
+ * STAGE 1 — PLAN
+ * ======================================================================= */
+function dbPlan(){
+  clearBanners();
+  setBusy(true);
+  prog('Reading the recipe…');
+  srv('DECK_getRecipe')
+    .then(function(rec){
+      ROWS = (rec.rows||[]).map(function(r){
+        return { spec:r, on:!r.optional, status:'pending', png:null,
+                 w:0, h:0, err:'' };
+      });
+      (rec.problems||[]).forEach(function(p){
+        banner('bad', '<b>Recipe:</b> '+esc(p));
+      });
+
+      /* Name the missing adapters ONCE, up front. Otherwise the same fact
+         arrives 39 separate times, once per failed row. */
+      var missing = AmrDeckSource.missingFor(rec.rows||[]);
+      if(missing.length){
+        var n = ROWS.filter(function(r){ return missing.indexOf(r.spec.source) !== -1; }).length;
+        banner('warn', '<b>'+n+' of '+ROWS.length+' slides cannot be rendered yet.</b> '+
+          'No content source is registered for: <b>'+esc(missing.join(', '))+'</b>. '+
+          'Those pages have not been moved into shared includes yet, so the Deck '+
+          'Builder cannot reach their tables. Everything else below will build.');
+      }
+
+      /* A layout the template does not have is a hard stop for those rows. */
+      var badLayouts = {};
+      ROWS.forEach(function(r){
+        if(TPL && !layoutOf(r.spec.layout)) badLayouts[r.spec.layout] = 1;
+      });
+      Object.keys(badLayouts).forEach(function(L){
+        banner('bad', 'Layout <b>'+esc(L)+'</b> is in the recipe but not in the '+
+          'template. Add a slide with "LAYOUT: '+esc(L)+'" in its speaker notes, '+
+          'or point those recipe rows at a layout that exists.');
+      });
+
+      prog(ROWS.length + ' slides planned');
+      redraw();
+      setBusy(false);
+      updateStages();
+    })
+    .catch(function(e){
+      prog('');
+      banner('bad', esc(e && e.message ? e.message : String(e)));
+      setBusy(false);
+    });
+}
+
+
+/* =========================================================================
+ * STAGE 2 — RENDER, one slide at a time
+ * ------------------------------------------------------------------------
+ * Serial on purpose. Parallel captures fight over the same off-screen layout
+ * and the same Chart.js canvases, and the progress line stops meaning
+ * anything. Slow and legible beats fast and unexplainable.
+ * ======================================================================= */
+function dbRenderAll(){
+  if(!TPL){ banner('bad', 'Load the template first — the capture size comes from it.'); return; }
+  clearBanners();
+  setBusy(true);
+
+  var todo = ROWS.filter(function(r){ return r.on && !r.png; });
+  if(!todo.length){ prog('Nothing to render'); setBusy(false); return; }
+
+  var i = 0;
+  function next(){
+    if(i >= todo.length){
+      var ok = countReady(), failed = ROWS.filter(function(r){ return r.status==='error'; }).length;
+      prog(ok + ' of ' + countOn() + ' slides ready' + (failed ? ' · ' + failed + ' failed' : ''));
+      if(failed) banner('warn', failed+' slide'+(failed===1?'':'s')+' could not be rendered. '+
+        'Press <b>Render</b> again to retry just those.');
+      setBusy(false); updateStages();
+      return;
+    }
+    var row = todo[i++];
+    prog('Rendering ' + i + ' of ' + todo.length + ' · ' + row.spec.title);
+    row.status = 'working'; row.err = ''; drawRow(row);
+
+    renderOne(row)
+      .then(function(){ row.status = 'ready'; })
+      .catch(function(e){
+        row.status = 'error';
+        row.err = (e && e.message) ? e.message : String(e);
+      })
+      .then(function(){
+        drawRow(row);
+        setTimeout(next, 0);        // yield, so the page stays alive
+      });
+  }
+  next();
+}
+
+/* One slide: ask its source for the content block, photograph it at the size
+   the template's image slot actually needs. */
+function renderOne(row){
+  var L = layoutOf(row.spec.layout);
+  if(!L) return Promise.reject(new Error('Layout "'+row.spec.layout+'" is not in the template.'));
+  var slot = L.slots && L.slots.image;
+  if(!slot) return Promise.reject(new Error('Layout "'+row.spec.layout+'" has no {{IMAGE}} box.'));
+
+  /* Lay the content out at a width proportional to the slot, so a narrow
+     right-hand slot does not get a table built for a full-width one and then
+     shrunk to illegibility. Capture resolution comes from the template. */
+  var cssW = Math.max(900, Math.min(1500, Math.round(slot.w * 2.2)));
+
+  return AmrDeckSource.build(row.spec).then(function(el){
+    return AmrSlide.captureBare(el, {
+      width: cssW,
+      capturePx: slot.capturePx || Math.round(slot.w * 4),
+      fit: (AmrDeckSource.get(row.spec.source)||{}).fit || null
+    });
+  }).then(function(cap){
+    row.png = cap.dataUrl; row.w = cap.w; row.h = cap.h;
+  });
+}
+
+
+/* =========================================================================
+ * STAGE 3 — PUBLISH, one google.script.run per slide
+ * ======================================================================= */
+function dbPublish(){
+  clearBanners();
+  var todo = ROWS.filter(function(r){ return r.on && r.png && r.status !== 'done'; });
+  if(!todo.length){ banner('warn', 'Nothing rendered to publish yet.'); return; }
+  setBusy(true);
+  prog('Creating the deck…');
+
+  var name = document.getElementById('dbName').value.trim();
+  var sub  = document.getElementById('dbSub').value.trim();
+
+  var start = DECKR ? Promise.resolve(DECKR)
+    : srv('DECK_create', [{ name:name || undefined, deckTitle:name || undefined, deckSub:sub }]);
+
+  start.then(function(d){
+    DECKR = d;
+    var i = 0;
+    function next(){
+      if(i >= todo.length){
+        prog('Finishing…');
+        return srv('DECK_finish', [DECKR.deckId]).then(function(out){
+          prog(out.slides + ' slides published');
+          banner('ok', 'Deck ready — <a href="'+esc(out.url)+'" target="_blank">open it in Google Slides</a> '+
+            '('+out.slides+' slides). Titles and comment boxes are real, editable text.');
+          setBusy(false); updateStages();
+        });
+      }
+      var row = todo[i++];
+      prog('Publishing ' + i + ' of ' + todo.length + ' · ' + row.spec.title);
+      row.status = 'working'; drawRow(row);
+
+      srv('DECK_addSlide', [DECKR.deckId, {
+          recipeId: row.spec.id, layoutId: row.spec.layout,
+          title: row.spec.title, subtitle: row.spec.subtitle,
+          comment: '',                       // real, empty, typeable on the slide
+          png: row.png, imgW: row.w, imgH: row.h
+        }])
+        .then(function(){ row.status = 'done'; })
+        .catch(function(e){
+          row.status = 'error';
+          row.err = (e && e.message) ? e.message : String(e);
+        })
+        .then(function(){ drawRow(row); setTimeout(next, 0); });
+    }
+    next();
+  }).catch(function(e){
+    prog('');
+    banner('bad', esc(e && e.message ? e.message : String(e)));
+    setBusy(false);
+  });
+}
+
+
+/* =========================================================================
+ * THE LIST + the in-page slide mock
+ * ------------------------------------------------------------------------
+ * The mock is drawn from the template's REAL geometry in points, scaled down.
+ * So it shows where things will actually land, it is instant, it needs no deck
+ * to exist — and when someone moves a box in the template and reloads, the
+ * previews move with it.
+ * ======================================================================= */
+function redraw(){
+  var host = document.getElementById('dbList');
+  if(!ROWS.length){
+    host.innerHTML = '<div style="padding:26px 16px;text-align:center" class="db-note">'+
+      'Press <b>Plan</b> to list the slides this month&rsquo;s deck will contain.</div>';
+    return;
+  }
+  var html = '', group = '';
+  ROWS.forEach(function(r, i){
+    if(r.spec.group !== group){
+      group = r.spec.group;
+      html += '<div class="db-group">'+esc(group)+'</div>';
+    }
+    html += rowHtml(r, i);
+  });
+  host.innerHTML = html;
+  ROWS.forEach(function(r, i){ paintThumb(i); });
+}
+
+function rowHtml(r, i){
+  var sub = [r.spec.source, r.spec.market, r.spec.period].filter(Boolean).join(' · ');
+  return '<div class="db-row'+(r.on?'':' off')+'" id="dbRow'+i+'">'+
+    '<input type="checkbox" '+(r.on?'checked':'')+' onchange="dbToggle('+i+',this.checked)">'+
+    '<div class="db-num">'+(i+1)+'</div>'+
+    '<div><div class="db-ttl">'+esc(r.spec.title)+'</div>'+
+      '<div class="db-sub">'+esc(sub)+'</div>'+
+      (r.err ? '<div class="db-err">'+esc(r.err)+'</div>' : '')+'</div>'+
+    '<div class="db-layout">'+esc(r.spec.layout)+'</div>'+
+    '<div class="db-st '+stCls(r.status)+'">'+stTxt(r.status)+'</div>'+
+    '<div class="db-thumb'+(r.png?'':' empty')+'" id="dbThumb'+i+'" '+
+      'onclick="dbOpenLb('+i+')" title="Click for a full-size look"></div>'+
+  '</div>';
+}
+function stCls(s){ return s==='working'?'working': s==='ready'?'ready':
+                          s==='error'?'error': s==='done'?'done':'pending'; }
+function stTxt(s){ return s==='working'?'working…': s==='ready'?'ready':
+                          s==='error'?'failed': s==='done'?'published':'—'; }
+
+function drawRow(r){
+  var i = ROWS.indexOf(r); if(i < 0) return;
+  var el = document.getElementById('dbRow'+i); if(!el) return;
+  el.outerHTML = rowHtml(r, i);
+  paintThumb(i);
+}
+
+function dbToggle(i, on){
+  ROWS[i].on = on;
+  var el = document.getElementById('dbRow'+i);
+  if(el) el.classList.toggle('off', !on);
+  prog(countOn() + ' of ' + ROWS.length + ' slides selected');
+  setBusy(false);
+}
+
+/* Build the mock: every slot the layout has, positioned by the template. */
+function slotHtml(r, L, scale){
+  if(!L) return '<div class="db-note" style="padding:6px;font-size:9px">no layout</div>';
+  var s = L.slots || {}, out = '';
+  function box(kind, rect, inner){
+    if(!rect) return '';
+    return '<div class="db-slot '+kind+'" style="left:'+(rect.x*scale)+'px;top:'+(rect.y*scale)+
+      'px;width:'+(rect.w*scale)+'px;height:'+(rect.h*scale)+'px">'+(inner||'')+'</div>';
+  }
+  out += box('comment', s.comment, '');
+  out += box('image', s.image, r.png ? '<img src="'+r.png+'" alt="">' : '');
+  out += box('image', s.image2, '');
+  out += box('title', s.title, esc(r.spec.title));
+  out += box('page', s.page, '');
+  return out;
+}
+
+function paintThumb(i){
+  var r = ROWS[i], host = document.getElementById('dbThumb'+i);
+  if(!host) return;
+  if(!TPL){ host.innerHTML = ''; return; }
+  var L = layoutOf(r.spec.layout);
+  var scale = 176 / (TPL.pageWidth || 720);
+  host.innerHTML = slotHtml(r, L, scale);
+}
+
+/* ---- full-size look ---- */
+function dbOpenLb(i){
+  if(!TPL) return;
+  var r = ROWS[i], L = layoutOf(r.spec.layout);
+  var W = Math.min(window.innerWidth - 60, 1000);
+  var scale = W / (TPL.pageWidth || 720);
+  var big = document.getElementById('dbBig');
+  big.style.width  = Math.round((TPL.pageWidth||720) * scale) + 'px';
+  big.style.height = Math.round((TPL.pageHeight||405) * scale) + 'px';
+  big.innerHTML = slotHtml(r, L, scale);
+  document.getElementById('dbLb').classList.add('open');
+}
+function dbCloseLb(){ document.getElementById('dbLb').classList.remove('open'); }
+document.addEventListener('keydown', function(e){
+  if(e.key === 'Escape' || e.keyCode === 27) dbCloseLb();
+});
+document.getElementById('dbLb').addEventListener('click', function(e){
+  if(e.target === this) dbCloseLb();
+});
+
+function updateStages(){
+  document.getElementById('dbStage1').classList.toggle('done', ROWS.length > 0);
+  document.getElementById('dbStage2').classList.toggle('done', countReady() > 0);
+  document.getElementById('dbStage3').classList.toggle('done', countDone() > 0);
+}
+
+
+/* =========================================================================
+ * boot — deferred, because AmrDeckSource and AmrCache are included AFTER
+ * this script (Shell.html defines AmrCache; the source modules register
+ * themselves into AmrDeckSource on the way in).
+ * ======================================================================= */
+document.addEventListener('DOMContentLoaded', function(){
+  var have = window.AmrDeckSource ? AmrDeckSource.list() : [];
+  document.getElementById('dbSources').innerHTML = have.length
+    ? '<b>Registered:</b> ' + esc(have.join(', '))
+    : '<span style="color:var(--neg);font-weight:700">None registered yet.</span><br>'+
+      'The report pages still hold their content builders. Moving them into '+
+      'shared includes is what lights this up, one page at a time.';
+
+  var d = new Date(); d.setMonth(d.getMonth() - 1);   // decks report last closed month
+  var MON = ['January','February','March','April','May','June','July',
+             'August','September','October','November','December'];
+  document.getElementById('dbName').value =
+    'Amrize Commercial Deck — ' + MON[d.getMonth()] + ' ' + d.getFullYear();
+
+  if(IS_LIVE) dbLoadTemplate();
+  else document.getElementById('dbTplInfo').innerHTML =
+    '<span style="color:var(--neg);font-weight:700">This page only works inside '+
+    'the live Apps Script web app.</span>';
+});
+</script>
+
+<script>
+  window.APP_URL  = '<?= appUrl ?>';
+  window.APP_PAGE = 'deckbuilder';
+  window.HELP_HTML =
+    '<h3>What is this?</h3><p>Builds the monthly pack as a real Google Slides deck. '+
+    'The <b>title</b> and the <b>comment box</b> land as editable Slides text — only the '+
+    'table or chart goes in as a picture. That is the difference from the PNG export on '+
+    'each report page, which flattens the whole slide into one image.</p>'+
+    '<h3>Three stages</h3><p><b>Plan</b> lists the slides from the recipe — untick anything '+
+    'this month skips. <b>Render</b> photographs each content block in your browser, one at a '+
+    'time; you can watch the previews fill in. <b>Publish</b> sends them to Slides, one slide '+
+    'per call.</p>'+
+    '<h3>If a slide fails</h3><p>It goes red with the reason. Press <b>Render</b> again — only '+
+    'the unfinished rows are retried, nothing already done is rebuilt.</p>'+
+    '<h3>Changing the layout</h3><p>Move or resize a box in the template deck, then press '+
+    '<b>&#8635; Reload template</b>. The previews and the generated slides both follow — the '+
+    '{{IMAGE}} box is a guide, not a frame, so the picture is always fitted inside it and can '+
+    'never cover the title or the comments.</p>'+
+    '<h3>Changing which slides are in the deck</h3><p>The list comes from '+
+    '<b>Deck_Recipe.gs</b>. Adding, removing or reordering a slide is an edit to that one '+
+    'array.</p>';
+</script>
+<?!= include('SlideExport') ?>
+<?!= include('Deck_Sources') ?>
+<!-- Report-page content modules register into AmrDeckSource here, one per page.
+     They must come AFTER Deck_Sources (which creates the registry) and AFTER
+     SlideExport (they lean on AmrSlide for fitting).
+     Phase 2 adds the first two, as include lines for Deck_FSC and Deck_RFSC.
+     Write them as real scriptlets — NOT inside a comment like this one.
+     Apps Script evaluates a scriptlet wherever it appears, HTML comment or
+     not, so a commented-out include of a file that does not exist yet still
+     throws and takes the whole page down. -->
+<?!= include('Shell') ?>
+</body>
+</html>

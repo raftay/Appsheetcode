@@ -246,8 +246,65 @@ var AmrSlide = (function(){
             function(){ if(btn) btn.classList.remove('busy'); });
   }
 
+  /* ---- capture JUST the content block, for the Deck Builder ----
+     This is the deliberate opposite of build(): no header, no title, no logo,
+     no whitespace bands. The Deck Builder needs the bare table/chart, because
+     the title and the comment box are REAL SLIDES TEXT on the generated slide
+     — baking them into the picture is exactly what the PNG export does and
+     exactly what the deck is meant to stop doing.
+
+     contentEl : a DOM element (the same node a page hands previewInto)
+     o : { width    css px to lay the content out at, default 1200. Tables are
+                    width-driven, so this decides how many columns fit before
+                    anything wraps — it is a LAYOUT choice, not a quality one.
+           capturePx target pixel width of the PNG. Quality. DECK_readTemplate
+                    returns one per image slot (4 px per point of slot width),
+                    so the deck asks for exactly what it needs.
+           fit(box) the page's own table-fitting callback, as build() takes.
+           bg       background colour, default white. }
+
+     Resolves { dataUrl, w, h } — w/h are the PNG's real pixel size, which is
+     what DECK_addSlide fits into the template's image box. Only their ratio
+     matters server-side, so px-in / pt-out never has to be reconciled. */
+  function captureBare(contentEl, o){
+    o = o || {};
+    var cssW = o.width || 1200;
+    var capW = o.capturePx || cssW;
+
+    var box = el('div','slide-bare');
+    box.style.cssText = 'position:fixed;left:-99999px;top:0;width:'+cssW+'px;'
+      + 'background:'+(o.bg||'#ffffff')+';font-family:Inter,Arial,sans-serif;'
+      + 'color:var(--ink);display:block';
+    box.appendChild(contentEl);
+    document.body.appendChild(box);
+
+    /* Let the page fit its own tables, exactly as build() does. */
+    if(typeof o.fit === 'function'){ try{ o.fit(box); }catch(e){} }
+
+    /* Charts need a frame to settle after any resize the fit triggered, or
+       html2canvas photographs a blank canvas. */
+    return new Promise(function(resolve, reject){
+      requestAnimationFrame(function(){ requestAnimationFrame(function(){
+        var h = box.scrollHeight || box.offsetHeight || 1;
+        var sc = capW / cssW;
+        html2canvas(box, { scale:sc, backgroundColor:(o.bg||'#ffffff'),
+            logging:false, width:cssW, height:h,
+            windowWidth:cssW, windowHeight:h,
+            ignoreElements:function(n){ return n.classList && n.classList.contains('amr-qm'); }})
+          .then(function(cv){
+            if(box.parentNode) box.parentNode.removeChild(box);
+            resolve({ dataUrl:cv.toDataURL('image/png'), w:cv.width, h:cv.height });
+          })
+          .catch(function(e){
+            if(box.parentNode) box.parentNode.removeChild(box);
+            reject(e);
+          });
+      }); });
+    });
+  }
+
   return { mountControls:mountControls, margins:margins, build:build,
            previewInto:previewInto, download:download, exportSlide:exportSlide,
-           viewSlide:viewSlide };
+           viewSlide:viewSlide, captureBare:captureBare };
 })();
 </script>
