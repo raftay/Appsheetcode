@@ -152,3 +152,20 @@ PV slides need both. That exercises the block's *assembly* (tables, KPI cards, c
 whether a chart looks right is a browser check. The `google.script.run` stub returns a fresh
 runner per access on purpose: `cust` asks for MTD and YTD in parallel, and a shared success
 handler silently hangs the second call.
+
+## `configcheck.js` — the sheet-resolution rules
+
+Runs `Config.gs` against a stubbed Script Properties store. The case it exists for: a page
+with `readsFrom` and a **stale override** from when it owned a workbook — Fuel Recovery, which
+is how "reading No longer needed FSC" survived the move to the Price & Volume sheet.
+
+Checks that `APP_sheetOwner_` redirects to the owning page, that `APP_propKey_` routes read,
+save *and* clear to the same property (so a save through a `readsFrom` page cannot recreate an
+orphan key), that such a page is absent from its own ⚙ panel, that `clearRetiredOverrides()`
+removes exactly the dead key, and that no `readsFrom` dangles or loops.
+
+```bash
+node tests/configcheck.js
+```
+
+No jsdom, no Google access.
