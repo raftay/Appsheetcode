@@ -565,9 +565,47 @@ needs a decision.
 | 0b | Fix the known bugs; commit the `.pptx` template | ✅ done — six fixed, template validated offline |
 | 1 | `Page_DeckBuilder.html` + `AmrDeckSource` + `AmrSlide.captureBare` + `Deck_Recipe.gs`; previews from template geometry, no data yet | ✅ done |
 | 2 | Fuel Recovery adapters into shared `Deck_Fuel.html` → first 4 slides end to end | ✅ done |
-| 3 | AGG P&V adapter (`pv` + `cust`) → 14 summary + 5 customer slides | ☐ **next** |
+| 3 | AGG P&V adapter (`pv` + `cust`) → 14 summary + 5 customer slides | ◐ **in progress** — see below |
 | 4 | RMX P&V + Segment adapters (`rmx` + `seg`) → 20 slides | ☐ |
 | 5 | Optional: remember last month's comment text per slide id and pre-fill | ☐ |
+
+### Phase 3 — where it actually stands
+
+**Done, and verified:**
+
+- The dependency closure was computed rather than eyeballed. `buildPvSlideContent(d)` and
+  `slideTitle(d)` turned out to touch **no page state at all**, and the whole closure reads
+  only **14** context fields — listed on `ctx_()` in `Deck_PV.html`.
+- **`Deck_PV.html` is built** — ~480 lines lifted *mechanically* out of
+  `Page_PriceVolume.html` (a script pulled the definitions verbatim and applied two uniform
+  rewrites, `STATE.x → CTX.x` and `CONFIG.slide → CTX.slide`), wrapped in an `AmrPvSlide`
+  module with a `withCtx` entry layer so the lifted bodies stay byte-for-byte unchanged.
+  Threading a ctx parameter through ~30 call sites would have meant editing all 30, and every
+  edit is a chance to change behaviour.
+- **Proven faithful on every path that does not need Chart.js**: `tests/pvcheck.js` diffs the
+  old page code against the module — 11/11 identical across `tableInnerHtml`, `monthTag_`,
+  `slideTitle`, and `buildCustTable` over every combination of secondary dimension, sort
+  direction and top-N.
+- `renderChartsOffscreen()` is written: the deck has no `#revChart` / `#aspChart`, so it makes
+  a throwaway canvas pair, draws, captures, destroys. The canvases must be parked **off-screen,
+  not `display:none`** — Chart.js draws nothing into a zero-size canvas.
+
+**Not done — what Phase 3 still needs:**
+
+1. **`custSlideSpec` is not lifted.** It builds the combined *Month to date* over *Year to
+   date* block that the Top-10 slide actually is; the module can currently build one customer
+   table, not the pair. It needs splitting into content (moves) and slide options (stays).
+2. **`Page_PriceVolume.html` is not rewired.** It still holds its own copies, and nothing
+   includes `Deck_PV.html` — so the module is inert and the page is untouched. The repo is in
+   a safe half-state, not a broken one.
+3. **No `pv` / `cust` adapters registered**, so those 19 recipe rows still report "no content
+   source registered".
+4. The KPI strip picks its region sheet from a **per-device `localStorage` map**
+   (`pvKpiViewMap`) the PV page writes when someone uses the Region dropdown. The module takes
+   it via `ctx.kpi` so the deck can reuse that mapping — but the wiring is not written, and on
+   a device that has never used the PV page for a given market the row would degrade to empty
+   (exactly as the page behaves today with no workbook). **Worth confirming that is acceptable**
+   before Phase 3 closes.
 
 ### How Phase 2 was done — the pattern Phases 3–4 should copy
 

@@ -64,3 +64,18 @@ node --check <(sed -n '/<script>/,/<\/script>/p' Page_X.html)   # or the checkjs
 Both harnesses take a synthetic model and need no Google access, so they run anywhere Node
 does. Keep `tests/node_modules` out of git — the repo root must stay a clean mirror of the
 Apps Script project.
+
+## `pvcheck.js` — the Price & Volume lift
+
+Same idea as `regress.js` but for `Deck_PV.html`: runs the old page's definitions and the
+extracted module over the same fixtures and diffs the HTML. Covers the paths that need no
+Chart.js — `tableInnerHtml`, `monthTag_`, `slideTitle`, and `buildCustTable` across every
+secondary dimension, sort direction and top-N.
+
+```bash
+cp Page_PriceVolume.html /tmp/old/old_pv.html    # pre-rewiring copy
+OLD_DIR=/tmp/old node tests/pvcheck.js
+```
+
+Extend it as Phase 3 lifts more (`custSlideSpec` next). The chart paths cannot be diffed
+this way — Chart.js needs a real canvas — so those are checked in the browser.
