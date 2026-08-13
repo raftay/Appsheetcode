@@ -169,3 +169,33 @@ node tests/configcheck.js
 ```
 
 No jsdom, no Google access.
+
+## `slidefit.js` — the slide layout, in a real browser
+
+The one harness that needs a browser. jsdom has no layout — every `clientWidth` is 0 — so
+`deckpath.js` can prove a slide is *assembled* and never that it *fits*, and fitting is the
+whole job of `AmrPvSlide.fitSlide` / `AmrSegSlide.fitSlide`. Every way a fitter goes wrong is
+silent and ships as a picture nobody can restyle: the PPI column clipped by its card, the
+grand-total row cut off at the bottom, a third of the frame left white.
+
+It builds the SAME block the Deck Builder builds (`contentOffscreen`) in the SAME frame
+(`AmrSlide.build`, bare) and runs the SAME fitter, over the frame shapes the deck produces —
+a comment+image slot, a short one, a tall one, the report page's own 1600x900 slide — and the
+payloads that behave differently: Central Canada (five markets in the first table) and a
+market with no EBITDA workbook (no KPI strip at all). Then it measures.
+
+Per case it fails on: a table clipped by its card, a KPI card clipping its own text, the
+table stack overflowing its row, the content overflowing the frame (which would make
+`AmrSlide.build` scale it a second time), a white band under either column, or the two
+columns ending more than 28px apart.
+
+```bash
+npm install playwright chart.js     # not vendored
+npx playwright install chromium     # or set CHROMIUM_PATH to one already on the box
+node tests/slidefit.js              # checks only
+node tests/slidefit.js /tmp/shots   # …and a PNG per case, to look at
+```
+
+The web fonts are not vendored either, so it runs in whatever sans the machine has: every
+check is a relationship between measured boxes, so it holds either way — only the exact font
+sizes it prints differ from production.

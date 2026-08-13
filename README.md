@@ -981,6 +981,7 @@ before assuming it is finished.**
 | | **Add the Slides + Drive scopes and serve `?page=deckbuilder` from the execute-as-user deployment**, then run `DECK_validateTemplate()` | ☐ |
 | | Deck Builder Phase 3 — `pv` + `cust` adapters (19 slides) | ☐ |
 | | Deck Builder Phase 4 — `rmx` + `seg` adapters (20 slides) | ☐ |
+| 2026-08-13 | AGG slide layout — fill the frame: bigger charts, bigger table type, KPI strip grown without clipping, and `tests/slidefit.js` to hold it there | ✅ done |
 
 ### What has and has not been run
 
@@ -1002,8 +1003,12 @@ executed outside the deployment. What was actually verified for the work above:
   source rejects with a readable sentence, and each backend is called exactly **once**
   across its two slides.
 - ✅ Every `include('X')` in every page resolves to a file that exists.
-- ❌ **Not run:** `DECK_create` / `addSlide` / `finish`, the page in a real browser, and any
-  capture through html2canvas. Those need the live deployment.
+- ✅ **The AGG slide laid out in real Chromium** (`tests/slidefit.js`): the deck's own block,
+  in the deck's own frame, through the deck's own fitter, over six frame shapes and payloads
+  — nothing clipped, nothing overflowing, no white band under either column. The same run
+  against the pre-change fitter fails four of the six cases, which is the point of it.
+- ❌ **Not run:** `DECK_create` / `addSlide` / `finish`, the pages themselves in a real
+  browser, and any capture through html2canvas. Those need the live deployment.
 
 The two harnesses are worth keeping — they are the regression gate for Phases 3–4. Rebuild
 them as `regress.js` (pre/post HTML diff) and `deckpath.js` (jsdom adapter run); both take a

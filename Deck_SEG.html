@@ -276,18 +276,23 @@ var AmrSegSlide = (function(){
     var arrow=up?'\u25B2':'\u25BC', col=good?'var(--blue-80)':'var(--neg)';
     var sign=up?'+':'\u2212';
     return segKpiCardShell(eyebrow, pill,
-        '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:8px;margin:5px 0 2px">'
-          +'<span style="font:800 24px Archivo,Arial;color:var(--blue-80)">'+fmt.v(m.cy)+'</span>'
-          +'<span style="font:700 11px Inter;color:'+col+';white-space:nowrap">'+arrow+' '+sign+fmt.d(dn)+' / '+sign+(Math.abs(dp)*100).toFixed(1)+'%</span>'
+        '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:.8em;margin:.5em 0 .2em">'
+          +'<span style="font:800 2.4em Archivo,Arial;color:var(--blue-80);white-space:nowrap">'+fmt.v(m.cy)+'</span>'
+          +'<span style="font:700 1.1em Inter;color:'+col+';white-space:nowrap">'+arrow+' '+sign+fmt.d(dn)+' / '+sign+(Math.abs(dp)*100).toFixed(1)+'%</span>'
         +'</div>'
-       +'<div style="font:500 10.5px Inter;color:var(--muted)">Prior Yr: '+fmt.v(m.py)+(sub?' \u00B7 '+sub:'')+'</div>');
+       +'<div style="font:500 1.05em Inter;color:var(--muted);white-space:nowrap">Prior Yr: '+fmt.v(m.py)+(sub?' \u00B7 '+sub:'')+'</div>');
   }
 
+  /* Every size in a card is in em, against the ROW's font-size: 10px is the
+     card as it has always been, and fitSegKpiRow() raises that one number so
+     the strip grows with the slide instead of staying 24px type beside tables
+     the fitter takes past 20px. The page's own KPI strip sets 10px and keeps
+     exactly the size it had. */
   function segKpiCardShell(eyebrow, pill, body){
-    return '<div style="flex:1 1 0;min-width:130px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:8px 11px">'
-      +'<div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px">'
-        +'<span style="font:700 9.5px Archivo,Arial;letter-spacing:.08em;text-transform:uppercase;color:var(--blue-100);white-space:nowrap">'+esc(eyebrow)+'</span>'
-        +'<span style="background:var(--blue-10);border:1px solid var(--blue-20);color:var(--blue-80);font:700 8px Archivo,Arial;letter-spacing:.06em;text-transform:uppercase;border-radius:5px;padding:2px 6px">'+esc(pill)+'</span>'
+    return '<div style="flex:1 1 0;min-width:13em;overflow:hidden;background:#fff;border:1px solid var(--line);border-radius:1em;box-shadow:var(--shadow);padding:.8em 1.1em">'
+      +'<div style="display:flex;flex-direction:column;align-items:flex-start;gap:.4em">'
+        +'<span style="font:700 .95em Archivo,Arial;letter-spacing:.08em;text-transform:uppercase;color:var(--blue-100);white-space:nowrap">'+esc(eyebrow)+'</span>'
+        +'<span style="background:var(--blue-10);border:1px solid var(--blue-20);color:var(--blue-80);font:700 .8em Archivo,Arial;letter-spacing:.06em;text-transform:uppercase;border-radius:.5em;padding:.25em .75em;white-space:nowrap">'+esc(pill)+'</span>'
       +'</div>'
       + body + '</div>';
   }
@@ -300,13 +305,13 @@ var AmrSegSlide = (function(){
     var sign=up?'+':'\u2212';
     var f=SEGKPI_FMT.krc;
     return segKpiCardShell(eyebrow, pill,
-        '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:14px;margin:5px 0 2px;flex-wrap:nowrap">'
-          +'<span style="white-space:nowrap"><span style="font:800 24px Archivo,Arial;color:var(--blue-80)">'+f.v(m.cy)+'</span>'
-            +'<span style="font:700 9.5px Archivo,Arial;letter-spacing:.04em;color:var(--muted);margin-left:4px">kRC</span></span>'
-          +'<span style="white-space:nowrap"><span style="font:800 20px Archivo,Arial;color:var(--blue-100)">'+(m.cyU==null?'\u2013':m.cyU.toFixed(2))+'</span>'
-            +'<span style="font:700 9.5px Archivo,Arial;letter-spacing:.04em;color:var(--muted);margin-left:4px">RC/m\u00B3</span></span>'
+        '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:1.4em;margin:.5em 0 .2em;flex-wrap:nowrap">'
+          +'<span style="white-space:nowrap"><span style="font:800 2.4em Archivo,Arial;color:var(--blue-80)">'+f.v(m.cy)+'</span>'
+            +'<span style="font:700 .95em Archivo,Arial;letter-spacing:.04em;color:var(--muted);margin-left:.4em">kRC</span></span>'
+          +'<span style="white-space:nowrap"><span style="font:800 2em Archivo,Arial;color:var(--blue-100)">'+(m.cyU==null?'\u2013':m.cyU.toFixed(2))+'</span>'
+            +'<span style="font:700 .95em Archivo,Arial;letter-spacing:.04em;color:var(--muted);margin-left:.4em">RC/m\u00B3</span></span>'
         +'</div>'
-       +'<div style="font:500 10.5px Inter;color:var(--muted);white-space:nowrap">Prior Yr: '+f.v(m.py)+' kRC \u00B7 '
+       +'<div style="font:500 1.05em Inter;color:var(--muted);white-space:nowrap">Prior Yr: '+f.v(m.py)+' kRC \u00B7 '
           +(m.pyU==null?'\u2013':m.pyU.toFixed(2))+' RC/m\u00B3'
           +' \u00B7 <span style="font-weight:700;color:'+col+'">'+arrow+' '+sign+Math.abs(dn).toFixed(2)+' / '+sign+(Math.abs(dp)*100).toFixed(1)+'%</span>'
         +'</div>');
@@ -332,7 +337,8 @@ var AmrSegSlide = (function(){
     if(kHtml){
       var krow=document.createElement('div');
       krow.className='seg-kpi-row';
-      krow.style.cssText='display:flex;gap:12px;flex-wrap:nowrap;width:100%;flex:none;margin:0 0 12px';
+      krow.style.cssText='display:flex;gap:1.1em;flex-wrap:nowrap;width:100%;flex:none;'
+        +'font-size:'+SEG_KPI_BASE+'px;margin:0 0 12px';
       krow.innerHTML=kHtml;
       frag.appendChild(krow);
     }
@@ -346,6 +352,44 @@ var AmrSegSlide = (function(){
       addRow([ computedCard(T.cap+' \u00B7 '+p, t, 'Ready-Mix data for '+ml) ]);
     });
     return frag;
+  }
+
+  /* The KPI strip's base size: 10px is the card as it was, and the fitter may
+     take it to SEG_KPI_MAX when the row has the room. */
+  var SEG_KPI_BASE = 10, SEG_KPI_MAX = 14;
+
+  /* Grow the strip until the widest card would clip, it outgrows its share of
+     the slide, or it reaches the cap. Returns a function that gives the height
+     back if the taller strip pushed the slide past its frame — the tables are
+     the point of the slide, and AmrSlide.build would otherwise shrink the whole
+     picture to fit. */
+  function fitSegKpiRow(box){
+    var krow = box.querySelector('.seg-kpi-row'); if(!krow) return null;
+    var center = box.querySelector('.slide-center');
+    var bodyR  = center && center.parentElement;
+    var availW = krow.clientWidth || (center ? center.clientWidth : 0);
+    var availH = bodyR ? bodyR.clientHeight : 0;
+    if(!availW) return null;
+    var cards = [].slice.call(krow.children);
+    var maxH = availH ? availH * 0.2 : 1e9;
+    var best = SEG_KPI_BASE, f, i;
+    for(f = SEG_KPI_BASE; f <= SEG_KPI_MAX + 0.001; f += 0.5){
+      krow.style.fontSize = f + 'px';
+      var over = krow.scrollWidth > availW + 1 || krow.offsetHeight > maxH;
+      for(i = 0; i < cards.length && !over; i++){
+        over = cards[i].scrollWidth > cards[i].clientWidth;
+      }
+      if(over) break;
+      best = f;
+    }
+    krow.style.fontSize = best + 'px';
+    return function(){
+      var guard = 0;
+      while(best > SEG_KPI_BASE && guard++ < 20 && bodyR &&
+            center.scrollHeight > bodyR.clientHeight){
+        best -= 0.5; krow.style.fontSize = best + 'px';
+      }
+    };
   }
 
   function fitTables(box){
@@ -366,6 +410,8 @@ var AmrSegSlide = (function(){
       center.parentElement.style.marginRight=(-pad)+'px';
       box.style.paddingBottom='0px';
     }
+
+    var kpiGiveBack = fitSegKpiRow(box);
 
     var tables=[].slice.call(box.querySelectorAll('table.gt'));
 
@@ -403,6 +449,8 @@ var AmrSegSlide = (function(){
         cap.style.fontSize=Math.max(10.5, Math.round(parseFloat(t.style.fontSize)*0.85*10)/10)+'px';
       }
     });
+
+    if(kpiGiveBack) kpiGiveBack();
   }
 
 /* ---------------------------------------------------------------------------

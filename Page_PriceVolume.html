@@ -54,7 +54,12 @@ thead th.grp-ppi{background:var(--blue-70)}
 .tbl-card .card-head{padding-bottom:12px}
 .exp .tbl-card .card-head{padding:10px 14px 6px}
 .exp table th{white-space:nowrap; line-height:1.15}
-.exp table th, .exp table td{padding:4px 9px}
+/* mirrored in Deck_Styles.html — the slide fitter drives cell padding and the
+   header size off the table's font-size, so the numbers and the cells around
+   them grow together. The `font:` shorthand on thead th pins the size at 11px,
+   hence the separate variable. */
+.exp table th, .exp table td{padding:var(--tpy,4px) var(--tpx,9px)}
+.exp table thead th{font-size:var(--thf,11px)}
 .foot-note{font:500 11px Inter; color:var(--muted); padding:10px 16px 16px}
 
 /* customer drill-down table */
@@ -1917,7 +1922,6 @@ function setCombinedFont(tables, size){
   });
 }
 
-function fitExportTables(box){ return AmrPvSlide.fitExportTables(box); }
 function fname(id){
   var d=STATE.data||{};
   var tag = id==='card-cust'

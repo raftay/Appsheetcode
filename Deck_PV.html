@@ -40,8 +40,16 @@
        Chart.js only exists in the browser, so the two waterfalls are rendered
        into real canvases and captured to PNG. On the report page those are the
        visible #revChart / #aspChart. The deck has no such canvases, so
-       renderChartsOffscreen() makes a throwaway pair, draws, captures and
-       destroys them — which is why the deck must render slides one at a time.
+       renderChartsOffscreen() makes a throwaway pair, draws and captures them
+       — which is why the deck must render slides one at a time. They are NOT
+       destroyed until the fitter has run: it knows the frame's real height, so
+       it re-photographs both charts at the size the slide actually gives them
+       rather than stretching a 500x310 picture into the slot.
+
+     FITTING
+       See the block comment above FIT, near the bottom. Short version: the KPI
+       strip, the tables and the charts are all grown to fill the frame, and the
+       charts are given the width the tables do not need.
      ============================================================= -->
 <script>
 var AmrPvSlide = (function(){
@@ -138,6 +146,10 @@ var AmrPvSlide = (function(){
     afterDatasetsDraw:function(chart){
       var ctx=chart.ctx, meta=chart.getDatasetMeta(0), seq=chart.$seq, fmt=chart.$fmt;
       if(!meta || !meta.data || !seq || !fmt) return;
+      /* the fitter photographs the chart at the size the slide gives it and
+         scales the axis fonts with it; the bar labels are drawn here, so they
+         have to follow the same scale or they shrink as the chart grows */
+      var k = chart.$fscale || 1;
       ctx.save();
       ctx.strokeStyle='#B9C9DF'; ctx.setLineDash([3,3]); ctx.lineWidth=1;
       for(var i=0;i<meta.data.length-1;i++){
@@ -150,7 +162,7 @@ var AmrPvSlide = (function(){
         var txt = s.total ? fmt.total(s.value) : fmt.delta(s.value);
         if(s.total){
           // shrink the font until the number fits the bar WIDTH
-          var maxW = Math.abs(bar.width) - 8, size = 13;
+          var maxW = Math.abs(bar.width) - 8*k, size = 13*k;
           ctx.font = '700 '+size+'px Inter';
           while(ctx.measureText(txt).width > maxW && size > 6){ size -= 0.5; ctx.font='700 '+size+'px Inter'; }
           // must ALSO fit the bar HEIGHT — if the bar is too short, white text would
@@ -158,17 +170,17 @@ var AmrPvSlide = (function(){
           var barH = Math.abs(bar.base - bar.y);
           if(barH >= size + 5){
             ctx.fillStyle = '#fff';                 // tall enough: white inside the bar
-            ctx.fillText(txt, bar.x, (bar.y + bar.base)/2 + 4);
+            ctx.fillText(txt, bar.x, (bar.y + bar.base)/2 + size/3);
           } else {
             ctx.fillStyle = '#011E6A';              // too short: navy, above the bar
-            ctx.fillText(txt, bar.x, top - 6);
+            ctx.fillText(txt, bar.x, top - 6*k);
           }
         } else {
-          var dmaxW = Math.abs(bar.width)*1.5, dsize = 12.5;
+          var dmaxW = Math.abs(bar.width)*1.5, dsize = 12.5*k;
           ctx.font='700 '+dsize+'px Inter';
           while(ctx.measureText(txt).width > dmaxW && dsize > 7){ dsize -= 0.5; ctx.font='700 '+dsize+'px Inter'; }
           ctx.fillStyle = s.value>=0 ? '#1F4F8F' : '#7A4750';
-          ctx.fillText(txt, bar.x, top-7);
+          ctx.fillText(txt, bar.x, top-7*k);
         }
       });
       ctx.restore();
@@ -232,17 +244,48 @@ var AmrPvSlide = (function(){
     charts[canvasId].$seq = W.seq; charts[canvasId].$fmt = fmt;
   }
 
-  function captureChart(id, w, h){
+  /* Blow the axis fonts and the top padding up with the picture, so a chart
+     drawn at 700px wide is a BIGGER chart and not the same chart with more
+     white in it. Returns the undo. */
+  function scaleChartFonts(ch, k){
+    var o = ch.options || {};
+    var x = o.scales && o.scales.x && o.scales.x.ticks && o.scales.x.ticks.font;
+    var y = o.scales && o.scales.y && o.scales.y.ticks && o.scales.y.ticks.font;
+    var lay = o.layout && o.layout.padding;
+    var prev = { x:x && x.size, y:y && y.size, top:lay && lay.top, f:ch.$fscale };
+    if(x) x.size = Math.round((prev.x||11) * k * 10)/10;
+    if(y) y.size = Math.round((prev.y||11) * k * 10)/10;
+    if(lay) lay.top = Math.round((prev.top||0) * k);
+    ch.$fscale = k;
+    return function(){
+      if(x) x.size = prev.x;
+      if(y) y.size = prev.y;
+      if(lay) lay.top = prev.top;
+      ch.$fscale = prev.f;
+    };
+  }
+
+  /* fontScale: 1 keeps the chart's own type sizes (what the report page's
+     single-card download wants); the slide fitter passes the ratio between the
+     size it is drawing at and the module's base capture size. */
+  function captureChart(id, w, h, fontScale){
     var ch = charts[id]; if(!ch) return '';
+    var k = (fontScale > 0) ? fontScale : 1;
     var sv = { anim:ch.options.animation, dpr:ch.options.devicePixelRatio };
     ch.options.animation = false;
     ch.options.devicePixelRatio = 3;
+    var undoFonts = scaleChartFonts(ch, k);
     ch.resize(w, h);
+    try { ch.update('none'); } catch(e){}     // the new font sizes need a layout
     try { ch.draw(); } catch(e){}
     var url = ch.toBase64Image('image/png');
+    undoFonts();
     ch.options.animation = sv.anim;
     ch.options.devicePixelRatio = sv.dpr;
     ch.resize();
+    /* the report page's own canvases are on screen: put the type back the way
+       the reader left it, not the way the slide wanted it */
+    if(k !== 1){ try { ch.update('none'); } catch(e){} }
     return url;
   }
 
@@ -274,11 +317,18 @@ var AmrPvSlide = (function(){
       +'</table>';
   }
 
-  function chartBlockHtml(name, img){
+  /* The block is built at the module's default size and RE-SIZED by the fitter,
+     which knows the frame's real height — it re-photographs the chart at the
+     size it hands the picture, so nothing is ever stretched. The classes are
+     the fitter's handles. */
+  function chartBlockHtml(name, img, id){
     var S = CTX.slide;
     var h = Math.round(S.chartColWidth * S.chartCaptureH / S.chartCaptureW);
-    return '<div style="border:1px solid #DCE6F2;border-radius:12px;padding:12px 14px 8px">'
-      +'<div style="font:700 13px Archivo,Arial;color:#011E6A;margin-bottom:4px">'+esc(name)+'</div>'
+    /* data-chart is which canvas this picture came from: the fitter re-shoots
+       it, and when one of the two charts fails to capture the surviving block
+       is no longer at the index its id sits at. */
+    return '<div class="pv-chart-block" data-chart="'+esc(id||'')+'" style="border:1px solid #DCE6F2;border-radius:12px;padding:12px 14px 8px">'
+      +'<div class="pv-chart-title" style="font:700 13px Archivo,Arial;color:#011E6A;margin-bottom:4px">'+esc(name)+'</div>'
       +'<img src="'+img+'" style="width:100%;height:'+h+'px;display:block">'
       +'</div>';
   }
@@ -297,11 +347,12 @@ var AmrPvSlide = (function(){
   function buildPvSlideContent(d){
     var S = CTX.slide;
     /* The page photographs its two visible canvases; the deck has none, so
-       renderChartsOffscreen() puts the ids of its throwaway pair on the ctx.
+       renderChartsOffscreen() keeps the ids of its throwaway pair on OFFS.
        Capturing the hardcoded ids here is why deck slides first came out with
        no charts at all. */
-    var revImg = captureChart(CTX.revId || 'revChart', S.chartCaptureW, S.chartCaptureH);
-    var aspImg = captureChart(CTX.aspId || 'aspChart', S.chartCaptureW, S.chartCaptureH);
+    var ids = chartIds();
+    var revImg = captureChart(ids[0], S.chartCaptureW, S.chartCaptureH);
+    var aspImg = captureChart(ids[1], S.chartCaptureW, S.chartCaptureH);
 
     var tableCards = (d.tables||[]).map(function(tb){
       var up=tb.volMix>=0;
@@ -324,15 +375,19 @@ var AmrPvSlide = (function(){
         +'</div>'
         +'<div style="width:'+S.columnGap+'px;flex:none"></div>'
         +'<div class="pv-exp-charts" style="width:'+S.chartColWidth+'px;flex:none;display:flex;flex-direction:column;gap:'+S.chartGap+'px">'
-          +(revImg?chartBlockHtml('Revenue growth', revImg):'')
-          +(aspImg?chartBlockHtml('ASP % growth', aspImg):'')
+          +(revImg?chartBlockHtml('Revenue growth', revImg, ids[0]):'')
+          +(aspImg?chartBlockHtml('ASP % growth', aspImg, ids[1]):'')
         +'</div>';
     var kHtml = (typeof kpiCardsHtml==='function') ? kpiCardsHtml() : '';
     if(!kHtml) return row;
     var outer=document.createElement('div');
-    outer.style.cssText='width:100%;display:flex;flex-direction:column';
+    outer.style.cssText='width:100%;display:flex;flex-direction:column;height:100%';
+    /* Every size inside a KPI card is in em, so the strip's own font-size is
+       the one dial the fitter turns: 10px is today's card, and it grows from
+       there until the widest card is full. */
     outer.innerHTML =
-      '<div class="pv-exp-kpis" style="display:flex;gap:12px;flex-wrap:nowrap;width:100%;flex:none;margin:0 0 12px">'
+      '<div class="pv-exp-kpis" style="display:flex;gap:1.1em;flex-wrap:nowrap;width:100%;flex:none;'
+      + 'font-size:10px;margin:0 0 ' + FIT.kpiGap + 'px">'
       + kHtml + '</div>';
     outer.appendChild(row);
     return outer;
@@ -350,23 +405,34 @@ var AmrPvSlide = (function(){
     return AmrKpi.plant(CTX.kpi.vals, CTX.kpi.index[CTX.kpi.sheet], CTX.period);
   }
 
+  /* ---- the KPI strip -------------------------------------------------------
+     EVERY size below is in em, against the strip's font-size. At 10px the card
+     is what it has always been (24px value, 9.5px eyebrow); the fitter raises
+     that one number until the widest card fills its share of the slide, so the
+     strip grows with the picture instead of staying a 24px row on a 1600px
+     slide. Nothing is nudged card by card: they are one row, they scale as one.
+
+     The card CLIPS what overflows (overflow:hidden) rather than spilling over
+     its neighbour, and min-width:0 lets the five share the width evenly \u2014 a
+     130px floor with nowrap contents is what used to push the last card's
+     number off the edge. */
   function kpiCard(eyebrow, pill, cy, py, fmt, grow){
     var d=cy-py, up=d>=0, pct=py?d/py:0;
     var arrow=up?'\u25B2':'\u25BC', col=up?'var(--blue-80)':'var(--neg)';
     var sign=up?'+':'\u2212';
     return kpiCardShell(eyebrow, pill,
-        '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:8px;margin:5px 0 2px">'
-          +'<span style="font:800 24px Archivo,Arial;color:var(--blue-80)">'+fmt.v(cy)+'</span>'
-          +'<span style="font:700 11px Inter;color:'+col+';white-space:nowrap">'+arrow+' '+sign+fmt.d(Math.abs(d))+' / '+sign+fmt.p(Math.abs(pct))+'</span>'
+        '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:.8em;margin:.5em 0 .2em">'
+          +'<span style="font:800 2.4em Archivo,Arial;color:var(--blue-80);white-space:nowrap">'+fmt.v(cy)+'</span>'
+          +'<span style="font:700 1.1em Inter;color:'+col+';white-space:nowrap">'+arrow+' '+sign+fmt.d(Math.abs(d))+' / '+sign+fmt.p(Math.abs(pct))+'</span>'
         +'</div>'
-       +'<div style="font:500 10.5px Inter;color:var(--muted)">Prior Yr: '+fmt.v(py)+'</div>', grow);
+       +'<div style="font:500 1.05em Inter;color:var(--muted);white-space:nowrap">Prior Yr: '+fmt.v(py)+'</div>', grow);
   }
 
   function kpiCardShell(eyebrow, pill, body, grow){
-    return '<div style="flex:'+(grow||1)+' 1 0;min-width:130px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:8px 11px">'
-      +'<div style="display:flex;flex-direction:column;align-items:flex-start;gap:4px">'
-        +'<span style="font:700 9.5px Archivo,Arial;letter-spacing:.08em;text-transform:uppercase;color:var(--blue-100);white-space:nowrap">'+esc(eyebrow)+'</span>'
-        +'<span style="background:var(--blue-10);border:1px solid var(--blue-20);color:var(--blue-80);font:700 8px Archivo,Arial;letter-spacing:.06em;text-transform:uppercase;border-radius:5px;padding:2px 6px">'+esc(pill)+'</span>'
+    return '<div style="flex:'+(grow||1)+' 1 0;min-width:13em;overflow:hidden;background:#fff;border:1px solid var(--line);border-radius:1em;box-shadow:var(--shadow);padding:.8em 1.1em">'
+      +'<div style="display:flex;flex-direction:column;align-items:flex-start;gap:.4em">'
+        +'<span style="font:700 .95em Archivo,Arial;letter-spacing:.08em;text-transform:uppercase;color:var(--blue-100);white-space:nowrap">'+esc(eyebrow)+'</span>'
+        +'<span style="background:var(--blue-10);border:1px solid var(--blue-20);color:var(--blue-80);font:700 .8em Archivo,Arial;letter-spacing:.06em;text-transform:uppercase;border-radius:.5em;padding:.25em .75em;white-space:nowrap">'+esc(pill)+'</span>'
       +'</div>'
       + body + '</div>';
   }
@@ -376,7 +442,7 @@ var AmrPvSlide = (function(){
     var x=kpiExtract(); if(!x) return '';
     var d=CTX.data, qv=(d && d.tables && d.tables[0] && d.tables[0].total) || null;
     var ppi=(d && d.priceBridge) ? d.priceBridge.ppi : null;
-    var wait='<div style="font:500 11.5px Inter;color:var(--muted);margin-top:10px">Load market data to fill this card.</div>';
+    var wait='<div style="font:500 1.15em Inter;color:var(--muted);margin-top:1em">Load market data to fill this card.</div>';
     return kpiCard('ASP ($/T)', 'SAP / USGAAP', x.aspCy, x.aspPy, KPI_FMT.asp)
       + (qv ? kpiCard('ASP ($/T)', 'QlikView', qv.cyAsp, qv.pyAsp, KPI_FMT.asp)
             : kpiCardShell('ASP ($/T)', 'QlikView', wait))
@@ -384,8 +450,8 @@ var AmrPvSlide = (function(){
       + kpiCard('Total Volumes (K)', 'SAP / USGAAP', x.volCy, x.volPy, KPI_FMT.thou)
       + ((ppi!=null)
           ? kpiCardShell('PPI \u2014 CY Revenue', 'Grand total',
-              '<div style="margin:5px 0 2px"><span style="font:800 22px Archivo,Arial;color:var(--blue-100)">'+(ppi*100).toFixed(1)+'</span><span style="font:700 12px Inter;color:var(--blue-100)"> %</span></div>'
-             +'<div style="font:700 10.5px Inter;color:var(--ink)">Price / Product Index</div>')
+              '<div style="margin:.5em 0 .2em;white-space:nowrap"><span style="font:800 2.2em Archivo,Arial;color:var(--blue-100)">'+(ppi*100).toFixed(1)+'</span><span style="font:700 1.2em Inter;color:var(--blue-100)"> %</span></div>'
+             +'<div style="font:700 1.05em Inter;color:var(--ink);white-space:nowrap">Price / Product Index</div>')
           : kpiCardShell('PPI \u2014 CY Revenue', 'Grand total', wait));
   }
 
@@ -477,49 +543,298 @@ var AmrPvSlide = (function(){
       +'</table>';
   }
 
-  function fitExportTables(box){
-    [].forEach.call(box.querySelectorAll('.tbl-card'), function(card){
-      var pad=card.querySelector('.tbl-pad'), table=card.querySelector('table');
-      if(!pad||!table) return;
-      var avail=pad.clientWidth, size=13, guard=0;
-      table.style.fontSize=size+'px';
-      while(table.scrollWidth > avail + 1 && size > 6.5 && guard < 80){ size-=0.5; table.style.fontSize=size+'px'; guard++; } 
-      });
+/* ===========================================================================
+ * THE FITTER
+ * ---------------------------------------------------------------------------
+ * One composition, three parts, all sized from the frame's REAL height and
+ * width: the KPI strip across the top, the dimension tables down the left, the
+ * two waterfalls down the right.
+ *
+ * What it is fixing. The old fitter only ever shrank things. The tables were
+ * laid out at 13px and left wherever they ended — on a 1030px deck frame the
+ * last row landed at 700 and the bottom third of the picture was white. The
+ * charts were a fixed 470px column, capped at whatever height that width
+ * implied, so they stopped short of the tables. Both are now grown to FILL the
+ * frame, which is also what makes the numbers bigger: the cell padding and the
+ * header size ride on the table's font-size (see the CSS variables in
+ * Deck_Styles.html), so a bigger font is a bigger table, not cramped digits.
+ *
+ * The rules, in the order they are applied:
+ *   1. the KPI strip grows until the widest card is full — never past it, so
+ *      nothing clips;
+ *   2. the tables take the font that fills the row's height, or the width,
+ *      whichever binds first;
+ *   3. width the tables did NOT need goes to the charts, up to CHART_MAX;
+ *   4. the two charts are re-photographed at exactly the size that fills the
+ *      row's height, so the bottom of the lower chart lands on the bottom of
+ *      the last table row;
+ *   5. anything still short of the bottom is taken up by row padding, not left
+ *      as white.
+ * ========================================================================= */
+  var FIT = {
+    kpiGap:  12,                  // strip -> tables, px (mirrored in the markup)
+    kpiMin:  8,   kpiMax:  18,    // the strip's font-size dial, px
+    tblMin:  9,   tblMax:  26, tblBase: 13,
+    padYMin: 0.28, padYMax: 0.85, // table row padding, em of the cell font
+    tblComfort: 12,               // below this the tables buy width back off the charts
+    /* THE SPLIT. The tables would happily eat the whole row: three stacked
+       cards fill 900px of height at ~20px type, and at 20px they want 1150px
+       of width, which is the entire slide. So the charts are given their share
+       FIRST and the tables are fitted into what is left — that is the "shrink
+       the table as long as the numbers still fit" side of the deal. Width the
+       tables genuinely do not need still comes back to the charts, up to MAX. */
+    chartFrac: 0.36, chartMinFrac: 0.26, chartMaxFrac: 0.46
+  };
+
+  /* The strip is one row of equal cards, so the widest card is the constraint.
+     Grow the base font until that card would overflow, then stop. Returns the
+     strip's height. */
+  function fitKpiStrip(strip, availW, availH){
+    var cards = [].slice.call(strip.children);
+    if(!cards.length) return 0;
+    var maxH = Math.max(70, availH * 0.16), best = FIT.kpiMin, f;
+    for(f = FIT.kpiMin; f <= FIT.kpiMax + 0.001; f += 0.5){
+      strip.style.fontSize = f + 'px';
+      var over = strip.scrollWidth > availW + 1 || strip.offsetHeight > maxH;
+      for(var i = 0; i < cards.length && !over; i++){
+        over = cards[i].scrollWidth > cards[i].clientWidth;   // any clip at all
+      }
+      if(over) break;
+      best = f;
+    }
+    strip.style.fontSize = best + 'px';
+    return strip.offsetHeight;
+  }
+
+  /* Everything about a table card that should scale with its numbers. The two
+     CSS variables are read by the padding rule in Deck_Styles.html / the page;
+     the card head is inline because its rules are px in the shared stylesheet. */
+  function applyTableScale(cards, tables, stack, f, padY){
+    if(stack) stack.style.gap = Math.round(f * 0.85) + 'px';
+    cards.forEach(function(card){
+      var head = card.querySelector('.card-head');
+      if(head) head.style.padding = Math.round(f*0.62)+'px '+Math.round(f*0.95)+'px '+Math.round(f*0.34)+'px';
+      var h3 = card.querySelector('h3');
+      if(h3) h3.style.fontSize = (Math.round(f*112)/100) + 'px';
+      var badge = card.querySelector('.badge');
+      if(badge){
+        badge.style.fontSize = (Math.round(f*95)/100) + 'px';
+        badge.style.padding  = Math.round(f*0.4)+'px '+Math.round(f*0.85)+'px';
+      }
+      var k = card.querySelector('.badge .k');
+      if(k) k.style.fontSize = (Math.round(f*72)/100) + 'px';
+      var pad = card.querySelector('.tbl-pad');
+      if(pad) pad.style.padding = '0 '+Math.round(f*0.5)+'px '+Math.round(f*0.6)+'px';
+    });
+    tables.forEach(function(t){
+      t.style.fontSize = f + 'px';
+      t.style.setProperty('--tpy', padY + 'em');
+      t.style.setProperty('--tpx', '0.7em');
+      t.style.setProperty('--thf', '0.86em');
+    });
+  }
+
+  /* The width the stack would LIKE: every cell is nowrap, so max-content is
+     exactly the width at which no number is squeezed.
+
+     The chrome around it is measured off the .tbl-pad's own content box, NEVER
+     off the table: a table too wide for its card simply overflows it (the card
+     clips, which is how the PPI column used to lose its last digit), so its
+     width tells you nothing about the room it has. */
+  function cardChrome(card, el){
+    if(!card || !el) return 0;
+    var cs = getComputedStyle(el);
+    var content = el.clientWidth - (parseFloat(cs.paddingLeft)||0) - (parseFloat(cs.paddingRight)||0);
+    return Math.max(0, card.offsetWidth - content);
+  }
+
+  function tablesNeedWidth(cards, tables){
+    var w = 0;
+    tables.forEach(function(t){
+      var pad = t.parentElement, card = pad && pad.parentElement;
+      var prev = t.style.width;
+      t.style.width = 'max-content';
+      var natural = t.offsetWidth;
+      t.style.width = prev;
+      w = Math.max(w, natural + cardChrome(card, pad));
+    });
+    cards.forEach(function(card){
+      var head = card.querySelector('.card-head');
+      if(!head) return;
+      var prev = head.style.width;
+      head.style.width = 'max-content';      // collapses .right's auto margin
+      var natural = head.offsetWidth;        // title + badge + its own padding
+      head.style.width = prev;
+      w = Math.max(w, natural + (card.offsetWidth - card.clientWidth));   // + border
+    });
+    return Math.ceil(w);
+  }
+
+  /* Grow the tables into colW x rowH. Returns the font it settled on and the
+     width it actually needed, which is what buys the charts their extra room. */
+  function fitTablesColumn(box, colW, rowH){
+    var inner  = box.querySelector('.pv-exp-tables-inner');
+    var cards  = [].slice.call(box.querySelectorAll('.tbl-card'));
+    var tables = cards.map(function(c){ return c.querySelector('table'); })
+                      .filter(function(t){ return !!t; });
+    if(!inner || !tables.length) return { font:FIT.tblBase, needW:colW };
+    var stack = inner.firstElementChild;
+
+    /* one measurement at the base size, then jump straight to the estimate —
+       both the width and the height of a nowrap table are near enough linear
+       in the font-size once the padding scales with it */
+    applyTableScale(cards, tables, stack, FIT.tblBase, FIT.padYMin);
+    var w0 = tablesNeedWidth(cards, tables), h0 = inner.scrollHeight;
+    var byW = w0 ? FIT.tblBase * colW / w0 : FIT.tblMax;
+    var byH = h0 ? FIT.tblBase * rowH / h0 : FIT.tblMax;
+    var f = Math.max(FIT.tblMin, Math.min(FIT.tblMax, Math.floor(Math.min(byW, byH) * 2) / 2));
+
+    var guard = 0;
+    applyTableScale(cards, tables, stack, f, FIT.padYMin);
+    while(f > FIT.tblMin && guard++ < 40 &&
+          (tablesNeedWidth(cards, tables) > colW || inner.scrollHeight > rowH)){
+      f -= 0.5; applyTableScale(cards, tables, stack, f, FIT.padYMin);
+    }
+    guard = 0;
+    while(f < FIT.tblMax && guard++ < 40){
+      applyTableScale(cards, tables, stack, f + 0.5, FIT.padYMin);
+      if(tablesNeedWidth(cards, tables) > colW || inner.scrollHeight > rowH){
+        applyTableScale(cards, tables, stack, f, FIT.padYMin); break;
+      }
+      f += 0.5;
+    }
+
+    /* short of the bottom because the WIDTH ran out first: spend what is left
+       on the rows rather than leaving a white band under the last card */
+    var padY = FIT.padYMin, short = rowH - inner.scrollHeight;
+    if(short > 2){
+      var rowCount = 0;
+      tables.forEach(function(t){ rowCount += t.rows.length; });
+      var perEm = Math.max(1, rowCount * 2 * f);          // px added by 1em of padding
+      padY = Math.min(FIT.padYMax, padY + short / perEm);
+      padY = Math.round(padY * 100) / 100;
+      applyTableScale(cards, tables, stack, f, padY);
+      guard = 0;
+      while(padY > FIT.padYMin && guard++ < 30 && inner.scrollHeight > rowH){
+        padY = Math.round((padY - 0.02) * 100) / 100;
+        applyTableScale(cards, tables, stack, f, padY);
+      }
+    }
+    return { font:f, needW:tablesNeedWidth(cards, tables) };
+  }
+
+  /* The charts fill the row's height exactly, and are RE-PHOTOGRAPHED at that
+     size: a chart drawn at 700x420 is a bigger chart, where the same picture
+     stretched into the slot would just be a blurrier one. */
+  function fitChartColumn(cCol, colW, rowH){
+    var blocks = [].slice.call(cCol.querySelectorAll('.pv-chart-block'));
+    var imgs = blocks.map(function(b){ return b.querySelector('img'); })
+                     .filter(function(i){ return !!i; });
+    if(!imgs.length) return;
+    var S = CTX.slide, gap = S.chartGap || 18, n = imgs.length;
+    cCol.style.gap = gap + 'px';
+
+    var titleF = Math.max(12, Math.min(22, Math.round(colW * 0.031)));
+    blocks.forEach(function(b){
+      var t = b.querySelector('.pv-chart-title');
+      if(t){ t.style.fontSize = titleF + 'px'; t.style.marginBottom = Math.round(titleF*0.35)+'px'; }
+      b.style.padding = Math.round(titleF*0.9)+'px '+Math.round(titleF*1.05)+'px '+Math.round(titleF*0.6)+'px';
+    });
+
+    var cs = getComputedStyle(blocks[0]);
+    var imgW = Math.max(80, Math.floor(blocks[0].clientWidth
+                 - parseFloat(cs.paddingLeft||0) - parseFloat(cs.paddingRight||0)));
+    var chrome = blocks[0].offsetHeight - imgs[0].offsetHeight;   // border+padding+title
+    var imgH = Math.max(80, Math.floor((rowH - gap*(n-1)) / n - chrome));
+
+    /* the type scales with the PICTURE, not with its width alone: these charts
+       come out taller and narrower than the module's 500x310 base, and keying
+       off the width would have shrunk the labels on a chart that grew */
+    var k = Math.sqrt((imgW / (S.chartCaptureW || 500)) * (imgH / (S.chartCaptureH || 310)));
+    k = Math.max(0.9, Math.min(1.7, k));
+
+    var ids = chartIds();
+    blocks.forEach(function(b, i){
+      var im = b.querySelector('img'); if(!im) return;
+      im.style.width = imgW + 'px';
+      im.style.height = imgH + 'px';
+      var url = captureChart(b.getAttribute('data-chart') || ids[i], imgW, imgH, k);
+      if(url) im.src = url;
+    });
   }
 
   function pvFitSlide(box){
+    try { pvFitSlide_(box); } finally { disposeOffscreen(); }
+  }
+
+  function pvFitSlide_(box){
     var S = CTX.slide;
     var center = box.querySelector('.slide-center'); if(!center) return;
     var bodyR = center.parentElement;
-    var availH = bodyR.clientHeight; if(!availH) return;
+    var availH = bodyR.clientHeight, availW = center.clientWidth;
+    if(!availH || !availW) return;
+
+    /* fill the frame from the top. The body row centres its content, so a
+       block that did not fill the height used to sit in the middle with white
+       above AND below it. */
+    bodyR.style.alignItems = 'stretch';
+    center.style.justifyContent = 'flex-start';
+
+    var rowH = availH;
     var kpiEl = box.querySelector('.pv-exp-kpis');
-    if(kpiEl) availH = Math.max(80, availH - kpiEl.offsetHeight - 12);
+    if(kpiEl) rowH = availH - fitKpiStrip(kpiEl, availW, availH) - FIT.kpiGap;
+    rowH = Math.max(120, rowH);
 
-    var cCol = box.querySelector('.pv-exp-charts');
-    if(cCol){
-      var cImgs = cCol.querySelectorAll('img');
-      var cNat = cCol.scrollHeight;
-      if(cNat > availH && cImgs.length){
-        var len=cImgs.length, aspect=S.chartCaptureW/S.chartCaptureH;
-        var gapTot=(len-1)*S.chartGap, img0H=cImgs[0].offsetHeight;
-        var hChrome=cCol.offsetWidth - cImgs[0].offsetWidth;
-        var chrome=(cNat-gapTot)/len - img0H;
-        var newImgH=Math.max(10,(availH-gapTot)/len - chrome);
-        [].forEach.call(cImgs,function(im){ im.style.height=newImgH+'px'; });
-        cCol.style.width=(newImgH*aspect+hChrome)+'px';
+    var row   = box.querySelector('.pv-exp-row');
+    var tBox  = box.querySelector('.pv-exp-tables');
+    var inner = box.querySelector('.pv-exp-tables-inner');
+    var cCol  = box.querySelector('.pv-exp-charts');
+    var hasCharts = !!(cCol && cCol.querySelector('img'));
+    if(inner){ inner.style.transform = ''; inner.style.width = '100%'; }
+    if(row){
+      row.style.height = rowH + 'px'; row.style.overflow = 'hidden';
+      /* the row is a flex child of the KPI stack, so it can be shrunk by a
+         fraction of a pixel in the strip's height. Fit to what it ACTUALLY
+         got, or the tables end up a few pixels taller than the frame and the
+         last grand-total row is clipped. */
+      rowH = Math.max(120, row.clientHeight || rowH);
+    }
+
+    var gap  = S.columnGap || 22;
+    var cMin = Math.round(availW * FIT.chartMinFrac);
+    var cMax = Math.round(availW * FIT.chartMaxFrac);
+    var cWide = Math.max(240, availW - gap - cMin);      // tables at their widest
+
+    /* the charts' share first; the tables get what is left */
+    var tW = hasCharts
+      ? Math.max(240, availW - gap - Math.round(availW * FIT.chartFrac))
+      : availW;
+    if(tBox){ tBox.style.flex = 'none'; tBox.style.width = tW + 'px'; }
+    var fit = fitTablesColumn(box, tW, rowH);
+
+    if(hasCharts){
+      /* too tight to read? then the charts give width back, down to MIN */
+      if(fit.font < FIT.tblComfort && tW < cWide){
+        tW = cWide;
+        tBox.style.width = tW + 'px';
+        fit = fitTablesColumn(box, tW, rowH);
       }
+      /* and whatever width the tables did not need is the charts' */
+      var cW = Math.min(cMax, Math.max(cMin, availW - gap - Math.min(tW, fit.needW)));
+      tW = availW - gap - cW;
+      if(tBox) tBox.style.width = tW + 'px';
+      cCol.style.width = cW + 'px';
+      cCol.style.flex = 'none';
+      fitTablesColumn(box, tW, rowH);     // settle into the width it ended up with
+      fitChartColumn(cCol, cW, rowH);
     }
 
-    fitExportTables(box);
-
-    var tBox=box.querySelector('.pv-exp-tables'), tInner=box.querySelector('.pv-exp-tables-inner');
-    if(tBox && tInner){
-      var colW=tBox.clientWidth, natH=tInner.scrollHeight;
-      if(natH>availH){ var s=availH/natH; tInner.style.width=Math.round(colW/s)+'px'; tInner.style.transform='scale('+s+')'; }
+    /* last resort, for a frame too short for even the smallest font */
+    if(inner && inner.scrollHeight > rowH + 1){
+      var s = rowH / inner.scrollHeight;
+      inner.style.width = Math.round(tW / s) + 'px';
+      inner.style.transform = 'scale(' + s + ')';
     }
-
-    var row=box.querySelector('.pv-exp-row');
-    if(row){ row.style.height=availH+'px'; row.style.overflow='hidden'; }
   }
 
   function fitCustomerSlide(box){
@@ -590,13 +905,36 @@ var AmrPvSlide = (function(){
  * end of the lifted block
  * ------------------------------------------------------------------------- */
 
+  /* THE LIVE CHART PAIR.
+     On the report page these are the two canvases on screen. The deck has no
+     canvases, so renderChartsOffscreen() makes a throwaway pair and leaves the
+     ids here — module state rather than ctx, because the fitter runs in a
+     LATER call with its ctx rebuilt from the row's spec, and it re-photographs
+     both charts at the size the frame turns out to give them. */
+  var OFFS = null;
+
+  function chartIds(){
+    return OFFS ? OFFS.ids : [CTX.revId || 'revChart', CTX.aspId || 'aspChart'];
+  }
+
+  function disposeOffscreen(){
+    if(!OFFS) return;
+    var o = OFFS; OFFS = null;
+    o.ids.forEach(function(id){
+      if(charts[id]){ try { charts[id].destroy(); } catch(e){} delete charts[id]; }
+    });
+    if(o.host.parentNode) o.host.parentNode.removeChild(o.host);
+  }
+
   /* Render the two waterfalls into throwaway canvases, for a caller with no
-     charts on screen (the deck). Returns the ids used, so the caller can hand
-     them to buildContent, and cleans up after itself.
+     charts on screen (the deck). They stay alive until the fitter has run —
+     it needs them to re-capture at the slide's real size — and that fitter
+     disposes of them; a second contentOffscreen() clears any that were left.
 
      The canvases must be IN the document and have non-zero size or Chart.js
      draws nothing, so they are parked off-screen rather than display:none. */
   function renderChartsOffscreen(d, run){
+    disposeOffscreen();
     var host = document.createElement('div');
     host.style.cssText = 'position:fixed;left:-99999px;top:0;width:'
       + SLIDE.chartCaptureW + 'px';
@@ -605,17 +943,13 @@ var AmrPvSlide = (function(){
       '<canvas id="' + idR + '" width="' + SLIDE.chartCaptureW + '" height="' + SLIDE.chartCaptureH + '"></canvas>'
     + '<canvas id="' + idA + '" width="' + SLIDE.chartCaptureW + '" height="' + SLIDE.chartCaptureH + '"></canvas>';
     document.body.appendChild(host);
-    var prevR = CTX.revId, prevA = CTX.aspId;
+    OFFS = { host:host, ids:[idR, idA] };
     try {
-      CTX.revId = idR; CTX.aspId = idA;      // buildPvSlideContent reads these
       renderCharts(d, idR, idA);
       return run(idR, idA);
-    } finally {
-      CTX.revId = prevR; CTX.aspId = prevA;
-      [idR, idA].forEach(function(id){
-        if(charts[id]){ try { charts[id].destroy(); } catch(e){} delete charts[id]; }
-      });
-      if(host.parentNode) host.parentNode.removeChild(host);
+    } catch(e){
+      disposeOffscreen();
+      throw e;
     }
   }
 
@@ -764,7 +1098,6 @@ var AmrPvSlide = (function(){
     },
 
     fitSlide: function(box, ctx){ return withCtx(ctx, function(){ return pvFitSlide(box); }); },
-    fitExportTables: fitExportTables,
     fitCustomerSlide: fitCustomerSlide,
     fitCombinedCustomerSlide: fitCombinedCustomerSlide
   };

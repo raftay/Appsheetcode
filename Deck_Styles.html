@@ -45,7 +45,12 @@
 .slide-bare .tbl-card .card-head{padding-bottom:12px}
 .slide-bare .exp .tbl-card .card-head{padding:10px 14px 6px}
 .slide-bare .exp table th{white-space:nowrap; line-height:1.15}
-.slide-bare .exp table th, .slide-bare .exp table td{padding:4px 9px}
+/* The fitter drives the cell padding and the header size off the table's own
+   font-size, so growing the numbers grows the whole table instead of cramming
+   bigger digits into cells sized for 13px. A `font:` shorthand pins the header
+   at 11px, which is why the header size is a variable of its own. */
+.slide-bare .exp table th, .slide-bare .exp table td{padding:var(--tpy,4px) var(--tpx,9px)}
+.slide-bare .exp table thead th{font-size:var(--thf,11px)}
 
 .slide-bare thead th.grp-asp{background:var(--blue-60)}
 .slide-bare thead th.grp-ppi{background:var(--blue-70)}

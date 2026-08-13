@@ -61,6 +61,7 @@ function classesDefined(src) {
    the gate honest instead of loose. */
 const INLINE_ONLY = new Set([
   'pv-exp-row', 'pv-exp-tables', 'pv-exp-tables-inner', 'pv-exp-charts', 'pv-exp-kpis',
+  'pv-chart-block', 'pv-chart-title',
   'cust-blk', 'cust-blk-lbl',
   'rmx-exp-row', 'rmx-exp-inner', 'mkt-card', 'export-cb',
   'seg-slide-wrap', 'seg-kpi-row',
