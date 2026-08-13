@@ -153,7 +153,13 @@ var APP_CONFIG = {
 
          Saskatchewan is the exception - it has a price increase rather than a
          surcharge, and that still comes from the Saskatchewan rates sheet
-         (see APP_EXTRA_SOURCES below). */
+         (see APP_EXTRA_SOURCES below).
+
+         `readsFrom` is now ENFORCED, not just documentation: id resolution
+         follows it (APP_sheetOwner_) and the ⚙ panel skips this page's own
+         row, so the retired Fuel Recovery workbook cannot come back through the
+         DATA_SPREADSHEET_ID__fuelsurcharge property left over from before the
+         move. Run clearRetiredOverrides() once to delete that property. */
       readsFrom: 'pricevolume',
       SHEETS: {}
     },
@@ -376,19 +382,37 @@ function APP_requirePage_(page){
   return p;
 }
 
-/* The Script-Property key for a page's chosen sheet. */
-function APP_propKey_(page){ return APP_CONFIG.PROP_PREFIX + APP_requirePage_(page); }
+/* The Script-Property key for a page's chosen sheet. Keyed on the page that
+   OWNS the sheet, so read, save and clear all address the same property. */
+function APP_propKey_(page){ return APP_CONFIG.PROP_PREFIX + APP_sheetOwner_(page); }
+
+/* A page that reads someone else's sheet owns none of its own. `readsFrom`
+   redirects every id lookup to that page, so a workbook a page has been
+   RETIRED FROM can never come back through a stale Script Property. Fuel
+   Recovery is the case in point: it moved to the Price & Volume sheet's
+   Combined Data CPI Raw tab, but DATA_SPREADSHEET_ID__fuelsurcharge was still
+   set from before the move, so its ⚙ panel kept offering the dead workbook. */
+function APP_sheetOwner_(page){
+  var p = APP_requirePage_(page), seen = {};
+  while (APP_CONFIG.PAGES[p] && APP_CONFIG.PAGES[p].readsFrom && !seen[p]){
+    seen[p] = 1;
+    var next = String(APP_CONFIG.PAGES[p].readsFrom).toLowerCase();
+    if (!APP_CONFIG.PAGES[next]) break;
+    p = next;
+  }
+  return p;
+}
 
 /* Resolve the spreadsheet id for a page: UI override → code default. */
 function getSpreadsheetIdForPage_(page){
-  var p = APP_requirePage_(page);
+  var p = APP_sheetOwner_(page);
   var override = PropertiesService.getScriptProperties().getProperty(APP_propKey_(p));
   return override || APP_CONFIG.PAGES[p].defaultSpreadsheetId || '';
 }
 
 /* Where a page's id is coming from (for the Settings UI badge). */
 function spreadsheetSourceForPage_(page){
-  var p = APP_requirePage_(page);
+  var p = APP_sheetOwner_(page);
   if (PropertiesService.getScriptProperties().getProperty(APP_propKey_(p))) return 'override';
   if (APP_CONFIG.PAGES[p].defaultSpreadsheetId)                            return 'code';
   return 'none';
@@ -467,7 +491,11 @@ function getSettingsFor(page){
      is one, then the extras. */
   var p   = String(page || '').toLowerCase();
   var out = [];
-  if (APP_CONFIG.PAGES[p]) out.push(getSettings(p));
+  /* ...and a page that declares `readsFrom` owns none either - Fuel Recovery
+     reads Price & Volume now. Listing it would show its RETIRED workbook (or,
+     once the id follows readsFrom, the Price & Volume sheet twice), so the
+     page's own row is skipped and APP_EXTRA_SOURCES supplies the real sheets. */
+  if (APP_CONFIG.PAGES[p] && !APP_CONFIG.PAGES[p].readsFrom) out.push(getSettings(p));
   (APP_EXTRA_SOURCES[p] || []).forEach(function(x){
     if (APP_CONFIG.PAGES[x]) out.push(getSettings(x));
   });
@@ -498,6 +526,21 @@ function clearSpreadsheetOverride(page){
   PropertiesService.getScriptProperties().deleteProperty(APP_propKey_(p));
   syncAll();
   return getSettings(p);
+}
+
+/* One-off tidy-up, run from the Apps Script editor: delete the Script
+   Properties belonging to pages that no longer own a sheet. Nothing reads them
+   any more (getSpreadsheetIdForPage_ follows `readsFrom`), so this only stops a
+   retired workbook - "No longer needed FSC" - from lingering in the property
+   store. Safe to run any number of times. */
+function clearRetiredOverrides(){
+  var props = PropertiesService.getScriptProperties(), gone = [];
+  Object.keys(APP_CONFIG.PAGES).forEach(function(p){
+    if (!APP_CONFIG.PAGES[p].readsFrom) return;
+    var key = APP_CONFIG.PROP_PREFIX + p;
+    if (props.getProperty(key) != null){ props.deleteProperty(key); gone.push(key); }
+  });
+  return { cleared: gone };
 }
 
 /* Accepts ".../spreadsheets/d/<ID>/edit", or a bare ID, and returns the ID. */

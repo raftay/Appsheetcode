@@ -52,6 +52,25 @@ node tests/deckpath.js
 
 Add a case here for every new source id a phase registers.
 
+## `fscheader.js` — the Fuel Recovery reader
+
+Runs `FSC_Backend.gs` under Node with its two Apps Script globals stubbed
+(`APP_openSpreadsheet_` returns a fake spreadsheet, `PV.saskMonthly` returns nothing), over a
+grid shaped like the real `Combined Data CPI Raw` tab — **totals band above the header
+included**.
+
+It exists because the page failed with *"missing these column(s): Plant, Year, Month, "####
+Volume", New Fuel Surcharge"*, which was never five renamed columns: the reader took the
+totals band as the header row. On the pre-fix `FSC_Backend.gs` this harness reproduces that
+error verbatim.
+
+```bash
+node tests/fscheader.js          # no dependencies
+```
+
+Covers the band layout, a band-less file, prior-year rows landing on the PY revenue and PY
+volume columns, and a genuinely wrong header still failing — with the row number it read.
+
 ## Also worth running
 
 ```bash

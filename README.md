@@ -309,6 +309,15 @@ cannot be re-sliced — whatever month the export was run for, both tabs are for
 - **AGG**: read from the Price & Volume sheet's `Combined Data CPI Raw`, where the surcharge
   sits on the same row as the volume it was charged on. The old pre-summed Fuel Recovery
   workbook forced applied tonnes to be inferred from a bucket, and they came out too high.
+  That workbook is **retired**: `PAGES.fuelsurcharge.readsFrom` is now enforced by
+  `APP_sheetOwner_`, so a leftover `DATA_SPREADSHEET_ID__fuelsurcharge` override can neither
+  be read nor shown in the ⚙ panel. `clearRetiredOverrides()` deletes the stale property.
+- **The header row on `Combined Data CPI Raw` is row 2, not row 1** — the tab sums *above*
+  its column names. `FSC_Backend.gs` scores the first rows and takes the best
+  (`headerRow_`), the same trick as `PV_Backend.tabHeaderRow_`. Reading row 1 blindly is
+  what produced "missing these column(s): Plant, Year, Month, "#### Volume", New Fuel
+  Surcharge" — five columns lost at once is always a misplaced header, never five renames.
+  Gate: `node tests/fscheader.js`.
 - **RMX**: applied m³ comes from the `M3 Applied To` columns in `Extra Raw Data`, matched via
   `mat_prod_hier_3` containing "fuel surcharge". Coverage = applied m³ ÷ gross (delivered)
   m³, **no cap**.
