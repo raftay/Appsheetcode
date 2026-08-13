@@ -92,7 +92,7 @@ var DECK_RECIPE = [
     layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - Southwest - YTD' },
 
   /* Land and Docks are a Southwest breakdown, not every month's story. They
-     are in the pack, so they are here - but unticked by default.
+     are in the pack, they are a now also checked by defualt.
 
      THEY ARE NOT MARKETS. Land and Docks are the two values of the MB
      SUBMARKET column INSIDE the Southwest market - the same split the Price &
@@ -102,16 +102,16 @@ var DECK_RECIPE = [
      never the sheet's raw spelling: the adapter matches it against the market's
      own MB SUBMARKET values, so a re-spelling in the sheet needs no edit here. */
   { id:'pv_swland_mtd',  source:'pv', market:'Southwest', refine:'Land', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG', optional:true,
+    layout:'L_COMMENT_IMAGE', group:'AGG',
     title:'AGG - Southwest Land - MTD' },
   { id:'pv_swland_ytd',  source:'pv', market:'Southwest', refine:'Land', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG', optional:true,
+    layout:'L_COMMENT_IMAGE', group:'AGG',
     title:'AGG - Southwest Land - YTD' },
   { id:'pv_swdocks_mtd', source:'pv', market:'Southwest', refine:'Docks', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG', optional:true,
+    layout:'L_COMMENT_IMAGE', group:'AGG',
     title:'AGG - Southwest Docks - MTD' },
   { id:'pv_swdocks_ytd', source:'pv', market:'Southwest', refine:'Docks', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG', optional:true,
+    layout:'L_COMMENT_IMAGE', group:'AGG',
     title:'AGG - Southwest Docks - YTD' },
 
   { id:'cust_sw',     source:'cust', market:'Southwest',
