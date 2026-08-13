@@ -130,6 +130,7 @@ Shared partials, pulled in with `<?!= include('Name') ?>`:
 | `KpiShared.html` | 373 | `AmrKpi` — upload/parse/share the EBITDA workbooks; used by three pages |
 | `Cube.html` | 622 | `AmrCube` — the month fact table in typed arrays, backed by IndexedDB |
 | `Deck_Sources.html` | 104 | `AmrDeckSource` — the content-source registry the Deck Builder asks for tables. Included **only** by the Deck Builder |
+| `Deck_Styles.html` | 152 | The slide CSS the deck's captures need — a mirror of the slide rules in each report page's own style block, every selector scoped under `.slide-bare`. Included **only** by the Deck Builder. See [§8](#the-css-the-deck-could-not-see) |
 | `Deck_Fuel.html` | 298 | `AmrFuelExec` — the Fuel Recovery exec tables, shared by **both** fuel pages and the deck. Also holds the `fsc` / `rfsc` adapters |
 | `Deck_SEG.html` | 535 | `AmrSegSlide` — RMX Product Segment slide content; holds the `seg` adapter |
 | `Deck_RMX.html` | 588 | `AmrRmxSlide` — RMX Price & Volume: the client-side compute layer, the table renderers, and the offscreen-host scrape; holds the `rmx` adapter |
@@ -458,9 +459,79 @@ so nobody has to guess.
 | `pv` / `cust` adapters (`Deck_PV.html`) | ✅ live — 19 more rows build |
 | `seg` / `rmx` adapters | ✅ live — all 43 rows now build |
 
-So: the pipeline is complete end to end and the four Fuel Recovery slides build all the way
-through. The remaining 39 rows are waiting on their adapters, and the Plan stage names the
-missing sources up front rather than failing 39 times.
+So: the pipeline is complete end to end and all 43 rows build. The Plan stage still names
+any missing source up front rather than failing once per row.
+
+### What the first real deck got wrong (July 2026 build)
+
+The 43-slide deck published without an error and was wrong in six ways. Every one of them
+is the same shape of mistake — the deck reuses a page's builder but not the page's
+*context*, and nothing checked that the context came with it.
+
+#### The CSS the deck could not see
+
+The big one, and the cause of three separate complaints. Phases 2–4 lifted the slide
+builders into `Deck_*.html` but left the CSS they depend on in each report page's own style
+block. Report pages include their module **and** have the CSS; the Deck Builder includes the
+modules **without** the pages. So every slide was photographed with **46 classes unstyled**:
+
+- Ready-Mix headings (`By submarket`, `By extra type`) lost `.rmx-eb-title` and rendered as
+  unstyled lower-case body text, run straight into the mix badge — `.rmx-eb-badge`'s
+  `margin-left:auto` is what separates them.
+- Price & Volume tables lost `.exp table th, .exp table td{padding:4px 9px}` and fell back
+  to the generic `10px 12px`. That is ~40% more width than the fitter budgeted for, and the
+  fitter cannot recover it: `thead th` sets its size through a `font:` **shorthand**, which
+  beats the inherited `font-size` the shrink loop is setting, so the header never shrinks.
+  The PPI column was cut in half by the card's `overflow:hidden` on every AGG slide.
+- Product Segment and Fuel tables lost their header, subtotal and grand-total colours.
+
+Fixed by `Deck_Styles.html`, included by the Deck Builder only, every selector scoped under
+`.slide-bare` (the wrapper `captureBare` photographs) so it cannot reach a page. The rules
+are **mirrored, not moved**: moving a rule out of a page's style block changes that page's
+cascade order, and these pages are in daily use. `tests/deckstatic.js` is the gate.
+
+#### Southwest Land / Docks published a page of zeroes
+
+Land and Docks are not markets — they are the two values of the **MB SUBMARKET** column
+*inside* the Southwest market, which is what the Price & Volume page's refine chips toggle.
+The recipe said `market:'Southwest Land'`, which matched no market, so the backend returned
+an empty report and the slide published as a full page of `0`s rather than failing. Rows now
+say `market:'Southwest', refine:'Land'`, and the `pv` adapter resolves that **label** against
+the market's own `refineOptions` — the sheet's raw spelling is never written into the recipe.
+
+#### Central Canada was cut by submarket
+
+Inside one market the interesting cut is its submarkets. Central Canada is not a market, it
+is every market at once, so the slide listed fourteen submarkets from five different markets
+(West GTA next to Regina next to Sask AGG) and left the reader to reassemble them. The
+rollup is cut by `MARKET` now; every other market keeps `SUBMARKET1`.
+
+#### Every picture was resampled on the way out
+
+Whatever resolution is inserted, an exported deck comes back with every picture capped at
+**2048 px on its longest side** — 21 of the 43 pictures were exactly 2048 wide or exactly
+2048 tall. Capturing at 2400 therefore never bought 2400: it bought a canvas Google then
+resampled, so text rendered at one scale was squeezed to another and every slide came out
+softer than the same table screenshotted by hand. `CAPTURE_MAX_PX` is 2048 now and
+`captureBare` clamps **both** dimensions to it, so html2canvas renders the text at its final
+size — one sampling, not two. The height matters as much as the width: the cap is on the
+longest side, so a tall table that overshot had its width dragged down with it.
+
+#### The Land / Docks chips listed the whole dataset
+
+Seven chips, five of which filtered to nothing. The cube path fed them
+`AmrCube.dict('agg','mb')` — every MB SUBMARKET value in the cube — and the chips label them
+all as just `Land` or `Docks`, so the other markets' values were indistinguishable from
+Southwest's. The server has always scoped that list to the market being viewed; the cube path
+now does too, grouped **without** the mb filter so the selected chip does not become the only
+one left to select.
+
+#### Table titles came out lower-case
+
+`fieldLabel()` lower-cased because its first caller put it mid-sentence ("all markets"), and
+it later became the heading over a table. So the cube path titled its cards `submarket` while
+the identical card built through the server path said `Submarket`. It returns the label as
+written now; the one sentence context lower-cases at the call site.
 
 ### Bugs found and fixed
 

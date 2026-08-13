@@ -21,6 +21,9 @@
  *            THAT PAGE uses, which is not the same across pages: the Southwest
  *            is 'Southwest' to Price & Volume and 'HNS_SW' to Ready-Mix. The
  *            canonical mapping lives in OVERVIEW.MARKETS (Config.gs).
+ *   refine   optional. A narrowing WITHIN that market, passed through to the
+ *            source, which decides what it means. Today only 'pv' reads it, as
+ *            the Land / Docks split of the Southwest (see those rows below).
  *   period   'MTD' | 'YTD'. Omitted where the slide shows both.
  *   layout   a LAYOUT id from the template's speaker notes.
  *   title    the real, editable Slides heading. NOT baked into the picture.
@@ -89,17 +92,25 @@ var DECK_RECIPE = [
     layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - Southwest - YTD' },
 
   /* Land and Docks are a Southwest breakdown, not every month's story. They
-     are in the pack, so they are here - but unticked by default. */
-  { id:'pv_swland_mtd',  source:'pv', market:'Southwest Land', period:'MTD',
+     are in the pack, so they are here - but unticked by default.
+
+     THEY ARE NOT MARKETS. Land and Docks are the two values of the MB
+     SUBMARKET column INSIDE the Southwest market - the same split the Price &
+     Volume page offers as its Land / Docks chips. These rows used to say
+     market:'Southwest Land', which matched no market at all, so both slides
+     published a full page of zeroes instead of failing. `refine` is the label,
+     never the sheet's raw spelling: the adapter matches it against the market's
+     own MB SUBMARKET values, so a re-spelling in the sheet needs no edit here. */
+  { id:'pv_swland_mtd',  source:'pv', market:'Southwest', refine:'Land', period:'MTD',
     layout:'L_COMMENT_IMAGE', group:'AGG', optional:true,
     title:'AGG - Southwest Land - MTD' },
-  { id:'pv_swland_ytd',  source:'pv', market:'Southwest Land', period:'YTD',
+  { id:'pv_swland_ytd',  source:'pv', market:'Southwest', refine:'Land', period:'YTD',
     layout:'L_COMMENT_IMAGE', group:'AGG', optional:true,
     title:'AGG - Southwest Land - YTD' },
-  { id:'pv_swdocks_mtd', source:'pv', market:'Southwest Docks', period:'MTD',
+  { id:'pv_swdocks_mtd', source:'pv', market:'Southwest', refine:'Docks', period:'MTD',
     layout:'L_COMMENT_IMAGE', group:'AGG', optional:true,
     title:'AGG - Southwest Docks - MTD' },
-  { id:'pv_swdocks_ytd', source:'pv', market:'Southwest Docks', period:'YTD',
+  { id:'pv_swdocks_ytd', source:'pv', market:'Southwest', refine:'Docks', period:'YTD',
     layout:'L_COMMENT_IMAGE', group:'AGG', optional:true,
     title:'AGG - Southwest Docks - YTD' },
 
@@ -190,6 +201,9 @@ function DECK_getRecipe() {
 
     rows.push({
       id: r.id, source: r.source, market: r.market || '',
+      /* a within-market narrowing, e.g. Southwest -> Land. The source decides
+         what it means; nothing here needs to know. */
+      refine: r.refine || '',
       period: r.period || '', layout: r.layout, title: r.title,
       subtitle: r.subtitle || '', group: r.group || 'Other',
       optional: !!r.optional

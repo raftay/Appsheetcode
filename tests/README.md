@@ -71,6 +71,36 @@ node tests/fscheader.js          # no dependencies
 Covers the band layout, a band-less file, prior-year rows landing on the PY revenue and PY
 volume columns, and a genuinely wrong header still failing — with the row number it read.
 
+## `deckstatic.js` — the CSS the deck can actually see, and the recipe
+
+No browser, no Google, no dependencies. Run it after touching a deck module, a report
+page's styles, or the recipe.
+
+```bash
+node tests/deckstatic.js
+```
+
+**Why it exists.** The July 2026 deck published all 43 slides and every one of them was
+photographed with its styling missing. Phases 2–4 lifted the slide *builders* into
+`Deck_*.html`; the CSS their markup depends on stayed behind in each report page's own
+style block. The pages still looked right — they include their module *and* have the CSS —
+but the Deck Builder includes the modules **without** the pages. Headings rendered as
+unstyled body text running straight into their badge, and Price & Volume tables fell back
+to the generic cell padding, which is wide enough that the PPI column was cut in half by
+the card's `overflow:hidden`. Nothing threw. On the pre-fix tree this harness names all
+**46** orphaned classes across the four modules.
+
+So: every class a deck module puts in its markup must have a rule in `Styles.html` or
+`Deck_Styles.html`. A class styled only in a report page fails, and the failure names the
+page to copy the rule from. Classes positioned by inline styles, and interaction-only ones
+(`:hover`, `cursor`) that a still photograph cannot show, are listed in `INLINE_ONLY`
+— add to that list only when the class genuinely has nothing to render.
+
+It also checks `Deck_Styles.html` is scoped (**every** selector under `.slide-bare`, the
+wrapper `captureBare` photographs, so the file can never reach a page or the Deck Builder's
+own UI) and included, and that the Southwest **Land / Docks** recipe rows filter the
+Southwest *market* with a `refine`, rather than naming a market that does not exist.
+
 ## Also worth running
 
 ```bash

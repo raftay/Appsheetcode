@@ -113,8 +113,23 @@ var DECK_CONFIG = {
   CAPTURE_PX_PER_PT: 4,
 
   /* Hard ceiling on a single capture, so one huge table cannot blow up the
-     request. The page should downscale to fit rather than send more. */
-  CAPTURE_MAX_PX: 2400
+     request. The page should downscale to fit rather than send more.
+
+     2048 IS NOT AN ARBITRARY ROUND NUMBER - it is where Google resamples.
+     Whatever is inserted here, an exported deck comes back with every picture
+     capped at 2048px on its LONGEST side; in the July build 21 of the 43
+     pictures were exactly 2048 wide or exactly 2048 tall, across every aspect
+     ratio in the deck. Asking for 2400 therefore did not buy 2400 - it bought a
+     2400px canvas that Google then bilinear-resampled down to 2048, so text
+     rendered at one scale was squeezed to another and every slide came out
+     softer than the same table screenshotted by hand.
+
+     Capturing at the ceiling instead means html2canvas RENDERS the text at its
+     final size - one sampling, not two - and nothing downstream touches it. The
+     page also clamps the capture's HEIGHT to this, because the cap applies to
+     the longest side: an unclamped tall table used to have its height reduced
+     to 2048 and its width dragged down with it. */
+  CAPTURE_MAX_PX: 2048
 };
 
 
@@ -276,6 +291,9 @@ var DECK = (function () {
           /* Tell the page how big to capture, so nobody has to guess. */
           r.capturePx = Math.min(DECK_CONFIG.CAPTURE_MAX_PX,
             Math.round(r.w * DECK_CONFIG.CAPTURE_PX_PER_PT));
+          /* ...and the ceiling itself, because the page must clamp the capture's
+             HEIGHT to it too - see CAPTURE_MAX_PX. */
+          r.maxPx = DECK_CONFIG.CAPTURE_MAX_PX;
         }
         slots[k] = r;
         order.push(k);

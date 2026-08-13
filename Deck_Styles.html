@@ -1,0 +1,173 @@
+<!-- ===========================================================================
+     Deck_Styles.html — the slide CSS the DECK's captures need.
+     ---------------------------------------------------------------------------
+     WHY THIS FILE EXISTS
+
+     Phases 2-4 lifted the slide BUILDERS out of the report pages into
+     Deck_Fuel / Deck_PV / Deck_SEG / Deck_RMX. The CSS those builders' markup
+     depends on stayed behind, in each page's own private style block. Every
+     report page still includes its own module, so on the pages nothing looked
+     wrong — but the Deck Builder includes the modules WITHOUT the pages, so
+     every generated slide was photographed with that styling missing:
+
+       · "By extra type" / "By submarket" lost .rmx-eb-title, so the heading
+         rendered as unstyled body text, lower-case, run straight into the mix
+         badge (.rmx-eb-badge sets the margin-left:auto that separates them).
+       · Price & Volume tables lost `.exp table th, .exp table td{padding:4px 9px}`
+         and fell back to the generic 10px/12px cell padding. That is ~40% more
+         width than the fitter budgeted for, so the last column (PPI) was cut in
+         half by the card's overflow:hidden on every AGG slide.
+       · The Product Segment and Fuel tables lost their header, subtotal and
+         grand-total colours.
+
+     A picture nobody can restyle afterwards is the deck's whole output, so a
+     missing rule here is not cosmetic — it ships.
+
+     SCOPING: every rule is under `.slide-bare`, the wrapper AmrSlide.captureBare
+     puts around content it is about to photograph. Nothing else on any page
+     carries that class, so this file cannot reach the Deck Builder's own UI and
+     could not reach a report page even if one included it.
+
+     KEEPING IT IN STEP: these rules are a MIRROR of the page blocks named in
+     each section below. They are duplicated rather than moved because moving a
+     rule out of a page's <style> changes that page's cascade order, and these
+     pages are in daily use. If you restyle a slide table on a report page,
+     change it here too — the deck is the other consumer.
+     ======================================================================== -->
+<style>
+/* ---------------------------------------------------------------------------
+   AGG Price & Volume  ·  mirrors Page_PriceVolume.html
+   The compact export padding is the one that matters most: without it the
+   tables overflow their card and get clipped.
+   ------------------------------------------------------------------------ */
+.slide-bare .tbl-card{padding-bottom:6px}
+.slide-bare .tbl-pad{padding:0 6px 8px}
+.slide-bare .tbl-card .card-head{padding-bottom:12px}
+.slide-bare .exp .tbl-card .card-head{padding:10px 14px 6px}
+.slide-bare .exp table th{white-space:nowrap; line-height:1.15}
+.slide-bare .exp table th, .slide-bare .exp table td{padding:4px 9px}
+
+.slide-bare thead th.grp-asp{background:var(--blue-60)}
+.slide-bare thead th.grp-ppi{background:var(--blue-70)}
+.slide-bare .grp-vol{box-shadow:inset 3px 0 0 var(--blue-20)}
+.slide-bare .grp-asp{box-shadow:inset 3px 0 0 var(--blue-30)}
+.slide-bare .grp-fsc{box-shadow:inset 3px 0 0 var(--blue-40)}
+.slide-bare .grp-app{box-shadow:inset 3px 0 0 var(--blue-30)}
+.slide-bare .grp-ppi{box-shadow:inset 3px 0 0 var(--blue-60)}
+.slide-bare .grp-pt{box-shadow:inset 3px 0 0 var(--blue-40)}
+
+/* Top 10 Customers */
+.slide-bare .ctbl-wrap{overflow-x:auto; padding:0 40px}
+.slide-bare table.cust{min-width:880px}
+.slide-bare table.cust thead tr.grp th{background:var(--blue-100); color:#cfe0f6; font:700 9.5px Archivo;
+  letter-spacing:.12em; text-transform:uppercase; padding:8px 10px; text-align:left;
+  border-right:1px solid rgba(255,255,255,.12)}
+.slide-bare table.cust thead tr.grp th.sticky-l{background:var(--blue-100)}
+.slide-bare table.cust thead tr.col th{background:var(--blue-80); color:#fff; font:600 10.5px Inter;
+  letter-spacing:.02em; padding:8px 10px; text-align:left; white-space:nowrap}
+.slide-bare table.cust thead tr.col th:first-child{text-align:left}
+.slide-bare table.cust td{padding:8px 10px; text-align:right; white-space:nowrap;
+  border-bottom:1px solid var(--line); font-size:12.5px}
+.slide-bare table.cust td:first-child{text-align:left}
+.slide-bare table.cust tr.parent>td{font-weight:600; background:#fff}
+.slide-bare table.cust tr.child>td{background:var(--blue-10); color:var(--muted); font-size:12px}
+.slide-bare table.cust tr.child>td:first-child{padding-left:30px; font-weight:500; color:var(--ink)}
+.slide-bare table.cust tfoot td{background:#fff; font-weight:700; border-top:2px solid var(--blue-100);
+  padding:11px 10px}
+.slide-bare .chev{display:inline-block; width:14px; color:var(--blue-60); font-size:10px}
+.slide-bare .collapsed .chev{transform:rotate(-90deg)}
+
+/* ---------------------------------------------------------------------------
+   Ready-Mix Price & Volume  ·  mirrors Page_Rmx.html
+   .rmx-eb-title is the "By submarket" / "By extra type" heading and
+   .rmx-eb-badge's margin-left:auto is what pushes the mix badge to the right.
+   The rmx-yellow variants are deliberately not mirrored: the deck always
+   photographs on white.
+   ------------------------------------------------------------------------ */
+.slide-bare .tbl-scroll{overflow-x:auto; padding:0 6px 10px}
+.slide-bare th.gB{background:var(--blue-60)}
+.slide-bare th.gA{background:var(--blue-70)}
+.slide-bare th.gV{background:var(--blue-80)}
+.slide-bare tr.subtotal td{font-weight:700; background:#EEF3FB; border-top:1px solid var(--blue-40)}
+.slide-bare td.section{font:800 11px Inter; letter-spacing:.04em; color:#fff; background:var(--blue-70);
+  text-align:center; vertical-align:middle; white-space:normal}
+.slide-bare table.rtbl th, .slide-bare table.rtbl td{padding:6px 9px}
+.slide-bare table.rtbl th.tlbl, .slide-bare table.rtbl td.tlbl{text-align:left}
+.slide-bare table.rtbl td.tlbl{font-weight:600}
+.slide-bare table.rtbl thead th{font-size:1em}
+.slide-bare table.rtbl tr.subtotal td{background:#EEF3FB; font-weight:700; border-top:1px solid var(--blue-40)}
+.slide-bare table.rtbl tfoot td{background:#D3E3F6; color:var(--blue-100); font-weight:800;
+  border-top:2px solid var(--blue-100)}
+
+.slide-bare .rmx-export-block{width:100%}
+.slide-bare .rmx-export-block .rmx-eb-head{display:flex; align-items:center; margin-bottom:8px}
+.slide-bare .rmx-eb-title{font:700 20px Archivo; color:var(--blue-100)}
+.slide-bare .rmx-eb-badge{margin-left:auto; font:800 20px Inter}
+.slide-bare .rmx-eb-badge.pos{color:var(--pos)}
+.slide-bare .rmx-eb-badge.neg{color:var(--neg)}
+.slide-bare .rmx-export-block table{min-width:0}
+.slide-bare .rmx-export-block thead th{font-size:1em}
+.slide-bare .rmx-export-block thead th small{font-size:.82em}
+
+/* ---------------------------------------------------------------------------
+   Commercial Product Segment  ·  mirrors Page_Segment.html
+   The page sizes table.gt under #tablesHost; the deck scrapes the table out of
+   that host, so the same sizing is restated on the capture wrapper instead.
+   ------------------------------------------------------------------------ */
+.slide-bare .crow{display:flex; gap:12px; align-items:flex-start}
+.slide-bare .ccell{flex:1 1 0%; min-width:0; overflow:hidden}
+.slide-bare .ccap{font:700 10.5px Archivo; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--blue-70); margin:0 0 5px}
+.slide-bare table.gt{--px:9px; --py:5px; width:100%; border-collapse:collapse; font-size:13px;
+  table-layout:auto}
+/* An explicit font-size inside a `font:` shorthand beats inheritance, so the
+   header would stay 11px while the fitter grew the values past 20px. */
+.slide-bare table.gt thead th{background:var(--blue-100); color:#fff; font-weight:700; font-size:1em;
+  text-align:right; white-space:nowrap; padding:calc(var(--py) + 3px) var(--px); line-height:1.2;
+  vertical-align:middle; border-right:1px solid rgba(255,255,255,.10)}
+.slide-bare table.gt thead th.gB{background:var(--blue-60)}
+.slide-bare table.gt thead th.gA{background:var(--blue-70)}
+.slide-bare table.gt thead th.gV{background:var(--blue-80)}
+.slide-bare table.gt tbody td{padding:var(--py) var(--px); text-align:right; white-space:nowrap;
+  color:var(--ink); border-bottom:1px solid #EEF3F9}
+.slide-bare table.gt thead th.tlbl, .slide-bare table.gt tbody td.tlbl{text-align:left}
+.slide-bare table.gt tbody td.tlbl{font-weight:600}
+.slide-bare table.gt td.section{background:var(--blue-70); color:#fff; font-weight:800; letter-spacing:.04em;
+  text-align:center; vertical-align:middle; white-space:normal; font-size:.88em}
+.slide-bare table.gt tbody tr.subtot td{background:#EEF3FB; font-weight:700; border-top:1px solid var(--blue-40)}
+.slide-bare table.gt tbody tr.grand td{background:#D3E3F6; color:var(--blue-100); font-weight:800;
+  border-top:2px solid var(--blue-100)}
+.slide-bare table.gt td.pos{color:var(--pos)}
+.slide-bare table.gt td.neg{color:var(--neg)}
+.slide-bare table.gt.wrapText thead th{white-space:normal}
+.slide-bare table.gt.wrapText tbody td.tlbl{white-space:normal}
+.slide-bare table.gt{--px:10px; --py:6px; font-size:12.5px; min-width:560px}
+
+/* ---------------------------------------------------------------------------
+   Fuel Recovery, both pages  ·  mirrors Page_FuelSurcharge.html
+   (Page_RmxFuel.html carries the same block; the two are already identical.)
+   ------------------------------------------------------------------------ */
+.slide-bare .fsc-wrap{width:100%}
+.slide-bare table.fsc-t{width:100%; border-collapse:collapse; font-size:15px}
+.slide-bare table.fsc-t thead th{background:var(--blue-80); color:#fff; font:600 11px Inter;
+  letter-spacing:.02em; text-transform:uppercase; padding:7px 10px; text-align:right; white-space:nowrap;
+  border-right:1px solid rgba(255,255,255,.10)}
+.slide-bare table.fsc-t thead th:first-child{text-align:left}
+.slide-bare table.fsc-t tbody td{padding:5px 10px; text-align:right; white-space:nowrap;
+  border-bottom:1px solid var(--line)}
+.slide-bare table.fsc-t tbody td.lft{text-align:left; font-weight:600; color:var(--ink)}
+.slide-bare table.fsc-t tbody tr.totrow td{background:var(--blue-10); font-weight:700; color:var(--blue-100);
+  border-top:2px solid var(--blue-100)}
+.slide-bare table.fsc-t tbody tr td.pos, .slide-bare table.fsc-t tbody tr.totrow td.pos{color:var(--pos); font-weight:600}
+.slide-bare table.fsc-t tbody tr td.neg, .slide-bare table.fsc-t tbody tr.totrow td.neg{color:var(--neg); font-weight:600}
+.slide-bare .fsc-exec{display:flex; flex-direction:column; gap:.6em; font-size:14px}
+.slide-bare .fsc-period{background:var(--blue-100); color:#fff; font:700 .95em Archivo; letter-spacing:.05em;
+  text-transform:uppercase; padding:.5em .95em}
+.slide-bare .fsc-secbar{background:var(--blue-80); color:#fff; font:700 .85em Inter; letter-spacing:.03em;
+  text-transform:uppercase; padding:.45em 1.1em; margin-top:.15em}
+.slide-bare table.fsc-t.exec{font-size:1em}
+.slide-bare table.fsc-t.exec thead th{font:600 .8em Inter; padding:.5em .95em}
+.slide-bare table.fsc-t.exec thead th.grp{text-align:center; border-bottom:1px solid rgba(255,255,255,.25)}
+.slide-bare table.fsc-t.exec thead th.mid{vertical-align:middle}
+.slide-bare table.fsc-t.exec tbody td{padding:.34em .75em}
+</style>

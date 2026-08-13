@@ -811,9 +811,52 @@ var AmrPvSlide = (function(){
 
   /* '__ALL__' is how the backend spells "every market" — the deck's
      "Central Canada" rollup is exactly that, and it has no market tab. */
-  function filterValueOf(market){
+  function isCentral(market){
     var m = String(market || '').trim();
-    return (!m || /^central\s*canada$/i.test(m)) ? '__ALL__' : m;
+    return !m || /^central\s*canada$/i.test(m);
+  }
+  function filterValueOf(market){
+    return isCentral(market) ? '__ALL__' : String(market || '').trim();
+  }
+
+  /* WHICH BREAKDOWN THE FIRST TABLE SHOWS.
+     Inside one market the interesting cut is its submarkets. Central Canada is
+     not a market — it is every market at once — so cutting it by submarket
+     produced one flat list of fourteen submarkets from five different markets
+     (West GTA next to Regina next to Sask AGG) and the reader had to reassemble
+     the markets in their head. The rollup slide is cut by MARKET. */
+  function dimsFor(market){
+    return isCentral(market) ? ['MARKET', 'PLANT_TYPE', 'PROD_CLASS']
+                             : ['SUBMARKET1', 'PLANT_TYPE', 'PROD_CLASS'];
+  }
+
+  /* ---- LAND / DOCKS ------------------------------------------------------
+     Southwest Land and Southwest Docks are NOT markets. They are the two
+     values of the MB SUBMARKET column inside the Southwest market, which the
+     Price & Volume page exposes as its refine chips. Asking the backend to
+     filter MARKET = "Southwest Land" matched no row at all, so both slides
+     were published as a full page of zeroes rather than failing out loud.
+
+     A recipe row therefore says market:'Southwest', refine:'Land'. The raw
+     value spelled in the sheet ("SW Land", "SW DOCKS", whatever it is this
+     month) is never written down here: the unrefined report already returns
+     refineOptions for the market, so the label is matched against that list at
+     build time, exactly as the chips on the page do it. */
+  function refineLabelOf(v){ return /dock/i.test(String(v || '')) ? 'Docks' : 'Land'; }
+
+  function resolveRefine(spec){
+    var want = String(spec.refine || '').trim();
+    if(!want) return Promise.resolve('__ALL__');
+    /* the market's own report, unrefined - it carries the option list */
+    return loadReport({ market: spec.market, period: spec.period }).then(function(d){
+      var opts = (d && d.refineOptions) || [];
+      for(var i = 0; i < opts.length; i++){
+        if(refineLabelOf(opts[i]).toLowerCase() === want.toLowerCase()) return opts[i];
+      }
+      throw new Error('"' + want + '" is not one of the Land / Docks values in '
+        + (spec.market || 'this market') + '. The sheet’s MB SUBMARKET column offers: '
+        + (opts.join(', ') || '(none)') + '.');
+    });
   }
 
   /* The shared EBITDA values, once per session. A missing workbook is NOT an
@@ -830,17 +873,23 @@ var AmrPvSlide = (function(){
     });
   }
 
-  function reportKey(spec){ return filterValueOf(spec.market) + '|' + (spec.period || 'MTD'); }
+  /* The refine value belongs in the key: Southwest, Southwest·Land and
+     Southwest·Docks are three different reports off the same market. */
+  function reportKey(spec, refineValue){
+    return filterValueOf(spec.market) + '|' + (spec.period || 'MTD')
+         + '|' + (refineValue || '__ALL__');
+  }
 
-  function loadReport(spec){
-    var key = reportKey(spec);
+  function loadReport(spec, refineValue){
+    var rv = refineValue || '__ALL__';
+    var key = reportKey(spec, rv);
     if(RPT[key]) return Promise.resolve(RPT[key]);
     return srv('getReport', [{
       period: spec.period || 'MTD',
-      dimensions: ['SUBMARKET1', 'PLANT_TYPE', 'PROD_CLASS'],
+      dimensions: dimsFor(spec.market),
       filterField: 'MARKET',
       filterValue: filterValueOf(spec.market),
-      refineValue: '__ALL__',
+      refineValue: rv,
       refineMode: 'include',
       month: 0,                 // 0 = the server's report month (last closed)
       upload: null
@@ -848,6 +897,19 @@ var AmrPvSlide = (function(){
       if(!d) throw new Error('No Price & Volume data for ' + (spec.market || 'Central Canada') + '.');
       RPT[key] = d; return d;
     });
+  }
+
+  /* What a spec actually resolves to, cached per row so prepare() and content()
+     agree without a second round trip. */
+  var REFINED = {};
+  function refineCacheKey(spec){
+    return spec.id
+      || (filterValueOf(spec.market) + '|' + (spec.period||'') + '|' + (spec.refine||''));
+  }
+  function specRefine(spec){
+    var k = refineCacheKey(spec);
+    if(REFINED[k] != null) return Promise.resolve(REFINED[k]);
+    return resolveRefine(spec).then(function(rv){ REFINED[k] = rv; return rv; });
   }
 
   function loadCust(market, period){
@@ -878,12 +940,17 @@ var AmrPvSlide = (function(){
 
   AmrDeckSource.register('pv', {
     /* Both the report and the KPI workbook; the KPI half never fails the
-       slide, it just leaves the strip off. */
+       slide, it just leaves the strip off. A Land / Docks row resolves its
+       refine value first — that is one extra report for the market, which the
+       market's own slides then reuse from cache. */
     prepare: function(spec){
-      return Promise.all([loadReport(spec), loadKpi()]);
+      return specRefine(spec).then(function(rv){
+        return Promise.all([loadReport(spec, rv), loadKpi()]);
+      });
     },
     content: function(spec){
-      var d = RPT[reportKey(spec)];
+      /* prepare() always runs first, so the resolved refine is in hand. */
+      var d = RPT[reportKey(spec, REFINED[refineCacheKey(spec)])];
       if(!d) throw new Error('Price & Volume data is not loaded yet.');
       var el = AmrPvSlide.contentOffscreen(d, ctxFor(spec, d));
       if(!el) throw new Error('Could not build the Price & Volume block.');

@@ -260,6 +260,15 @@ var AmrSlide = (function(){
            capturePx target pixel width of the PNG. Quality. DECK_readTemplate
                     returns one per image slot (4 px per point of slot width),
                     so the deck asks for exactly what it needs.
+           maxPx    ceiling on BOTH dimensions of the PNG, 0/absent = none.
+                    Google caps an inserted picture at 2048 on its longest side,
+                    so anything bigger is not extra quality — it is a second
+                    resampling of already-rendered text, which is what made deck
+                    slides look softer than the same table screenshotted by
+                    hand. Clamping here makes html2canvas render the text at its
+                    final size instead. The HEIGHT needs the clamp as much as
+                    the width: the cap is on the longest side, so a tall table
+                    that overshot had its width dragged down with it.
            fit(box) the page's own table-fitting callback, as build() takes.
            bg       background colour, default white. }
 
@@ -287,6 +296,10 @@ var AmrSlide = (function(){
       requestAnimationFrame(function(){ requestAnimationFrame(function(){
         var h = box.scrollHeight || box.offsetHeight || 1;
         var sc = capW / cssW;
+        /* Never hand the platform something it will resample: the height is
+           measured by now, so both dimensions can be held under the ceiling. */
+        var mx = o.maxPx || 0;
+        if(mx > 0) sc = Math.min(sc, mx / cssW, mx / h);
         html2canvas(box, { scale:sc, backgroundColor:(o.bg||'#ffffff'),
             logging:false, width:cssW, height:h,
             windowWidth:cssW, windowHeight:h,

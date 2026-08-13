@@ -11,6 +11,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <?!= include('Styles') ?>
+<!-- The slide CSS the captures need. Every report page carries its own copy in
+     its own private style block; this page includes the builders WITHOUT those pages,
+     so without this file every generated slide is photographed unstyled. -->
+<?!= include('Deck_Styles') ?>
 <style>
 /* ---- Deck Builder page-only rules (tokens/base/header from Styles.html) ---- */
 .dbwrap{max-width:1560px; margin:0 auto; padding:14px 20px 28px; box-sizing:border-box;
@@ -415,6 +419,9 @@ function renderOne(row){
     return AmrSlide.captureBare(el, {
       width: cssW,
       capturePx: slot.capturePx || Math.round(slot.w * 4),
+      /* the ceiling Google will enforce anyway - clamping here means the text
+         is RENDERED at final size instead of resampled down to it */
+      maxPx: slot.maxPx || 2048,
       fit: (AmrDeckSource.get(row.spec.source)||{}).fit || null
     });
   }).then(function(cap){
@@ -547,7 +554,11 @@ function dbPickKpi(i, sheet){
 }
 
 function rowHtml(r, i){
-  var sub = [r.spec.source, r.spec.market, r.spec.period].filter(Boolean).join(' · ');
+  /* refine sits next to the market it narrows, so a Land row is readable as
+     "pv · Southwest · Land · MTD" rather than looking like a duplicate of the
+     plain Southwest row above it */
+  var sub = [r.spec.source, r.spec.market, r.spec.refine, r.spec.period]
+    .filter(Boolean).join(' · ');
   return '<div class="db-row'+(r.on?'':' off')+'" id="dbRow'+i+'">'+
     '<input type="checkbox" '+(r.on?'checked':'')+' onchange="dbToggle('+i+',this.checked)">'+
     '<div class="db-num">'+(i+1)+'</div>'+

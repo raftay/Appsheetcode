@@ -835,12 +835,32 @@ function pvBuildLocal(){
 
   var opts = C.dict('agg', PV_CUBE_FIELD[STATE.filterField] || 'market') || [];
 
+  /* THE LAND / DOCKS OPTIONS ARE PER MARKET, NOT PER DATASET.
+     This used to hand the chips C.dict('agg','mb') - every MB SUBMARKET value
+     in the whole cube. Each market has its own ("SW Land", "GTA Land", ...) and
+     the chips label them all as just Land or Docks, so Southwest showed seven
+     buttons of which the five belonging to other markets filtered to nothing.
+     The server has always scoped this list to the market being viewed (it
+     collects the options AFTER the market filter); this is the cube path
+     catching up. Grouped WITHOUT the mb filter, so the option that is currently
+     selected does not become the only one left to select. */
+  var noRefine = {};
+  for (var fk in filters) if (fk !== 'mb') noRefine[fk] = filters[fk];
+  var mbRows = pvCubeGrouped(C.query({ line:'agg', cyMonths:M.cy, pyMonths:M.py,
+                                       filters:noRefine, groupBy:'mb' }));
+  /* if the cube cannot group by mb, the unscoped dictionary is still better
+     than no chips at all - that is exactly what this page did before */
+  var mbOpts = mbRows
+    ? mbRows.filter(function(g){ return g.key && (g.cyVol || g.pyVol || g.cyRev || g.pyRev); })
+            .map(function(g){ return String(g.key); }).sort()
+    : (C.dict('agg','mb') || []).slice().sort();
+
   return {
     ok:true, local:true, period:STATE.period,
     filterField:STATE.filterField, filterValue:STATE.filterValue,
     refineValue:STATE.refineValue, refineMode:STATE.refineMode,
     filterOptions: opts.slice().sort(),
-    refineOptions: (C.dict('agg','mb') || []).slice().sort(),
+    refineOptions: mbOpts,
     rowCount: C.rows ? C.rows('agg') : 0,
     tables: tables,
     revenueBridge: { pyRev: total.pyRev, cyRev: total.cyRev,
@@ -1462,7 +1482,7 @@ function onData(d){
      back for the corrected one. '__ALL__' always exists, so this can't loop. */
   if(STATE.filterValue !== fWas || STATE.refineValue !== rWas){ load(); return; }
   var refineTxt = (d.refineValue && d.refineValue!=='__ALL__') ? (' · '+refineLabelOf(d.refineValue)) : '';
-  document.getElementById('bridgeMeta').textContent = label(d.period)+' · '+(d.filterValue==='__ALL__'?'all '+fieldLabel(d.filterField):d.filterValue)+refineTxt;
+  document.getElementById('bridgeMeta').textContent = label(d.period)+' · '+(d.filterValue==='__ALL__'?'all '+fieldLabel(d.filterField).toLowerCase():d.filterValue)+refineTxt;
   document.getElementById('tableMeta').textContent = (d.rowCount||0).toLocaleString('en-CA')+' lines';
   renderCharts(d);
   renderTables(d);
@@ -2111,7 +2131,13 @@ function captureChart(id, w, h){ return AmrPvSlide.captureChart(id, w, h); }
 /* ---------- misc ---------- */
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
 function label(p){ return p==='YTD'?'Year to date':'Month to date'; }
-function fieldLabel(k){ var d=DIMS.filter(function(x){return x.key===k;})[0]; return d?d.label.toLowerCase():k; }
+/* The dimension's name AS WRITTEN in CONFIG.DIMENSIONS - "Submarket", not
+   "submarket". It used to lower-case here because its first caller put it in
+   the middle of a sentence ("all markets"), and then it became the heading over
+   a table, which is why the cube path titled its cards "submarket" / "plant
+   type" while the identical card built on the server path said "Submarket".
+   Sentence contexts lower-case at the call site now; there is one. */
+function fieldLabel(k){ var d=DIMS.filter(function(x){return x.key===k;})[0]; return d?d.label:k; }
 function showBanner(msg){ var b=document.getElementById('banner'); document.getElementById('bannerText').textContent=msg; b.classList.add('show'); }
 /* Same names, same call sites — but the page is no longer frozen while they
    are up. Everything on this page is either already on screen or arriving, and
