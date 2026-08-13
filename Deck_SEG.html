@@ -26,10 +26,14 @@
 
      WHICH TABLES APPEAR
        The page has a checkbox per table and remembers the choice; the deck
-       wants all of them, every month, with nothing to forget to tick. So
+       needs the same set every month with nothing to forget to tick. So
        exportSel is a ctx field: the page passes its live selection, and the
-       deck passes {} — which isOn() reads as "the default for this table",
-       and every table defaults on.
+       deck passes an explicit set.
+
+       NOT {}. An empty object means "each table's default", and two of the
+       three default OFF (EXPORT_DEFAULT_OFF below), so the deck's slides came
+       out as the Segment table alone. The deck names what it wants:
+       Segment + By extra type.
      ============================================================= -->
 <script>
 var AmrSegSlide = (function(){
@@ -502,7 +506,12 @@ var AmrSegSlide = (function(){
       data: CACHE[key(spec)] || null,
       market: spec.market || '',
       period: spec.period || 'MTD',
-      exportSel: {},                       // every table on
+      /* NOT {} - that means "each table's default", and byType/detail default
+         OFF (EXPORT_DEFAULT_OFF), so the slide was the Segment table alone.
+         The deck wants Segment + By extra type, which is the pair the Segment
+         page ticks for its own export. `detail` stays off: it is the EXTRAS
+         LOOKUP working view, too wide to read at slide size. */
+      exportSel: { 'seg:segment': true, 'seg:byType': true, 'seg:detail': false },
       kpi: (window.AmrPvSlide && AmrPvSlide.kpiFor)
         ? AmrPvSlide.kpiFor(KPIVALS.vals, 'RMX_MARKET', spec.market || '', spec.kpiSheet)
         : { vals:KPIVALS.vals, sheet:'', index:{}, sheets:[], map:{} }

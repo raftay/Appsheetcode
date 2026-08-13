@@ -493,35 +493,52 @@ var DECK = (function () {
 
 
   /* ======================================================================
-   * DECK_finish - drop everything that is not a built slide, number the pages
+   * DECK_finish - park everything that is not a built slide, number the pages
+   * ----------------------------------------------------------------------
+   * THE TEMPLATE SLIDES ARE MOVED TO THE END, NOT DELETED. They used to be
+   * removed outright, which threw away the one copy of each layout that the
+   * deck was actually built from - so a slide that came out wrong could not be
+   * rebuilt by hand from the layout beside it, and there was nothing left to
+   * check a suspect box against. Parking them costs a few slides at the back of
+   * a 43-slide deck and can be deleted in one selection by whoever wants them
+   * gone.
+   *
+   * Everything the builder made carries "SLIDE: <id>" in its speaker notes.
+   * Parking by the ABSENCE of that tag rather than the presence of "LAYOUT:"
+   * also sweeps up any untagged slide left in the template, which would
+   * otherwise sit in the middle of the deck.
    * ==================================================================== */
   function finish(deckId) {
     if (!deckId) fail_('finish called without a deckId.');
     var pres = SlidesApp.openById(deckId);
 
-    /* Keep ONLY slides this builder made - every one of them carries
-       "SLIDE: <id>". Deleting by the absence of that tag rather than by the
-       presence of "LAYOUT:" also sweeps out any untagged slide someone left in
-       the template, which would otherwise survive into every deck.
-       Backwards, so removing one does not shift the next index to check. */
     var slides = pres.getSlides();
-    var removed = 0;
-    for (var i = slides.length - 1; i >= 0; i--) {
-      if (!recipeIdOf_(slides[i])) { slides[i].remove(); removed++; }
+    var parked = [];
+    for (var i = 0; i < slides.length; i++) {
+      if (!recipeIdOf_(slides[i])) parked.push(slides[i]);
     }
+    /* Each to the last index IN ORDER, so they keep their template order at the
+       back instead of arriving reversed. */
+    for (var p = 0; p < parked.length; p++) parked[p].move(slides.length - 1);
 
-    /* Now the order is final, so {{PAGE}} can mean something. */
+    /* Now the order is final, so {{PAGE}} can mean something. Only BUILT slides
+       are numbered: a parked layout is not page 44 of the deck, and leaving its
+       {{PAGE}} token alone is what keeps it usable as a template. */
     slides = pres.getSlides();
+    var page = 0;
     for (var j = 0; j < slides.length; j++) {
-      setToken_(slides[j], DECK_CONFIG.TOKENS.page, String(j + 1));
+      if (!recipeIdOf_(slides[j])) continue;
+      setToken_(slides[j], DECK_CONFIG.TOKENS.page, String(++page));
     }
     pres.saveAndClose();
 
     return {
       deckId: deckId,
       url: 'https://docs.google.com/presentation/d/' + deckId + '/edit',
-      slides: slides.length,
-      templateSlidesRemoved: removed
+      /* the deck proper - what the page reports as "N slides published" - not
+         counting the layouts parked behind it */
+      slides: page,
+      templateSlidesParked: parked.length
     };
   }
 
@@ -738,8 +755,8 @@ function DECK_smokeTest() {
   });
 
   var out = DECK.finish(deck.deckId);
-  Logger.log('Finished: %s slides, %s template slides removed',
-    out.slides, out.templateSlidesRemoved);
+  Logger.log('Finished: %s slides, %s template slides parked at the end',
+    out.slides, out.templateSlidesParked);
   Logger.log('OPEN THIS: %s', out.url);
   return out;
 }

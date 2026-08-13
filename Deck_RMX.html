@@ -540,7 +540,7 @@ var AmrRmxSlide = (function(){
 (function(){
   if(!window.AmrDeckSource) return;
 
-  var KEYS = {}, EXTRAS = {};
+  var KEYS = {};
 
   function srv(fn, args){
     return new Promise(function(resolve, reject){
@@ -557,13 +557,15 @@ var AmrRmxSlide = (function(){
      key rows and the browser builds every table from them - which is why the
      compute layer had to come across with the renderers. month 0 = the
      server's report month (last closed). */
+  /* RMX_getExtras is NOT fetched. These slides carry the three dimension tables
+     and nothing else, and the extras tables they used to feed now live on the
+     Product Segment slide. Re-add the call here if extraCards below ever comes
+     back - renderExtras takes null and renders nothing, so the slide is right
+     either way, but a table with no data behind it is not. */
   function load(spec){
     var k = key(spec), opts = { market:spec.market, period:spec.period||'MTD', month:0, upload:null };
-    var need = [];
-    if(!KEYS[k])   need.push(srv('RMX_getKeys',   [opts]).then(function(d){ KEYS[k]=d; }));
-    if(!EXTRAS[k]) need.push(srv('RMX_getExtras', [opts]).then(function(d){ EXTRAS[k]=d; })
-                              .catch(function(){ EXTRAS[k] = null; }));  // extras are optional
-    return Promise.all(need);
+    if(KEYS[k]) return Promise.resolve();
+    return srv('RMX_getKeys', [opts]).then(function(d){ KEYS[k]=d; });
   }
 
   AmrDeckSource.register('rmx', {
@@ -571,11 +573,21 @@ var AmrRmxSlide = (function(){
     content: function(spec){
       var k = key(spec), res = KEYS[k];
       if(!res) throw new Error('Ready-Mix data is not loaded yet.');
+      /* THREE TABLES, exactly as the page's own export produces: By Submarket,
+         By Strength Class, Top 10 Plants. extraCards used to add "By extra
+         type" and "Extras & VAP detail" on top, which pushed a five-table stack
+         into one image slot - and those two belong on the Product Segment
+         slide, where the Segment page puts them.
+
+         breakdowns is what labelForDim() reads. Passing [] left every heading
+         falling back to the RAW DIMENSION KEY, which is why these slides said
+         "By SUBMARKET" and "PLANT" where the page says "By Submarket" and
+         "Top 10 Plants". RMX_getKeys already returns the list. */
       var ctx = { month:0, latestMonth:res.latestMonth || 0,
-                  extraCards:['BYTYPE','DETAIL'], exportSel:{}, mapCounts:null,
-                  naMode:'separate', breakdowns:[] };
+                  extraCards:[], exportSel:{}, mapCounts:null,
+                  naMode:'separate', breakdowns:res.breakdowns || [] };
       var d = AmrRmxSlide.buildTables(res, AmrRmxSlide.DEFAULT_DIMS, ctx);
-      var el = AmrRmxSlide.contentOffscreen(d, EXTRAS[k], ctx);
+      var el = AmrRmxSlide.contentOffscreen(d, null, ctx);
       if(!el) throw new Error('Could not build the Ready-Mix block - no tables came back.');
       return el;
     },

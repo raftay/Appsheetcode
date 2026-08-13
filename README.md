@@ -526,6 +526,34 @@ Southwest's. The server has always scoped that list to the market being viewed; 
 now does too, grouped **without** the mb filter so the selected chip does not become the only
 one left to select.
 
+#### The Ready-Mix slides carried five tables and raw dimension keys
+
+Two things, one `ctx`. `extraCards:['BYTYPE','DETAIL']` added *By extra type* and *Extras &
+VAP detail* on top of the three dimension tables, so a five-table stack was squeezed into
+one image slot — and those two belong on the Product Segment slide, which is where the
+Segment page puts them. And `breakdowns:[]` left `labelForDim()` falling back to the **raw
+dimension key**, which is why the slides read `By SUBMARKET` / `By STRENGTH` / `PLANT` where
+the page reads `By Submarket` / `By Strength Class` / `Top 10 Plants`. `RMX_getKeys` returns
+the label list; the adapter passes it through now. The slide is the page's three tables:
+Submarket, Strength Class, Top 10 Plants. `RMX_getExtras` is no longer fetched.
+
+#### The Product Segment slides carried one table
+
+`exportSel:{}` reads as "each table's default", and two of the three default **off**
+(`EXPORT_DEFAULT_OFF`), so the slide was the Segment table alone. The deck names what it
+wants now — Segment **and** By extra type, the pair the Segment page ticks for its own
+export. `Extras & VAP detail` stays off: it is the EXTRAS LOOKUP working view, too wide to
+read at slide size.
+
+#### The template slides were deleted
+
+`finish()` removed every slide without a `SLIDE: <id>` note, which threw away the one copy
+of each layout the deck was built from — so a slide that came out wrong could not be rebuilt
+by hand from the layout beside it. They are **moved to the end** now, in template order.
+Only built slides are numbered: a parked layout is not page 44, and leaving its `{{PAGE}}`
+token unfilled is what keeps it usable as a template. `finish()` returns
+`templateSlidesParked`, and `slides` is the count of the deck proper.
+
 #### Table titles came out lower-case
 
 `fieldLabel()` lower-cased because its first caller put it mid-sentence ("all markets"), and
