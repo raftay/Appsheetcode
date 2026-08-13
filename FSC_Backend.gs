@@ -17,6 +17,10 @@
  *   its own tonnes are the ones that count. The numbers on this page will move,
  *   and the direction is expected - applied tonnes down, $/applied tonne up.
  *
+ * THE HEADER IS NOT ROW 1. The tab carries a totals band above its column
+ * names (row 1 sums, row 2 names, row 3 first record), so the header row is
+ * located by scoring, exactly as Price & Volume does. See headerRow_().
+ *
  * COLUMNS USED (names matched case- and space-insensitively)
  *   Plant · Year · Month
  *   "#### Volume"      - one column per year; the row's Year picks which
@@ -60,10 +64,46 @@ var FSC = (function () {
     return -1;
   }
 
+  /* ---------- THE HEADER ROW IS NOT ALWAYS ROW 1 ----------
+     "Combined Data CPI Raw" carries a TOTALS BAND above its header: row 1 is
+     the sums, row 2 the column names, row 3 the first data row. Reading row 1
+     blindly took that band as the header, every column came back -1, and the
+     page reported Plant, Year, Month, "#### Volume" and New Fuel Surcharge all
+     missing at once - the tell-tale of a header read one row too high, since a
+     genuine rename never loses every column together.
+
+     Price & Volume already solves this in tabHeaderRow_(); the same scoring is
+     repeated here rather than shared because the two files are separate Apps
+     Script globals and FSC must keep parsing an UPLOAD, which never goes
+     through PV's reader at all.
+
+     Score the first few rows against the names this tab is supposed to carry
+     and take the best. A "#### Volume" column counts too, so a file that rolls
+     over to a new year needs no edit here. */
+  var CPI_HEADER_NAMES_ = ['lookup key','sold to','plant','plant type','material family',
+    'customer parent','product class [rock]','product application','material',
+    'cust segment [rock]','year','month','cy rev exworks','py rev exworks',
+    'new fuel surcharge','cy fuel surcharge','py fuel surcharge','fuel surchage'];
+
+  function headerRow_(grid, names){
+    var want = {};
+    (names || CPI_HEADER_NAMES_).forEach(function(n){ want[norm_(n)] = 1; });
+    var best = 0, bestScore = -1, limit = Math.min(grid.length, 8);
+    for (var r = 0; r < limit; r++){
+      var row = grid[r] || [], score = 0;
+      for (var c = 0; c < row.length; c++){
+        var k = norm_(row[c]); if (!k) continue;
+        if (want[k] || /^\d{4} volume$/.test(k)) score++;
+      }
+      if (score > bestScore){ bestScore = score; best = r; }
+    }
+    return best;
+  }
+
   /* ---------- shared column resolution for a CPI grid ----------
      Used by both the sheet reader and the upload path, so an uploaded export
      and the live tab are parsed by exactly the same rules. */
-  function cpiCols_(header){
+  function cpiCols_(header, headerRowNo){
     var idx = {};
     header.forEach(function(h,i){ var k = norm_(h); if (k && !(k in idx)) idx[k] = i; });
 
@@ -93,8 +133,15 @@ var FSC = (function () {
     if (c.month < 0) miss.push('Month');
     if (!Object.keys(c.vol).length) miss.push('"#### Volume"');
     if (c.fsc < 0 && c.cyFsc < 0 && c.pyFsc < 0 && c.rawFsc < 0) miss.push('New Fuel Surcharge');
-    if (miss.length) throw new Error('The Combined Data CPI Raw data is missing these column(s): '
-      + miss.join(', ') + '. Check the header row spelling.');
+    if (miss.length){
+      /* Name the row that was read and the names found on it. When the header
+         moves, everything is "missing" at once and the row number is the fix. */
+      var seenNames = header.map(norm_).filter(function(x){ return !!x; }).slice(0, 12);
+      throw new Error('The Combined Data CPI Raw tab is missing these column(s): '
+        + miss.join(', ') + '. The header was read as row ' + (headerRowNo || 1)
+        + ', which carries: ' + (seenNames.join(', ') || '(nothing)')
+        + '. Check the header row spelling.');
+    }
     return c;
   }
 
@@ -152,11 +199,14 @@ var FSC = (function () {
      surcharge or it does not, and only its own tonnes count as applied. That is
      the whole point of moving source - it used to be inferred from a bucket. */
   function buildCells_(grid, mktOf, unknownLabel, otherRev){
-    var c = cpiCols_(grid[0]);
+    /* hr, not 0: the tab sums ABOVE its header (see headerRow_) */
+    var hr = headerRow_(grid);
+    var c  = cpiCols_(grid[hr], hr + 1);
+    var first = hr + 1;                      // first data row
 
     /* the newest year in the file decides which Rev column belongs to a row */
     var yMax = 0;
-    for (var s0 = 1; s0 < grid.length; s0++){
+    for (var s0 = first; s0 < grid.length; s0++){
       var y0 = Math.round(toNum_(grid[s0][c.year]));
       if (y0 > yMax) yMax = y0;
     }
@@ -180,7 +230,7 @@ var FSC = (function () {
     if (otherRev && c.key >= 0){
       denom = { hi:{}, lo:{} };
       var vHi = c.vol[yMax], vLo = c.vol[yMax - 1];
-      for (var q = 1; q < grid.length; q++){
+      for (var q = first; q < grid.length; q++){
         var kq = norm_(grid[q][c.key]); if (!kq) continue;
         if (vHi != null) denom.hi[kq] = (denom.hi[kq] || 0) + toNum_(grid[q][vHi]);
         if (vLo != null) denom.lo[kq] = (denom.lo[kq] || 0) + toNum_(grid[q][vLo]);
@@ -188,7 +238,7 @@ var FSC = (function () {
     }
 
     var cells = {}, markets = [], seen = {}, latest = 0, unknown = {}, used = 0;
-    for (var r = 1; r < grid.length; r++){
+    for (var r = first; r < grid.length; r++){
       var row = grid[r];
       var yr = Math.round(toNum_(row[c.year]));  if (!yr) continue;
       var mo = monthOrd_(row[c.month]);          if (!mo) continue;
@@ -373,14 +423,15 @@ var FSC = (function () {
     /* Other Revenue: LOOKUP KEY -> summed revenue. Duplicate keys are summed,
        and a key present at $0 still counts as present (that is what decides
        whether the Combined file's own column is used instead). */
-    var oi = {};
-    other[0].forEach(function(h,i){ var k = norm_(h); if (k && !(k in oi)) oi[k] = i; });
+    var oi = {}, ohr = headerRow_(other, ['lookup key','key','other revenue','revenue']);
+    other[ohr].forEach(function(h,i){ var k = norm_(h); if (k && !(k in oi)) oi[k] = i; });
     var oK = pick_(oi, ['lookup key','key']),
         oR = pick_(oi, ['other revenue','revenue']);
     if (oK < 0 || oR < 0)
-      throw new Error('The Other Revenue export needs a LOOKUP KEY column and an Other Revenue column.');
+      throw new Error('The Other Revenue export needs a LOOKUP KEY column and an Other Revenue column. '
+        + 'Its header was read as row ' + (ohr + 1) + '.');
     var map = {};
-    for (var i = 1; i < other.length; i++){
+    for (var i = ohr + 1; i < other.length; i++){
       var k = norm_(other[i][oK]); if (!k) continue;
       map[k] = (map[k] || 0) + toNum_(other[i][oR]);
     }
