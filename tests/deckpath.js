@@ -221,7 +221,6 @@ let bad = 0;
     return { sheets: p.sheets(spec), book: p.book(spec), has: p.hasBook(spec) };
   };
   const ok = (label, cond) => { if (!cond) bad++; console.log(`  ${cond ? 'ok  ' : 'FAIL'} ${label}`); };
-
   const gta  = pick('pv',  { market: 'GTA' });
   const sask = pick('pv',  { market: 'Saskatchewan' });
   const segS = pick('seg', { market: 'SASKATCHEWAN' });
@@ -250,6 +249,19 @@ let bad = 0;
   const before = calls.length;
   const n = R.resetAll();
   ok(`resetAll() ran them all (${n})`, n === R.list().length);
+
+  /* The Region dropdown reads what was loaded, so resetAll() blanks it — and
+     warmAll() has to be able to fill it in again with NOTHING rendered. That
+     is the whole point of the hook: prepare() loads the same workbook, but
+     only during a render, so before this the dropdown read "no workbook" on
+     every row until the first render had already been paid for. */
+  ok('resetAll() blanks the Region dropdown',
+     pick('pv', { market: 'GTA' }).sheets.length === 0);
+  await R.warmAll();
+  ok('warmAll() fills it in again with nothing rendered',
+     pick('pv', { market: 'GTA' }).sheets.length > 0);
+  ok('...and it still respects the row\'s workbook',
+     pick('pv', { market: 'Saskatchewan' }).sheets.indexOf('GTA') === -1);
 
   await R.build(specs[0]);                       // fsc_mtd, already built once
   const refetched = calls.length > before;

@@ -159,13 +159,38 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
     /AmrProgress\s*\.\s*clear\s*\(\s*['"]sync['"]\s*\)/.test(src),
     'no AmrProgress.clear(\'sync\') — ifChanged only clears it when nothing changed');
 
-  /* Render must run the check, not leave it to somebody remembering the
-     button: a deck built from figures the sheet replaced an hour ago builds
-     perfectly and goes red nowhere. */
+  /* Render must run the check itself. There is deliberately no button for it:
+     a deck built from figures the sheet replaced an hour ago builds perfectly
+     and goes red nowhere, so it must not be skippable. */
   const render = src.slice(src.indexOf('function dbRenderAll'));
   check('deck builder · Render runs the source check first',
-    /function dbRenderAll[\s\S]{0,700}?dbSyncCore\s*\(/.test(render),
-    'dbRenderAll does not call dbSyncCore');
+    /function dbRenderAll[\s\S]{0,900}?dbSourceCheck\s*\(/.test(render),
+    'dbRenderAll does not call dbSourceCheck');
+
+  /* And the Region dropdown has to be answerable BEFORE a render, or the
+     choice it exists to offer can only be made after paying for the render
+     that used the wrong one. The KPI workbook is loaded by prepare(), which
+     runs during a render, so Plan has to warm it separately. */
+  check('deck builder · Plan warms the Region dropdowns',
+    /function dbPlan[\s\S]{0,3000}?dbWarmPickers\s*\(/.test(src),
+    'dbPlan does not call dbWarmPickers — pickers stay blank until a render');
+}
+
+/* ---- the source contract ------------------------------------------------- *
+ * Every source that feeds a Region dropdown must be able to fill it in before
+ * anything is rendered. prepare() loads the KPI workbook too, but prepare()
+ * only runs during a render — so a source with a kpiPicker and no warm() puts
+ * the page back to reading "no workbook" on every row until the first render
+ * has already happened.
+ * -------------------------------------------------------------------------- */
+{
+  ['Deck_PV.html', 'Deck_SEG.html'].forEach(f => {
+    const src = read(f);
+    if (!/kpiPicker\s*:/.test(src)) return;
+    check(f + ' · a source with a Region dropdown warms it',
+      /\bwarm\s*:\s*function/.test(src),
+      'declares kpiPicker but no warm() — the dropdown cannot answer until a render');
+  });
 }
 
 /* ---- the recipe ---------------------------------------------------------- */

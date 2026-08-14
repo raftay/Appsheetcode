@@ -1302,6 +1302,10 @@ var AmrPvSlide = (function(){
         return Promise.all([loadReport(spec, rv), loadKpi()]);
       });
     },
+    /* The Region dropdown needs the KPI workbook, and it is worth knowing
+       which rows have one BEFORE spending a render on the wrong region. Only
+       the KPI half: the reports themselves are per row and stay in prepare(). */
+    warm: function(){ return loadKpi(); },
     content: function(spec){
       /* prepare() always runs first, so the resolved refine is in hand. */
       var d = RPT[reportKey(spec, REFINED[refineCacheKey(spec)])];

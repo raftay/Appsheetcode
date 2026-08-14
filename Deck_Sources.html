@@ -15,6 +15,7 @@
          prepare: function(spec){ ... },   // optional. Promise or null.
          content: function(spec){ ... },   // required. Returns a DOM element.
          fit:     function(box, spec){ },  // optional. The page's own fitter.
+         warm:    function(){ ... },       // optional. Preload what the UI needs.
          reset:   function(){ ... },       // optional. Drop everything fetched.
          kpiPicker: { ... }                // optional. See below.
        });
@@ -35,7 +36,14 @@
      period happened to be captured last. That is why the fuel pages grew
      buildContentFor(period) instead of reusing buildContent().
 
-     reset() is called by ↻ Update from source on the Deck Builder. Throw
+     warm() is called once after PLAN, before anything is rendered. Load only
+     what the Deck Builder needs to DESCRIBE a row — today that is the KPI
+     workbook the Region dropdown lists. prepare() loads it too, but prepare()
+     runs during a render, and a dropdown that cannot answer until after the
+     render is the wrong way round: the whole point of picking the region is
+     to pick it BEFORE paying for 43 slides. Per-row data stays in prepare().
+
+     reset() is called when the source sheets turn out to have changed. Throw
      away everything fetched — that is the ONLY thing standing between a
      changed sheet and a re-render that quietly reuses the old figures.
 
@@ -78,6 +86,31 @@ var AmrDeckSource = (function(){
   function has(id){ return !!REG[String(id||'')]; }
   function get(id){ return REG[String(id||'')] || null; }
   function list(){ return Object.keys(REG).sort(); }
+
+  /* Load what the Deck Builder needs to DESCRIBE a row, before anything is
+     rendered — today that is the KPI workbook behind the Region dropdown.
+     prepare() also loads it, but prepare() only runs during a render, so
+     without this the picker cannot know its options until the first render has
+     happened: every row read "no workbook", including the ones whose workbook
+     was uploaded, and the region could only be corrected after paying for a
+     render that used the wrong one. Which is precisely backwards.
+
+     Optional, must not throw, and a failure is not allowed to stop the Plan
+     stage — the list is still usable without a dropdown. Resolves when every
+     source that has one is done, so the caller can redraw once. */
+  function warmAll(){
+    var jobs = [];
+    Object.keys(REG).forEach(function(id){
+      var src = REG[id];
+      if(typeof src.warm !== 'function') return;
+      try { jobs.push(Promise.resolve(src.warm())); }
+      catch(e){ console.warn('AmrDeckSource: warm() failed for "'+id+'"', e); }
+    });
+    return Promise.all(jobs).catch(function(e){
+      console.warn('AmrDeckSource: a warm() rejected', e);
+      return null;
+    });
+  }
 
   /* ↻ Update from source. Every adapter holds what it fetched for the rest of
      the page's life — that is the whole point of prepare() being cheap the
@@ -134,6 +167,7 @@ var AmrDeckSource = (function(){
   }
 
   return { register:register, has:has, get:get, list:list,
-           missingFor:missingFor, build:build, resetAll:resetAll };
+           missingFor:missingFor, build:build, warmAll:warmAll,
+           resetAll:resetAll };
 })();
 </script>
