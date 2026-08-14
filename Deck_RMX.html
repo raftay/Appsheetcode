@@ -594,7 +594,10 @@ var AmrRmxSlide = (function(){
         month:monthOf(spec), latestMonth:(res && res.latestMonth) || 0,
         extraCards:[], exportSel:{}, mapCounts:null,
         naMode:'separate', breakdowns:(res && res.breakdowns) || [] });
-    }
+    },
+    /* ↻ Update from source: forget the key rows, so the next Render fetches
+       them again rather than rebuilding the tables from the old ones. */
+    reset: function(){ KEYS = {}; }
   });
 })();
 </script>

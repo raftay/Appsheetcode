@@ -52,6 +52,23 @@ node tests/deckpath.js
 
 Add a case here for every new source id a phase registers.
 
+It also pins two things the Deck Builder's ↻ Update from source depends on.
+
+**The Region dropdown is per row, not per page.** Manitoba and Saskatchewan read the *second*
+EBITDA workbook; every other market reads the first. One merged list meant a Saskatchewan row
+was offered Ontario's regions and defaulted to the first of them — a real region sheet,
+silently the wrong one. It showed no wrong numbers only because the KPI strip is suppressed
+for those two markets while their workbook is missing, so the day that file is uploaded is
+the day it would have surfaced. The harness asserts each row is offered its own book's
+regions and only those, that the recipe's capitalised spelling (`SASKATCHEWAN`) lands on the
+same book, and that a missing workbook reads as missing rather than as an empty list.
+
+**`reset()` on every source.** The adapters hold what they fetched for the life of the page —
+that is what makes `prepare()` cheap the second time — so moving the server's cache version
+does nothing about the copy already in the browser. The harness fails if any registered
+source has no `reset()`, and checks that a slide rebuilt after `resetAll()` actually goes
+back to the server instead of re-photographing what it was holding.
+
 ## `fscheader.js` — the Fuel Recovery reader
 
 Runs `FSC_Backend.gs` under Node with its two Apps Script globals stubbed
@@ -188,7 +205,9 @@ sheet; each page follows its own workbook and a `readsFrom` page follows its own
 asks cost one Drive call but forgetting the stamp reads again; an unreachable sheet still
 answers rather than taking the page down; and ↻ Update from source reports *no change* on an
 untouched sheet, always re-reads Drive rather than trusting the 30-second copy, and treats a
-page with no version yet as changed. It also checks PV and RMX read that same stamp instead of
+page with no version yet as changed. The **Deck Builder** is covered as its own case for the
+same reason the Overview is: it owns no workbook, so without `APP_EXTRA_SOURCES.deckbuilder`
+its version is a constant and its button reports "no change" however stale the deck is. It also checks PV and RMX read that same stamp instead of
 keeping counters, and that the loading screen is the full-screen one with the API pages
 already call left intact.
 

@@ -162,6 +162,36 @@ console.log('\na page with no sheet of its own follows all of them:');
     ctx.updateFromSource('overview', have).changed, true);
 }
 
+console.log('\nthe Deck Builder is the same case, and has the same button:');
+{
+  const { ctx, state, PV_ID, RMX_ID } = load();
+  /* It owns no workbook either — it photographs the other tools' blocks. On
+     its own id it resolves to nothing, so its version would be a constant and
+     ↻ Update from source would report "no change" however stale the deck was.
+     That is the Overview's trap exactly; APP_EXTRA_SOURCES.deckbuilder is what
+     keeps it out of it. */
+  const db = ctx.APP_getGen_('deckbuilder');
+  checkThat('it has a real version, not a constant',
+    db !== '0.' + ctx.APP_CODE_BUILD, db);
+
+  const have = ctx.APP_getGen_('deckbuilder');
+  check('an untouched set means the button throws nothing away',
+    ctx.updateFromSource('deckbuilder', have).changed, false);
+
+  /* Every workbook behind a deck slide has to move it, or a Render after that
+     sheet changed quietly reuses the figures already in the browser. */
+  state.mtime[PV_ID] = 4242;
+  ctx.APP_forgetStamp_(null);
+  checkThat('Price & Volume moving moves it',
+    ctx.APP_getGen_('deckbuilder') !== db, ctx.APP_getGen_('deckbuilder'));
+
+  const db2 = ctx.APP_getGen_('deckbuilder');
+  state.mtime[RMX_ID] = 4343;
+  ctx.APP_forgetStamp_(null);
+  checkThat('and so does Ready-Mix',
+    ctx.APP_getGen_('deckbuilder') !== db2, ctx.APP_getGen_('deckbuilder'));
+}
+
 /* ======================================================================
  * 2. Asking is cheap — pages do it every few minutes
  * ==================================================================== */

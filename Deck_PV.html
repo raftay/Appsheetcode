@@ -1037,15 +1037,28 @@ var AmrPvSlide = (function(){
     return (filterField||'') + ':' + (filterValue||'__ALL__');
   }
   /* Every region sheet the shared workbook offers. [] when no workbook has
-     been uploaded, which is exactly when the KPI row is omitted. */
-  function kpiSheets(vals){
-    var list = window.AmrKpi ? AmrKpi.plantIndex(vals) : [];
+     been uploaded, which is exactly when the KPI row is omitted.
+
+     `book` narrows it to one of the two EBITDA workbooks. The report pages
+     pass nothing and keep the merged list they have always had; the deck
+     passes the book the row's market belongs to, so a Manitoba slide is
+     offered Manitoba's region sheets and nothing else. Before this, a MB/SK
+     row with only the main workbook uploaded was offered every ONTARIO
+     region and defaulted to the first of them - a real region, silently the
+     wrong one. It showed no wrong numbers only because kpiMissingBook()
+     blanks the strip for those two markets; the moment the MB/SK workbook
+     lands that guard stops firing and the stale default would have gone
+     straight onto the slide. */
+  function kpiSheets(vals, book){
+    var list = window.AmrKpi ? AmrKpi.plantIndex(vals, book) : [];
     return (list || []).map(function(e){ return e.label; });
   }
   /* Assemble the ctx.kpi a slide needs: the shared values, the sheet chosen
-     for this market, and the index kpiExtract() looks the sheet up in. */
-  function kpiFor(vals, filterField, filterValue, override){
-    var list = window.AmrKpi ? (AmrKpi.plantIndex(vals) || []) : [];
+     for this market, and the index kpiExtract() looks the sheet up in.
+     `book` scopes BOTH the offered sheets and the fallback default, so the
+     remembered-or-first choice can never land on the other workbook. */
+  function kpiFor(vals, filterField, filterValue, override, book){
+    var list = window.AmrKpi ? (AmrKpi.plantIndex(vals, book) || []) : [];
     var index = {}, sheets = [];
     list.forEach(function(e){ index[e.label] = e; sheets.push(e.label); });
     var map = kpiLoadMap();
@@ -1141,6 +1154,14 @@ var AmrPvSlide = (function(){
   }
   function filterValueOf(market){
     return isCentral(market) ? '__ALL__' : String(market || '').trim();
+  }
+
+  /* Which EBITDA workbook this row's KPI strip reads. Central Canada is a
+     rollup of both books; it is left on 'main', which is where its region
+     sheets are and what it has always used. */
+  function bookOf(spec){
+    return (window.AmrKpi && AmrKpi.bookFor)
+      ? AmrKpi.bookFor(spec && spec.market) : 'main';
   }
 
   /* WHICH BREAKDOWN THE FIRST TABLE SHOWS.
@@ -1267,7 +1288,7 @@ var AmrPvSlide = (function(){
       filterField: 'MARKET', filterValue: fv,
       custSecondary: 'CUST_SEGMENT', custSort: 'cyVol', custDir: 'top',
       custTopN: '10', custSearch: '', collapsed: {},
-      kpi: AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET', fv, spec.kpiSheet)
+      kpi: AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET', fv, spec.kpiSheet, bookOf(spec))
     };
   }
 
@@ -1295,16 +1316,29 @@ var AmrPvSlide = (function(){
       return AmrPvSlide.fitSlide(box, ctxFor(spec, d));
     },
     /* The Deck Builder shows a Region dropdown on rows whose source declares
-       one. Everything it needs is here, so the page stays generic. */
+       one. Everything it needs is here, so the page stays generic — including
+       WHICH workbook this row reads, so the page never has to know that
+       Manitoba and Saskatchewan are the ones on the second file. */
     kpiPicker: {
-      sheets: function(){ return AmrPvSlide.kpiSheets(KPIVALS.vals); },
+      sheets: function(spec){ return AmrPvSlide.kpiSheets(KPIVALS.vals, bookOf(spec)); },
       current: function(spec){
         return AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET',
-          filterValueOf(spec.market), spec.kpiSheet).sheet;
+          filterValueOf(spec.market), spec.kpiSheet, bookOf(spec)).sheet;
       },
       choose: function(spec, sheet){
         AmrPvSlide.kpiRemember('MARKET', filterValueOf(spec.market), sheet);
+      },
+      book: bookOf,
+      hasBook: function(spec){
+        return !(window.AmrKpi && AmrKpi.hasBook)
+            || AmrKpi.hasBook(KPIVALS.vals, bookOf(spec));
       }
+    },
+    /* ↻ Update from source: drop everything fetched, so the next Render asks
+       the server again instead of re-photographing the copy in memory. */
+    reset: function(){
+      RPT = {}; CUST = {}; REFINED = {};
+      KPIVALS.loaded = false; KPIVALS.vals = null;
     }
   });
 
@@ -1319,7 +1353,13 @@ var AmrPvSlide = (function(){
       if(!el) throw new Error('Could not build the customer block.');
       return el;
     },
-    fit: AmrPvSlide.fitCombinedCustomerSlide
+    fit: AmrPvSlide.fitCombinedCustomerSlide,
+    /* Same store as 'pv' above — clearing it twice is harmless and means
+       neither adapter depends on the other being registered. */
+    reset: function(){
+      RPT = {}; CUST = {}; REFINED = {};
+      KPIVALS.loaded = false; KPIVALS.vals = null;
+    }
   });
 })();
 </script>

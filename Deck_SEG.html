@@ -520,6 +520,15 @@ var AmrSegSlide = (function(){
   }
   function key(spec){ return (spec.market||'') + '|' + (spec.period||'MTD') + '|m' + monthOf(spec); }
 
+  /* Which EBITDA workbook this market's KPI strip reads — 'mbsk' for Manitoba
+     and Saskatchewan, 'main' for the rest. The recipe spells these markets in
+     caps ('SASKATCHEWAN'); AmrKpi.bookFor normalises, so both spellings land
+     on the same book. */
+  function bookOf(spec){
+    return (window.AmrKpi && AmrKpi.bookFor)
+      ? AmrKpi.bookFor(spec && spec.market) : 'main';
+  }
+
   function loadKpi(){
     if(KPIVALS.loaded) return Promise.resolve(KPIVALS.vals);
     if(!window.AmrKpi){ KPIVALS.loaded = true; return Promise.resolve(null); }
@@ -554,7 +563,8 @@ var AmrSegSlide = (function(){
          LOOKUP working view, too wide to read at slide size. */
       exportSel: { 'seg:segment': true, 'seg:byType': true, 'seg:detail': false },
       kpi: (window.AmrPvSlide && AmrPvSlide.kpiFor)
-        ? AmrPvSlide.kpiFor(KPIVALS.vals, 'RMX_MARKET', spec.market || '', spec.kpiSheet)
+        ? AmrPvSlide.kpiFor(KPIVALS.vals, 'RMX_MARKET', spec.market || '',
+            spec.kpiSheet, bookOf(spec))
         : { vals:KPIVALS.vals, sheet:'', index:{}, sheets:[], map:{} }
     };
   }
@@ -572,14 +582,25 @@ var AmrSegSlide = (function(){
        key prefix so an RMX market and an AGG market of the same name do not
        fight over one setting. */
     kpiPicker: (window.AmrPvSlide && AmrPvSlide.kpiSheets) ? {
-      sheets: function(){ return AmrPvSlide.kpiSheets(KPIVALS.vals); },
+      sheets: function(spec){ return AmrPvSlide.kpiSheets(KPIVALS.vals, bookOf(spec)); },
       current: function(spec){
-        return AmrPvSlide.kpiFor(KPIVALS.vals, 'RMX_MARKET', spec.market||'', spec.kpiSheet).sheet;
+        return AmrPvSlide.kpiFor(KPIVALS.vals, 'RMX_MARKET', spec.market||'',
+          spec.kpiSheet, bookOf(spec)).sheet;
       },
       choose: function(spec, sheet){
         AmrPvSlide.kpiRemember('RMX_MARKET', spec.market||'', sheet);
+      },
+      book: bookOf,
+      hasBook: function(spec){
+        return !(window.AmrKpi && AmrKpi.hasBook)
+            || AmrKpi.hasBook(KPIVALS.vals, bookOf(spec));
       }
-    } : null
+    } : null,
+    /* ↻ Update from source: forget the tables and the KPI slice. */
+    reset: function(){
+      CACHE = {};
+      KPIVALS.loaded = false; KPIVALS.vals = null;
+    }
   });
 })();
 </script>

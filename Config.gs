@@ -366,7 +366,17 @@ var APP_EXTRA_SOURCES = { pricevolume: ['saskrates'],
                              including the two closed-year history books the month cube needs. */
                           overview: ['pricevolume', 'rmx', 'segment',
                                        'histagg', 'histrmx',
-                                       'histagg2', 'histrmx2'] };
+                                       'histagg2', 'histrmx2'],
+                          /* The Deck Builder owns no sheet either - it photographs
+                             the other tools' blocks. Without this its data version
+                             would resolve to nothing at all and never move, so
+                             "Update from source" would report "no change" however
+                             stale the deck was. Same trap the Overview fell into;
+                             see the note on APP_sourceIds_ in Code.gs.
+                             The five deck sources reduce to these four workbooks:
+                             pv + cust -> pricevolume (+ saskrates), seg + rmx ->
+                             rmx and segment, fsc -> pricevolume, rfsc -> rmx. */
+                          deckbuilder: ['pricevolume', 'rmx', 'segment', 'saskrates'] };
 
 /* Validate an incoming page id. We do NOT silently default to a page here:
    a wrong/blank id used to make RMX open the Price & Volume sheet and throw a

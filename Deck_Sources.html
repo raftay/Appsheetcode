@@ -13,7 +13,10 @@
 
        AmrDeckSource.register('fsc', {
          prepare: function(spec){ ... },   // optional. Promise or null.
-         content: function(spec){ ... }    // required. Returns a DOM element.
+         content: function(spec){ ... },   // required. Returns a DOM element.
+         fit:     function(box, spec){ },  // optional. The page's own fitter.
+         reset:   function(){ ... },       // optional. Drop everything fetched.
+         kpiPicker: { ... }                // optional. See below.
        });
 
        spec = { id, source, market, period, layout, title, ... }
@@ -31,6 +34,22 @@
      page's own view to answer would leave the user staring at whichever
      period happened to be captured last. That is why the fuel pages grew
      buildContentFor(period) instead of reusing buildContent().
+
+     reset() is called by ↻ Update from source on the Deck Builder. Throw
+     away everything fetched — that is the ONLY thing standing between a
+     changed sheet and a re-render that quietly reuses the old figures.
+
+     kpiPicker declares the Region dropdown the Deck Builder shows on a row:
+
+       sheets(spec)   → [label, …] this row may choose from. [] hides it.
+       current(spec)  → the label chosen now
+       choose(spec,l) → remember that choice where the report page reads it
+       book(spec)     → optional. Which workbook the row's numbers live in.
+       hasBook(spec)  → optional. false = that workbook is not uploaded, so
+                        the empty list is "no workbook yet", not "no regions".
+
+     The last two are what let a Manitoba row say the MB/SK workbook is
+     missing while an Ontario row on the same screen offers its regions.
 
      WHY REGISTRATION IS GUARDED EVERYWHERE
      Report pages do NOT include this file — only the Deck Builder does. So
@@ -59,6 +78,26 @@ var AmrDeckSource = (function(){
   function has(id){ return !!REG[String(id||'')]; }
   function get(id){ return REG[String(id||'')] || null; }
   function list(){ return Object.keys(REG).sort(); }
+
+  /* ↻ Update from source. Every adapter holds what it fetched for the rest of
+     the page's life — that is the whole point of prepare() being cheap the
+     second time — so invalidating the SERVER's cache is only half of it. Until
+     these are dropped the next Render happily re-photographs the copy already
+     in this browser and the new figures never appear.
+
+     reset() is optional and must not throw: one adapter with a bad one cannot
+     be allowed to leave the others holding stale data. Returns how many ran,
+     which is what the Deck Builder reports. */
+  function resetAll(){
+    var n = 0;
+    Object.keys(REG).forEach(function(id){
+      var src = REG[id];
+      if(typeof src.reset !== 'function') return;
+      try { src.reset(); n++; }
+      catch(e){ console.warn('AmrDeckSource: reset() failed for "'+id+'"', e); }
+    });
+    return n;
+  }
 
   /* Which sources a recipe needs but nobody registered. The Deck Builder
      shows this up front, so a missing adapter is a sentence on the page
@@ -95,6 +134,6 @@ var AmrDeckSource = (function(){
   }
 
   return { register:register, has:has, get:get, list:list,
-           missingFor:missingFor, build:build };
+           missingFor:missingFor, build:build, resetAll:resetAll };
 })();
 </script>

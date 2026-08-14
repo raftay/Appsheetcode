@@ -112,8 +112,22 @@ win.Chart = function(ctx, cfg){
 
 vm.createContext(win);
 vm.runInContext(scriptOf('Deck_Sources.html'), win);
+/* The real AmrKpi lives in KpiShared.html, which this harness does not load —
+   the deck modules only ever touch this handful of it. Mirror the shape,
+   including the two-workbook split: Manitoba and Saskatchewan read the 'mbsk'
+   book, every other market reads 'main'. The stub carries ONE region per book,
+   so a row offered the wrong book's regions shows up as the wrong label rather
+   than as an empty list that could equally mean "no workbook". */
 win.AmrKpi = {
-  plantIndex: v => (v ? [{ label:'Central' }, { label:'GTA' }] : []),
+  plantIndex: (v, book) => {
+    if(!v) return [];
+    const all = [{ label:'Central', book:'main' }, { label:'GTA', book:'main' },
+                 { label:'Regina', book:'mbsk' }];
+    return book ? all.filter(e => e.book === book) : all;
+  },
+  bookFor: market => /^(manitoba|sask)/i.test(String(market || '').trim()) ? 'mbsk' : 'main',
+  bookLabel: book => book === 'mbsk' ? 'Manitoba / Saskatchewan EBITDA' : 'AGG & RMX EBITDA',
+  hasBook: (v, book) => !!(v && (book === 'mbsk' ? v.mbsk : true)),
   load: cb => setTimeout(() => cb({ ok:true }), 0),
   /* the numbers behind the KPI cards, for whichever region sheet is picked */
   plant: (vals, entry, period) => entry
@@ -190,6 +204,56 @@ let bad = 0;
   if (!cached) bad++;
   console.log(`  ${cached ? 'ok  ' : 'FAIL'} backend calls: ${JSON.stringify(counts)} (one per market+period, never per slide)`);
   console.log(`       args: ${JSON.stringify(calls.map(c => c[1]))}`);
+
+  /* ------------------------------------------------------------------
+   * The Region dropdown is per ROW, not per page.
+   * ------------------------------------------------------------------
+   * Manitoba and Saskatchewan read the SECOND EBITDA workbook; every other
+   * market reads the first. One merged list meant a Saskatchewan row was
+   * offered Ontario's regions and defaulted to the first of them — a real
+   * region sheet, silently the wrong one. It showed no wrong numbers only
+   * because the KPI strip is suppressed for those two markets while their
+   * workbook is missing; the moment it lands, that guard stops firing.
+   * ---------------------------------------------------------------- */
+  console.log('\nthe Region dropdown follows the row\'s own workbook:');
+  const pick = (src, spec) => {
+    const p = R.get(src).kpiPicker;
+    return { sheets: p.sheets(spec), book: p.book(spec), has: p.hasBook(spec) };
+  };
+  const ok = (label, cond) => { if (!cond) bad++; console.log(`  ${cond ? 'ok  ' : 'FAIL'} ${label}`); };
+
+  const gta  = pick('pv',  { market: 'GTA' });
+  const sask = pick('pv',  { market: 'Saskatchewan' });
+  const segS = pick('seg', { market: 'SASKATCHEWAN' });
+
+  ok('an Ontario row is offered the main book',        gta.book === 'main');
+  ok('...and only its regions',                        JSON.stringify(gta.sheets) === '["Central","GTA"]');
+  ok('a Saskatchewan row is sent to the MB/SK book',   sask.book === 'mbsk');
+  ok('...and is NOT offered an Ontario region',        sask.sheets.indexOf('GTA') === -1);
+  ok('the recipe\'s capitalised spelling lands there too', segS.book === 'mbsk');
+  ok('a missing MB/SK workbook reads as missing',      sask.has === false);
+  ok('...while the main book is present',              gta.has === true);
+
+  /* ------------------------------------------------------------------
+   * reset() — what ↻ Update from source relies on.
+   * ------------------------------------------------------------------
+   * The adapters hold what they fetched for the life of the page. Bumping
+   * the server's cache does nothing about that, so without this the button
+   * re-photographs the copy already in this browser and the new figures
+   * never appear.
+   * ---------------------------------------------------------------- */
+  console.log('\nreset() drops what the adapters are holding:');
+  const withReset = R.list().filter(id => typeof R.get(id).reset === 'function');
+  ok(`every source has one (${withReset.length}/${R.list().length})`,
+     withReset.length === R.list().length);
+
+  const before = calls.length;
+  const n = R.resetAll();
+  ok(`resetAll() ran them all (${n})`, n === R.list().length);
+
+  await R.build(specs[0]);                       // fsc_mtd, already built once
+  const refetched = calls.length > before;
+  ok('a rebuilt slide goes back to the server', refetched);
 
   console.log(bad ? `\n${bad} FAILURE(S).` : '\nDECK PATH OK.');
   process.exit(bad ? 1 : 0);
