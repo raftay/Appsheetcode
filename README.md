@@ -214,22 +214,34 @@ sites use them after writing to a sheet — they no longer bump anything, they j
 30-second copy so the next read sees the new time. `PV_Backend` and `RMX_Backend` read the
 same stamp instead of their old `pv_cache_gen` / `cache_gen` counters.
 
-### Syncing: one hourly trigger, and nothing else
+### Syncing: one trigger, and nothing else
 
-There is no ⇣ pull button. Set **one** hourly time-driven trigger on `qlikSyncHourly`.
+There is no ⇣ pull button. Set **one** time-driven trigger on `qlikSyncCheck` (the old
+`qlikSyncHourly` name still works and calls it — an existing trigger keeps working).
 
-Each hour it stamps the export files in the two Drive folders by name and modified time. If
-that matches last hour's it stops there — no folders opened, no sheets touched. When it has
-changed it syncs, and writing to the sheet moves that sheet's modified time, which is all the
-invalidation anything needs.
+The three exports are named by **file id** in `APP_CONFIG.QLIK_SYNC`, one per page:
 
-Run `qlikMarkCurrent()` once from the editor after setting the trigger up, so the first check
-doesn't re-sync exports already in the sheet.
+| file id | export | feeds |
+|---|---|---|
+| `AGG_FILE_ID` | Aggregates Margin Monitor | Price & Volume |
+| `RMX_FILE_ID` | CAN RMX Margin Monitor | Ready-Mix (main / extra / assoc) |
+| `SEG_FILE_ID` | Segment + Product | Slide Builder |
 
-**The retry rule.** A run that could not happen at all — Drive unreachable, another sync
-holding the lock — leaves the stamp alone and is tried again next hour. A run that *finished*
-but wrote a bad tab records the stamp anyway and logs it: that tab will be just as broken next
-hour, and re-syncing hourly forever neither fixes it nor tells anybody.
+Every firing compares each file's modified time with the one it last synced. Files that
+haven't moved are skipped entirely, and each is checked on its own — a re-exported
+Aggregates file costs an Aggregates sync and nothing else. An ordinary firing is three Drive
+lookups.
+
+**Run `qlikMarkCurrent()` once after setting the trigger up.** Without it the first firing has
+nothing to compare, treats all three exports as new, and syncs every one of them — minutes of
+work replacing data the sheet very likely already has. Harmless, just slow and pointless.
+
+`qlikStamps()` shows what the next check will compare and what it will do.
+
+**The retry rule.** A run that could not happen at all — file unreadable, another sync holding
+the lock — keeps no stamp and is tried again next firing. A run that *finished* but wrote a
+bad tab keeps its stamp and logs the failure: that tab will be just as broken next time, and
+re-syncing forever neither fixes it nor tells anybody.
 
 ### What the user sees
 

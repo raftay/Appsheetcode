@@ -29,24 +29,23 @@ var APP_CONFIG = {
   /* Drive folders holding the raw QlikView exports, read by QlikSync.gs when
      someone presses "Update data from QlikView" on the home page.
 
-     File NAMES are never trusted — every Excel file in the folder is opened and
-     identified by what is inside it, so re-exporting under a different name
-     needs no change here. Just drop the new export in and delete the old one.
+     Each export is named by its FILE ID below, so there is no folder to scan
+     and no guessing which file is which. Re-exporting over the same file is
+     what the check watches: its modified time moves and that source syncs.
+     A brand-new file needs its id pasted in here.
 
-       AGG_FOLDER_ID  the Aggregates Margin Monitor export
-                      → Price & Volume workbook (Combined Data CPI Raw +
-                        Combined Data CPI Other Revenue)
-
-       RMX_FOLDER_ID  BOTH Ready-Mix exports, in one folder:
-                      the Margin Monitor export → Ready-Mix workbook
-                        (Main / Extra / Associate Raw Data)
-                      the Segment + Product export → Slide Builder workbook
-                        (Slide Segment MTD/YTD, Slide Product <Market> MTD/YTD)
-
-     Both folders must be shared with whoever runs the update. */
+     All three must be shared with whoever the web app runs as. */
   QLIK_SYNC: {
-    AGG_FOLDER_ID: '1PiUwYYHwFklcJBjIR4v1n0HsNDrCCxyg',
-    RMX_FOLDER_ID: '1sdHATTQIxGAkB55R-Xz85FJjpxU8ROAO'
+    /* The three QlikView exports, BY FILE ID. Each one feeds exactly one
+       page, so a re-export of the Aggregates file no longer costs a Ready-Mix
+       and Slide Builder sync as well.
+
+       These are the .xls files themselves, not folders and not the workbooks
+       they are written into. QlikSync converts each to a temporary Google
+       Sheet to read it and throws that away afterwards. */
+    AGG_FILE_ID: '19ptynrhtzC-Noi71znNbVIJw8GDmPUxZ',   // → Price & Volume
+    RMX_FILE_ID: '1wUb82e1PVxstddK9IE2VxYLSQEicVAGK',   // → Ready-Mix (main, extra, assoc)
+    SEG_FILE_ID: '1d1XzYlENUyE6sxBewCd-Q3GpjTNzgRZH'    // → Slide Builder
   },
 
 
