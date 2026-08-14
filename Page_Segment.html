@@ -680,13 +680,13 @@ document.addEventListener('DOMContentLoaded', segKpiInit);
    Every table is drawn on the page first and carries a tick box; the slide
    below is built from whatever is ticked, in this order. Same pattern, same
    control, same default behaviour as RMX · Price & Volume — except that there
-   the detail table is the one that starts off, and here BOTH Extras tables are
-   optional so a slide starts as Segment + By extra type. Ticks are remembered
+   the detail table is the one that starts off, and here a slide starts as
+   Segment + By extra type. Ticks are remembered
    for the session, so switching market, month or period keeps your selection. */
-/* Only the Segment table is on to begin with. The two Extras tables are opt-in,
-   the same way they are on RMX - Price & Volume, where they hang off their own
-   chips under "Break down by". */
-var EXPORT_DEFAULT_OFF = { 'seg:byType':1, 'seg:detail':1 };
+/* Segment and By extra type are both on to begin with - the pair the slide is
+   normally built from, and the same pair the Deck Builder starts with. Only the
+   Extras & VAP detail table is opt-in. */
+var EXPORT_DEFAULT_OFF = { 'seg:detail':1 };
 function isOn(key){
   var saved = STATE.exportSel[key];
   return (saved === undefined) ? !EXPORT_DEFAULT_OFF[key] : saved;
