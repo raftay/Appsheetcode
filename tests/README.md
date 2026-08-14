@@ -143,10 +143,21 @@ cache. It also checks the answer rides along on `getDataVersion` so a page open 
 extra round trip, that `syncAll` still does everything at once for "Update from source", and
 that the 600 ms reload is gone from the ⇣ button.
 
-Last section guards a trap the prompt walked into: `AmrProgress.detail()` was a single
+One section guards a trap the prompt walked into: `AmrProgress.detail()` was a single
 page-wide registration, so a shared module using it would have taken the popover away from
 the Overview's month history. Detail bodies are keyed by job now, and the harness fails if
 either side stops honouring that.
+
+The last section pins the **forced** prompt, which is the whole point of it: the modal is
+marked `data-locked` and both shared dismissal handlers skip locked modals; the card carries
+no ✕ and no `data-close`; the running state offers no action at all; and the ready state
+offers exactly one, `publish`, with no *Later*. It also pins the two judgement calls — a
+pull that had trouble but still landed tabs is still forced, and a *failed publish* is not,
+because a tab nobody can leave is worse than a stale one.
+
+These are static checks on `Shell.html`, in the same spirit as `deckstatic.js`: jsdom is not
+vendored, so the modal is never rendered here. **The wording and layout still need looking at
+in a real browser** — this harness only proves there is no way out of it.
 
 ## `pvlookup.js` — the mapping check, and where the header row is
 

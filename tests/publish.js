@@ -264,5 +264,50 @@ console.log('\nthe update prompt does not take over the Overview\'s popover:');
     /AmrProgress\.detail\(\{/.test(ov));
 }
 
+/* ======================================================================
+ * 9. After YOUR OWN pull, the update is not a suggestion
+ * ==================================================================== */
+console.log('\npressing the button commits you to finishing:');
+{
+  const shell = fs.readFileSync(`${REPO}/Shell.html`, 'utf8');
+
+  checkThat('the pull opens the blocking modal while it runs',
+    /AmrUpdate\.pulling\(\)/.test(shell));
+  checkThat('and when it lands the prompt is the forced one',
+    /AmrUpdate\.require\(\{/.test(shell));
+
+  /* The modal must sit outside the shared dismissal handlers. */
+  const marked = /id="amrQlikModal"[^>]*data-locked/.test(shell);
+  checkThat('the modal is marked locked', marked);
+  checkThat('click-outside skips locked modals',
+    /querySelectorAll\('\.amr-modal:not\(\[data-locked\]\)'\)/.test(shell));
+  const escBlock = shell.slice(shell.indexOf("if(e.key==='Escape')"), shell.indexOf("if(e.key==='Escape')") + 220);
+  checkThat('Escape skips them too', /:not\(\[data-locked\]\)/.test(escBlock), escBlock);
+
+  /* The card carries no ✕ and the running state offers no way out. */
+  const card = shell.slice(shell.indexOf('id="amrQlikModal"'), shell.indexOf('id="amrQlikModal"') + 700);
+  checkThat('the card has no close button', !/amr-x/.test(card), card);
+  checkThat('and no data-close', !/data-close/.test(card), card);
+
+  const pulling = shell.slice(shell.indexOf('function pulling()'), shell.indexOf('function require_'));
+  checkThat('the running state offers no action at all', !/data-act/.test(pulling), pulling);
+
+  /* The forced prompt has exactly one action, and it is publish. */
+  const render = shell.slice(shell.indexOf('function render()'), shell.indexOf('function finish('));
+  const actsInRender = render.match(/act:'[a-z]+'/g) || [];
+  check('the forced prompt offers only publishing', [...new Set(actsInRender)], ["act:'publish'"]);
+  checkThat('with no Later', !/'later'/.test(render), render);
+
+  /* A pull that had trouble but still landed tabs must still be published:
+     the tabs that landed are real, and leaving them is the stale state again. */
+  checkThat('trouble does not turn the prompt back into a suggestion',
+    /awaitingPublish\)\{[\s\S]{0,220}AmrUpdate\.require\(/.test(shell));
+
+  /* Retry, and one way out, so a failed publish is not a locked tab. */
+  const pf = shell.slice(shell.indexOf('function publishFailed('), shell.indexOf('function act('));
+  checkThat('a failed publish offers a retry', /act:'publish'/.test(pf), pf);
+  checkThat('...and does not trap the tab', /act:'close'/.test(pf), pf);
+}
+
 console.log(fails ? `\n${fails} failing check(s)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

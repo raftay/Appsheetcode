@@ -224,8 +224,24 @@ pulls merge, keeping the *first* timestamp — the prompt says how long the site
 behind, not how long since the last pull. `getQlikPending()` reads it, and it rides along on
 `getDataVersion` / `getDataVersions` so a page open costs no extra round trip to find out.
 
-`AmrUpdate` in `Shell.html` shows the prompt — on the progress pill, never a blocking modal,
-because what is on screen is still perfectly good until someone takes the new numbers.
+`AmrUpdate` in `Shell.html` shows the prompt, at one of two strengths:
+
+- **You pressed ⇣ and waited** → a blocking modal. It goes up when the pull starts and stays
+  up until it finishes, then turns into a single **Update the site now** button. No ✕, no
+  Escape, no click-outside (the modal carries `data-locked`, which the shared dismissal
+  handlers skip). You asked for the data; you don't get to wander off leaving the site on the
+  old numbers with only you knowing why. A pull that had trouble but still landed some tabs
+  is *still* forced — those tabs are real, and leaving them unpublished is the stale state
+  all over again.
+- **You arrived on a page and a trigger's data is waiting** → the progress pill, with a
+  *Later*. Forcing the modal here would mean every visitor, all afternoon, made to sit
+  through a rebuild they didn't ask for and can't decline — and what's on their screen is
+  still good.
+
+The one place the modal lets go is a failed publish: retry is offered first, but a tab nobody
+can leave is worse than a stale one. The pending note survives, so the pill still says so on
+the next page open.
+
 Publishing bumps only the waiting pages, so an AGG pull no longer makes every device rebuild
 Ready-Mix for nothing. A page whose bump throws stays on the pending list rather than being
 quietly dropped behind a stale cache.
