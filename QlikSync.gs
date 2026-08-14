@@ -152,6 +152,67 @@ var QLIKSYNC = (function () {
   var BUDGET_MS  = 4 * 60 * 1000;      /* of the six; the rest finishes up */
   var REPORT_KEY = 'QLIK_SYNC_LAST_RUN';
 
+
+  /* =====================================================================
+   * 0c. PULLING AND PUBLISHING ARE TWO DIFFERENT THINGS
+   * ---------------------------------------------------------------------
+   * This used to end by calling syncAll(), which bumps every page's data
+   * version. That version is what invalidates BOTH caches: the 6-hour server
+   * cache, and each device's saved tables in localStorage — and the device
+   * copies have no expiry at all, so the version is the only thing that ever
+   * clears them (Shell.html, AmrCache.check).
+   *
+   * Bumping it the moment the sheet is written meant the sync pulled the floor
+   * out from under whoever was already reading:
+   *
+   *   · the page you are on keeps its tables, because nothing re-checks the
+   *     version mid-session — so the sync looks like it did nothing;
+   *   · leave the page and come back and boot() sees a new version, wipes the
+   *     device copy, and the server cache is cold too, so the whole 50k-row
+   *     rebuild has to happen inside that one page load. Slow at best, and a
+   *     blank page when it does not make it.
+   *
+   * So the pull no longer publishes. It writes the sheet and leaves a note
+   * saying which pages have new data behind them; the site keeps serving the
+   * numbers it already has until someone chooses to take the new ones, which
+   * is when the versions move. Nobody is interrupted mid-read, and the rebuild
+   * happens at a moment a human is watching and can be shown progress.
+   * =================================================================== */
+  var PENDING_KEY = 'QLIK_PENDING_UPDATE';
+
+  /* Merged, not replaced: an AGG pull followed by an RMX pull leaves BOTH
+     waiting to be published, and the older timestamp is the honest one. */
+  function markPending_(pages, files) {
+    try {
+      var p = PropertiesService.getScriptProperties();
+      var cur = {};
+      try { cur = JSON.parse(p.getProperty(PENDING_KEY) || '{}'); } catch (e) { cur = {}; }
+      var list = (cur.pages || []).slice();
+      pages.forEach(function (pg) { if (list.indexOf(pg) === -1) list.push(pg); });
+      if (!list.length) return;
+      p.setProperty(PENDING_KEY, JSON.stringify({
+        since: cur.since || new Date().toISOString(),
+        at:    new Date().toISOString(),
+        pages: list,
+        files: (files || []).slice(0, 8)
+      }));
+    } catch (e) {}
+  }
+
+  function pending() {
+    try {
+      var raw = PropertiesService.getScriptProperties().getProperty(PENDING_KEY);
+      if (!raw) return { pending: false, pages: [] };
+      var v = JSON.parse(raw);
+      if (!v.pages || !v.pages.length) return { pending: false, pages: [] };
+      return { pending: true, since: v.since, at: v.at, pages: v.pages, files: v.files || [] };
+    } catch (e) { return { pending: false, pages: [] }; }
+  }
+
+  function clearPending() {
+    try { PropertiesService.getScriptProperties().deleteProperty(PENDING_KEY); } catch (e) {}
+  }
+
   /* A Script Property holds 9 kB. One "none of the export columns matched"
      message carries the whole export header and can be most of that on its
      own, so every line is clipped before it goes in: a report that cannot be
@@ -867,7 +928,7 @@ var QLIKSYNC = (function () {
     }
 
     var started = new Date();
-    var done = [], skipped = [], failed = [], notRun = [];
+    var done = [], skipped = [], failed = [], notRun = [], touched = {};
     function elapsed_()  { return new Date() - started; }
     function outOfTime_() { return elapsed_() > BUDGET_MS; }
 
@@ -950,6 +1011,7 @@ var QLIKSYNC = (function () {
               } catch (e2) {}
             }
             done.push(res);
+            touched[page] = 1;                 /* this page has new data behind it */
             ends[norm_(spec.tab)] = sh.getMaxRows();
           } catch (e) {
             failed.push({ tab: spec.tab, error: e.message });
@@ -984,9 +1046,10 @@ var QLIKSYNC = (function () {
         SpreadsheetApp.flush();
       });
 
-      /* --- every cached copy, everywhere, is now stale --- */
-      report_({ phase: 'clearing caches' });
-      try { syncAll(); } catch (e) {}
+      /* --- the sheet has the new data; the site is not told yet (see 0c) --- */
+      var pages = Object.keys(touched);
+      report_({ phase: 'noting what is waiting to be published' });
+      markPending_(pages, filesSeen);
 
       var out = {
         ok: failed.length === 0 && notRun.length === 0,
@@ -996,6 +1059,8 @@ var QLIKSYNC = (function () {
         skipped: skipped,
         failed: failed,
         notRun: notRun,
+        pagesUpdated: pages,
+        awaitingPublish: pages.length > 0,
         seconds: Math.round(elapsed_() / 100) / 10
       };
       if (notRun.length) {
@@ -1044,7 +1109,8 @@ var QLIKSYNC = (function () {
     }
   }
 
-  return { run: run, lastRun: lastRun };
+  return { run: run, lastRun: lastRun,
+           pending: pending, clearPending: clearPending };
 })();
 
 

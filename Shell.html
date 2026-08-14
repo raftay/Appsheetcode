@@ -398,7 +398,19 @@ window.AmrCache = (function(){
     boot: function(done){
       if (!(typeof google !== 'undefined' && google.script && google.script.run)){ done && done(); return; }
       google.script.run
-        .withSuccessHandler(function(r){ api.check(r && r.generation); done && done(); })
+        .withSuccessHandler(function(r){
+          api.check(r && r.generation);
+          /* The reply also says whether a QlikView pull is sitting in the
+             sheet unpublished, so arriving on any page tells you so without
+             a second round trip. Offered, never forced: what is on screen is
+             still good until somebody takes the new numbers. */
+          try {
+            if (r && r.pendingUpdate && r.pendingUpdate.pending && window.AmrUpdate){
+              AmrUpdate.offer(r.pendingUpdate);
+            }
+          } catch (e){}
+          done && done();
+        })
         .withFailureHandler(function(){ done && done(); })
         .getDataVersion(page());
     },
@@ -446,9 +458,18 @@ window.AmrCache = (function(){
  * A page that wants a richer popover (the Overview's month history, with
  * its own buttons) registers one:
  *   AmrProgress.detail({ html:function(job){...}, act:function(name){...} })
+ *
+ * That form is the page's FALLBACK body, used for any job without one of
+ * its own. A shared module cannot use it — there is one of it, so the last
+ * caller wins and the Overview would lose its month history to whatever
+ * registered after it. Name the job instead, and only that job's popover
+ * changes:
+ *   AmrProgress.detail('qlik-update', { html:…, act:… })
+ *   AmrProgress.detail('qlik-update', null)   // hand it back
  * ================================================================== */
 window.AmrProgress = (function(){
-  var jobs = {}, seq = 0, detail = null, pill = null, pop = null, mounted = false;
+  var jobs = {}, seq = 0, detail = null, details = {},
+      pill = null, pop = null, mounted = false;
 
   function esc(s){
     return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
@@ -481,7 +502,9 @@ window.AmrProgress = (function(){
     pop.addEventListener('click', function(e){
       var b = e.target.closest ? e.target.closest('button') : null;
       if (!b || !b.getAttribute('data-act')) return;
-      if (detail && detail.act) { try { detail.act(b.getAttribute('data-act')); } catch (err) {} }
+      /* to whoever drew this body, not to whoever registered last */
+      var j = lead(), d = (j && details[j.key]) || detail;
+      if (d && d.act) { try { d.act(b.getAttribute('data-act'), j); } catch (err) {} }
     });
     document.addEventListener('click', function(e){
       if (pill.getAttribute('aria-expanded') !== 'true') return;
@@ -524,9 +547,9 @@ window.AmrProgress = (function(){
 
     if (!open){ pop.classList.remove('show'); return; }
 
-    var html = '';
-    if (detail && detail.html){
-      try { html = detail.html(j) || ''; } catch (e) { html = ''; }
+    var html = '', d = details[j.key] || detail;
+    if (d && d.html){
+      try { html = d.html(j) || ''; } catch (e) { html = ''; }
     }
     if (!html) html = '<b>' + esc(j.text) + '</b>' + (j.note ? '<br>' + esc(j.note) : '');
     if (j.pct != null) html += '<div class="bar"><i style="width:' + j.pct + '%"></i></div>';
@@ -556,7 +579,7 @@ window.AmrProgress = (function(){
                     seq:  prev ? prev.seq : (++seq) };
       render();
     },
-    clear: function(key){ delete jobs[key]; render(); },
+    clear: function(key){ delete jobs[key]; delete details[key]; render(); },
     /* Finished cleanly: tick for a moment, then take the chrome away — no
        standing UI for a solved problem. */
     done: function(key, text, ms){
@@ -568,8 +591,14 @@ window.AmrProgress = (function(){
     },
     fail: function(key, text){ api.set(key, { text: text || 'Something went wrong', cls: 'bad', pct: null, order: 0 }); },
     has:  function(key){ return !!jobs[key]; },
-    /* A page can own the popover body (the Overview's month history does). */
-    detail: function(d){ detail = d; render(); },
+    /* One job's popover body — detail('key', {…}) — or, with a single
+       argument, this page's fallback for jobs that have none. */
+    detail: function(a, b){
+      if (typeof a === 'string'){
+        if (b) details[a] = b; else delete details[a];
+      } else { detail = a; }
+      render();
+    },
     repaint: render
   };
   return api;
@@ -770,11 +799,21 @@ window.AmrQlik = (function(){
             }
             return;
           }
+          /* THE PULL DOES NOT PUBLISH. The sheet has the new data; this page
+             keeps showing the numbers it already had until someone asks for
+             the new ones. Reloading here was what made the pull feel broken:
+             the version had already moved, so the reload wiped this device's
+             saved tables and the page had to rebuild 50k rows cold inside
+             that one load — slow, and blank when it did not make it. */
+          if (res.awaitingPublish && window.AmrUpdate){
+            if (window.AmrProgress) AmrProgress.clear('qlik');
+            AmrUpdate.offer({ pending:true, pages:res.pagesUpdated || [],
+                              labels:res.pagesUpdated || [] }, summary(res));
+            return;
+          }
           if (window.AmrProgress) {
             AmrProgress.set('qlik', { text: summary(res), cls:'done', order:0 });
           }
-          /* every cached copy is now stale — come back with the new data */
-          setTimeout(function(){ window.location.reload(); }, 600);
         });
       });
     });
@@ -784,5 +823,115 @@ window.AmrQlik = (function(){
   else document.addEventListener('DOMContentLoaded', wire);
 
   return { run: run, summary: summary, wire: wire };
+})();
+</script>
+
+<script>
+/* =========================================================================
+ * AmrUpdate — "there is new data; show it when you're ready".
+ * -------------------------------------------------------------------------
+ * The second half of the split described in QlikSync.gs section 0c. A pull
+ * writes the sheet and stops there. This is what tells somebody, and what
+ * moves the data version when they say yes.
+ *
+ * Why it is not automatic. The version is the ONLY thing that clears a
+ * device's saved tables — they have no expiry (AmrCache above). Moving it
+ * mid-session meant the next page open had to rebuild everything from the
+ * sheet in one go, which is slow on 50k rows and blank when it does not
+ * finish. Here the rebuild happens on a click, with the pill saying so.
+ *
+ * It rides the existing progress pill rather than introducing a modal: the
+ * pill already owns "background work the user should know about", takes a
+ * popover body, and never blocks the page underneath — which matters, because
+ * the numbers on screen are still perfectly good until they publish.
+ * ======================================================================= */
+window.AmrUpdate = (function(){
+  var KEY = 'qlik-update', info = null, busy = false;
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
+    });
+  }
+  function when(iso){
+    if (!iso) return '';
+    try {
+      var d = new Date(iso), mins = Math.round((Date.now() - d.getTime()) / 60000);
+      if (mins < 1)  return 'just now';
+      if (mins < 60) return mins + ' minute' + (mins === 1 ? '' : 's') + ' ago';
+      return d.toLocaleTimeString([], { hour:'numeric', minute:'2-digit' });
+    } catch (e){ return ''; }
+  }
+
+  /* The popover body: what arrived, and the one button that acts on it. */
+  function body(){
+    if (!info) return '';
+    var names = (info.labels && info.labels.length ? info.labels : info.pages) || [];
+    var ago = when(info.at || info.since);
+    var h = '<b>New QlikView data is in the sheet</b>';
+    if (info.note) h += '<br>' + esc(info.note);
+    if (names.length) h += '<br>Waiting to be shown: ' + esc(names.join(', ')) + '.';
+    if (ago) h += '<br>Pulled ' + esc(ago) + '.';
+    h += '<br><br>This page is still showing the previous numbers. Updating ' +
+         'rebuilds the tables from the sheet and can take a minute on the ' +
+         'bigger pages.';
+    h += '<div class="acts">' +
+         '<button type="button" data-act="publish"' + (busy ? ' disabled' : '') + '>' +
+         (busy ? 'Updating…' : 'Update now') + '</button>' +
+         '<button type="button" data-act="later"' + (busy ? ' disabled' : '') + '>' +
+         'Later</button></div>';
+    return h;
+  }
+
+  function paint(){
+    if (!window.AmrProgress) return;
+    AmrProgress.detail(KEY, { html: body, act: onAct });
+    AmrProgress.set(KEY, {
+      text: busy ? 'Updating the site…' : 'New data ready — update the site',
+      cls: '', order: 1, pct: null
+    });
+  }
+
+  function onAct(what){
+    if (busy) return;
+    if (what === 'later'){ AmrProgress.clear(KEY); return; }
+    if (what !== 'publish') return;
+
+    busy = true; paint();
+    google.script.run
+      .withSuccessHandler(function(r){
+        if (r && r.ok){
+          /* The version has moved, so this device's saved tables are already
+             void. Reload straight into the rebuild rather than leaving a page
+             whose cache is about to be wiped underneath it. */
+          AmrProgress.set(KEY, { text:'Loading the new data…', cls:'', order:0 });
+          window.location.reload();
+          return;
+        }
+        busy = false;
+        AmrProgress.fail(KEY, (r && r.error) ? r.error : 'The update did not go through.');
+        paint();
+      })
+      .withFailureHandler(function(e){
+        busy = false;
+        AmrProgress.fail(KEY, (e && e.message) ? e.message : 'The update did not go through.');
+        paint();
+      })
+      .publishQlikData((info && info.pages) || []);
+  }
+
+  return {
+    /* Called on page open (from AmrCache.boot's reply) and straight after a
+       pull finishes. `note` is the pull's own summary, shown only in the
+       second case — on a page open there is nothing to summarise. */
+    offer: function(p, note){
+      if (!p || !p.pending) return;
+      info = { pages: p.pages || [], labels: p.labels || [],
+               since: p.since, at: p.at, note: note || '' };
+      busy = false;
+      paint();
+    },
+    dismiss: function(){ if (window.AmrProgress) AmrProgress.clear(KEY); }
+  };
 })();
 </script>

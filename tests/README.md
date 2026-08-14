@@ -119,6 +119,35 @@ wrapper `captureBare` photographs, so the file can never reach a page or the Dec
 own UI) and included, and that the Southwest **Land / Docks** recipe rows filter the
 Southwest *market* with a `refine`, rather than naming a market that does not exist.
 
+## `publish.js` — pulling vs. showing
+
+Runs `Code.gs` + `QlikSync.gs` under Node with the two page backends stubbed at their
+generation-bumping edge.
+
+```bash
+node tests/publish.js            # no dependencies
+```
+
+**Why it exists.** The pull used to end with `syncAll()`, moving every page's data version
+the instant the sheet was written. That version is the only thing that ever clears a
+device's saved tables, so a sync yanked the ground out from under whoever was reading: the
+page you were on kept its tables (nothing re-checks mid-session, so the pull looked like it
+did nothing), and navigating away and back wiped the device copy against a cold server cache
+— one page load then had to rebuild 50k rows, which is where the blank page came from.
+
+So it pins the split: a pull moves **no** generation and leaves a note saying which pages are
+waiting; `publishQlikData()` moves them. Successive pulls merge and keep the *first*
+timestamp. Publishing touches only the waiting pages, is a no-op the second time, and a page
+whose bump throws stays on the list with `ok:false` rather than being dropped behind a stale
+cache. It also checks the answer rides along on `getDataVersion` so a page open costs no
+extra round trip, that `syncAll` still does everything at once for "Update from source", and
+that the 600 ms reload is gone from the ⇣ button.
+
+Last section guards a trap the prompt walked into: `AmrProgress.detail()` was a single
+page-wide registration, so a shared module using it would have taken the popover away from
+the Overview's month history. Detail bodies are keyed by job now, and the harness fails if
+either side stops honouring that.
+
 ## `pvlookup.js` — the mapping check, and where the header row is
 
 Runs `PV_Backend.gs` + `PV_Lookup.gs` under Node over a grid shaped like `Combined Data CPI

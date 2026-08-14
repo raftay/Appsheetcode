@@ -199,6 +199,40 @@ optional closed-year history books (`histagg`, `histrmx`, `histagg2`, `histrmx2`
 
 Scheduled sync triggers fire at 2 PM, one per data source.
 
+### Pulling is not publishing
+
+The ⇣ button and the daily triggers **write the sheet and stop there**. The site keeps
+serving the numbers it already has until somebody presses *Update now* on the prompt.
+
+The reason is the data version. It is the only thing that ever clears a device's saved
+tables — `AmrCache` in `Shell.html` has no expiry, it wipes when the version string changes
+— so moving it the moment a sync finished meant the sync pulled the floor out from under
+whoever was reading. The page you were on kept its tables (nothing re-checks the version
+mid-session, so the pull looked like it had done nothing), and the moment you navigated away
+and back, `boot()` saw a new version, wiped the device copy, and the whole 50k-row rebuild
+had to happen inside that one page load — slow at best, blank when it didn't finish.
+
+So the two halves are separate:
+
+| | writes the sheet | moves the data version |
+|---|---|---|
+| `qlikSyncNow(scope)` / the daily triggers | yes | no |
+| `publishQlikData(pages)` | no | yes, for the pages that were waiting |
+
+A pull records which pages have new data behind them in `QLIK_PENDING_UPDATE`. Successive
+pulls merge, keeping the *first* timestamp — the prompt says how long the site has been
+behind, not how long since the last pull. `getQlikPending()` reads it, and it rides along on
+`getDataVersion` / `getDataVersions` so a page open costs no extra round trip to find out.
+
+`AmrUpdate` in `Shell.html` shows the prompt — on the progress pill, never a blocking modal,
+because what is on screen is still perfectly good until someone takes the new numbers.
+Publishing bumps only the waiting pages, so an AGG pull no longer makes every device rebuild
+Ready-Mix for nothing. A page whose bump throws stays on the pending list rather than being
+quietly dropped behind a stale cache.
+
+`syncAll()` still exists and still does everything at once — it is what "Update from source"
+and the lookup editors call.
+
 #### When a trigger says "failed" and the sheets look fine
 
 Attach triggers to `qlikSyncDailyAgg`, `qlikSyncDailyRmx` or `qlikSyncDailySegment` — never
