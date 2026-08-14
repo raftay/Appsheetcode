@@ -39,43 +39,22 @@
 .amr-body h3{font:700 13px Archivo,sans-serif;margin:18px 0 6px;color:#011E6A}
 .amr-body h3:first-child{margin-top:0}
 .amr-body code{background:#EEF7FF;border-radius:5px;padding:1px 5px;font-size:12px}
-/* The QlikView pull's own modal. Narrower, and with no way out on purpose:
-   between the sheet being written and the site being told about it, the app is
-   knowingly showing numbers that are behind. That is not a state to let
-   somebody wander off into by pressing Escape. */
-.amr-card.amr-sm{max-width:440px}
-.amr-acts{display:flex;gap:9px;margin-top:20px}
-.amr-btn{flex:1;border:1px solid #DCE6F2;background:#fff;color:#011E6A;font:700 12.5px Inter,sans-serif;
-  padding:10px 12px;border-radius:9px;cursor:pointer}
-.amr-btn:hover:not(:disabled){border-color:#7FA8DE;background:#EEF7FF}
-.amr-btn.primary{background:#011E6A;border-color:#011E6A;color:#fff}
-.amr-btn.primary:hover:not(:disabled){background:#0A2E86}
-.amr-btn:disabled{opacity:.55;cursor:default}
-.amr-note{color:#5A6B85;font-size:12.5px}
-.amr-bad{color:#B0304A;font-weight:600}
-.amr-spin{display:inline-block;width:13px;height:13px;border-radius:50%;border:2px solid #C9DBF2;
-  border-top-color:#011E6A;animation:amrspin .8s linear infinite;vertical-align:-2px;margin-right:8px}
-@keyframes amrspin{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){ .amr-spin{animation-duration:2.4s} }
-/* THE PULL SCRIM. Up on EVERY page, for everybody, for as long as a pull is
-   running — not just for whoever pressed the button. While it is up, the tabs
-   underneath these figures are being replaced, so what is on screen is known
-   to be going out of date; the blur says so without anyone having to read.
-   z-index sits above the modal so the two never fight. */
-.amr-scrim{position:fixed;inset:0;z-index:9300;display:none;align-items:center;
-  justify-content:center;padding:24px;background:rgba(1,30,106,.42);backdrop-filter:blur(3px);
-  -webkit-backdrop-filter:blur(3px)}
-.amr-scrim.amr-open{display:flex}
-.amr-scrim .amr-scrim-card{background:#fff;border-radius:16px;max-width:400px;width:100%;
-  padding:24px 26px;box-shadow:0 24px 60px rgba(1,30,106,.34);text-align:center}
-.amr-scrim h2{font:800 16px Archivo,sans-serif;margin:0 0 8px;color:#011E6A}
-.amr-scrim p{font:400 13px Inter,sans-serif;color:#16243B;line-height:1.55;margin:0 0 6px}
-.amr-scrim .amr-note{color:#5A6B85;font-size:12px}
-.amr-scrim .amr-spin{width:16px;height:16px;margin:0 0 10px;display:block;margin-inline:auto}
 .amr-body table{border-collapse:collapse;width:100%;margin:8px 0 4px;font-size:12px}
 .amr-body th{background:#011E6A;color:#fff;text-align:left;padding:6px 8px;font-weight:600;white-space:nowrap}
 .amr-body td{border:1px solid #DCE6F2;padding:5px 8px;white-space:nowrap}
 .amr-scroll{overflow-x:auto}
+/* the stale-data grey-out */
+.amr-stale{position:fixed;inset:0;z-index:9200;display:none;align-items:center;justify-content:center;
+  padding:24px;background:rgba(1,30,106,.45);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px)}
+.amr-stale.amr-open{display:flex}
+.amr-stale-card{background:#fff;border-radius:16px;max-width:400px;width:100%;padding:26px;
+  text-align:center;box-shadow:0 24px 60px rgba(1,30,106,.34)}
+.amr-stale-card h2{font:800 16px Archivo,sans-serif;margin:0 0 10px;color:#011E6A}
+.amr-stale-card p{font:400 13px Inter,sans-serif;color:#16243B;line-height:1.55;margin:0 0 18px}
+.amr-stale-btn{width:100%;border:1px solid #011E6A;background:#011E6A;color:#fff;
+  font:700 12.5px Inter,sans-serif;padding:11px 14px;border-radius:9px;cursor:pointer}
+.amr-stale-btn:hover:not(:disabled){background:#0A2E86}
+.amr-stale-btn:disabled{opacity:.6;cursor:default}
 .amr-input{width:100%;border:1px solid #DCE6F2;border-radius:10px;background:#F4F7FC;padding:10px 12px;
   font:500 13px Inter;color:#16243B}
 .amr-save{margin-top:0;border:0;background:#011E6A;color:#fff;font:700 13px Inter;padding:10px 18px;
@@ -147,28 +126,15 @@
   </div>
 </div>
 
-<!-- The ⇣ QlikView pull: blocks while it runs, then insists on the update.
-     data-locked keeps the shared Escape / click-outside handlers off it, and
-     it carries no close button — the only way past is the button inside.
-     AmrUpdate (further down) owns everything in the body. -->
-<div class="amr-modal" id="amrQlikModal" data-locked="1" role="dialog" aria-modal="true"
-     aria-labelledby="amrQlikTitle">
-  <div class="amr-card amr-sm">
-    <div class="amr-head"><h2 id="amrQlikTitle">Pulling from QlikView</h2></div>
-    <div class="amr-body" id="amrQlikBody"></div>
-  </div>
-</div>
-
-<!-- Raised on every page, for every user, whenever a pull is running anywhere.
-     AmrSyncWatch owns it. -->
-<div class="amr-scrim" id="amrScrim" role="alertdialog" aria-live="assertive"
-     aria-labelledby="amrScrimTitle">
-  <div class="amr-scrim-card">
-    <span class="amr-spin"></span>
-    <h2 id="amrScrimTitle">Updating from QlikView</h2>
-    <p id="amrScrimText">The data behind this page is being replaced.</p>
-    <p class="amr-note" id="amrScrimNote">What you can see is not the latest. 
-      The page will refresh itself when the update finishes.</p>
+<!-- Up when the hourly sync has replaced the data behind this page. No close
+     control and no data-close: the figures underneath are stale, so the only
+     thing to do is reload. -->
+<div class="amr-stale" id="amrStale" role="alertdialog" aria-labelledby="amrStaleTitle">
+  <div class="amr-stale-card">
+    <h2 id="amrStaleTitle">New data has arrived</h2>
+    <p>QlikView sent a new export and the sheet behind this page has been updated.
+       What you are looking at is the previous data.</p>
+    <button type="button" class="amr-stale-btn" id="amrStaleBtn">Update from source</button>
   </div>
 </div>
 
@@ -382,13 +348,11 @@
   [].forEach.call(document.querySelectorAll('[data-close]'),function(x){
     x.onclick=function(){ document.getElementById(x.getAttribute('data-close')).classList.remove('amr-open'); };
   });
-  /* data-locked opts a modal out of both: the QlikView one has to be answered,
-     not dismissed by a stray click on the backdrop or a reflexive Escape. */
-  [].forEach.call(document.querySelectorAll('.amr-modal:not([data-locked])'),function(m){
+  [].forEach.call(document.querySelectorAll('.amr-modal'),function(m){
     m.addEventListener('click',function(e){ if(e.target===m) m.classList.remove('amr-open'); });
   });
   document.addEventListener('keydown',function(e){
-    if(e.key==='Escape') [].forEach.call(document.querySelectorAll('.amr-modal:not([data-locked])'),function(m){ m.classList.remove('amr-open'); });
+    if(e.key==='Escape') [].forEach.call(document.querySelectorAll('.amr-modal'),function(m){ m.classList.remove('amr-open'); });
   });
 
   /* ================== AmrHint : per-table source hints ==================
@@ -460,20 +424,8 @@ window.AmrCache = (function(){
       google.script.run
         .withSuccessHandler(function(r){
           api.check(r && r.generation);
-          /* The same reply says whether a pull is running right now and
-             whether anything is waiting to be shown, so arriving on any
-             page learns both without a second round trip. The watcher
-             takes it from here and keeps polling.
-
-             The prompt is FORCED here too: a page open showing figures we
-             already know are superseded is the stale state, whoever did
-             the pulling. */
-          try {
-            if (r && r.qlikStatus && window.AmrSyncWatch) AmrSyncWatch.start(r.qlikStatus);
-            else if (r && r.pendingUpdate && r.pendingUpdate.pending && window.AmrUpdate){
-              AmrUpdate.require(r.pendingUpdate, '', false);
-            }
-          } catch (e){}
+          /* boot already asked for the version, so watching it is free */
+          try { if (window.AmrFresh) AmrFresh.start(r && r.generation); } catch (e){}
           done && done();
         })
         .withFailureHandler(function(){ done && done(); })
@@ -523,18 +475,9 @@ window.AmrCache = (function(){
  * A page that wants a richer popover (the Overview's month history, with
  * its own buttons) registers one:
  *   AmrProgress.detail({ html:function(job){...}, act:function(name){...} })
- *
- * That form is the page's FALLBACK body, used for any job without one of
- * its own. A shared module cannot use it — there is one of it, so the last
- * caller wins and the Overview would lose its month history to whatever
- * registered after it. Name the job instead, and only that job's popover
- * changes:
- *   AmrProgress.detail('qlik-update', { html:…, act:… })
- *   AmrProgress.detail('qlik-update', null)   // hand it back
  * ================================================================== */
 window.AmrProgress = (function(){
-  var jobs = {}, seq = 0, detail = null, details = {},
-      pill = null, pop = null, mounted = false;
+  var jobs = {}, seq = 0, detail = null, pill = null, pop = null, mounted = false;
 
   function esc(s){
     return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
@@ -567,9 +510,7 @@ window.AmrProgress = (function(){
     pop.addEventListener('click', function(e){
       var b = e.target.closest ? e.target.closest('button') : null;
       if (!b || !b.getAttribute('data-act')) return;
-      /* to whoever drew this body, not to whoever registered last */
-      var j = lead(), d = (j && details[j.key]) || detail;
-      if (d && d.act) { try { d.act(b.getAttribute('data-act'), j); } catch (err) {} }
+      if (detail && detail.act) { try { detail.act(b.getAttribute('data-act')); } catch (err) {} }
     });
     document.addEventListener('click', function(e){
       if (pill.getAttribute('aria-expanded') !== 'true') return;
@@ -612,9 +553,9 @@ window.AmrProgress = (function(){
 
     if (!open){ pop.classList.remove('show'); return; }
 
-    var html = '', d = details[j.key] || detail;
-    if (d && d.html){
-      try { html = d.html(j) || ''; } catch (e) { html = ''; }
+    var html = '';
+    if (detail && detail.html){
+      try { html = detail.html(j) || ''; } catch (e) { html = ''; }
     }
     if (!html) html = '<b>' + esc(j.text) + '</b>' + (j.note ? '<br>' + esc(j.note) : '');
     if (j.pct != null) html += '<div class="bar"><i style="width:' + j.pct + '%"></i></div>';
@@ -644,7 +585,7 @@ window.AmrProgress = (function(){
                     seq:  prev ? prev.seq : (++seq) };
       render();
     },
-    clear: function(key){ delete jobs[key]; delete details[key]; render(); },
+    clear: function(key){ delete jobs[key]; render(); },
     /* Finished cleanly: tick for a moment, then take the chrome away — no
        standing UI for a solved problem. */
     done: function(key, text, ms){
@@ -656,14 +597,8 @@ window.AmrProgress = (function(){
     },
     fail: function(key, text){ api.set(key, { text: text || 'Something went wrong', cls: 'bad', pct: null, order: 0 }); },
     has:  function(key){ return !!jobs[key]; },
-    /* One job's popover body — detail('key', {…}) — or, with a single
-       argument, this page's fallback for jobs that have none. */
-    detail: function(a, b){
-      if (typeof a === 'string'){
-        if (b) details[a] = b; else delete details[a];
-      } else { detail = a; }
-      render();
-    },
+    /* A page can own the popover body (the Overview's month history does). */
+    detail: function(d){ detail = d; render(); },
     repaint: render
   };
   return api;
@@ -793,348 +728,65 @@ window.AmrKpiStore = (function(){
 
 <script>
 /* =========================================================================
- * ⇣ PULL FROM QLIKVIEW — shared by every page.
+ * AmrFresh — "the figures on this page are out of date".
  * -------------------------------------------------------------------------
- * Any button carrying data-qlik-scope is wired here, so each tool gets the
- * same behaviour without its own copy of this code:
+ * There is no sync button any more. One hourly trigger checks whether the
+ * QlikView exports in Drive have actually changed; if they have, it syncs and
+ * calls syncAll(), which moves this page's data version.
  *
- *   data-qlik-scope="pricevolume"   the Aggregates tabs
- *   data-qlik-scope="rmx"           the Ready-Mix raw tabs
- *   data-qlik-scope="segment"       the Slide Builder tabs
- *   data-qlik-scope="all"           everything
+ * So this asks one small question every few minutes: is the version still the
+ * one I loaded with? When it is not, the data behind the page has been
+ * replaced — the page is greyed out and says so, and the button reloads it.
  *
- * QlikSync.gs opens the Drive folder(s), works out which export is which from
- * what is inside it, and replaces the data in the Google Sheet. It ends by
- * bumping every data version, so the page is reloaded afterwards to pick the
- * new data up — that is simpler and more certain than re-fetching in place.
+ * That is the whole mechanism. The version already existed and already meant
+ * exactly this; nothing new is stored anywhere.
  * ======================================================================= */
-window.AmrQlik = (function(){
+window.AmrFresh = (function(){
+  var EVERY = 5 * 60 * 1000;         /* the trigger runs hourly; this is plenty */
+  var mine = null, timer = null, shown = false;
 
-  function run(scope, cb){
-    google.script.run
-      .withSuccessHandler(function(res){ cb(res || { ok:false, error:'No answer came back.' }); })
-      .withFailureHandler(function(e){ cb({ ok:false, error:(e && e.message) ? e.message : String(e) }); })
-      .qlikSyncNow(scope || 'all');
-  }
+  function page(){ return window.APP_PAGE || ''; }
 
-  /* One line summarising what happened, for the pill and the status line.
-     A run that ran out of time is not a failure with nothing to show: it says
-     what it did land before stopping, so the tabs already updated are not
-     mistaken for lost work. */
-  function summary(res){
-    if (!res.ok && res.error){
-      var got = (res.done || []).length;
-      return res.error + (got ? ' (' + got + ' tab' + (got === 1 ? '' : 's') +
-                                ' updated before it stopped.)' : '');
-    }
-    var n = (res.done || []).length;
-    var t = n + ' tab' + (n === 1 ? '' : 's') + ' updated';
-    var r = 0;
-    (res.done || []).forEach(function(d){ r += (d.rows || 0); });
-    if (r) t += ' \u00b7 ' + r.toLocaleString() + ' rows';
-    if (res.failed && res.failed.length) t += ' \u00b7 ' + res.failed.length + ' failed';
-    return t;
-  }
-
-  function wire(){
-    var btns = document.querySelectorAll('[data-qlik-scope]');
-    Array.prototype.forEach.call(btns, function(btn){
-      if (btn.getAttribute('data-qlik-wired')) return;
-      btn.setAttribute('data-qlik-wired', '1');
-
-      btn.addEventListener('click', function(){
-        var scope = btn.getAttribute('data-qlik-scope') || 'all';
-        if (btn.disabled) return;
-        btn.disabled = true;
-        btn.classList.add('busy');
-
-        /* Straight to the scrim every other page is about to show too, rather
-           than a modal only this user gets. The watcher keeps it up until the
-           server says the pull is done. */
-        if (window.AmrSyncWatch) AmrSyncWatch.hold('Reading the QlikView exports\u2026');
-        else if (window.AmrProgress) {
-          AmrProgress.set('qlik', { text:'Reading the QlikView exports\u2026', order:0 });
-        }
-
-        run(scope, function(res){
-          btn.disabled = false;
-          btn.classList.remove('busy');
-          if (window.AmrProgress) AmrProgress.clear('qlik');
-
-          if (!window.AmrUpdate){                    /* no shell: say it plainly */
-            alert(res.ok ? summary(res) : ('QlikView update failed\n\n' + summary(res)));
-            return;
-          }
-          /* The pull runs the update-from-source itself now, so by the time
-             this returns the data version has usually already moved and this
-             device's saved tables are void. Reload into the new figures.
-             Every OTHER page gets there the same way, a poll behind. */
-          if ((res.published || []).length){
-            if (window.AmrSyncWatch) AmrSyncWatch.hold('The update has finished. Loading the new figures\u2026');
-            window.location.reload();
-            return;
-          }
-
-          if (window.AmrSyncWatch) AmrSyncWatch.stop();
-
-          /* Tabs landed but the publish did not go through. Insist \u2014 the
-             tabs that DID land are real, and leaving them unpublished is the
-             stale state all over again. */
-          if (res.awaitingPublish){
-            AmrUpdate.require({ pending:true, pages:res.pagesUpdated || [],
-                                labels:res.pagesUpdated || [] }, summary(res), !res.ok);
-            return;
-          }
-          /* Nothing was written, so there is nothing to insist on. */
-          AmrUpdate.finish(summary(res), !res.ok);
-        });
-      });
-    });
-  }
-
-  if (document.readyState !== 'loading') wire();
-  else document.addEventListener('DOMContentLoaded', wire);
-
-  return { run: run, summary: summary, wire: wire };
-})();
-</script>
-
-<script>
-/* =========================================================================
- * AmrSyncWatch — every page knows when a pull is happening, anywhere.
- * -------------------------------------------------------------------------
- * A pull replaces the tabs every page reads. For the minutes that takes, the
- * figures on screen are being made out of date underneath whoever is looking
- * at them — and only the person who pressed the button had any idea. So a
- * scrim goes up on EVERY page, for EVERY user, for as long as one is running.
- *
- * It polls, because there is nothing to push with. The call is two Script
- * Property reads and no sheet access, it only runs while the tab is actually
- * visible, and it speeds up while a pull is in flight and slows back down
- * when nothing is happening — so an idle afternoon costs one call a minute.
- *
- * WHEN A PULL FINISHES the page reloads itself. It has to: the pull now runs
- * the update-from-source at the end, so the data version has already moved
- * and this device's saved tables are void. Sitting on them would be showing
- * numbers we know are stale, which is the thing the scrim exists to prevent.
- * ======================================================================= */
-window.AmrSyncWatch = (function(){
-  var IDLE = 60000, BUSY = 6000;        /* poll every minute / every 6s */
-  var timer = null, wasRunning = false, gen = null, stopped = false;
-
-  function el(id){ return document.getElementById(id); }
-  function scrim(on, text){
-    var s = el('amrScrim'); if (!s) return;
-    if (text){ var t = el('amrScrimText'); if (t) t.textContent = text; }
-    s.classList[on ? 'add' : 'remove']('amr-open');
-  }
-
-  function apply(st){
-    if (!st) return;
-    if (st.running){
-      wasRunning = true;
-      var mins = Math.round((st.seconds || 0) / 60);
-      scrim(true, 'The data behind this page is being replaced' +
-                  (mins >= 1 ? ' \u2014 started ' + mins + ' minute' + (mins === 1 ? '' : 's') + ' ago' : '') + '.');
-      schedule(BUSY);
-      return;
-    }
-
-    /* Not running. Did one just finish, or did the data move under us while
-       we were not looking? Either way this device is holding stale tables. */
-    var moved = (gen != null && st.generation != null && st.generation !== gen);
-    if (wasRunning || moved){
-      scrim(true, 'The update has finished. Loading the new figures\u2026');
-      window.location.reload();
-      return;
-    }
-    if (gen == null) gen = st.generation;
-    scrim(false);
-
-    /* Nothing running, but something was pulled and never published — an
-       automatic publish that failed. Insist on it, on every page. */
-    if (st.pending && window.AmrUpdate){
-      AmrUpdate.require({ pending:true, pages:st.pages || [], labels:st.labels || [],
-                          at:st.pulledAt }, '', false);
-    }
-    schedule(IDLE);
-  }
-
-  function poll(){
-    if (stopped) return;
-    if (document.hidden){ schedule(IDLE); return; }
-    if (!(typeof google !== 'undefined' && google.script && google.script.run)){ return; }
-    google.script.run
-      .withSuccessHandler(apply)
-      .withFailureHandler(function(){ schedule(IDLE); })   /* a blip is not news */
-      .getQlikStatus(window.APP_PAGE || '');
-  }
-  function schedule(ms){
-    if (stopped) return;
+  function show(){
+    if (shown) return;
+    shown = true;
     if (timer) clearTimeout(timer);
-    timer = setTimeout(poll, ms);
+    var el = document.getElementById('amrStale');
+    if (!el) { window.location.reload(); return; }   /* no chrome: just refresh */
+    el.classList.add('amr-open');
   }
 
-  document.addEventListener('visibilitychange', function(){
-    if (!document.hidden) schedule(400);      /* coming back is worth a look */
+  function check(){
+    if (!(typeof google !== 'undefined' && google.script && google.script.run)) return;
+    if (document.hidden){ timer = setTimeout(check, EVERY); return; }
+    google.script.run
+      .withSuccessHandler(function(r){
+        var g = r && r.generation;
+        if (g && mine && g !== mine){ show(); return; }
+        if (g && !mine) mine = g;
+        timer = setTimeout(check, EVERY);
+      })
+      .withFailureHandler(function(){ timer = setTimeout(check, EVERY); })
+      .getDataVersion(page());
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    var b = document.getElementById('amrStaleBtn');
+    if (b) b.onclick = function(){
+      b.disabled = true;
+      b.textContent = 'Loading the new figures\u2026';
+      window.location.reload();
+    };
   });
 
   return {
-    /* Called from AmrCache.boot with the status that already came back with
-       the page-open call, so the first look costs nothing extra. */
-    start: function(st){ apply(st); },
-    /* The pull's own page drives the scrim directly rather than waiting for
-       the next poll to notice what it already knows. */
-    hold: function(text){ wasRunning = true; scrim(true, text); schedule(BUSY); },
-    stop: function(){ stopped = true; if (timer) clearTimeout(timer); scrim(false); }
-  };
-})();
-</script>
-
-<script>
-/* =========================================================================
- * AmrUpdate — the second half of the pull.
- * -------------------------------------------------------------------------
- * A pull writes the sheet and stops (QlikSync.gs section 0c). This is what
- * tells somebody, and what moves the data version when they act on it.
- *
- * Why the version is not moved automatically: it is the ONLY thing that ever
- * clears a device's saved tables — they have no expiry (AmrCache above). 
- * Moving it the moment a sync finished meant the next page open had to
- * rebuild everything from the sheet in one go: slow on 50k rows, and blank
- * when it did not finish. Here the rebuild happens on a click, with the
- * screen saying what is going on.
- *
- * THE NORMAL PATH NEVER GETS HERE. A pull runs the update-from-source
- * itself and the page reloads into the new figures, so this modal is the
- * exception: tabs were written and the publish did not go through.
- *
- * When it does appear it is forced — no Escape, no backdrop click, no ✕ —
- * wherever you are and whoever did the pulling. A page sitting on figures we
- * already know are superseded is the stale state this whole arrangement
- * exists to stop, and it is no less stale for being somebody else's pull.
- *
- * The one state with a way out is a failed publish: retry is offered first,
- * but a tab nobody can leave is worse than a stale one. That is not an
- * escape either — the note survives on the server, so AmrSyncWatch's next
- * poll puts this straight back up.
- * ======================================================================= */
-window.AmrUpdate = (function(){
-  var info = null, busy = false, note = '', bad = false;
-  var modal = null, bodyEl = null, titleEl = null, wired = false;
-
-  function esc(s){
-    return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
-      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
-    });
-  }
-  function names(){
-    var n = (info && ((info.labels && info.labels.length) ? info.labels : info.pages)) || [];
-    return n.join(', ');
-  }
-
-  function els(){
-    if (modal && bodyEl) return true;
-    modal   = document.getElementById('amrQlikModal');
-    bodyEl  = document.getElementById('amrQlikBody');
-    titleEl = document.getElementById('amrQlikTitle');
-    if (!modal || !bodyEl) return false;
-    if (!wired){
-      wired = true;
-      bodyEl.addEventListener('click', function(e){
-        var b = e.target.closest ? e.target.closest('button[data-act]') : null;
-        if (b && !b.disabled) act(b.getAttribute('data-act'));
-      });
+    /* The version this page loaded with. AmrCache.boot already asked for it,
+       so this costs nothing extra. */
+    start: function(gen){
+      if (!gen || mine) return;
+      mine = gen;
+      timer = setTimeout(check, EVERY);
     }
-    return true;
-  }
-  function show(title, html){
-    if (!els()) return false;
-    if (titleEl) titleEl.textContent = title;
-    bodyEl.innerHTML = html;
-    modal.classList.add('amr-open');
-    var first = bodyEl.querySelector('button[data-act]:not([disabled])');
-    if (first) { try { first.focus(); } catch (e){} }
-    return true;
-  }
-  function hide(){ if (els()) modal.classList.remove('amr-open'); }
-
-  function acts(list){
-    return '<div class="amr-acts">' + list.map(function(a){
-      return '<button type="button" class="amr-btn' + (a.primary ? ' primary' : '') + '"' +
-             ' data-act="' + a.act + '"' + (a.off ? ' disabled' : '') + '>' + esc(a.label) + '</button>';
-    }).join('') + '</div>';
-  }
-
-  /* The normal path publishes itself at the end of the pull, so this is the
-     exception: tabs were written and the update did not go through. Forced,
-     wherever you are and whoever did the pulling — a page showing figures we
-     already know are superseded is the stale state this all exists to stop. */
-  function require_(p, msg, hadTrouble){
-    if (!p || !p.pending){ if (msg) finish(msg, hadTrouble); return; }
-    info = { pages:p.pages || [], labels:p.labels || [], since:p.since, at:p.at };
-    note = msg || ''; bad = !!hadTrouble; busy = false;
-    render();
-  }
-
-  function render(){
-    var h = '';
-    if (bad) h += '<p class="amr-bad">The pull did not finish cleanly.</p>';
-    if (note) h += '<p>' + esc(note) + '</p>';
-    var n = names();
-    if (n) h += '<p class="amr-note">New data for: ' + esc(n) + '.</p>';
-    h += '<p>The sheet has the new figures. This site is still showing the ' +
-         'previous ones until they are taken.</p>';
-    h += '<p class="amr-note">Updating rebuilds the tables from the sheet and ' +
-         'reloads the page. On the bigger pages that can take a minute.</p>';
-    h += busy
-      ? '<p><span class="amr-spin"></span>Updating\u2026</p>' +
-        acts([{ act:'publish', label:'Updating\u2026', primary:true, off:true }])
-      : acts([{ act:'publish', label:'Update the site now', primary:true }]);
-    show(bad ? 'Pulled, with problems' : 'New data is ready', h);
-  }
-
-  /* Nothing was written, so there is nothing to insist on. */
-  function finish(msg, hadTrouble){
-    show(hadTrouble ? 'The pull did not finish' : 'Nothing to update',
-      '<p' + (hadTrouble ? ' class="amr-bad"' : '') + '>' + esc(msg || '') + '</p>' +
-      acts([{ act:'close', label:'Close' }]));
-  }
-
-  /* A tab nobody can leave is worse than a stale one, so a failed publish is
-     the one state with a way out. It is not an escape: the note survives on
-     the server, so the next poll puts this straight back up. */
-  function publishFailed(msg){
-    busy = false;
-    show('The update did not go through',
-      '<p class="amr-bad">' + esc(msg) + '</p>' +
-      '<p class="amr-note">The sheet is fine \u2014 only the site has not picked the ' +
-      'new data up. Trying again is safe.</p>' +
-      acts([{ act:'publish', label:'Try again', primary:true },
-             { act:'close',  label:'Not now' }]));
-  }
-
-  function act(what){
-    if (what === 'close'){ hide(); return; }
-    if (what !== 'publish' || busy) return;
-
-    busy = true; render();
-    google.script.run
-      .withSuccessHandler(function(r){
-        if (r && r.ok){
-          show('Loading the new data\u2026',
-            '<p><span class="amr-spin"></span>Rebuilding the tables from the sheet.</p>');
-          window.location.reload();
-          return;
-        }
-        publishFailed((r && r.error) ? r.error : 'The update did not go through.');
-      })
-      .withFailureHandler(function(e){
-        publishFailed((e && e.message) ? e.message : 'The update did not go through.');
-      })
-      .publishQlikData((info && info.pages) || []);
-  }
-
-  return { require: require_, finish: finish, dismiss: hide };
+  };
 })();
 </script>
