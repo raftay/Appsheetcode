@@ -119,6 +119,32 @@ wrapper `captureBare` photographs, so the file can never reach a page or the Dec
 own UI) and included, and that the Southwest **Land / Docks** recipe rows filter the
 Southwest *market* with a `refine`, rather than naming a market that does not exist.
 
+## `pvlookup.js` — the mapping check, and where the header row is
+
+Runs `PV_Backend.gs` + `PV_Lookup.gs` under Node over a grid shaped like `Combined Data CPI
+Raw` — **totals band on row 1, header on row 2**, which is how that tab actually sits.
+
+```bash
+node tests/pvlookup.js           # no dependencies
+```
+
+**Why it exists.** `getPvUnmapped` failed with *"The raw tab has no "Plant" column, so the
+mapping check can't run"* against a tab whose row 2 says `Plant`. `PV_Lookup.gs` had its own
+copy of "the header is row 1", took the totals band for the header, resolved every column to
+`-1`, and blamed the sheet. On the pre-fix file this harness reproduces that error verbatim.
+
+That was the **third** copy of the header-row rule: `PV_Backend.readTab_` located it properly
+(SCHEMA `v5`), `FSC_Backend.headerRow_` was fixed separately for the same reason, and this
+one never got it. So the fix was to stop having a third copy — `PV` exports `readTab` and
+`RAW_HEADER_NAMES`, `PV_Lookup` calls them — and the harness fails if a local reader comes
+back or `PV.readTab` stops being used.
+
+It also pins the other half of the rule: the two **LOOKUP** tabs are read by column
+*position* and must keep row 1, so the reader has to be told nothing for them. A located
+header row there would silently drop the first mapping and report a mapped plant as missing.
+And it checks the two files still share one cache entry per tab, which is the only reason
+the mapping check does not re-read 40k rows the page has already read.
+
 ## `qliksync.js` — the sync, and the six minutes
 
 Runs `QlikSync.gs` for real against a fake Spreadsheet/Drive service, over a fixture shaped

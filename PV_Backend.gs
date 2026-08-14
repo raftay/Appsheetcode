@@ -1380,7 +1380,17 @@ function getCrossData(opts) {
        already built, so the cube never opens the sheet itself and adds nothing
        to any page load. Read-only: the cube only ever sums them.
        The array also carries .cyYear (see getRawEnriched_). */
-    rawEnriched:       getRawEnriched_
+    rawEnriched:       getRawEnriched_,
+
+    /* THE TAB READER ITSELF, and the names it scores the header row against.
+       PV_Lookup.gs is outside this IIFE and had its own copy of "the header is
+       row 1" — which is how the mapping check came to report no "Plant" column
+       on a tab that plainly has one: it was reading the totals band that sits
+       ABOVE the header on Combined Data CPI Raw. FSC_Backend.gs had the same
+       bug and got the same fix separately. Three copies of one rule is how it
+       keeps coming back, so there is one reader now and everybody calls it. */
+    readTab:           readTab_,
+    RAW_HEADER_NAMES:  RAW_HEADER_NAMES_
   };
 })();
 
