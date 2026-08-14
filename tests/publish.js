@@ -1,4 +1,4 @@
-/* The split between PULLING QlikView data and SHOWING it on the site.
+/* PULLING QlikView data, SHOWING it, and telling everyone while it happens.
  *
  * The pull used to end with syncAll(), which moves every page's data version.
  * That version is the only thing that ever clears a device's saved tables —
@@ -10,13 +10,20 @@
  *     cache, so one page load had to rebuild 50k rows. Slow, and blank when
  *     it did not make it.
  *
- * So the pull records what is waiting and stops. publishQlikData() is the
- * second step. What this harness pins:
+ * The arrangement now: the pull records what it wrote, publishes it itself,
+ * and every page is dimmed while that is going on and reloads when it ends.
+ * What this harness pins:
  *
- *   THE PULL PUBLISHES NOTHING   no generation moves while data is pulled
- *   IT SAYS WHAT IS WAITING      per page, merged across successive pulls
- *   PUBLISHING MOVES THEM        and only for the pages that were waiting
- *   IT IS HONEST WHEN IT FAILS   a page whose bump threw stays waiting
+ *   RECORDED BEFORE PUBLISHED    a publish that throws leaves the note behind
+ *   PUBLISHED PER PAGE           an AGG pull does not invalidate Ready-Mix
+ *   HONEST WHEN IT FAILS         the page stays waiting, ok:false
+ *   VISIBLE WHILE IT RUNS        a scrim on every page, from a polled flag
+ *   THE FLAG CAN EXPIRE          a killed run must not dim the suite forever
+ *   NO WAY PAST THE PROMPT       when it does appear, it is answered
+ *
+ * The Shell.html half is static checks, in the spirit of deckstatic.js: jsdom
+ * is not vendored, so nothing here renders. They prove the wiring, not the
+ * look — that still wants a real browser.
  *
  *   node tests/publish.js
  */
@@ -240,23 +247,28 @@ console.log('\nthe pull is wired to the recorder, not to syncAll:');
   checkThat('and reports it to the caller', /awaitingPublish/.test(runBody));
 
   const shell = fs.readFileSync(`${REPO}/Shell.html`, 'utf8');
-  checkThat('the pull button no longer reloads the page',
+  checkThat('the pull button no longer reloads on a timer',
     !/location\.reload\(\);\s*\},\s*600\)/.test(shell),
-    'the 600ms reload is still in AmrQlik');
-  checkThat('and the update prompt is offered instead', /AmrUpdate\.offer\(/.test(shell));
+    'the blind 600ms reload is back in AmrQlik');
+  checkThat('it reloads on what the publish actually returned',
+    /\(res\.published \|\| \[\]\)\.length/.test(shell));
 }
 
 /* ======================================================================
- * 8. The popover the prompt uses is not stolen from the page
+ * 8. One job's popover body cannot be stolen by another
  * ==================================================================== */
-console.log('\nthe update prompt does not take over the Overview\'s popover:');
+console.log('\na shared module cannot take the popover away from a page:');
 {
   const shell = fs.readFileSync(`${REPO}/Shell.html`, 'utf8');
+  /* detail() was one page-wide registration, so the last caller won and the
+     Overview's month history lost its body to whatever registered after it. */
   checkThat('AmrProgress keys detail bodies by job', /details\[j\.key\]/.test(shell));
-  checkThat('AmrUpdate registers under its own key',
-    /AmrProgress\.detail\(KEY,/.test(shell));
+  checkThat('a job\'s own body wins over the page fallback',
+    /details\[j\.key\] \|\| detail/.test(shell));
   checkThat('the single-argument form still works for a page',
     /typeof a === 'string'/.test(shell));
+  checkThat('and clearing a job takes its body with it',
+    /delete details\[key\]/.test(shell));
 
   /* Page_Overview registers the fallback form; it must keep working. */
   const ov = fs.readFileSync(`${REPO}/Page_Overview.html`, 'utf8');
@@ -265,45 +277,107 @@ console.log('\nthe update prompt does not take over the Overview\'s popover:');
 }
 
 /* ======================================================================
- * 9. After YOUR OWN pull, the update is not a suggestion
+ * 9. The pull publishes itself, and everyone is told while it runs
  * ==================================================================== */
-console.log('\npressing the button commits you to finishing:');
+console.log('\nthe pull runs the update-from-source itself:');
+{
+  const ctx = load();
+  const before = ctx.APP_getGen_('pricevolume');
+
+  /* run() calls APP_publishPages_ directly; drive that seam. */
+  const did = ctx.APP_publishPages_(['pricevolume']);
+  check('the pages it wrote get published', did, ['pricevolume']);
+  checkThat('the version moved without anyone clicking',
+    ctx.APP_getGen_('pricevolume') !== before);
+
+  const src = fs.readFileSync(`${REPO}/QlikSync.gs`, 'utf8');
+  const runBody = src.slice(src.indexOf('function run(scope)'), src.indexOf('return { run: run'));
+  checkThat('run() publishes what it touched', /APP_publishPages_\(pages\)/.test(runBody));
+  checkThat('...after recording it as pending, not before',
+    runBody.indexOf('markPending_(') < runBody.indexOf('APP_publishPages_('));
+  checkThat('...and only forgets it once it went through',
+    /published\.length === pages\.length\) clearPending\(\)/.test(runBody));
+  checkThat('awaitingPublish now means the publish FAILED',
+    /awaitingPublish: pages\.length > 0 && published\.length < pages\.length/.test(runBody));
+}
+
+console.log('\na running pull is visible to every page:');
+{
+  const ctx = load();
+  const P = ctx.PropertiesService.getScriptProperties();
+
+  check('nothing running to begin with', ctx.getQlikStatus('rmx').running, false);
+
+  P.setProperty('QLIK_SYNC_RUNNING', JSON.stringify({ since: new Date().toISOString(), scope: 'all' }));
+  const live = ctx.getQlikStatus('rmx');
+  check('a pull in flight is reported', live.running, true);
+  check('with the scope', live.scope, 'all');
+  checkThat('and the generation, so a poll can see the data move', !!live.generation);
+
+  /* A run killed at the runtime limit never reaches its finally, so the flag
+     would otherwise dim every page in the suite forever. */
+  const old = new Date(Date.now() - 30 * 60000).toISOString();
+  P.setProperty('QLIK_SYNC_RUNNING', JSON.stringify({ since: old, scope: 'all' }));
+  check('a flag left behind by a killed run expires', ctx.getQlikStatus('rmx').running, false);
+  checkThat('and is cleaned up', !P.getProperty('QLIK_SYNC_RUNNING'),
+    P.getProperty('QLIK_SYNC_RUNNING'));
+
+  P.setProperty('QLIK_SYNC_RUNNING', JSON.stringify({ since: 'not a date', scope: 'all' }));
+  check('so does a corrupt one', ctx.getQlikStatus('rmx').running, false);
+}
+
+/* ======================================================================
+ * 10. The screen says so, everywhere, and there is no way past the prompt
+ * ==================================================================== */
+console.log('\nevery page dims while a pull is running:');
 {
   const shell = fs.readFileSync(`${REPO}/Shell.html`, 'utf8');
 
-  checkThat('the pull opens the blocking modal while it runs',
-    /AmrUpdate\.pulling\(\)/.test(shell));
-  checkThat('and when it lands the prompt is the forced one',
-    /AmrUpdate\.require\(\{/.test(shell));
+  checkThat('there is a scrim in the shell every page includes',
+    /id="amrScrim"/.test(shell));
+  checkThat('it blurs what is behind it', /backdrop-filter:blur/.test(shell));
+  checkThat('it carries no dismiss control',
+    !/id="amrScrim"[\s\S]{0,600}data-close/.test(shell));
+  checkThat('a watcher polls for it', /AmrSyncWatch/.test(shell));
+  checkThat('the pull raises it immediately rather than waiting for a poll',
+    /AmrSyncWatch\.hold\(/.test(shell));
 
-  /* The modal must sit outside the shared dismissal handlers. */
-  const marked = /id="amrQlikModal"[^>]*data-locked/.test(shell);
-  checkThat('the modal is marked locked', marked);
+  const watch = shell.slice(shell.indexOf('window.AmrSyncWatch = (function'),
+                            shell.indexOf('window.AmrUpdate = (function'));
+  checkThat('polling stops while the tab is hidden', /document\.hidden/.test(watch), watch.slice(0, 200));
+  checkThat('it polls faster while a pull is in flight', /BUSY\s*=\s*\d+/.test(watch));
+  checkThat('a finished pull reloads the page into the new figures',
+    /location\.reload\(\)/.test(watch));
+  checkThat('a moved generation does too, even if we missed the run',
+    /st\.generation !== gen/.test(watch));
+  checkThat('a failed poll does not put the scrim up', /withFailureHandler/.test(watch));
+}
+
+console.log('\narriving on a page with data waiting is forced too:');
+{
+  const shell = fs.readFileSync(`${REPO}/Shell.html`, 'utf8');
+  const boot = shell.slice(shell.indexOf('boot: function(done)'), shell.indexOf('get: function(key)'));
+  checkThat('page open forces the prompt', /AmrUpdate\.require\(/.test(boot), boot);
+  checkThat('it is not merely offered', !/AmrUpdate\.offer\(/.test(shell),
+    'the optional pill path is back');
+  checkThat('the watcher forces it as well, not just the first load',
+    /st\.pending && window\.AmrUpdate[\s\S]{0,160}AmrUpdate\.require\(/.test(shell));
+
+  /* The modal still has to be inescapable. */
+  checkThat('the modal is marked locked', /id="amrQlikModal"[^>]*data-locked/.test(shell));
   checkThat('click-outside skips locked modals',
     /querySelectorAll\('\.amr-modal:not\(\[data-locked\]\)'\)/.test(shell));
-  const escBlock = shell.slice(shell.indexOf("if(e.key==='Escape')"), shell.indexOf("if(e.key==='Escape')") + 220);
-  checkThat('Escape skips them too', /:not\(\[data-locked\]\)/.test(escBlock), escBlock);
-
-  /* The card carries no ✕ and the running state offers no way out. */
+  const escAt = shell.indexOf("if(e.key==='Escape')");
+  checkThat('Escape skips them too',
+    /:not\(\[data-locked\]\)/.test(shell.slice(escAt, escAt + 220)));
   const card = shell.slice(shell.indexOf('id="amrQlikModal"'), shell.indexOf('id="amrQlikModal"') + 700);
   checkThat('the card has no close button', !/amr-x/.test(card), card);
-  checkThat('and no data-close', !/data-close/.test(card), card);
 
-  const pulling = shell.slice(shell.indexOf('function pulling()'), shell.indexOf('function require_'));
-  checkThat('the running state offers no action at all', !/data-act/.test(pulling), pulling);
-
-  /* The forced prompt has exactly one action, and it is publish. */
   const render = shell.slice(shell.indexOf('function render()'), shell.indexOf('function finish('));
-  const actsInRender = render.match(/act:'[a-z]+'/g) || [];
-  check('the forced prompt offers only publishing', [...new Set(actsInRender)], ["act:'publish'"]);
+  const actsInRender = [...new Set(render.match(/act:'[a-z]+'/g) || [])];
+  check('the forced prompt offers only publishing', actsInRender, ["act:'publish'"]);
   checkThat('with no Later', !/'later'/.test(render), render);
 
-  /* A pull that had trouble but still landed tabs must still be published:
-     the tabs that landed are real, and leaving them is the stale state again. */
-  checkThat('trouble does not turn the prompt back into a suggestion',
-    /awaitingPublish\)\{[\s\S]{0,220}AmrUpdate\.require\(/.test(shell));
-
-  /* Retry, and one way out, so a failed publish is not a locked tab. */
   const pf = shell.slice(shell.indexOf('function publishFailed('), shell.indexOf('function act('));
   checkThat('a failed publish offers a retry', /act:'publish'/.test(pf), pf);
   checkThat('...and does not trap the tab', /act:'close'/.test(pf), pf);

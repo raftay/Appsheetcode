@@ -152,10 +152,13 @@ function APP_bumpGen_(page) {
  * The browser compares it with what it stored on its last visit. */
 function getDataVersion(page) {
   page = String(page || '');
-  /* The pending note rides along: every page already makes this call on open
-     (AmrCache.boot), so asking separately would be a second round trip on
-     every load to answer a question that is almost always "no". */
-  return { page: page, generation: APP_getGen_(page), pendingUpdate: getQlikPending() };
+  /* The QlikView status rides along: every page already makes this call on
+     open (AmrCache.boot), so asking separately would be a second round trip
+     on every load to answer a question that is almost always "nothing is
+     happening". `pendingUpdate` is kept as its own field because that is
+     what the shell reads; qlikStatus adds whether a pull is running now. */
+  return { page: page, generation: APP_getGen_(page),
+           pendingUpdate: getQlikPending(), qlikStatus: getQlikStatus(page) };
 }
 
 /* Several pages need more than one page's version before they can trust their
@@ -247,6 +250,32 @@ function APP_publishPages_(pages) {
  *
  * Both of these are called from Shell.html (google.script.run).
  * ====================================================================== */
+
+/* Everything a page needs to know about the QlikView data in one small call:
+   is a pull happening right now, and is anything waiting to be shown.
+   The shell polls this while it is open (AmrSyncWatch), so it is kept to two
+   Script Property reads and no sheet access at all. */
+function getQlikStatus(page) {
+  var out = { running: false, pending: false };
+  try {
+    var r = QLIKSYNC.running();
+    out.running = !!r.running;
+    out.since   = r.since;
+    out.scope   = r.scope;
+    out.seconds = r.seconds;
+  } catch (e) {}
+  try {
+    var p = getQlikPending();
+    out.pending = !!p.pending;
+    out.pages   = p.pages  || [];
+    out.labels  = p.labels || [];
+    out.pulledAt = p.at;
+  } catch (e) {}
+  /* The generation rides along so a polling page can notice the data moved
+     underneath it — which is exactly what an automatic publish does. */
+  try { out.generation = APP_getGen_(String(page || '')); } catch (e) {}
+  return out;
+}
 
 /* Is there new data sitting in the sheet that the site is not showing yet?
    Folded into getDataVersion below as well, so a page open costs no extra

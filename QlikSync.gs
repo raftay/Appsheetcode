@@ -180,6 +180,50 @@ var QLIKSYNC = (function () {
    * =================================================================== */
   var PENDING_KEY = 'QLIK_PENDING_UPDATE';
 
+
+  /* =====================================================================
+   * 0d. "A PULL IS HAPPENING" — visible on every page, to everybody
+   * ---------------------------------------------------------------------
+   * A pull replaces the tabs every page reads. For the minutes that takes,
+   * anyone looking at any page is looking at figures that are being replaced
+   * underneath them, and nothing on their screen said so — the person who
+   * pressed the button knew, and nobody else did.
+   *
+   * So the run raises a flag here and the shell dims every page against it.
+   *
+   * THE FLAG HAS TO BE ABLE TO EXPIRE ON ITS OWN. A run that is killed for
+   * passing the runtime limit (section 0b) never reaches its `finally`, so
+   * "running" would stay true forever and every page in the suite would sit
+   * greyed out until somebody found this property. Anything older than the
+   * window below is therefore treated as finished no matter what it says —
+   * a stuck flag costs one stale screen, not a dead site.
+   * =================================================================== */
+  var STATE_KEY  = 'QLIK_SYNC_RUNNING';
+  var STALE_MS   = 12 * 60 * 1000;    /* comfortably past the 4-minute budget */
+
+  function setRunning_(scope) {
+    try {
+      PropertiesService.getScriptProperties().setProperty(STATE_KEY, JSON.stringify({
+        since: new Date().toISOString(), scope: scope
+      }));
+    } catch (e) {}
+  }
+  function clearRunning_() {
+    try { PropertiesService.getScriptProperties().deleteProperty(STATE_KEY); } catch (e) {}
+  }
+
+  /* The single source of truth for "is a pull happening", server-side, so
+     every page agrees rather than each deciding for itself. */
+  function running() {
+    try {
+      var raw = PropertiesService.getScriptProperties().getProperty(STATE_KEY);
+      if (!raw) return { running: false };
+      var v = JSON.parse(raw), age = new Date() - new Date(v.since);
+      if (!(age >= 0) || age > STALE_MS) { clearRunning_(); return { running: false }; }
+      return { running: true, since: v.since, scope: v.scope, seconds: Math.round(age / 1000) };
+    } catch (e) { return { running: false }; }
+  }
+
   /* Merged, not replaced: an AGG pull followed by an RMX pull leaves BOTH
      waiting to be published, and the older timestamp is the honest one. */
   function markPending_(pages, files) {
@@ -934,6 +978,9 @@ var QLIKSYNC = (function () {
 
     report_({ startedAt: started.toISOString(), scope: want, phase: 'starting',
               ok: null, done: [], skipped: [], failed: [], notRun: [], error: null });
+    /* The lock is ours, so this is THE pull. Every page dims against this
+       until the finally below puts it down (or it ages out). */
+    setRunning_(want);
 
     try {
       var ids  = folderIds_();
@@ -1046,10 +1093,20 @@ var QLIKSYNC = (function () {
         SpreadsheetApp.flush();
       });
 
-      /* --- the sheet has the new data; the site is not told yet (see 0c) --- */
+      /* --- the sheet has the new data; now tell the site --- */
       var pages = Object.keys(touched);
-      report_({ phase: 'noting what is waiting to be published' });
       markPending_(pages, filesSeen);
+
+      /* The pull runs the update-from-source itself. It is recorded as
+         pending FIRST and only forgotten once it has actually gone
+         through, so a publish that throws leaves the note behind for the
+         next page open to insist on rather than losing it. */
+      var published = [];
+      if (pages.length) {
+        report_({ phase: 'updating the site from the new data' });
+        try { published = APP_publishPages_(pages) || []; } catch (e) { published = []; }
+        if (published.length === pages.length) clearPending();
+      }
 
       var out = {
         ok: failed.length === 0 && notRun.length === 0,
@@ -1060,7 +1117,8 @@ var QLIKSYNC = (function () {
         failed: failed,
         notRun: notRun,
         pagesUpdated: pages,
-        awaitingPublish: pages.length > 0,
+        published: published,
+        awaitingPublish: pages.length > 0 && published.length < pages.length,
         seconds: Math.round(elapsed_() / 100) / 10
       };
       if (notRun.length) {
@@ -1078,6 +1136,7 @@ var QLIKSYNC = (function () {
       finish_(bad);
       return bad;
     } finally {
+      clearRunning_();
       try { lock.releaseLock(); } catch (e2) {}
     }
 
@@ -1109,7 +1168,7 @@ var QLIKSYNC = (function () {
     }
   }
 
-  return { run: run, lastRun: lastRun,
+  return { run: run, lastRun: lastRun, running: running,
            pending: pending, clearPending: clearPending };
 })();
 

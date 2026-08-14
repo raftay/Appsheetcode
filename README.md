@@ -199,83 +199,49 @@ optional closed-year history books (`histagg`, `histrmx`, `histagg2`, `histrmx2`
 
 Scheduled sync triggers fire at 2 PM, one per data source.
 
-### Pulling is not publishing
+### The pull, and everyone watching it
 
-The ⇣ button and the daily triggers **write the sheet and stop there**. The site keeps
-serving the numbers it already has until somebody presses *Update now* on the prompt.
+A pull replaces the tabs every page reads. For the minutes that takes, anyone on any page is
+looking at figures being made out of date underneath them — so the whole suite is dimmed
+while it happens, and reloads itself when it ends.
 
-The reason is the data version. It is the only thing that ever clears a device's saved
-tables — `AmrCache` in `Shell.html` has no expiry, it wipes when the version string changes
-— so moving it the moment a sync finished meant the sync pulled the floor out from under
-whoever was reading. The page you were on kept its tables (nothing re-checks the version
-mid-session, so the pull looked like it had done nothing), and the moment you navigated away
-and back, `boot()` saw a new version, wiped the device copy, and the whole 50k-row rebuild
-had to happen inside that one page load — slow at best, blank when it didn't finish.
+| | writes the sheet | data version | screen |
+|---|---|---|---|
+| pull starts (button or trigger) | — | — | **scrim up, every page, every user** |
+| pull runs | yes | no | scrim |
+| pull ends | — | **moves, automatically** | reload into the new figures |
 
-So the two halves are separate:
+`run()` raises `QLIK_SYNC_RUNNING`, writes the tabs, records what it touched in
+`QLIK_PENDING_UPDATE`, then publishes those pages itself (`APP_publishPages_`) and clears the
+note **only once the publish actually went through**. `AmrSyncWatch` in `Shell.html` polls
+`getQlikStatus()` — two Script Property reads, no sheet access — every 6 s while a pull is in
+flight and every 60 s otherwise, pausing entirely while the tab is hidden. The first look
+rides along on the page-open call, so opening a page costs no extra round trip.
 
-| | writes the sheet | moves the data version |
-|---|---|---|
-| `qlikSyncNow(scope)` / the daily triggers | yes | no |
-| `publishQlikData(pages)` | no | yes, for the pages that were waiting |
+**The running flag has to be able to expire.** A run killed at the runtime limit never reaches
+its `finally`, so a stuck flag would grey out the entire suite until somebody found the
+property by hand. Anything older than 12 minutes is treated as finished regardless. A stuck
+flag costs one stale screen, not a dead site.
 
-A pull records which pages have new data behind them in `QLIK_PENDING_UPDATE`. Successive
-pulls merge, keeping the *first* timestamp — the prompt says how long the site has been
-behind, not how long since the last pull. `getQlikPending()` reads it, and it rides along on
-`getDataVersion` / `getDataVersions` so a page open costs no extra round trip to find out.
+**Publishing is per page**, so an AGG pull no longer makes every device rebuild Ready-Mix for
+nothing. Pages that compose others need no special case: the Overview folds Price & Volume's
+and Ready-Mix's versions into the token it compares.
 
-`AmrUpdate` in `Shell.html` shows the prompt, at one of two strengths:
+#### When the modal appears
 
-- **You pressed ⇣ and waited** → a blocking modal. It goes up when the pull starts and stays
-  up until it finishes, then turns into a single **Update the site now** button. No ✕, no
-  Escape, no click-outside (the modal carries `data-locked`, which the shared dismissal
-  handlers skip). You asked for the data; you don't get to wander off leaving the site on the
-  old numbers with only you knowing why. A pull that had trouble but still landed some tabs
-  is *still* forced — those tabs are real, and leaving them unpublished is the stale state
-  all over again.
-- **You arrived on a page and a trigger's data is waiting** → the progress pill, with a
-  *Later*. Forcing the modal here would mean every visitor, all afternoon, made to sit
-  through a rebuild they didn't ask for and can't decline — and what's on their screen is
-  still good.
+The normal path never reaches it — the pull publishes itself and the page reloads. The modal
+is the exception: **tabs were written and the publish did not go through.** Then it is forced,
+on page open and on every poll, wherever you are and whoever did the pulling. No ✕, no
+Escape, no click-outside (it carries `data-locked`, which the shared dismissal handlers skip).
+A page sitting on figures we already know are superseded is the stale state this exists to
+stop, and it is no less stale for being somebody else's pull.
 
-The one place the modal lets go is a failed publish: retry is offered first, but a tab nobody
-can leave is worse than a stale one. The pending note survives, so the pill still says so on
-the next page open.
+The one state with a way out is a *failed publish*: retry first, but a tab nobody can leave is
+worse than a stale one. Not an escape either — the note survives on the server, so the next
+poll puts it straight back up.
 
-Publishing bumps only the waiting pages, so an AGG pull no longer makes every device rebuild
-Ready-Mix for nothing. A page whose bump throws stays on the pending list rather than being
-quietly dropped behind a stale cache.
-
-`syncAll()` still exists and still does everything at once — it is what "Update from source"
+`syncAll()` still exists and still does everything at once; it is what "Update from source"
 and the lookup editors call.
-
-#### When a trigger says "failed" and the sheets look fine
-
-Attach triggers to `qlikSyncDailyAgg`, `qlikSyncDailyRmx` or `qlikSyncDailySegment` — never
-to `qlikSyncNow` itself. A time-driven trigger passes its own event object to whatever
-function it fires, so a trigger on `qlikSyncNow` would hand `{ triggerUid: … }` in as the
-scope. (That argument is now ignored unless it is a real page id, so such a trigger runs
-everything rather than nothing — but one scope per trigger is still the right setup, and
-`scope: 'all'` is the slowest thing this script can be asked to do.)
-
-`run()` returns its errors, it does not throw them, so a genuinely failed tab does **not**
-mark the execution failed. The one thing that does is Apps Script killing the run for going
-past its runtime limit — and that kill is invisible to the `try/catch`, arrives after most
-of the writing is already done, and leaves the trigger reporting failure over sheets that
-are correctly updated. That is the usual explanation for "it works but keeps saying failed".
-
-Two things address it. The run stops on its own once it is four minutes in rather than being
-killed mid-write, reporting the tabs it did not reach in `notRun`. And it writes a
-breadcrumb to Script Properties as it goes, so a run that *was* killed still leaves a record
-of where. Read it back from the Apps Script editor:
-
-```js
-qlikSyncLastRun()
-```
-
-`phase: "finished"` means the run ended on its own and `ok` / `failed` / `error` say how it
-went. Any other `phase` is where it was killed. If that keeps happening, give each page its
-own trigger at its own time rather than one `all` run.
 
 ### `APP_CONFIG.PAGES` keys
 
