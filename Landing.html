@@ -133,14 +133,10 @@
   </div>
 
   <div class="panel" id="qsPanel">
-    <h3>Pull the data from QlikView</h3>
-    <p>Drop the QlikView exports into their Drive folders, then press the button. Every row in every
-       Google Sheet is replaced with what the exports say &mdash; formulas, lookups and anything the
-       export does not send are left exactly as they are. You do <b>not</b> need to pick a file:
-       whatever is sitting in the folders is used. <b>This takes a minute or two</b>; leave the page open.</p>
-    <p style="margin-top:8px">This does all three sheets at once. Each tool also has its own
-       <b>&#8675; Pull from QlikView</b> button at the top of its page, which updates just that tool.</p>
-    <button class="land-setbtn" id="qsBtn">&#8675;&nbsp; Pull from QlikView</button>
+    <h3>QlikView data</h3>
+    <p>Drop the QlikView exports into their Drive folders. Every hour the suite checks whether
+       they have changed, and syncs them if they have &mdash; there is nothing to press.</p>
+    <p>If a page is open when new data lands, it says so and offers a button to load it.</p>
     <div class="qs-out" id="qsOut"></div>
   </div>
 </div>
@@ -274,85 +270,6 @@ var QLIK_GUIDE = [
     });
   }
 })();
-</script>
-<script>
-/* ---- "Update data from QlikView" -------------------------------------
-   One press: QlikSync.gs opens both Drive folders, works out which export
-   is which from what is inside it, and replaces the data in all three
-   workbooks. Every cached copy is invalidated at the end, so the tools
-   pick the new data up on their next open. ------------------------------ */
-document.addEventListener('DOMContentLoaded', function () {
-  var btn = document.getElementById('qsBtn');
-  var out = document.getElementById('qsOut');
-  if (!btn || !out) return;
-
-  var LABEL = btn.innerHTML;
-
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
-  }
-
-  function show(html) { out.innerHTML = html; out.className = 'qs-out show'; }
-
-  function done(res) {
-    btn.disabled = false;
-    btn.innerHTML = LABEL;
-
-    if (!res) { show('<div class="qs-bad">No answer came back. Try again.</div>'); return; }
-    if (res.error) { show('<div class="qs-bad">' + esc(res.error) + '</div>'); return; }
-
-    var html = '';
-
-    if (res.failed && res.failed.length) {
-      html += '<div class="qs-bad"><b>' + res.failed.length + ' tab' +
-              (res.failed.length > 1 ? 's' : '') + ' could not be updated.</b><br>';
-      html += res.failed.map(function (f) {
-        return esc(f.tab) + ' &mdash; ' + esc(f.error);
-      }).join('<br>');
-      html += '</div>';
-    }
-
-    html += '<div class="qs-head">' + (res.done ? res.done.length : 0) + ' tab' +
-            ((res.done && res.done.length === 1) ? '' : 's') + ' updated' +
-            (res.seconds ? ' in ' + esc(res.seconds) + 's' : '') + '</div><ul>';
-
-    (res.done || []).forEach(function (d) {
-      var note = d.unmatched && d.unmatched.length
-        ? ' &middot; <span class="er">' + d.unmatched.length + ' column' +
-          (d.unmatched.length > 1 ? 's' : '') + ' not placed</span>'
-        : '';
-      html += '<li><span class="ok">&#10003;</span><span class="nm">' + esc(d.tab) +
-              '<br><span class="ct">from ' + esc(d.from) + '</span></span>' +
-              '<span class="ct">' + Number(d.rows).toLocaleString() + ' rows &middot; ' +
-              esc(d.columns) + ' cols' + note + '</span></li>';
-    });
-    html += '</ul>';
-
-    (res.skipped || []).forEach(function (s) {
-      html += '<div class="qs-msg">Skipped ' + esc(s.tab) + ' &mdash; ' + esc(s.error) + '</div>';
-    });
-
-    if (res.files && res.files.length) {
-      html += '<div class="qs-msg" style="margin-top:8px">Read: ' +
-              res.files.map(esc).join(' &middot; ') + '</div>';
-    }
-    html += '<div class="qs-msg" style="margin-top:8px">Every tool now reloads its data next time you open it.</div>';
-
-    show(html);
-  }
-
-  btn.addEventListener('click', function () {
-    btn.disabled = true;
-    btn.innerHTML = '&#8675;&nbsp; Reading the exports&hellip;';
-    show('<div class="qs-msg">Opening the Drive folders and replacing the data. ' +
-         'This usually takes a minute or two &mdash; leave the page open.</div>');
-    /* the call itself lives in Shell.html, shared with every tool's own
-       \u21e3 Pull from QlikView button \u2014 only the reporting differs here */
-    window.AmrQlik.run('all', done);
-  });
-});
 </script>
 </body>
 </html>

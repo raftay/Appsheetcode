@@ -185,39 +185,30 @@ header row there would silently drop the first mapping and report a mapped plant
 And it checks the two files still share one cache entry per tab, which is the only reason
 the mapping check does not re-read 40k rows the page has already read.
 
-## `qliksync.js` — the sync, and the six minutes
+## `qliksync.js` — the sync, and the hourly check
 
-Runs `QlikSync.gs` for real against a fake Spreadsheet/Drive service, over a fixture shaped
-like the Price & Volume workbook: banner row above the header, array formulas on the first
-data row in columns the export never feeds, and more rows in the sheet than in the export so
-it has to shrink.
+Runs `QlikSync.gs` against a fake Spreadsheet + Drive service.
 
 ```bash
 node tests/qliksync.js           # no dependencies
 ```
 
-**Why it exists.** The daily triggers reported *failed* while the sheets came out correctly
-updated. Nothing in `run()` throws — every error path returns a value — so the only thing
-that can mark a trigger failed is Apps Script killing the execution for running past its
-runtime limit, and that kill is invisible to a `try/catch`. What was spending the time was
-per-cell work: the band of array formulas was cleared one `getRange().clearContent()` at a
-time and restored one `setFormula()` at a time, a round trip to Sheets for each. Both now go
-a contiguous **run** at a time.
+**Batching.** The band of array formulas used to be cleared one
+`getRange().clearContent()` at a time and restored one `setFormula()` at a time — a round
+trip to Sheets per cell, across every raw tab, twice. That is what pushed a sync past the
+Apps Script runtime limit and got the trigger killed mid-write, which is why it reported
+"failed" over sheets that were correctly updated. Both go a contiguous **run** at a time now,
+so the harness counts calls: six formulas in a row, two calls each way, and no `setFormula`
+at all. It also pins the *result* — every anchor still re-pointed at the new height, its own
+(`B3:B50040` → `B3:B7`) and across tabs — because a faster sync that writes different
+formulas is not the same sync.
 
-So the harness counts calls. Six formula cells in one row must be cleared in two calls and
-restored in two, and no `setFormula` may be reached at all. Alongside that it pins the
-*result* of the batching — every anchor still re-pointed at the new height, its own
-(`B3:B50040` → `B3:B7`) and across tabs (`'…Other Revenue'!C3:C50040` → `C3:C4`) — because a
-faster sync that writes different formulas is not the same sync.
-
-It also drives a virtual clock through the fake service to check the budget: a run that
-would overshoot stops itself, keeps and re-anchors what it finished, and names the rest in
-`notRun`, instead of being killed mid-write. And it reads the Script Properties breadcrumb
-*while the run is still going*, which is exactly what `qlikSyncLastRun()` reports after a run
-that never got to finish.
-
-Last case: a trigger event object handed in as `scope`, which is what happens if a trigger
-is wired to `qlikSyncNow` rather than to one of the `qlikSyncDaily*` wrappers.
+**The hourly check.** Nothing in the UI starts a sync. The trigger compares the exports'
+modified times against the last set it saw, so an ordinary hour costs one Drive listing and
+nothing else: the harness asserts a second look writes nothing and throws no cache away, and
+that bumping a file's modified time is picked up. It also pins the retry rule — a run that
+*could not happen* (lock held) leaves the stamp alone and is retried, a run that *finished
+with a bad tab* records the stamp and logs, because that tab will be just as broken next hour.
 
 ## Also worth running
 

@@ -50,17 +50,9 @@
  *   OAuth token, so the Advanced Drive Service does NOT need to be turned on.
  *
  * TRIGGERS
- *   Attach them to qlikSyncDailyAgg / qlikSyncDailyRmx / qlikSyncDailySegment,
- *   one scope each — not to qlikSyncNow, which takes an argument a trigger
- *   would fill with its own event object.
- *
- *   run() RETURNS its errors, it never throws them, so a failed tab does not
- *   mark the execution failed. What does is Apps Script killing the run for
- *   passing its runtime limit — invisible to the try/catch, and late enough
- *   that the sheets are already written. A trigger that reports "failed" over
- *   correctly updated sheets is nearly always that. Section 0b keeps the run
- *   inside its budget and leaves a breadcrumb either way; qlikSyncLastRun()
- *   at the bottom of this file reads it back.
+ *   ONE hourly trigger, on qlikSyncHourly. It compares when the export files
+ *   in Drive were last modified against the last set it saw, and does nothing
+ *   at all unless something changed. Nothing in the UI starts a sync.
  *
  * NOTE — no validation yet. This copies what the export says, as the export
  * says it. Reconciliation checks come later.
@@ -123,187 +115,6 @@ var QLIKSYNC = (function () {
       out.push({ start: s, len: i - s });
     }
     return out;
-  }
-
-
-  /* =====================================================================
-   * 0b. THE SIX MINUTES, AND THE BREADCRUMB
-   * ---------------------------------------------------------------------
-   * Apps Script kills any execution that passes its runtime limit. That kill
-   * is not an exception: the try/catch in run() never sees it, the return
-   * value never reaches anybody, and all that is left is a trigger the
-   * dashboard marks "failed" and a "failed to complete successfully" email —
-   * even though every sheet the run had already written is sitting there
-   * correctly updated. A sync that "works but keeps saying failed" is very
-   * often exactly this, and nothing about it is visible after the fact.
-   *
-   * Two things here, together:
-   *
-   *   BUDGET   No new tab is started once the run is this far in. The work
-   *            already done is kept, the rest is reported as not-run, and the
-   *            execution ENDS instead of being killed — so the trigger says
-   *            what actually happened rather than just "failed".
-   *
-   *   REPORT   A breadcrumb written to Script Properties as the run moves
-   *            through its phases. Property writes survive the kill, so even
-   *            a run that does get cut off leaves behind the tab it was on.
-   *            Read it back with qlikSyncLastRun().
-   * =================================================================== */
-  var BUDGET_MS  = 4 * 60 * 1000;      /* of the six; the rest finishes up */
-  var REPORT_KEY = 'QLIK_SYNC_LAST_RUN';
-
-
-  /* =====================================================================
-   * 0c. PULLING AND PUBLISHING ARE TWO DIFFERENT THINGS
-   * ---------------------------------------------------------------------
-   * This used to end by calling syncAll(), which bumps every page's data
-   * version. That version is what invalidates BOTH caches: the 6-hour server
-   * cache, and each device's saved tables in localStorage — and the device
-   * copies have no expiry at all, so the version is the only thing that ever
-   * clears them (Shell.html, AmrCache.check).
-   *
-   * Bumping it the moment the sheet is written meant the sync pulled the floor
-   * out from under whoever was already reading:
-   *
-   *   · the page you are on keeps its tables, because nothing re-checks the
-   *     version mid-session — so the sync looks like it did nothing;
-   *   · leave the page and come back and boot() sees a new version, wipes the
-   *     device copy, and the server cache is cold too, so the whole 50k-row
-   *     rebuild has to happen inside that one page load. Slow at best, and a
-   *     blank page when it does not make it.
-   *
-   * So the pull no longer publishes. It writes the sheet and leaves a note
-   * saying which pages have new data behind them; the site keeps serving the
-   * numbers it already has until someone chooses to take the new ones, which
-   * is when the versions move. Nobody is interrupted mid-read, and the rebuild
-   * happens at a moment a human is watching and can be shown progress.
-   * =================================================================== */
-  var PENDING_KEY = 'QLIK_PENDING_UPDATE';
-
-
-  /* =====================================================================
-   * 0d. "A PULL IS HAPPENING" — visible on every page, to everybody
-   * ---------------------------------------------------------------------
-   * A pull replaces the tabs every page reads. For the minutes that takes,
-   * anyone looking at any page is looking at figures that are being replaced
-   * underneath them, and nothing on their screen said so — the person who
-   * pressed the button knew, and nobody else did.
-   *
-   * So the run raises a flag here and the shell dims every page against it.
-   *
-   * THE FLAG HAS TO BE ABLE TO EXPIRE ON ITS OWN. A run that is killed for
-   * passing the runtime limit (section 0b) never reaches its `finally`, so
-   * "running" would stay true forever and every page in the suite would sit
-   * greyed out until somebody found this property. Anything older than the
-   * window below is therefore treated as finished no matter what it says —
-   * a stuck flag costs one stale screen, not a dead site.
-   * =================================================================== */
-  var STATE_KEY  = 'QLIK_SYNC_RUNNING';
-  var STALE_MS   = 12 * 60 * 1000;    /* comfortably past the 4-minute budget */
-
-  function setRunning_(scope) {
-    try {
-      PropertiesService.getScriptProperties().setProperty(STATE_KEY, JSON.stringify({
-        since: new Date().toISOString(), scope: scope
-      }));
-    } catch (e) {}
-  }
-  function clearRunning_() {
-    try { PropertiesService.getScriptProperties().deleteProperty(STATE_KEY); } catch (e) {}
-  }
-
-  /* The single source of truth for "is a pull happening", server-side, so
-     every page agrees rather than each deciding for itself. */
-  function running() {
-    try {
-      var raw = PropertiesService.getScriptProperties().getProperty(STATE_KEY);
-      if (!raw) return { running: false };
-      var v = JSON.parse(raw), age = new Date() - new Date(v.since);
-      if (!(age >= 0) || age > STALE_MS) { clearRunning_(); return { running: false }; }
-      return { running: true, since: v.since, scope: v.scope, seconds: Math.round(age / 1000) };
-    } catch (e) { return { running: false }; }
-  }
-
-  /* Merged, not replaced: an AGG pull followed by an RMX pull leaves BOTH
-     waiting to be published, and the older timestamp is the honest one. */
-  function markPending_(pages, files) {
-    try {
-      var p = PropertiesService.getScriptProperties();
-      var cur = {};
-      try { cur = JSON.parse(p.getProperty(PENDING_KEY) || '{}'); } catch (e) { cur = {}; }
-      var list = (cur.pages || []).slice();
-      pages.forEach(function (pg) { if (list.indexOf(pg) === -1) list.push(pg); });
-      if (!list.length) return;
-      p.setProperty(PENDING_KEY, JSON.stringify({
-        since: cur.since || new Date().toISOString(),
-        at:    new Date().toISOString(),
-        pages: list,
-        files: (files || []).slice(0, 8)
-      }));
-    } catch (e) {}
-  }
-
-  function pending() {
-    try {
-      var raw = PropertiesService.getScriptProperties().getProperty(PENDING_KEY);
-      if (!raw) return { pending: false, pages: [] };
-      var v = JSON.parse(raw);
-      if (!v.pages || !v.pages.length) return { pending: false, pages: [] };
-      return { pending: true, since: v.since, at: v.at, pages: v.pages, files: v.files || [] };
-    } catch (e) { return { pending: false, pages: [] }; }
-  }
-
-  function clearPending() {
-    try { PropertiesService.getScriptProperties().deleteProperty(PENDING_KEY); } catch (e) {}
-  }
-
-  /* A Script Property holds 9 kB. One "none of the export columns matched"
-     message carries the whole export header and can be most of that on its
-     own, so every line is clipped before it goes in: a report that cannot be
-     stored is worth nothing on the morning it is needed. */
-  function clip_(s) {
-    s = String(s == null ? '' : s);
-    return s.length > 200 ? s.slice(0, 197) + '…' : s;
-  }
-
-  function report_(patch) {
-    try {
-      var p = PropertiesService.getScriptProperties();
-      var cur = {};
-      try { cur = JSON.parse(p.getProperty(REPORT_KEY) || '{}'); } catch (e) { cur = {}; }
-      Object.keys(patch).forEach(function (k) { cur[k] = patch[k]; });
-      var s = JSON.stringify(cur);
-      if (s.length > 8500) {
-        ['done', 'skipped', 'failed', 'notRun'].forEach(function (k) {
-          if (cur[k] && cur[k].length > 6) {
-            cur[k] = cur[k].slice(0, 6).concat(['… and ' + (cur[k].length - 6) + ' more']);
-          }
-        });
-        s = JSON.stringify(cur).slice(0, 8500);
-        try { JSON.parse(s); } catch (e2) { s = JSON.stringify({ phase: cur.phase, ok: cur.ok,
-          error: 'The full report was too long to store.' }); }
-      }
-      p.setProperty(REPORT_KEY, s);
-    } catch (e) {}                     /* diagnostics never break the sync */
-  }
-
-  /* What the last run got to. `phase` is the breadcrumb: if it still reads
-     mid-run, that run was killed there rather than finishing. */
-  function lastRun() {
-    try {
-      var raw = PropertiesService.getScriptProperties().getProperty(REPORT_KEY);
-      if (!raw) return { ok: false, error: 'No QlikView sync has been recorded yet.' };
-      var r = JSON.parse(raw);
-      if (r.phase && r.phase !== 'finished') {
-        r.verdict = 'This run never reached the end. It stopped during "' + r.phase +
-          '" — on a time-driven trigger that almost always means it ran past the ' +
-          'Apps Script runtime limit and was killed, which is what the "failed" ' +
-          'notice is reporting.';
-      }
-      return r;
-    } catch (e) {
-      return { ok: false, error: e.message };
-    }
   }
 
 
@@ -959,28 +770,14 @@ var QLIKSYNC = (function () {
 
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(5000)) {
-      /* Three daily triggers set to the same time is the usual way here: two
-         of them find the lock held and come back with this. Nothing is wrong,
-         but nothing was updated either, so it goes on the record as a run that
-         ended on its own — not as a half-written one. */
-      var busyMsg = 'Another update is already running. Try again in a moment.';
-      report_({ phase: 'finished', ok: false, scope: want, error: busyMsg,
-                startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
-                seconds: 0, done: [], skipped: [], failed: [], notRun: [] });
-      return { ok: false, scope: want, error: busyMsg,
-               files: [], done: [], skipped: [], failed: [], notRun: [] };
+      /* The hourly trigger overlapping a manual run from the editor. Nothing
+         is wrong, but nothing was written either — `error` says the run did
+         not happen, which is what stops the caller recording it as done. */
+      return { ok: false, scope: want, files: [], done: [], skipped: [], failed: [],
+               error: 'Another update is already running. Try again in a moment.' };
     }
-
     var started = new Date();
-    var done = [], skipped = [], failed = [], notRun = [], touched = {};
-    function elapsed_()  { return new Date() - started; }
-    function outOfTime_() { return elapsed_() > BUDGET_MS; }
-
-    report_({ startedAt: started.toISOString(), scope: want, phase: 'starting',
-              ok: null, done: [], skipped: [], failed: [], notRun: [], error: null });
-    /* The lock is ours, so this is THE pull. Every page dims against this
-       until the finally below puts it down (or it ages out). */
-    setRunning_(want);
+    var done = [], skipped = [], failed = [];
 
     try {
       var ids  = folderIds_();
@@ -998,7 +795,6 @@ var QLIKSYNC = (function () {
       [['AGG', ids.AGG_FOLDER_ID], ['RMX', ids.RMX_FOLDER_ID]].forEach(function (pair) {
         if (!needed[pair[0]]) return;
         excelFilesIn_(pair[1], pair[0]).forEach(function (f) {
-          report_({ phase: 'reading ' + pair[0] + ' export: ' + f.name });
           filesSeen.push(pair[0] + ': ' + f.name);
           tabsByFolder[pair[0]] = tabsByFolder[pair[0]].concat(readExport_(f));
         });
@@ -1022,14 +818,6 @@ var QLIKSYNC = (function () {
         var plan = [], ends = {};
 
         byPage[page].forEach(function (spec) {
-          /* Starting another tab now would run past the limit and get the
-             whole execution killed mid-write. Stop while the run still owns
-             its own ending. */
-          if (outOfTime_()) {
-            notRun.push({ tab: spec.tab, error: 'Ran out of time before this tab was reached.' });
-            return;
-          }
-          report_({ phase: 'writing ' + spec.tab });
           try {
             var sh = ss.getSheetByName(spec.tab);
             if (!sh) {
@@ -1058,7 +846,6 @@ var QLIKSYNC = (function () {
               } catch (e2) {}
             }
             done.push(res);
-            touched[page] = 1;                 /* this page has new data behind it */
             ends[norm_(spec.tab)] = sh.getMaxRows();
           } catch (e) {
             failed.push({ tab: spec.tab, error: e.message });
@@ -1068,7 +855,6 @@ var QLIKSYNC = (function () {
         /* Every tab in this workbook has its final height now, so the array
            formulas can be re-pointed — including the ones that reach across
            into another tab of the same workbook. */
-        report_({ phase: 'restoring formulas in ' + APP_CONFIG.PAGES[page].label });
         plan.forEach(function (p) {
           var ownEnd = p.sh.getMaxRows();
           for (var r = 0; r < p.band.length; r++) {
@@ -1093,135 +879,106 @@ var QLIKSYNC = (function () {
         SpreadsheetApp.flush();
       });
 
-      /* --- the sheet has the new data; now tell the site --- */
-      var pages = Object.keys(touched);
-      markPending_(pages, filesSeen);
+      /* --- every cached copy, everywhere, is now stale --- */
+      try { syncAll(); } catch (e) {}
 
-      /* The pull runs the update-from-source itself. It is recorded as
-         pending FIRST and only forgotten once it has actually gone
-         through, so a publish that throws leaves the note behind for the
-         next page open to insist on rather than losing it. */
-      var published = [];
-      if (pages.length) {
-        report_({ phase: 'updating the site from the new data' });
-        try { published = APP_publishPages_(pages) || []; } catch (e) { published = []; }
-        if (published.length === pages.length) clearPending();
-      }
-
-      var out = {
-        ok: failed.length === 0 && notRun.length === 0,
+      return {
+        ok: failed.length === 0,
         scope: want,
         files: filesSeen,
         done: done,
         skipped: skipped,
         failed: failed,
-        notRun: notRun,
-        pagesUpdated: pages,
-        published: published,
-        awaitingPublish: pages.length > 0 && published.length < pages.length,
-        seconds: Math.round(elapsed_() / 100) / 10
+        seconds: Math.round((new Date() - started) / 100) / 10
       };
-      if (notRun.length) {
-        out.error = 'Ran out of time with ' + notRun.length + ' tab' +
-          (notRun.length === 1 ? '' : 's') + ' still to do. Everything written so far ' +
-          'is good — run the update again, or give each page its own trigger so no ' +
-          'single run has to do all of them.';
-      }
-      finish_(out);
-      return out;
 
     } catch (e) {
-      var bad = { ok: false, scope: want, error: e.message, files: [],
-                  done: done, skipped: skipped, failed: failed, notRun: notRun };
-      finish_(bad);
-      return bad;
+      return { ok: false, scope: want, error: e.message, files: [],
+               done: done, skipped: skipped, failed: failed };
     } finally {
-      clearRunning_();
       try { lock.releaseLock(); } catch (e2) {}
-    }
-
-    /* The record of a run that reached its own ending. Only the shape of the
-       outcome is kept — the full row-by-row detail goes back to the caller,
-       not into a Script Property. */
-    function finish_(res) {
-      report_({
-        phase:      'finished',
-        ok:         res.ok,
-        error:      clip_(res.error || '') || null,
-        finishedAt: new Date().toISOString(),
-        seconds:    Math.round(elapsed_() / 100) / 10,
-        done:       res.done.map(function (d) { return d.tab + ' (' + d.rows + ' rows)'; }),
-        skipped:    res.skipped.map(function (s) { return clip_(s.tab + ': ' + s.error); }),
-        failed:     res.failed.map(function (f) { return clip_(f.tab + ': ' + f.error); }),
-        notRun:     res.notRun.map(function (n) { return n.tab; })
-      });
-      /* Visible in the Executions list without marking the run failed — a run
-         that finished and reported its own problems is not a crash. */
-      if (!res.ok) {
-        try {
-          console.error('QlikView sync (' + want + ') finished with problems: ' +
-            (res.error || '') + ' ' + res.failed.map(function (f) {
-              return f.tab + ': ' + f.error;
-            }).join(' | '));
-        } catch (e3) {}
-      }
     }
   }
 
-  return { run: run, lastRun: lastRun, running: running,
-           pending: pending, clearPending: clearPending };
+  return { run: run };
 })();
 
 
 /* ==========================================================================
- * Called from the ⇣ Pull from QlikView button (google.script.run).
+ * THE ONLY THING THAT STARTS A SYNC: one hourly trigger.
+ * --------------------------------------------------------------------------
+ * Set ONE time-driven trigger, hourly, on qlikSyncHourly.
  *
- *   qlikSyncNow()               everything
- *   qlikSyncNow('pricevolume')  the Aggregates tabs only
- *   qlikSyncNow('rmx')          the Ready-Mix raw tabs only
- *   qlikSyncNow('segment')      the Slide Builder tabs only
+ * It looks at when the export files in Drive were last modified. If none of
+ * them has changed since the last look, it stops — no folders opened, no
+ * sheets touched, no caches thrown away, and every page keeps serving from
+ * cache. Only a genuinely new export costs anything.
  *
- * A page passes its own id, so pressing the button on one tool does not make
- * everybody wait for the other exports to be converted and read.
+ * When something HAS changed it syncs and calls syncAll(), which moves every
+ * page's data version. That version is what each open page is watching, so
+ * the prompt appears on its own — see AmrFresh in Shell.html.
  * ======================================================================== */
-function qlikSyncNow(scope) {
-  /* A time-driven trigger hands its own event object to whatever function it
-     is attached to. Wire a trigger straight to THIS one and `scope` arrives as
-     { triggerUid: …, authMode: … }, which matches no page, filters the spec
-     down to nothing and returns "nothing is set up to update for [object
-     Object]" — a daily run that quietly does nothing. Only a real page id
-     counts; anything else means everything.
-     The three qlikSyncDaily* functions below are the ones to attach a trigger
-     to, precisely because they take no argument. */
-  return QLIKSYNC.run(typeof scope === 'string' ? scope : 'all');
-}
-function qlikSyncDailyAgg() {
-  return qlikSyncNow('pricevolume');
-}
-function qlikSyncDailyRmx() {
-  return qlikSyncNow('rmx');
-}
-function qlikSyncDailySegment() {
-  return qlikSyncNow('segment');
+var QLIK_STAMP_KEY = 'QLIK_FILE_STAMPS';
+
+/* name + last-modified for every export file, as one string. Any new export,
+   re-export or removal changes it. */
+function qlikFileStamp_() {
+  var q = (APP_CONFIG && APP_CONFIG.QLIK_SYNC) || {};
+  var out = [];
+  [q.AGG_FOLDER_ID, q.RMX_FOLDER_ID].forEach(function (id) {
+    if (!id) return;
+    var it = DriveApp.getFolderById(id).getFiles();
+    while (it.hasNext()) {
+      var f = it.next(), name = f.getName();
+      if (!/\.xlsx?$/i.test(name) &&
+          f.getMimeType() !== 'application/vnd.google-apps.spreadsheet') continue;
+      out.push(name + '@' + f.getLastUpdated().getTime());
+    }
+  });
+  return out.sort().join('|');
 }
 
-/* ==========================================================================
- * What did the last run actually do?
- *
- * Run this from the Apps Script editor after a trigger reports a failure. A
- * run that was killed for going over the runtime limit cannot report anything
- * itself — the breadcrumb it left behind is all there is, and this reads it:
- *
- *   phase: "finished"          it ended on its own; `ok`, `failed` and
- *                              `error` say how it went.
- *   phase: anything else       it was killed there. On a trigger that means
- *                              the runtime limit, and the sheets it had
- *                              already written are still correctly updated —
- *                              which is why the sync "works" and the trigger
- *                              still says failed.
- * ======================================================================== */
-function qlikSyncLastRun() {
-  var r = QLIKSYNC.lastRun();
-  try { console.log(JSON.stringify(r, null, 2)); } catch (e) {}
-  return r;
+function qlikSyncHourly() {
+  var props = PropertiesService.getScriptProperties();
+  var now, seen;
+  try {
+    now = qlikFileStamp_();
+  } catch (e) {
+    Logger.log('QlikView check failed: ' + e.message);
+    return { ok: false, error: e.message };
+  }
+  seen = props.getProperty(QLIK_STAMP_KEY) || '';
+
+  if (now === seen) return { ok: true, changed: false };
+
+  var res = QLIKSYNC.run('all');
+
+  /* Remember the stamp unless the run fell over completely (Drive unreachable,
+     another sync holding the lock). A run that finished with a bad TAB is not
+     retried: that tab will be just as broken next hour, and re-syncing every
+     hour forever neither fixes it nor tells anybody. It is logged instead. */
+  if (res.error) {
+    Logger.log('QlikView sync did not run: ' + res.error);
+  } else {
+    props.setProperty(QLIK_STAMP_KEY, now);
+    if (!res.ok) Logger.log('QlikView sync finished with bad tabs: ' + JSON.stringify(res.failed));
+  }
+
+  res.changed = true;
+  return res;
+}
+
+/* Run this once from the editor after setting the trigger up, so the first
+   hourly check has something to compare against and does not sync a set of
+   exports that are already in the sheet. */
+function qlikMarkCurrent() {
+  PropertiesService.getScriptProperties().setProperty(QLIK_STAMP_KEY, qlikFileStamp_());
+  return 'Current exports marked as already synced.';
+}
+
+/* Manual sync, from the editor only. Nothing in the UI calls this. */
+function qlikSyncNow(scope) {
+  var res = QLIKSYNC.run(typeof scope === 'string' ? scope : 'all');
+  try { PropertiesService.getScriptProperties().setProperty(QLIK_STAMP_KEY, qlikFileStamp_()); } catch (e) {}
+  return res;
 }

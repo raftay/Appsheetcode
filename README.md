@@ -197,51 +197,30 @@ Alongside those: the EBITDA KPI workbooks in a shared Drive folder
 (`APP_CONFIG.KPI_FOLDER_ID`), the Saskatchewan rates sheet, the inventory PDF, and the
 optional closed-year history books (`histagg`, `histrmx`, `histagg2`, `histrmx2`).
 
-Scheduled sync triggers fire at 2 PM, one per data source.
+### Syncing: one hourly trigger, and nothing else
 
-### The pull, and everyone watching it
+There is no sync button. Set **one** hourly time-driven trigger on `qlikSyncHourly`.
 
-A pull replaces the tabs every page reads. For the minutes that takes, anyone on any page is
-looking at figures being made out of date underneath them — so the whole suite is dimmed
-while it happens, and reloads itself when it ends.
+Each hour it lists the export files in the two Drive folders and builds a stamp from their
+names and last-modified times. If that stamp matches the one it saw last hour it stops right
+there — no folders opened, no sheets touched, no caches thrown away. Only a genuinely new
+export costs anything.
 
-| | writes the sheet | data version | screen |
-|---|---|---|---|
-| pull starts (button or trigger) | — | — | **scrim up, every page, every user** |
-| pull runs | yes | no | scrim |
-| pull ends | — | **moves, automatically** | reload into the new figures |
+When something has changed it runs the sync and calls `syncAll()`, which moves every page's
+data version. Any page that is open notices on its next check (`AmrFresh` in `Shell.html`,
+every 5 minutes), greys itself out and offers one button that reloads it. The version already
+meant "the data behind you changed"; nothing new is stored to make this work.
 
-`run()` raises `QLIK_SYNC_RUNNING`, writes the tabs, records what it touched in
-`QLIK_PENDING_UPDATE`, then publishes those pages itself (`APP_publishPages_`) and clears the
-note **only once the publish actually went through**. `AmrSyncWatch` in `Shell.html` polls
-`getQlikStatus()` — two Script Property reads, no sheet access — every 6 s while a pull is in
-flight and every 60 s otherwise, pausing entirely while the tab is hidden. The first look
-rides along on the page-open call, so opening a page costs no extra round trip.
+Run `qlikMarkCurrent()` once from the editor after setting the trigger up, so the first hourly
+check doesn't re-sync exports that are already in the sheet.
 
-**The running flag has to be able to expire.** A run killed at the runtime limit never reaches
-its `finally`, so a stuck flag would grey out the entire suite until somebody found the
-property by hand. Anything older than 12 minutes is treated as finished regardless. A stuck
-flag costs one stale screen, not a dead site.
+**The retry rule.** A run that could not happen at all — Drive unreachable, another sync
+holding the lock — leaves the stamp alone and is tried again next hour. A run that *finished*
+but wrote a bad tab records the stamp anyway and logs the failure: that tab will be just as
+broken next hour, and re-syncing hourly forever neither fixes it nor tells anybody.
 
-**Publishing is per page**, so an AGG pull no longer makes every device rebuild Ready-Mix for
-nothing. Pages that compose others need no special case: the Overview folds Price & Volume's
-and Ready-Mix's versions into the token it compares.
-
-#### When the modal appears
-
-The normal path never reaches it — the pull publishes itself and the page reloads. The modal
-is the exception: **tabs were written and the publish did not go through.** Then it is forced,
-on page open and on every poll, wherever you are and whoever did the pulling. No ✕, no
-Escape, no click-outside (it carries `data-locked`, which the shared dismissal handlers skip).
-A page sitting on figures we already know are superseded is the stale state this exists to
-stop, and it is no less stale for being somebody else's pull.
-
-The one state with a way out is a *failed publish*: retry first, but a tab nobody can leave is
-worse than a stale one. Not an escape either — the note survives on the server, so the next
-poll puts it straight back up.
-
-`syncAll()` still exists and still does everything at once; it is what "Update from source"
-and the lookup editors call.
+`qlikSyncNow(scope)` is still there for a manual run from the editor. Nothing in the UI calls
+it.
 
 ### `APP_CONFIG.PAGES` keys
 

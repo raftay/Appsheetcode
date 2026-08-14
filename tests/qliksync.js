@@ -1,25 +1,21 @@
-/* QlikSync.gs, run for real against a fake Spreadsheet service.
+/* QlikSync.gs, run for real against a fake Spreadsheet + Drive service.
  *
- * The bug this harness exists for: the daily triggers reported FAILED even
- * though the sheets came out correctly updated. Nothing in run() throws — every
- * error path returns a value — so the only thing that can produce a "failed"
- * trigger is Apps Script killing the execution for running past its six
- * minutes, which a try/catch cannot see and which leaves no record at all.
- *
- * So three things are checked here, and each one is the reason a change to
- * QlikSync.gs is safe:
+ * Two things this file has to keep getting right.
  *
  *   BATCHING   The band of array formulas is cleared and restored a RUN at a
  *              time, not a CELL at a time. Every one of those was a round trip
- *              to Sheets, and the count is what pushed the run over the limit.
- *   SAMENESS   Batching them changed no formula: every anchor still comes back
- *              re-pointed at the new height, its own and across tabs.
- *   THE CLOCK  A run that is going to run out of time stops itself and reports
- *              what it did not get to, instead of being killed mid-write.
+ *              to Sheets, and the count is what used to push a sync past the
+ *              Apps Script runtime limit and get the trigger killed mid-write.
+ *              Batching them must change no formula: every anchor still comes
+ *              back re-pointed at the new height, its own and across tabs.
  *
- * Plus the breadcrumb (what a killed run leaves behind) and the trigger event
- * object, which arrives as the `scope` argument if a trigger is wired straight
- * to qlikSyncNow.
+ *   THE CHECK  Nothing in the UI starts a sync any more. One hourly trigger
+ *              compares the export files' modified times against the last set
+ *              it saw and does nothing at all unless something moved — so the
+ *              cost of an ordinary hour is one Drive listing, and pages keep
+ *              serving from cache. The retry rule matters too: a run that
+ *              could not happen is tried again next hour, a run that finished
+ *              with a broken TAB is not (it will be just as broken next hour).
  *
  *   node tests/qliksync.js
  */
@@ -187,12 +183,10 @@ function exportBook() {
 let PROPS = {};
 let BOOKS = {};
 let SYNC_ALL_CALLS = 0;
-let PUBLISHED = [];
-let PUBLISH_THROWS = false;
+let MTIME = RealDate.UTC(2026, 7, 13, 5, 0, 0);   /* the export's modified time */
 
-function load({ tick = 0, lockFree = true, publishThrows = false } = {}) {
+function load({ tick = 0, lockFree = true } = {}) {
   PROPS = {}; OPS = []; TICK = tick; SYNC_ALL_CALLS = 0;
-  PUBLISHED = []; PUBLISH_THROWS = publishThrows;
   CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);
 
   const sheets = { raw: rawSheet(), other: otherSheet() };
@@ -235,6 +229,7 @@ function load({ tick = 0, lockFree = true, publishThrows = false } = {}) {
               getId: () => 'EXPORT_BOOK',
               getName: () => 'AGG export.xlsx',
               getMimeType: () => 'application/vnd.google-apps.spreadsheet',
+              getLastUpdated: () => new RealDate(MTIME),
             }; },
           };
         },
@@ -247,14 +242,6 @@ function load({ tick = 0, lockFree = true, publishThrows = false } = {}) {
     ScriptApp: { getOAuthToken: () => 'tok' },
     UrlFetchApp: { fetch: () => { throw new Error('no conversion expected'); } },
     syncAll: () => { SYNC_ALL_CALLS++; return { ok: true }; },
-    /* The seam run() publishes through. Code.gs owns the real one; here it
-       just records, so the harness can tell an automatic publish from a
-       failed one rather than passing because the symbol was missing. */
-    APP_publishPages_: pages => {
-      if (PUBLISH_THROWS) throw new Error('publish is having a bad day');
-      PUBLISHED.push.apply(PUBLISHED, pages);
-      return pages.slice();
-    },
   };
   ctx.global = ctx;
   vm.createContext(ctx);
@@ -282,7 +269,6 @@ console.log('a clean run over both Price & Volume tabs:');
 
   check('it reports success', res.ok, true);
   check('nothing failed', res.failed, []);
-  check('nothing was left unrun', res.notRun, []);
   check('both tabs were written', res.done.map(d => d.tab).sort(), [OTHER_TAB, RAW_TAB]);
   check('the raw tab took all five export rows', res.done.filter(d => d.tab === RAW_TAB)[0].rows, 5);
 
@@ -346,145 +332,60 @@ console.log('\nthe formula band is handled a run at a time, not a cell at a time
 }
 
 /* ======================================================================
- * 4. A run that is going to run out of time ends itself
+ * 4. The hourly check: does nothing unless an export actually changed
  * ==================================================================== */
-console.log('\na run that runs out of time stops instead of being killed:');
-{
-  /* 70 s per write call: the first tab alone spends the four-minute budget. */
-  const ctx = load({ tick: 70 * 1000 });
-  const res = ctx.qlikSyncNow('pricevolume');
-
-  check('it returns rather than dying mid-write', typeof res, 'object');
-  check('it does not claim success', res.ok, false);
-  check('the tab it reached is done', res.done.map(d => d.tab), [RAW_TAB]);
-  check('the tab it could not reach is named', res.notRun.map(n => n.tab), [OTHER_TAB]);
-  checkThat('and the message says what to do',
-    /ran out of time/i.test(res.error || '') && /trigger/i.test(res.error || ''), res.error);
-  check('the finished tab still has its formulas restored',
-    formulaRow(BOOKS._sheets.raw, 3)[7], '=ARRAYFORMULA(F3:F7*1)');
-}
-
-/* ======================================================================
- * 5. The breadcrumb — what a killed run leaves behind
- * ==================================================================== */
-console.log('\nthe run records where it is as it goes:');
+console.log('\nthe hourly check only syncs when Drive says something moved:');
 {
   const ctx = load();
-  /* Read the property mid-run, at the moment the second tab is being written:
-     this is exactly what would still be on disk if the axe fell here. */
-  let midRun = null;
-  const other = BOOKS._sheets.other;
-  const realSetValues = other.getRange;
-  other.getRange = function (...a) {
-    const rng = realSetValues.apply(other, a);
-    const inner = rng.setValues;
-    rng.setValues = function (g) {
-      if (midRun === null) midRun = JSON.parse(PROPS.QLIK_SYNC_LAST_RUN || '{}');
-      return inner.call(rng, g);
-    };
-    return rng;
-  };
 
-  ctx.qlikSyncNow('pricevolume');
+  const first = ctx.qlikSyncHourly();
+  check('the first look finds a new export', first.changed, true);
+  check('and the run happened', !first.error, true);
+  check('the AGG tabs were written', first.done.map(d => d.tab).sort(),
+    [OTHER_TAB, RAW_TAB]);
+  check('caches were thrown away exactly once', SYNC_ALL_CALLS, 1);
 
-  check('mid-run it names the tab being written', midRun && midRun.phase, 'writing ' + OTHER_TAB);
-  check('mid-run it has not yet claimed an outcome', midRun && midRun.ok, null);
+  const before = OPS.length;
+  const again = ctx.qlikSyncHourly();
+  check('an unchanged export is not synced again', again.changed, false);
+  check('nothing was written', OPS.length, before);
+  check('and no cache was thrown away', SYNC_ALL_CALLS, 1);
 
-  const after = ctx.qlikSyncLastRun();
-  check('once finished the phase says so', after.phase, 'finished');
-  check('...and the outcome is recorded', after.ok, true);
-  check('...with the tabs it wrote', after.done.length, 2);
-  checkThat('a finished run offers no post-mortem', after.verdict === undefined, after.verdict);
+  MTIME += 1000;                                  /* QlikView drops a new export */
+  const third = ctx.qlikSyncHourly();
+  check('a re-export is picked up', third.changed, true);
+  check('and everything reloads', SYNC_ALL_CALLS, 2);
 }
 
-console.log('\na run that never finished is called out for what it is:');
+console.log('\na run that could not happen at all is retried next hour:');
+{
+  const ctx = load({ lockFree: false });          /* another sync holds the lock */
+  const res = ctx.qlikSyncHourly();
+  check('it tried', res.changed, true);
+  check('it did not run', res.ok, false);
+  checkThat('so the stamp is NOT remembered', !PROPS.QLIK_FILE_STAMPS, PROPS.QLIK_FILE_STAMPS);
+  check('and nothing was written', OPS.length, 0);
+}
+
+console.log('\nbut a run that finished with a bad tab is not retried forever:');
 {
   const ctx = load();
-  PROPS.QLIK_SYNC_LAST_RUN = JSON.stringify({ phase: 'writing Main Raw Data', ok: null });
-  const r = ctx.qlikSyncLastRun();
-  checkThat('the verdict names the runtime limit',
-    /runtime limit/i.test(r.verdict || '') && /Main Raw Data/.test(r.verdict || ''), r.verdict);
+  /* 'all' reaches the Ready-Mix and Slide Builder tabs, which this fixture has
+     no workbook for — so the run finishes with failed tabs but no fatal error. */
+  const res = ctx.qlikSyncHourly();
+  checkThat('the run reports the bad tabs', (res.failed || []).length > 0);
+  checkThat('but did not fall over', !res.error, res.error);
+  checkThat('the stamp is remembered anyway', !!PROPS.QLIK_FILE_STAMPS);
+  check('so the next hour does nothing', ctx.qlikSyncHourly().changed, false);
 }
 
-/* ======================================================================
- * 5b. The pull writes the sheet and stops there
- * ==================================================================== */
-console.log('\nthe pull publishes what it wrote, and only then forgets it:');
+console.log('\nmarking the current exports stops a needless first sync:');
 {
   const ctx = load();
-  const res = ctx.qlikSyncNow('pricevolume');
-
-  check('the blunt everything-at-once path is not used', SYNC_ALL_CALLS, 0);
-  check('the page it wrote is published', res.published, ['pricevolume']);
-  check('through the shared seam', PUBLISHED, ['pricevolume']);
-  check('so nothing is left awaiting a click', res.awaitingPublish, false);
-  check('and which page changed is still reported', res.pagesUpdated, ['pricevolume']);
-  checkThat('the pending note is cleared once it went through',
-    !PROPS.QLIK_PENDING_UPDATE, PROPS.QLIK_PENDING_UPDATE);
-  checkThat('and the running flag is down', !PROPS.QLIK_SYNC_RUNNING, PROPS.QLIK_SYNC_RUNNING);
-}
-
-console.log('\na publish that throws leaves the note behind:');
-{
-  const ctx = load({ publishThrows: true });
-  const res = ctx.qlikSyncNow('pricevolume');
-
-  check('nothing was published', res.published, []);
-  check('so the site is still waiting', res.awaitingPublish, true);
-
-  const note = JSON.parse(PROPS.QLIK_PENDING_UPDATE || '{}');
-  check('the note survives for the next page open to insist on', note.pages, ['pricevolume']);
-  checkThat('with the export it came from',
-    (note.files || []).join().indexOf('AGG export.xlsx') !== -1, JSON.stringify(note.files));
-
-  /* A second pull must not reset when this started: the prompt should say how
-     long the site has been behind, not how long since the most recent pull. */
-  const firstSince = note.since;
-  ctx.qlikSyncNow('pricevolume');
-  const note2 = JSON.parse(PROPS.QLIK_PENDING_UPDATE || '{}');
-  check('a second pull keeps the original timestamp', note2.since, firstSince);
-  check('and does not duplicate the page', note2.pages, ['pricevolume']);
-}
-
-console.log('\na pull that wrote nothing leaves nothing waiting:');
-{
-  const ctx = load({ lockFree: false });
-  ctx.qlikSyncNow('pricevolume');
-  checkThat('no note was left', !PROPS.QLIK_PENDING_UPDATE, PROPS.QLIK_PENDING_UPDATE);
-}
-
-/* ======================================================================
- * 6. Three triggers set to the same time
- * ==================================================================== */
-console.log('\na run that finds the lock held is recorded as a run that ended:');
-{
-  const ctx = load({ lockFree: false });
-  const res = ctx.qlikSyncNow('pricevolume');
-
-  check('it says why', /already running/i.test(res.error || ''), true);
-  check('and returns the shape the caller expects', [res.done, res.failed, res.notRun],
-    [[], [], []]);
-  check('nothing was touched', writes(RAW_TAB).length, 0);
-
-  const rec = ctx.qlikSyncLastRun();
-  check('the record does not look like a killed run', rec.phase, 'finished');
-  checkThat('so no post-mortem is offered', rec.verdict === undefined, rec.verdict);
-}
-
-/* ======================================================================
- * 7. A trigger wired straight to qlikSyncNow
- * ==================================================================== */
-console.log('\na trigger event object is not mistaken for a page id:');
-{
-  const ctx = load();
-  const ev = { triggerUid: '81929341', authMode: 'FULL', 'day-of-month': 13 };
-  const res = ctx.qlikSyncNow(ev);
-  check('it falls back to everything', res.scope, 'all');
-  checkThat('it does not report an empty spec',
-    !/nothing is set up/i.test(res.error || ''), res.error);
-
-  const named = ctx.qlikSyncNow('pricevolume');
-  check('a real page id is still honoured', named.scope, 'pricevolume');
+  ctx.qlikMarkCurrent();
+  const res = ctx.qlikSyncHourly();
+  check('nothing to do', res.changed, false);
+  check('nothing was synced', SYNC_ALL_CALLS, 0);
 }
 
 console.log(fails ? `\n${fails} failing check(s)` : '\nall checks passed');
