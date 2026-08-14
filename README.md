@@ -197,30 +197,72 @@ Alongside those: the EBITDA KPI workbooks in a shared Drive folder
 (`APP_CONFIG.KPI_FOLDER_ID`), the Saskatchewan rates sheet, the inventory PDF, and the
 optional closed-year history books (`histagg`, `histrmx`, `histagg2`, `histrmx2`).
 
-### Syncing: one hourly trigger, and nothing else
+### The data version is the sheet's modified time
 
-There is no sync button. Set **one** hourly time-driven trigger on `qlikSyncHourly`.
+There is no cache counter to bump. `APP_getGen_(page)` is the **last-modified time of the
+workbook that page reads**, plus the code build stamp. Drive already tracks exactly what we
+mean, so the version moves when — and only when — the data actually changed:
 
-Each hour it lists the export files in the two Drive folders and builds a stamp from their
-names and last-modified times. If that stamp matches the one it saw last hour it stops right
-there — no folders opened, no sheets touched, no caches thrown away. Only a genuinely new
-export costs anything.
+- QlikSync writes the raw tabs → moved.
+- Somebody types a row into `REGION LOOKUP`, or fixes a number by hand → moved. Nothing has
+  to be told; nobody has to remember to press anything.
+- Nothing happened → identical, and every cached table stays valid.
 
-When something has changed it runs the sync and calls `syncAll()`, which moves every page's
-data version. Any page that is open notices on its next check (`AmrFresh` in `Shell.html`,
-every 5 minutes), greys itself out and offers one button that reloads it. The version already
-meant "the data behind you changed"; nothing new is stored to make this work.
+The Drive lookup is cached for 30 seconds, so the pages' freshness check is cheap to run
+often. `APP_bumpGen_` / `bumpGeneration_` / `syncAll()` all still exist because a dozen call
+sites use them after writing to a sheet — they no longer bump anything, they just drop that
+30-second copy so the next read sees the new time. `PV_Backend` and `RMX_Backend` read the
+same stamp instead of their old `pv_cache_gen` / `cache_gen` counters.
 
-Run `qlikMarkCurrent()` once from the editor after setting the trigger up, so the first hourly
-check doesn't re-sync exports that are already in the sheet.
+### Syncing: one trigger, and nothing else
 
-**The retry rule.** A run that could not happen at all — Drive unreachable, another sync
-holding the lock — leaves the stamp alone and is tried again next hour. A run that *finished*
-but wrote a bad tab records the stamp anyway and logs the failure: that tab will be just as
-broken next hour, and re-syncing hourly forever neither fixes it nor tells anybody.
+There is no ⇣ pull button. Set **one** time-driven trigger on `qlikSyncCheck`, at whatever
+interval suits — 15 minutes costs three Drive lookups when nothing has changed.
 
-`qlikSyncNow(scope)` is still there for a manual run from the editor. Nothing in the UI calls
-it.
+The three exports are named by **file id** in `APP_CONFIG.QLIK_SYNC`, one per page:
+
+| file id | export | feeds |
+|---|---|---|
+| `AGG_FILE_ID` | Aggregates Margin Monitor | Price & Volume |
+| `RMX_FILE_ID` | CAN RMX Margin Monitor | Ready-Mix (main / extra / assoc) |
+| `SEG_FILE_ID` | Segment + Product | Slide Builder |
+
+Every firing compares each file's modified time with the one it last synced. Files that
+haven't moved are skipped entirely, and each is checked on its own — a re-exported
+Aggregates file costs an Aggregates sync and nothing else. An ordinary firing is three Drive
+lookups.
+
+**Run `qlikMarkCurrent()` once after setting the trigger up.** Without it the first firing has
+nothing to compare, treats all three exports as new, and syncs every one of them — minutes of
+work replacing data the sheet very likely already has. Harmless, just slow and pointless.
+
+`qlikStamps()` shows what the next check will compare and what it will do.
+
+**The retry rule.** A run that could not happen at all — file unreadable, another sync holding
+the lock — keeps no stamp and is tried again next firing. A run that *finished* but wrote a
+bad tab keeps its stamp and logs the failure: that tab will be just as broken next time, and
+re-syncing forever neither fixes it nor tells anybody.
+
+### What the user sees
+
+`AmrFresh` in `Shell.html` asks every 5 minutes whether the version is still the one the page
+loaded with. When it isn't, the page greys out and offers one button that reloads it.
+
+**↻ Update from source** asks before it acts, on every page that has the button — Price &
+Volume, Ready-Mix, Segment, the Overview and both Fuel Recovery pages. If nothing behind the
+page has been touched it says *Already up to date* and throws nothing away; pressing it on an
+unchanged sheet used to make every user rebuild every table for nothing.
+
+A page's version covers **every workbook its figures depend on**, not just its own: the
+Overview reads Price & Volume, Ready-Mix and Segment, so its version moves when any of the
+three does. That comes from `APP_EXTRA_SOURCES` in `Config.gs`, which already listed exactly
+that. Without it a page with no sheet of its own would report a version that never moved and
+sit on stale figures with the button insisting there was nothing to do.
+
+**Loading is full-screen.** `AmrProgress` was a small pill in the corner, which was easy to
+miss — people read half-loaded tables without realising. Same API (`set` / `done` / `fail` /
+`clear` / `detail`), different chrome. The consequence worth knowing: work that used to run
+quietly in the background now covers the page while it runs.
 
 ### `APP_CONFIG.PAGES` keys
 

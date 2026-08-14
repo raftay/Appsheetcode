@@ -124,24 +124,21 @@ function firstCol_(sheet, names){
 
 /* =================== chunked cache + generation =================== */
 var _GEN = null;
-function generation_(){
+/* The version IS the source sheet's modified time (Code.gs). It moves when
+   the data behind this page actually changes — a sync, or somebody typing
+   into a lookup tab — and not otherwise, so an unchanged sheet keeps every
+   cached table valid however many times anything is pressed. */
+function generation_() {
   if (_GEN != null) return _GEN;
-  try {
-    var p = PropertiesService.getScriptProperties();
-    var g = p.getProperty('cache_gen');
-    if (!g){ g = '1'; p.setProperty('cache_gen', g); }
-    _GEN = g;
-  } catch(e){ _GEN = '1'; }
+  try { _GEN = APP_sourceStamp_('rmx') || '1'; } catch (e) { _GEN = '1'; }
   return _GEN;
 }
-function bumpGeneration_(){
-  try {
-    var p = PropertiesService.getScriptProperties();
-    var g = String(parseInt(p.getProperty('cache_gen') || '1', 10) + 1);
-    p.setProperty('cache_gen', g);
-    _GEN = g;
-    return g;
-  } catch(e){ _GEN = null; return generation_(); }
+/* Nothing to bump: whatever just wrote to the sheet moved its modified time.
+   Forget the copy we are holding so the next read sees it. */
+function bumpGeneration_() {
+  _GEN = null;
+  try { APP_forgetStamp_('rmx'); } catch (e) {}
+  return generation_();
 }
 function cacheKey_(parts){ return CONFIG.CACHE_VER + '|g' + generation_() + '|' + parts.join('|'); }
 

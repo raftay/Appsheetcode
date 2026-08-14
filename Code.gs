@@ -105,48 +105,108 @@ function getGuideImages(ids){
 }
 
 
-/* ========================================================================
- * DATA VERSION (per page) + shared chunked cache
- * ----------------------------------------------------------------------
- * Each report page has ONE "data version" number stored in Script
- * Properties. Every server cache key AND every browser (localStorage)
- * cache key includes it, so bumping the number instantly strands every
- * old copy — for every user — with nothing to enumerate or delete.
+/* ------------------------------------------------------------------------
+ * THE DATA VERSION IS THE SOURCE SHEET'S LAST-MODIFIED TIME.
+ * ------------------------------------------------------------------------
+ * It used to be a counter that something had to remember to bump. Anything
+ * that changed the data without bumping it — someone typing a row into
+ * REGION LOOKUP, someone fixing a number by hand — left every page serving
+ * figures that no longer matched the sheet, with nothing anywhere to notice.
+ * And a bump with no real change threw away every cache for nothing.
  *
- * The number only changes when someone presses "Update from source"
- * (or syncAll). CacheService can hold values for at most 6 h; when an
- * entry lapses it is silently recomputed once and re-cached — the user
- * just sees a normal load. The browser copies (AmrCache in Shell.html)
- * have no expiry at all: they stay valid until the version changes.
- * ====================================================================== */
-var APP_GEN_PROPS = { pricevolume: 'pv_cache_gen', rmx: 'cache_gen', segment: 'sb_cache_gen',
-                      kpi: 'kpi_cache_gen' };
+ * Drive already tracks exactly the thing we mean. So the version is the
+ * spreadsheet's modified time: it moves when, and only when, the data behind
+ * a page actually changed — whoever changed it and however. A sync, a hand
+ * edit, a pasted column: all the same, all automatic.
+ *
+ * The Drive lookup is cached for half a minute so the pages' freshness check
+ * costs nothing to run often.
+ * ---------------------------------------------------------------------- */
+var APP_STAMP_TTL_S = 30;
+var APP_STAMP_MEMO  = {};      /* within one execution */
+
+function APP_stampKey_(id){ return 'srcmtime|' + id; }
+
+/* Every workbook a page's figures depend on: its own, plus anything listed
+   for it in APP_EXTRA_SOURCES. The Executive Overview has no sheet of its own
+   — it reads Price & Volume, Ready-Mix and Segment — so on its own id it would
+   resolve to nothing at all, report a version that never moves, and would sit
+   on stale figures forever with Update from source insisting there was
+   nothing to do. */
+function APP_sourceIds_(page){
+  var seen = {}, ids = [];
+  function add(p){
+    if (!p) return;
+    var id;
+    try { id = getSpreadsheetIdForPage_(APP_sheetOwner_(p)); } catch (e) { return; }
+    if (id && !seen[id]) { seen[id] = 1; ids.push(id); }
+  }
+  add(page);
+  var extra = (typeof APP_EXTRA_SOURCES === 'object' && APP_EXTRA_SOURCES[page]) || [];
+  extra.forEach(add);
+  return ids;
+}
+
+/* The version of one workbook: its modified time in ms, as a string. */
+function APP_oneStamp_(id){
+  if (APP_STAMP_MEMO[id]) return APP_STAMP_MEMO[id];
+
+  var key = APP_stampKey_(id), c = null;
+  try { c = CacheService.getScriptCache(); } catch (e) {}
+  if (c) { try { var hit = c.get(key); if (hit) return (APP_STAMP_MEMO[id] = hit); } catch (e) {} }
+
+  var ms = '';
+  try { ms = String(DriveApp.getFileById(id).getLastUpdated().getTime()); } catch (e) { ms = ''; }
+  if (ms) {
+    APP_STAMP_MEMO[id] = ms;
+    if (c) { try { c.put(key, ms, APP_STAMP_TTL_S); } catch (e) {} }
+  }
+  return ms;
+}
+
+/* The stamp for a page: every workbook behind it, joined. Moves when ANY of
+   them does, which is what a page reading three sheets needs. */
+function APP_sourceStamp_(page){
+  var ids = APP_sourceIds_(page);
+  if (!ids.length) return '';
+  var parts = ids.map(APP_oneStamp_);
+  return parts.join('-');
+}
+
+/* Read Drive again on the next ask rather than trusting the half-minute copy.
+   Called after this app itself writes to a sheet, and by the Update button. */
+function APP_forgetStamp_(page){
+  var ids = [];
+  if (page) ids = APP_sourceIds_(page);
+  else {
+    APP_dataPages_().forEach(function(p){
+      APP_sourceIds_(p).forEach(function(id){ if (ids.indexOf(id) === -1) ids.push(id); });
+    });
+  }
+  var c = null;
+  try { c = CacheService.getScriptCache(); } catch (e) {}
+  ids.forEach(function(id){
+    delete APP_STAMP_MEMO[id];
+    if (c) { try { c.remove(APP_stampKey_(id)); } catch (e) {} }
+  });
+}
 
 /* CODE BUILD STAMP - bump this whenever backend LOGIC changes.
-   The generation below tracks the DATA: it moves when someone presses "Update
-   from source". On its own that is not enough to invalidate a browser's saved
-   tables, because a code fix leaves the data generation untouched - so every
-   device keeps serving figures the OLD code computed and the fix looks like it
-   did nothing. Folding this stamp into the token every page compares means a
-   backend change clears each device on its next visit. */
-var APP_CODE_BUILD = '2026-08-11a';
+   The stamp above tracks the DATA. A code fix leaves the data untouched, so
+   without this every device would keep serving figures the OLD code computed
+   and the fix would look like it did nothing. */
+var APP_CODE_BUILD = '2026-08-14a';
 
 function APP_getGen_(page) {
-  var prop = APP_GEN_PROPS[page]; if (!prop) return '1.' + APP_CODE_BUILD;
-  try {
-    var p = PropertiesService.getScriptProperties(), g = p.getProperty(prop);
-    if (!g) { g = '1'; p.setProperty(prop, g); }
-    return g + '.' + APP_CODE_BUILD;
-  } catch (e) { return '1.' + APP_CODE_BUILD; }
+  return (APP_sourceStamp_(page) || '0') + '.' + APP_CODE_BUILD;
 }
+
+/* Kept because a dozen call sites use it after writing to a sheet. Nothing is
+   bumped any more — the write itself moved the modified time — so all this
+   has to do is stop us reading a stale copy of it. */
 function APP_bumpGen_(page) {
-  var prop = APP_GEN_PROPS[page]; if (!prop) return '1';
-  try {
-    var p = PropertiesService.getScriptProperties();
-    var g = String(parseInt(p.getProperty(prop) || '1', 10) + 1);
-    p.setProperty(prop, g);
-    return g;
-  } catch (e) { return APP_getGen_(page); }
+  APP_forgetStamp_(page);
+  return APP_getGen_(page);
 }
 /* Tiny call every page makes on open: which data version is current?
  * The browser compares it with what it stored on its last visit. */
@@ -198,12 +258,32 @@ function APP_cacheGet_(key) {
  * GLOBAL SYNC — invalidate every page's cache at once
  * ====================================================================== */
 function syncAll() {
-  try { RMX_NS.bumpGeneration(); } catch (e) {}     // RMX
-  try { PV.clearCache();      } catch (e) {}     // Price & Volume (bumps its data version)
-  try { APP_bumpGen_('segment'); } catch (e) {}  // Segment Product
-  try { APP_bumpGen_('kpi');     } catch (e) {}  // shared KPI workbooks
+  /* Nothing to bump: the version is the sheet's modified time, and whatever
+     just changed the data moved it already. All this has to do is stop us
+     answering from the half-minute copy of that time. */
+  APP_forgetStamp_(null);
+  try { PV.clearCache();          } catch (e) {}
+  try { RMX_NS.bumpGeneration();  } catch (e) {}
   try { CacheService.getScriptCache().remove('amrize_logo_datauri'); } catch (e) {}
   return { ok: true, at: new Date().toISOString() };
+}
+
+/* ------------------------------------------------------------------------
+ * ↻ UPDATE FROM SOURCE
+ * ------------------------------------------------------------------------
+ * Reads Drive again and reports the sheet's version. If it is the one the
+ * page already has, the data has not changed and NOTHING is thrown away —
+ * pressing the button on an unchanged sheet used to make every user rebuild
+ * every table for no reason.
+ * ---------------------------------------------------------------------- */
+function updateFromSource(page, have) {
+  page = String(page || '');
+  APP_forgetStamp_(page);
+  var gen = APP_getGen_(page);
+  if (have && String(have) === gen) {
+    return { ok: true, changed: false, generation: gen };
+  }
+  return { ok: true, changed: true, generation: gen };
 }
 
 

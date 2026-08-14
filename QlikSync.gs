@@ -3,19 +3,20 @@
  *               the data in each tool's Google Sheet.
  * ---------------------------------------------------------------------------
  * WHAT IT DOES
- *   Two Drive folders hold the QlikView exports. The file NAMES are not
- *   trusted — every Excel file in the folder is opened and identified by what
- *   is actually inside it, so re-exporting under a different name changes
- *   nothing here.
+ *   Three QlikView exports, each named by FILE ID in Config.gs, each feeding
+ *   exactly one page:
  *
- *     AGG folder  →  Price & Volume workbook
- *                      Combined Data CPI Raw
- *                      Combined Data CPI Other Revenue
- *     RMX folder  →  Ready-Mix workbook   (the Margin Monitor export)
- *                      Main Raw Data · Extra Raw Data · Associate Raw Data
- *                 →  Slide Builder workbook (the Segment/Product export)
- *                      Slide Segment MTD / YTD
- *                      Slide Product <Market> MTD / YTD
+ *     AGG_FILE_ID  →  Price & Volume workbook
+ *                       Combined Data CPI Raw
+ *                       Combined Data CPI Other Revenue
+ *     RMX_FILE_ID  →  Ready-Mix workbook   (the Margin Monitor export)
+ *                       Main Raw Data · Extra Raw Data · Associate Raw Data
+ *     SEG_FILE_ID  →  Slide Builder workbook (the Segment/Product export)
+ *                       Slide Segment MTD / YTD
+ *                       Slide Product <Market> MTD / YTD
+ *
+ *   One file per page means a re-exported Aggregates file costs an Aggregates
+ *   sync and nothing else.
  *
  * HOW A TAB IS REPLACED
  *   Two modes, chosen per tab in SPEC below.
@@ -45,14 +46,23 @@
  *   deleted out from under a formula.
  *
  * SETUP
- *   Folder ids live in Config.gs → APP_CONFIG.QLIK_SYNC.
+ *   The three file ids live in Config.gs → APP_CONFIG.QLIK_SYNC.
  *   Nothing else to enable: the Drive REST copy below runs on the script's own
  *   OAuth token, so the Advanced Drive Service does NOT need to be turned on.
  *
  * TRIGGERS
- *   ONE hourly trigger, on qlikSyncHourly. It compares when the export files
- *   in Drive were last modified against the last set it saw, and does nothing
- *   at all unless something changed. Nothing in the UI starts a sync.
+ *   ONE time-driven trigger on qlikSyncCheck. Every firing compares each
+ *   export's modified time against the
+ *   one it last synced and does nothing at all for the ones that have not
+ *   moved — so an ordinary firing is three Drive lookups.
+ *
+ *   Run qlikMarkCurrent() ONCE after setting the trigger up. Without it the
+ *   first firing has nothing to compare, treats all three exports as new and
+ *   syncs every one of them.
+ *
+ *   qlikStamps() shows what the next check will compare, and what it will do.
+ *
+ *   Nothing in the UI starts a sync.
  *
  * NOTE — no validation yet. This copies what the export says, as the export
  * says it. Reconciliation checks come later.
@@ -157,7 +167,7 @@ var QLIKSYNC = (function () {
   /* =====================================================================
    * 2. WHICH EXPORT TAB FEEDS WHICH SHEET TAB
    * ---------------------------------------------------------------------
-   *   folder  'AGG' | 'RMX'      — which Drive folder to look in
+   *   folder  'AGG' | 'RMX' | 'SEG' — which export file it comes from
    *   page    the Config.gs page id whose workbook owns the tab
    *   tab     the tab name in that workbook
    *   mode    'columns' (map by header, keep formulas) | 'replace' (wipe)
@@ -204,9 +214,9 @@ var QLIKSYNC = (function () {
          The export already splits MTD and YTD and is already summed to
          Segment x Market, so there is no Bill Month column any more and no
          per-month repetition: 29 rows, not 400. */
-      { folder: 'RMX', page: 'segment', tab: 'Slide Segment MTD',
+      { folder: 'SEG', page: 'segment', tab: 'Slide Segment MTD',
         mode: 'replace', srcTab: 'Summary MTD' },
-      { folder: 'RMX', page: 'segment', tab: 'Slide Segment YTD',
+      { folder: 'SEG', page: 'segment', tab: 'Slide Segment YTD',
         mode: 'replace', srcTab: 'Summary YTD' }
     ];
 
@@ -221,7 +231,7 @@ var QLIKSYNC = (function () {
     markets.forEach(function (m) {
       ['MTD', 'YTD'].forEach(function (p) {
         SPEC.push({
-          folder: 'RMX', page: 'segment',
+          folder: 'SEG', page: 'segment',
           tab:    'Slide Product ' + (labels[m] || m) + ' ' + p,
           mode:   'replace',
           srcTab: m + ' ' + p,
@@ -248,27 +258,6 @@ var QLIKSYNC = (function () {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 1,
     'application/vnd.google-apps.spreadsheet': 1
   };
-
-  function excelFilesIn_(folderId, label) {
-    var out = [];
-    var folder;
-    try {
-      folder = DriveApp.getFolderById(folderId);
-    } catch (e) {
-      throw new Error('Could not open the ' + label + ' Drive folder (id ' + folderId +
-        '). Check APP_CONFIG.QLIK_SYNC in Config.gs, and that the folder is shared with you.');
-    }
-    var it = folder.getFiles();
-    while (it.hasNext()) {
-      var f = it.next();
-      var mime = f.getMimeType();
-      var name = f.getName();
-      if (EXCEL_MIME[mime] || /\.xlsx?$/i.test(name)) {
-        out.push({ id: f.getId(), name: name, mime: mime });
-      }
-    }
-    return out;
-  }
 
   /* Convert to a temporary Google Sheet and return the new file id. */
   function convertToSheet_(fileId, name) {
@@ -753,13 +742,37 @@ var QLIKSYNC = (function () {
    * 8. THE RUN
    * =================================================================== */
 
-  function folderIds_() {
+  /* The three exports, each by file id, each feeding one page. There is no
+     folder to scan and no guessing which file is which. */
+  function sources_() {
     var q = (APP_CONFIG && APP_CONFIG.QLIK_SYNC) || {};
-    if (!q.AGG_FOLDER_ID || !q.RMX_FOLDER_ID) {
-      throw new Error('The QlikView Drive folders are not set. ' +
-        'Add APP_CONFIG.QLIK_SYNC.AGG_FOLDER_ID and .RMX_FOLDER_ID in Config.gs.');
+    var out = [
+      { key: 'AGG', id: q.AGG_FILE_ID, scope: 'pricevolume', label: 'Aggregates' },
+      { key: 'RMX', id: q.RMX_FILE_ID, scope: 'rmx',         label: 'Ready-Mix' },
+      { key: 'SEG', id: q.SEG_FILE_ID, scope: 'segment',     label: 'Slide Builder' }
+    ];
+    var missing = out.filter(function (x) { return !x.id; }).map(function (x) { return x.key; });
+    if (missing.length) {
+      throw new Error('The QlikView export file ids are not set: ' + missing.join(', ') +
+        '. Add them to APP_CONFIG.QLIK_SYNC in Config.gs.');
     }
-    return q;
+    return out;
+  }
+
+  function sourceById_(key) {
+    var all = sources_();
+    for (var i = 0; i < all.length; i++) if (all[i].key === key) return all[i];
+    return null;
+  }
+
+  /* One export file, as { id, name, mime } — the shape readExport_ wants. */
+  function exportFile_(src) {
+    var f;
+    try { f = DriveApp.getFileById(src.id); } catch (e) {
+      throw new Error('Could not open the ' + src.label + ' export (file id ' + src.id +
+        '). Check APP_CONFIG.QLIK_SYNC in Config.gs, and that the file is shared with you.');
+    }
+    return { id: f.getId(), name: f.getName(), mime: f.getMimeType() };
   }
 
   /* scope: 'all', or a page id ('pricevolume' | 'rmx' | 'segment') so a tool's
@@ -780,24 +793,22 @@ var QLIKSYNC = (function () {
     var done = [], skipped = [], failed = [];
 
     try {
-      var ids  = folderIds_();
       var SPEC = buildSpec_().filter(function (s) { return want === 'all' || s.page === want; });
       if (!SPEC.length) {
         return { ok: false, error: 'Nothing is set up to update for "' + want + '".' };
       }
 
-      /* --- read only the folders these tabs need, once each --- */
-      var tabsByFolder = { AGG: [], RMX: [] };
+      /* --- open only the export files these tabs need, once each --- */
+      var tabsByFolder = { AGG: [], RMX: [], SEG: [] };
       var filesSeen    = [];
       var needed = {};
       SPEC.forEach(function (s) { needed[s.folder] = 1; });
 
-      [['AGG', ids.AGG_FOLDER_ID], ['RMX', ids.RMX_FOLDER_ID]].forEach(function (pair) {
-        if (!needed[pair[0]]) return;
-        excelFilesIn_(pair[1], pair[0]).forEach(function (f) {
-          filesSeen.push(pair[0] + ': ' + f.name);
-          tabsByFolder[pair[0]] = tabsByFolder[pair[0]].concat(readExport_(f));
-        });
+      sources_().forEach(function (src) {
+        if (!needed[src.key]) return;
+        var f = exportFile_(src);
+        filesSeen.push(src.label + ': ' + f.name);
+        tabsByFolder[src.key] = readExport_(f);
       });
 
       /* --- one workbook at a time, so its formulas can be fixed together --- */
@@ -900,85 +911,117 @@ var QLIKSYNC = (function () {
     }
   }
 
-  return { run: run };
+  return { run: run, sources: sources_ };
 })();
 
 
 /* ==========================================================================
  * THE ONLY THING THAT STARTS A SYNC: one hourly trigger.
  * --------------------------------------------------------------------------
- * Set ONE time-driven trigger, hourly, on qlikSyncHourly.
+ * Set ONE time-driven trigger on qlikSyncCheck, at whatever interval suits.
  *
- * It looks at when the export files in Drive were last modified. If none of
- * them has changed since the last look, it stops — no folders opened, no
- * sheets touched, no caches thrown away, and every page keeps serving from
- * cache. Only a genuinely new export costs anything.
+ * It looks at when each export file was last modified. The ones that have not
+ * changed since they were last synced are skipped outright — nothing opened,
+ * nothing written, every page still serving from cache. Only a genuinely new
+ * export costs anything, and only for the page it feeds.
  *
- * When something HAS changed it syncs and calls syncAll(), which moves every
- * page's data version. That version is what each open page is watching, so
- * the prompt appears on its own — see AmrFresh in Shell.html.
+ * Writing to a workbook moves its modified time, and that IS the data version
+ * every open page is watching — so the prompt appears on its own, with
+ * nothing here having to tell anybody. See AmrFresh in Shell.html.
  * ======================================================================== */
 var QLIK_STAMP_KEY = 'QLIK_FILE_STAMPS';
 
-/* name + last-modified for every export file, as one string. Any new export,
-   re-export or removal changes it. */
-function qlikFileStamp_() {
-  var q = (APP_CONFIG && APP_CONFIG.QLIK_SYNC) || {};
-  var out = [];
-  [q.AGG_FOLDER_ID, q.RMX_FOLDER_ID].forEach(function (id) {
-    if (!id) return;
-    var it = DriveApp.getFolderById(id).getFiles();
-    while (it.hasNext()) {
-      var f = it.next(), name = f.getName();
-      if (!/\.xlsx?$/i.test(name) &&
-          f.getMimeType() !== 'application/vnd.google-apps.spreadsheet') continue;
-      out.push(name + '@' + f.getLastUpdated().getTime());
+/* Each export is checked on its own, so a re-exported Aggregates file costs an
+   Aggregates sync and nothing else. */
+function qlikSyncCheck() {
+  var props = PropertiesService.getScriptProperties();
+  var seen = {};
+  try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); } catch (e) { seen = {}; }
+
+  var sources;
+  try { sources = QLIKSYNC.sources(); }
+  catch (e) { Logger.log('QlikView check failed: ' + e.message); return { ok: false, error: e.message }; }
+
+  var out = { ok: true, changed: [], unchanged: [], failed: [] };
+
+  sources.forEach(function (src) {
+    var stamp;
+    try {
+      stamp = String(DriveApp.getFileById(src.id).getLastUpdated().getTime());
+    } catch (e) {
+      out.failed.push(src.label + ': cannot read the file (' + e.message + ')');
+      out.ok = false;
+      return;
+    }
+    if (stamp === seen[src.key]) { out.unchanged.push(src.label); return; }
+
+    var res = QLIKSYNC.run(src.scope);
+
+    /* Remember the stamp unless the run fell over completely (file unreadable,
+       another sync holding the lock). A run that FINISHED but wrote a bad tab
+       is not retried: that tab will be just as broken in fifteen minutes, and
+       re-syncing forever neither fixes it nor tells anybody. It is logged. */
+    if (res.error) {
+      out.failed.push(src.label + ': ' + res.error);
+      out.ok = false;
+    } else {
+      seen[src.key] = stamp;
+      out.changed.push(src.label);
+      if (!res.ok) {
+        out.failed.push(src.label + ': ' + JSON.stringify(res.failed));
+        Logger.log('QlikView ' + src.label + ' synced with bad tabs: ' + JSON.stringify(res.failed));
+      }
     }
   });
-  return out.sort().join('|');
+
+  props.setProperty(QLIK_STAMP_KEY, JSON.stringify(seen));
+  if (out.failed.length) Logger.log('QlikView check: ' + out.failed.join(' | '));
+  return out;
 }
 
-function qlikSyncHourly() {
-  var props = PropertiesService.getScriptProperties();
-  var now, seen;
-  try {
-    now = qlikFileStamp_();
-  } catch (e) {
-    Logger.log('QlikView check failed: ' + e.message);
-    return { ok: false, error: e.message };
-  }
-  seen = props.getProperty(QLIK_STAMP_KEY) || '';
+/* Run this once from the editor after setting the trigger up, so the FIRST
+   check has something to compare against.
 
-  if (now === seen) return { ok: true, changed: false };
-
-  var res = QLIKSYNC.run('all');
-
-  /* Remember the stamp unless the run fell over completely (Drive unreachable,
-     another sync holding the lock). A run that finished with a bad TAB is not
-     retried: that tab will be just as broken next hour, and re-syncing every
-     hour forever neither fixes it nor tells anybody. It is logged instead. */
-  if (res.error) {
-    Logger.log('QlikView sync did not run: ' + res.error);
-  } else {
-    props.setProperty(QLIK_STAMP_KEY, now);
-    if (!res.ok) Logger.log('QlikView sync finished with bad tabs: ' + JSON.stringify(res.failed));
-  }
-
-  res.changed = true;
-  return res;
-}
-
-/* Run this once from the editor after setting the trigger up, so the first
-   hourly check has something to compare against and does not sync a set of
-   exports that are already in the sheet. */
+   Without it the first firing sees no stamps at all, treats all three exports
+   as new and syncs every one of them — minutes of work replacing data the
+   sheet very likely already has. Harmless, just slow and pointless. */
 function qlikMarkCurrent() {
-  PropertiesService.getScriptProperties().setProperty(QLIK_STAMP_KEY, qlikFileStamp_());
-  return 'Current exports marked as already synced.';
+  var seen = {};
+  QLIKSYNC.sources().forEach(function (src) {
+    try { seen[src.key] = String(DriveApp.getFileById(src.id).getLastUpdated().getTime()); }
+    catch (e) {}
+  });
+  PropertiesService.getScriptProperties().setProperty(QLIK_STAMP_KEY, JSON.stringify(seen));
+  return 'Marked ' + Object.keys(seen).length + ' export(s) as already synced.';
 }
 
-/* Manual sync, from the editor only. Nothing in the UI calls this. */
+/* What the check is about to compare, for a look from the editor. */
+function qlikStamps() {
+  var props = PropertiesService.getScriptProperties(), seen = {};
+  try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); } catch (e) {}
+  return QLIKSYNC.sources().map(function (src) {
+    var now = '';
+    try { now = String(DriveApp.getFileById(src.id).getLastUpdated().getTime()); } catch (e) { now = 'unreadable'; }
+    return { source: src.label, feeds: src.scope, lastSynced: seen[src.key] || '(never)',
+             fileNow: now, willSync: now !== seen[src.key] };
+  });
+}
+
+/* Manual sync, from the editor only. Nothing in the UI calls this.
+   Records the stamps of whatever it covered, so the next check does not
+   immediately redo the same work. */
 function qlikSyncNow(scope) {
-  var res = QLIKSYNC.run(typeof scope === 'string' ? scope : 'all');
-  try { PropertiesService.getScriptProperties().setProperty(QLIK_STAMP_KEY, qlikFileStamp_()); } catch (e) {}
+  var want = (typeof scope === 'string' && scope) ? scope : 'all';
+  var res  = QLIKSYNC.run(want);
+  if (!res.error) {
+    var props = PropertiesService.getScriptProperties(), seen = {};
+    try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); } catch (e) {}
+    QLIKSYNC.sources().forEach(function (src) {
+      if (want !== 'all' && src.scope !== want) return;
+      try { seen[src.key] = String(DriveApp.getFileById(src.id).getLastUpdated().getTime()); }
+      catch (e) {}
+    });
+    props.setProperty(QLIK_STAMP_KEY, JSON.stringify(seen));
+  }
   return res;
 }

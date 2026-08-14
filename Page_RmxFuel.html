@@ -940,7 +940,12 @@ var QLIK_GUIDE = [
   /* Header ↻ Update from source: same as the rail's Reload from sheet —
      drop out of upload mode and re-read the Google Sheet. */
   var sb=document.getElementById('syncBtn');
-  if(sb) sb.addEventListener('click', function(){ upOff(); loadData(); });
+  if(sb) sb.addEventListener('click', function(){
+    upOff();
+    /* Ask first: an untouched sheet means there is nothing to re-read. */
+    if(window.AmrFresh){ AmrFresh.ifChanged(function(changed){ if(changed) loadData(); }); return; }
+    loadData();
+  });
 
   /* Shell.html calls this after the ⚙ Data sheet is pointed somewhere new. */
   window.amrReloadData = function(){ try{ upOff(); }catch(e){} loadData(); };

@@ -1036,6 +1036,16 @@ function updateFromSheets(){
   if(!IS_LIVE) return;
   var btn=document.getElementById('syncBtn');
   if(btn){ btn.disabled=true; btn.classList.add('busy'); }
+  /* Ask first: an untouched sheet means there is nothing to rebuild, for
+     anyone — see AmrFresh.ifChanged in Shell.html. */
+  if(window.AmrFresh){ AmrFresh.ifChanged(function(changed){
+    if(!changed){ if(btn){ btn.disabled=false; btn.classList.remove('busy'); } return; }
+    updateFromSheetsNow();
+  }); return; }
+  updateFromSheetsNow();
+}
+function updateFromSheetsNow(){
+  var btn=document.getElementById('syncBtn');
   if(window.AmrProgress) AmrProgress.set('sync', { text:'Re-reading the Google Sheet…', order:5 });
   CACHE={};
   STATE.titleDirty=false; STATE.month=0;

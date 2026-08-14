@@ -468,16 +468,23 @@ window.AmrCache = (function(){
  *   AmrProgress.done('cube', 'Everything is in')   // ✓, then fades out
  *   AmrProgress.fail('cube', 'History unavailable')
  *
- * Several jobs can run at once. The pill shows the one with the lowest
- * `order` (default 50); the rest are listed in the popover, so "why is
- * this still spinning" is always one click away.
+ * Several jobs can run at once. The screen shows the one with the lowest
+ * `order` (default 50); the rest are listed underneath, so "why is this
+ * still spinning" is always visible rather than one click away.
  *
- * A page that wants a richer popover (the Overview's month history, with
- * its own buttons) registers one:
+ * It is a FULL-SCREEN card, not a corner pill. A small marker off to the
+ * side was too easy to miss, and people were reading half-loaded tables
+ * without realising. Note the consequence: work that used to run quietly in
+ * the background now covers the page while it runs.
+ *
+ * A page that wants a richer body (the Overview's month history, with its
+ * own buttons) registers one:
  *   AmrProgress.detail({ html:function(job){...}, act:function(name){...} })
+ * A shared module must name its job instead - AmrProgress.detail('key', {…})
+ * - or the last caller wins and the page loses its body.
  * ================================================================== */
 window.AmrProgress = (function(){
-  var jobs = {}, seq = 0, detail = null, pill = null, pop = null, mounted = false;
+  var jobs = {}, seq = 0, detail = null, details = {}, host = null, mounted = false;
 
   function esc(s){
     return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
@@ -488,40 +495,24 @@ window.AmrProgress = (function(){
   function mount(){
     if (mounted || !document.body) return;
     mounted = true;
-    pill = document.createElement('button');
-    pill.type = 'button';
-    pill.className = 'amr-pill';
-    pill.id = 'amrPill';
-    pill.setAttribute('aria-haspopup', 'dialog');
-    pill.setAttribute('aria-expanded', 'false');
-    pill.innerHTML = '<span class="ring"></span><span class="amr-txt"></span>';
-    pop = document.createElement('div');
-    pop.className = 'amr-pop';
-    pop.id = 'amrPop';
-    pop.setAttribute('role', 'dialog');
-    pop.setAttribute('aria-label', 'Background work');
-    document.body.appendChild(pill);
-    document.body.appendChild(pop);
-
-    pill.addEventListener('click', function(){
-      pill.setAttribute('aria-expanded', pill.getAttribute('aria-expanded') === 'true' ? 'false' : 'true');
-      render();
-    });
-    pop.addEventListener('click', function(e){
-      var b = e.target.closest ? e.target.closest('button') : null;
-      if (!b || !b.getAttribute('data-act')) return;
-      if (detail && detail.act) { try { detail.act(b.getAttribute('data-act')); } catch (err) {} }
-    });
-    document.addEventListener('click', function(e){
-      if (pill.getAttribute('aria-expanded') !== 'true') return;
-      if (pill.contains(e.target) || pop.contains(e.target)) return;
-      pill.setAttribute('aria-expanded', 'false'); render();
+    host = document.createElement('div');
+    host.className = 'amr-load';
+    host.id = 'amrLoad';
+    host.setAttribute('role', 'status');
+    host.setAttribute('aria-live', 'polite');
+    host.innerHTML = '<div class="amr-load-card"><div class="amr-load-body"></div></div>';
+    document.body.appendChild(host);
+    host.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('button[data-act]') : null;
+      if (!b) return;
+      var j = lead(), d = (j && details[j.key]) || detail;
+      if (d && d.act) { try { d.act(b.getAttribute('data-act'), j); } catch (err) {} }
     });
   }
 
-  /* The job the pill actually shows: errors first, then the lowest order,
-     then whichever was registered first. A 'done' job only wins when it is
-     the only thing left, so a tick never hides live work. */
+  /* The job the screen shows: errors first, then the lowest order, then
+     whichever was registered first. A 'done' job only wins when it is the
+     only thing left, so a tick never hides live work. */
   function lead(){
     var list = [];
     for (var k in jobs) list.push(jobs[k]);
@@ -538,37 +529,34 @@ window.AmrProgress = (function(){
 
   function render(){
     mount();
-    if (!pill) return;
+    if (!host) return;
     var j = lead();
-    var open = pill.getAttribute('aria-expanded') === 'true';
-    if (!j){
-      pill.className = 'amr-pill';
-      pop.classList.remove('show');
-      pill.setAttribute('aria-expanded', 'false');
-      return;
-    }
-    pill.className = 'amr-pill show' + (j.cls ? (' ' + j.cls) : '');
-    var txt = pill.querySelector('.amr-txt');
-    if (txt) txt.textContent = j.text + (j.pct != null ? ' ' + j.pct + '%' : '');
+    if (!j){ host.classList.remove('show'); return; }
 
-    if (!open){ pop.classList.remove('show'); return; }
+    var body = host.querySelector('.amr-load-body');
+    var h = '';
+    h += '<div class="amr-load-mark ' + (j.cls || '') + '"></div>';
+    h += '<div class="amr-load-text">' + esc(j.text) + '</div>';
 
-    var html = '';
-    if (detail && detail.html){
-      try { html = detail.html(j) || ''; } catch (e) { html = ''; }
+    var d = details[j.key] || detail, extra = '';
+    if (d && d.html){ try { extra = d.html(j) || ''; } catch (e) { extra = ''; } }
+    if (extra) h += '<div class="amr-load-detail">' + extra + '</div>';
+    else if (j.note) h += '<div class="amr-load-sub">' + esc(j.note) + '</div>';
+
+    if (j.pct != null){
+      h += '<div class="amr-load-bar"><i style="width:' + j.pct + '%"></i></div>';
+      h += '<div class="amr-load-sub">' + j.pct + '%</div>';
     }
-    if (!html) html = '<b>' + esc(j.text) + '</b>' + (j.note ? '<br>' + esc(j.note) : '');
-    if (j.pct != null) html += '<div class="bar"><i style="width:' + j.pct + '%"></i></div>';
 
     var others = [];
     for (var k in jobs) if (jobs[k] !== j) others.push(jobs[k]);
     if (others.length){
-      html += '<ul class="amr-jobs">' + others.map(function(o){
-        return '<li><span>' + esc(o.text) + '</span><b>' + (o.pct != null ? o.pct + '%' : '…') + '</b></li>';
+      h += '<ul class="amr-load-jobs">' + others.map(function(o){
+        return '<li><span>' + esc(o.text) + '</span><b>' + (o.pct != null ? o.pct + '%' : '\u2026') + '</b></li>';
       }).join('') + '</ul>';
     }
-    pop.innerHTML = html;
-    pop.classList.add('show');
+    body.innerHTML = h;
+    host.className = 'amr-load show' + (j.cls ? (' ' + j.cls) : '');
   }
 
   var api = {
@@ -577,7 +565,7 @@ window.AmrProgress = (function(){
       o = o || {};
       var prev = jobs[key];
       jobs[key] = { key: key,
-                    text: o.text != null ? o.text : (prev ? prev.text : 'Working…'),
+                    text: o.text != null ? o.text : (prev ? prev.text : 'Working\u2026'),
                     pct:  o.pct  != null ? o.pct  : null,
                     cls:  o.cls  || '',
                     note: o.note || '',
@@ -585,20 +573,23 @@ window.AmrProgress = (function(){
                     seq:  prev ? prev.seq : (++seq) };
       render();
     },
-    clear: function(key){ delete jobs[key]; render(); },
-    /* Finished cleanly: tick for a moment, then take the chrome away — no
-       standing UI for a solved problem. */
+    clear: function(key){ delete jobs[key]; delete details[key]; render(); },
     done: function(key, text, ms){
       if (!jobs[key] && !text) return;
       api.set(key, { text: text || (jobs[key] && jobs[key].text) || 'Done', cls: 'done', pct: null });
       setTimeout(function(){
         if (jobs[key] && jobs[key].cls === 'done') api.clear(key);
-      }, ms == null ? 2200 : ms);
+      }, ms == null ? 1200 : ms);
     },
     fail: function(key, text){ api.set(key, { text: text || 'Something went wrong', cls: 'bad', pct: null, order: 0 }); },
     has:  function(key){ return !!jobs[key]; },
-    /* A page can own the popover body (the Overview's month history does). */
-    detail: function(d){ detail = d; render(); },
+    /* One job's body — detail('key', {…}) — or, with a single argument, this
+       page's fallback for jobs that have none. */
+    detail: function(a, b){
+      if (typeof a === 'string'){ if (b) details[a] = b; else delete details[a]; }
+      else { detail = a; }
+      render();
+    },
     repaint: render
   };
   return api;
@@ -780,6 +771,28 @@ window.AmrFresh = (function(){
   });
 
   return {
+    /* ↻ Update from source. Asks Drive whether the sheet has actually been
+       touched since this page loaded. If it has not, nothing is thrown away
+       and nothing is rebuilt — pressing the button on an unchanged sheet used
+       to make every user re-read 50k rows for no reason. cb(true) means go
+       ahead and rebuild. */
+    ifChanged: function(cb){
+      if (!(typeof google !== 'undefined' && google.script && google.script.run)){ cb(true); return; }
+      if (window.AmrProgress) AmrProgress.set('sync', { text:'Checking the sheet\u2026', order:5 });
+      google.script.run
+        .withSuccessHandler(function(r){
+          if (r && r.ok && r.changed === false){
+            if (window.AmrProgress) AmrProgress.done('sync', 'Already up to date', 1600);
+            cb(false);
+            return;
+          }
+          if (r && r.generation) mine = r.generation;
+          cb(true);
+        })
+        .withFailureHandler(function(){ cb(true); })   /* cannot tell: just rebuild */
+        .updateFromSource(page(), mine);
+    },
+
     /* The version this page loaded with. AmrCache.boot already asked for it,
        so this costs nothing extra. */
     start: function(gen){

@@ -101,23 +101,21 @@ function getSheetCI_(ss, name) {
  * prefixed with it, so bumping it instantly strands every old entry for
  * every user — nothing needs to be enumerated or deleted.               */
 var _GEN = null;
+/* The version IS the source sheet's modified time (Code.gs). It moves when
+   the data behind this page actually changes — a sync, or somebody typing
+   into a lookup tab — and not otherwise, so an unchanged sheet keeps every
+   cached table valid however many times anything is pressed. */
 function generation_() {
   if (_GEN != null) return _GEN;
-  try {
-    var p = PropertiesService.getScriptProperties(), g = p.getProperty('pv_cache_gen');
-    if (!g) { g = '1'; p.setProperty('pv_cache_gen', g); }
-    _GEN = g;
-  } catch (e) { _GEN = '1'; }
+  try { _GEN = APP_sourceStamp_('pricevolume') || '1'; } catch (e) { _GEN = '1'; }
   return _GEN;
 }
+/* Nothing to bump: whatever just wrote to the sheet moved its modified time.
+   Forget the copy we are holding so the next read sees it. */
 function bumpGeneration_() {
-  try {
-    var p = PropertiesService.getScriptProperties();
-    var g = String(parseInt(p.getProperty('pv_cache_gen') || '1', 10) + 1);
-    p.setProperty('pv_cache_gen', g);
-    _GEN = g;
-    return g;
-  } catch (e) { _GEN = null; return generation_(); }
+  _GEN = null;
+  try { APP_forgetStamp_('pricevolume'); } catch (e) {}
+  return generation_();
 }
 var SCHEMA_ = 'v5';   // bump when a COMPUTED pivot column changes meaning, or when a CACHED SHAPE does (v5: readTab_ locates the header row, so rows start lower; pivots carry a month)
 function gk_(key) { return 'pv|g' + generation_() + '|' + SCHEMA_ + '|' + key; }

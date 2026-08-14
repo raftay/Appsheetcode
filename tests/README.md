@@ -119,46 +119,6 @@ wrapper `captureBare` photographs, so the file can never reach a page or the Dec
 own UI) and included, and that the Southwest **Land / Docks** recipe rows filter the
 Southwest *market* with a `refine`, rather than naming a market that does not exist.
 
-## `publish.js` — pulling, showing, and telling everyone
-
-Runs `Code.gs` + `QlikSync.gs` under Node with the two page backends stubbed at their
-generation-bumping edge, plus static checks over `Shell.html`.
-
-```bash
-node tests/publish.js            # no dependencies
-```
-
-**Why it exists.** The pull used to end with `syncAll()`, moving every page's data version the
-instant the sheet was written. That version is the only thing that ever clears a device's
-saved tables, so a sync yanked the ground out from under whoever was reading: the page you
-were on kept its tables (nothing re-checks mid-session, so the pull looked like it did
-nothing), and navigating away and back wiped the device copy against a cold server cache —
-one page load then had to rebuild 50k rows, which is where the blank page came from.
-
-Server side it pins: the pull records what it wrote **before** publishing and only forgets it
-once the publish went through; publishing touches only the pages that were waiting; a page
-whose bump throws stays on the list with `ok:false`; and the answer rides along on
-`getDataVersion` so a page open costs no extra round trip.
-
-It also pins the **running flag expiring**. A run killed at the runtime limit never reaches
-its `finally`, so a stuck flag would grey out every page in the suite forever. Anything older
-than the window, or corrupt, reads as finished and is cleaned up.
-
-Client side (static, no jsdom): a scrim exists in the shell with no dismiss control, the
-watcher pauses while the tab is hidden and polls faster during a pull, a finished pull *or* a
-generation that moved while we weren't looking reloads the page, and a failed poll is not
-treated as news. The forced prompt is checked for having no way out — `data-locked` honoured
-by both dismissal handlers, no ✕, exactly one action and no *Later* — along with the two
-judgement calls: a failed publish keeps a way out, and page open forces rather than offers.
-
-One section guards a trap the prompt walked into on the way here: `AmrProgress.detail()` was a
-single page-wide registration, so a shared module using it would have taken the popover away
-from the Overview's month history. Detail bodies are keyed by job now.
-
-These are static checks in the spirit of `deckstatic.js`: jsdom is not vendored, so nothing
-here renders. **The scrim and the modal still want looking at in a real browser** — the
-harness proves the wiring, not the look.
-
 ## `pvlookup.js` — the mapping check, and where the header row is
 
 Runs `PV_Backend.gs` + `PV_Lookup.gs` under Node over a grid shaped like `Combined Data CPI
@@ -209,6 +169,28 @@ nothing else: the harness asserts a second look writes nothing and throws no cac
 that bumping a file's modified time is picked up. It also pins the retry rule — a run that
 *could not happen* (lock held) leaves the stamp alone and is retried, a run that *finished
 with a bad tab* records the stamp and logs, because that tab will be just as broken next hour.
+
+## `freshness.js` — the data version
+
+Runs `Config.gs` + `Code.gs` under Node with Drive stubbed, and counts the Drive calls.
+
+```bash
+node tests/freshness.js          # no dependencies
+```
+
+**Why it exists.** The version used to be a counter something had to remember to bump. A hand
+edit to `REGION LOOKUP` bumped nothing, so every page kept serving figures that no longer
+matched the sheet with nothing anywhere to notice — and a bump with no real change threw every
+cache away for nothing. It is the workbook's last-modified time now.
+
+Pins: it moves on a hand edit with nothing being told; it does *not* move on an untouched
+sheet; each page follows its own workbook and a `readsFrom` page follows its owner's; twenty
+asks cost one Drive call but forgetting the stamp reads again; an unreachable sheet still
+answers rather than taking the page down; and ↻ Update from source reports *no change* on an
+untouched sheet, always re-reads Drive rather than trusting the 30-second copy, and treats a
+page with no version yet as changed. It also checks PV and RMX read that same stamp instead of
+keeping counters, and that the loading screen is the full-screen one with the API pages
+already call left intact.
 
 ## Also worth running
 

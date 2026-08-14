@@ -178,38 +178,42 @@ tfoot td:first-child{text-align:left}
    usable while the numbers fill in. Replaces the full-screen .loader
    overlay for anything that is not an outright modal wait.
    =================================================================== */
-.amr-pill{position:fixed; left:18px; bottom:18px; z-index:58; display:none;
-  align-items:center; gap:9px; border:1px solid var(--line); background:#fff;
-  border-radius:999px; padding:8px 15px 8px 11px; cursor:pointer;
-  box-shadow:0 6px 20px rgba(1,30,106,.14); font:700 11.5px Inter; color:var(--blue-100)}
-.amr-pill.show{display:inline-flex}
-.amr-pill:hover{border-color:var(--blue-40)}
-.amr-pill .ring{flex:none; width:15px; height:15px; border-radius:50%;
-  border:2.5px solid var(--blue-10); border-top-color:var(--blue-70); animation:amrspin .9s linear infinite}
-.amr-pill.done .ring{border:0; background:var(--pos); position:relative; animation:none}
-.amr-pill.done .ring::after{content:"\2713"; position:absolute; inset:0; color:#fff;
-  font:800 10px Inter; line-height:15px; text-align:center}
-.amr-pill.bad{color:var(--neg); border-color:#EBC9CE}
-.amr-pill.bad .ring{border:0; background:var(--neg); animation:none}
-.amr-pill .amr-pct{font:700 11px Inter; color:var(--muted)}
-@keyframes amrspin{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){ .amr-pill .ring{animation-duration:2s} }
-
-.amr-pop{position:fixed; left:18px; bottom:60px; z-index:59; display:none; width:290px;
-  background:#fff; border:1px solid var(--line); border-radius:12px; padding:13px 14px;
-  box-shadow:0 14px 36px rgba(1,30,106,.18); font:500 11.5px/1.6 Inter; color:var(--ink)}
-.amr-pop.show{display:block}
-.amr-pop b{color:var(--blue-100); font-weight:700}
-.amr-pop .bar{height:5px; border-radius:3px; background:var(--blue-10); margin:9px 0 4px; overflow:hidden}
-.amr-pop .bar i{display:block; height:100%; background:var(--blue-70); border-radius:3px; transition:width .3s}
-.amr-pop .acts{display:flex; gap:7px; margin-top:11px}
-.amr-pop .acts button{flex:1; border:1px solid var(--line); background:#fff; color:var(--blue-100);
-  font:700 11px Inter; padding:7px 9px; border-radius:8px; cursor:pointer}
-.amr-pop .acts button:hover{border-color:var(--blue-40); background:var(--blue-10)}
-.amr-pop .amr-jobs{margin:8px 0 0; padding:0; list-style:none}
-.amr-pop .amr-jobs li{display:flex; justify-content:space-between; gap:10px;
-  font:600 11px Inter; color:var(--muted); padding:3px 0}
-.amr-pop .amr-jobs li b{font-weight:700}
+/* ---------- the shared loading screen (AmrProgress) ----------
+   Full screen, centred, over a blurred page. It used to be a small pill in
+   the corner, which was easy to miss — people read half-loaded tables without
+   realising anything was still coming. */
+.amr-load{position:fixed; inset:0; z-index:9000; display:none; align-items:center;
+  justify-content:center; padding:24px; background:rgba(244,247,252,.72);
+  backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px)}
+.amr-load.show{display:flex}
+.amr-load-card{background:#fff; border:1px solid var(--line); border-radius:16px;
+  box-shadow:0 24px 60px rgba(1,30,106,.22); padding:28px 30px; min-width:280px;
+  max-width:420px; width:100%; text-align:center}
+.amr-load-mark{width:34px; height:34px; margin:0 auto 14px; border-radius:50%;
+  border:3px solid var(--blue-10); border-top-color:var(--blue-70);
+  animation:amrload .8s linear infinite}
+@keyframes amrload{to{transform:rotate(360deg)}}
+.amr-load-mark.done{border:0; background:var(--pos); animation:none; position:relative}
+.amr-load-mark.done::after{content:"\2713"; position:absolute; inset:0; color:#fff;
+  font:700 19px/34px Inter; text-align:center}
+.amr-load-mark.bad{border:0; background:var(--neg); animation:none; position:relative}
+.amr-load-mark.bad::after{content:"!"; position:absolute; inset:0; color:#fff;
+  font:700 20px/34px Inter; text-align:center}
+.amr-load-text{font:700 14.5px Archivo,sans-serif; color:var(--blue-100)}
+.amr-load.bad .amr-load-text{color:var(--neg)}
+.amr-load-sub{font:500 12px Inter; color:var(--muted); margin-top:7px; line-height:1.5}
+.amr-load-detail{font:400 12.5px Inter; color:var(--ink); margin-top:11px; text-align:left; line-height:1.5}
+.amr-load-detail b{color:var(--blue-100)}
+.amr-load-detail .acts{display:flex; gap:7px; margin-top:12px}
+.amr-load-detail .acts button{flex:1; border:1px solid var(--line); background:#fff;
+  color:var(--blue-100); font:700 11.5px Inter; padding:8px 10px; border-radius:8px; cursor:pointer}
+.amr-load-detail .acts button:hover{border-color:var(--blue-40); background:var(--blue-10)}
+.amr-load-bar{height:6px; border-radius:3px; background:var(--blue-10); margin:14px 0 0; overflow:hidden}
+.amr-load-bar i{display:block; height:100%; background:var(--blue-70); border-radius:3px; transition:width .3s}
+.amr-load-jobs{margin:14px 0 0; padding:12px 0 0; list-style:none; border-top:1px solid var(--line)}
+.amr-load-jobs li{display:flex; justify-content:space-between; gap:10px;
+  font:600 11.5px Inter; color:var(--muted); padding:3px 0}
+@media (prefers-reduced-motion:reduce){ .amr-load-mark{animation-duration:2.4s} }
 
 /* Panels waiting on background work: a quiet line, never an empty box. */
 .amr-waiting{font:600 11.5px Inter; color:var(--muted); padding:14px 0}

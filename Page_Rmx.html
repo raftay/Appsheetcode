@@ -956,6 +956,16 @@ function renderExtras(d){
 function doSync(){
   if(!IS_LIVE){ showBanner('Update from source only works in the live Apps Script web app.'); return; }
   var b=$('syncBtn'); b.classList.add('busy');
+  /* Ask first: an unchanged sheet means nothing to rebuild, for anyone. */
+  if(window.AmrFresh){ AmrFresh.ifChanged(function(changed){
+    if(!changed){ b.classList.remove('busy'); return; }
+    doSyncNow();
+  }); return; }
+  doSyncNow();
+  }
+
+function doSyncNow(){
+  var b=$('syncBtn');
   if(window.AmrProgress) AmrProgress.set('sync', { text:'Re-reading the Google Sheet…', order:5 });
   STATE.keyCache={}; STATE.extrasCache={}; STATE.mapCache={}; STATE.extras=null;
   STATE.sug=null; STATE.sugErr=null;

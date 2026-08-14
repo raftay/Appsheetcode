@@ -9,13 +9,18 @@
  *              Batching them must change no formula: every anchor still comes
  *              back re-pointed at the new height, its own and across tabs.
  *
- *   THE CHECK  Nothing in the UI starts a sync any more. One hourly trigger
- *              compares the export files' modified times against the last set
- *              it saw and does nothing at all unless something moved — so the
- *              cost of an ordinary hour is one Drive listing, and pages keep
- *              serving from cache. The retry rule matters too: a run that
- *              could not happen is tried again next hour, a run that finished
- *              with a broken TAB is not (it will be just as broken next hour).
+ *   THE CHECK  Nothing in the UI starts a sync. One time-driven trigger
+ *              compares each export FILE's modified time against the one it
+ *              last synced, and does nothing at all for the ones that have not
+ *              moved — so an ordinary firing is three Drive lookups and pages
+ *              keep serving from cache. One file per page, so a re-exported
+ *              Aggregates file costs an Aggregates sync and nothing else.
+ *
+ *              The retry rule matters too: a run that could not HAPPEN (the
+ *              lock was held) keeps no stamp and is tried again, while a run
+ *              that finished with a broken TAB does keep its stamp — that tab
+ *              will be just as broken next time, and re-syncing forever
+ *              neither fixes it nor tells anybody.
  *
  *   node tests/qliksync.js
  */
@@ -183,10 +188,17 @@ function exportBook() {
 let PROPS = {};
 let BOOKS = {};
 let SYNC_ALL_CALLS = 0;
-let MTIME = RealDate.UTC(2026, 7, 13, 5, 0, 0);   /* the export's modified time */
+const AGG_ID = '19ptynrhtzC-Noi71znNbVIJw8GDmPUxZ';
+const RMX_ID = '1wUb82e1PVxstddK9IE2VxYLSQEicVAGK';
+const SEG_ID = '1d1XzYlENUyE6sxBewCd-Q3GpjTNzgRZH';
+const NAMES = { [AGG_ID]: 'Agg Margin Monitor Export.xls',
+                [RMX_ID]: 'CAN RMX Margin Monitor 2.xls',
+                [SEG_ID]: 'CAN RMX Margin Monitor 3.xls' };
+let MTIME = {};                                   /* per export file */
 
 function load({ tick = 0, lockFree = true } = {}) {
   PROPS = {}; OPS = []; TICK = tick; SYNC_ALL_CALLS = 0;
+  MTIME = { [AGG_ID]: 1000, [RMX_ID]: 2000, [SEG_ID]: 3000 };
   CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);
 
   const sheets = { raw: rawSheet(), other: otherSheet() };
@@ -216,25 +228,22 @@ function load({ tick = 0, lockFree = true } = {}) {
     },
     LockService: { getScriptLock: () => ({ tryLock: () => lockFree, releaseLock: () => {} }) },
     SpreadsheetApp: {
-      openById: id => (id === 'EXPORT_BOOK' ? exportBook() : BOOKS[id]),
+      openById: id => ((id in NAMES) ? exportBook() : BOOKS[id]),
       flush: () => {},
     },
     DriveApp: {
-      getFolderById: () => ({
-        getFiles: () => {
-          let n = 0;
-          return {
-            hasNext: () => n < 1,
-            next: () => { n++; return {
-              getId: () => 'EXPORT_BOOK',
-              getName: () => 'AGG export.xlsx',
-              getMimeType: () => 'application/vnd.google-apps.spreadsheet',
-              getLastUpdated: () => new RealDate(MTIME),
-            }; },
-          };
-        },
-      }),
-      getFileById: () => ({ setTrashed: () => {} }),
+      /* One export file per source id, each with its own modified time, so the
+         check can be watched picking up one and leaving the others alone. */
+      getFileById: id => {
+        if (!(id in MTIME)) return { setTrashed: () => {} };   /* the temp copy */
+        return {
+          getId: () => id,
+          getName: () => NAMES[id],
+          getMimeType: () => 'application/vnd.google-apps.spreadsheet',
+          getLastUpdated: () => new RealDate(MTIME[id]),
+          setTrashed: () => {},
+        };
+      },
     },
     Session: { getScriptTimeZone: () => 'America/Toronto' },
     Utilities: { formatDate: d => String(d) },
@@ -332,60 +341,67 @@ console.log('\nthe formula band is handled a run at a time, not a cell at a time
 }
 
 /* ======================================================================
- * 4. The hourly check: does nothing unless an export actually changed
+ * 4. The check: per export file, and only when Drive says it moved
  * ==================================================================== */
-console.log('\nthe hourly check only syncs when Drive says something moved:');
+console.log('\nthe check syncs the export that moved, and only that one:');
 {
   const ctx = load();
 
-  const first = ctx.qlikSyncHourly();
-  check('the first look finds a new export', first.changed, true);
-  check('and the run happened', !first.error, true);
-  check('the AGG tabs were written', first.done.map(d => d.tab).sort(),
-    [OTHER_TAB, RAW_TAB]);
-  check('caches were thrown away exactly once', SYNC_ALL_CALLS, 1);
+  const first = ctx.qlikSyncCheck();
+  check('with nothing on record every export looks new',
+    first.changed.length, 3);
+  check('and none is skipped', first.unchanged, []);
 
-  const before = OPS.length;
-  const again = ctx.qlikSyncHourly();
-  check('an unchanged export is not synced again', again.changed, false);
-  check('nothing was written', OPS.length, before);
-  check('and no cache was thrown away', SYNC_ALL_CALLS, 1);
+  const after = OPS.length;
+  const second = ctx.qlikSyncCheck();
+  check('a second look syncs nothing', second.changed, []);
+  check('all three are recognised as unchanged', second.unchanged.length, 3);
+  check('and nothing was written', OPS.length, after);
 
-  MTIME += 1000;                                  /* QlikView drops a new export */
-  const third = ctx.qlikSyncHourly();
-  check('a re-export is picked up', third.changed, true);
-  check('and everything reloads', SYNC_ALL_CALLS, 2);
-}
-
-console.log('\na run that could not happen at all is retried next hour:');
-{
-  const ctx = load({ lockFree: false });          /* another sync holds the lock */
-  const res = ctx.qlikSyncHourly();
-  check('it tried', res.changed, true);
-  check('it did not run', res.ok, false);
-  checkThat('so the stamp is NOT remembered', !PROPS.QLIK_FILE_STAMPS, PROPS.QLIK_FILE_STAMPS);
-  check('and nothing was written', OPS.length, 0);
-}
-
-console.log('\nbut a run that finished with a bad tab is not retried forever:');
-{
-  const ctx = load();
-  /* 'all' reaches the Ready-Mix and Slide Builder tabs, which this fixture has
-     no workbook for — so the run finishes with failed tabs but no fatal error. */
-  const res = ctx.qlikSyncHourly();
-  checkThat('the run reports the bad tabs', (res.failed || []).length > 0);
-  checkThat('but did not fall over', !res.error, res.error);
-  checkThat('the stamp is remembered anyway', !!PROPS.QLIK_FILE_STAMPS);
-  check('so the next hour does nothing', ctx.qlikSyncHourly().changed, false);
+  MTIME[AGG_ID] += 1000;                       /* only Aggregates re-exported */
+  const third = ctx.qlikSyncCheck();
+  check('the re-exported one is picked up', third.changed, ['Aggregates']);
+  check('the other two are left alone', third.unchanged.sort(),
+    ['Ready-Mix', 'Slide Builder']);
 }
 
 console.log('\nmarking the current exports stops a needless first sync:');
 {
   const ctx = load();
-  ctx.qlikMarkCurrent();
-  const res = ctx.qlikSyncHourly();
-  check('nothing to do', res.changed, false);
+  const msg = ctx.qlikMarkCurrent();
+  checkThat('it says how many it marked', /3/.test(msg), msg);
+
+  const res = ctx.qlikSyncCheck();
+  check('nothing looks new', res.changed, []);
   check('nothing was synced', SYNC_ALL_CALLS, 0);
+  check('and nothing was written', OPS.length, 0);
+}
+
+console.log('\na run that could not happen is retried next time:');
+{
+  const ctx = load({ lockFree: false });          /* another sync holds the lock */
+  const res = ctx.qlikSyncCheck();
+  check('it did not succeed', res.ok, false);
+  check('nothing was recorded as synced', res.changed, []);
+  check('and nothing was written', OPS.length, 0);
+
+  const seen = JSON.parse(PROPS.QLIK_FILE_STAMPS || '{}');
+  check('no stamp was kept, so the next check tries again',
+    Object.keys(seen).length, 0);
+}
+
+console.log('\nqlikStamps says what the next check will do:');
+{
+  const ctx = load();
+  ctx.qlikMarkCurrent();
+  MTIME[SEG_ID] += 5000;
+
+  const rows = ctx.qlikStamps();
+  check('one row per export', rows.length, 3);
+  check('the moved one is flagged',
+    rows.filter(r => r.willSync).map(r => r.source), ['Slide Builder']);
+  check('and it names the page it feeds',
+    rows.filter(r => r.willSync)[0].feeds, 'segment');
 }
 
 console.log(fails ? `\n${fails} failing check(s)` : '\nall checks passed');

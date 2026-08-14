@@ -5037,8 +5037,18 @@ window.HELP_HTML = `
     b.addEventListener('click', function(){
       if(!IS_LIVE){ banner('Update from source only works in the live Apps Script web app.'); return; }
       b.disabled=true; b.classList.add('busy');
-      if(window.AmrProgress) AmrProgress.set('sync', { text:'Re-reading every source sheet\u2026', order:5 });
       function stop(){ b.disabled=false; b.classList.remove('busy'); }
+      /* Ask first. This page reads Price & Volume, Ready-Mix AND Segment, so
+         its version covers all three (APP_EXTRA_SOURCES in Config.gs): if none
+         of them has been touched there is nothing to rebuild, for anyone. */
+      if(window.AmrFresh){ AmrFresh.ifChanged(function(changed){
+        if(!changed){ stop(); return; }
+        go();
+      }); return; }
+      go();
+
+      function go(){
+      if(window.AmrProgress) AmrProgress.set('sync', { text:'Re-reading every source sheet\u2026', order:5 });
       google.script.run
         .withSuccessHandler(function(){
           afterLookupWrite(function(){
@@ -5052,6 +5062,7 @@ window.HELP_HTML = `
           banner('Update failed: '+((e&&e.message)||e));
         })
         .syncAll();
+      }
     });
   })();
 
