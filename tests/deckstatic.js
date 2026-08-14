@@ -143,6 +143,31 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
     'found ' + hits.length + ' × "month: 0" — pass monthOf(spec) so the deck\'s picker reaches it');
 }
 
+/* ---- the shell's loading overlay comes back down ------------------------- *
+ * AmrFresh.ifChanged puts up the full-screen 'sync' job, but only takes it
+ * down again on the ONE path where nothing changed. Every other caller is a
+ * report page that goes straight into its own rebuild and owns the screen from
+ * there. The Deck Builder does not: it prints a banner and stops. So when the
+ * data HAD moved, the overlay sat there saying "Checking the sheet…" over a
+ * page that had already finished, with the banner visible behind it — the
+ * server call showed Completed in the execution log and nothing was wrong
+ * except that nobody had cleared the job. It must clear it itself.
+ * -------------------------------------------------------------------------- */
+{
+  const src = read('Page_DeckBuilder.html');
+  check('deck builder · takes the shell\'s sync overlay down itself',
+    /AmrProgress\s*\.\s*clear\s*\(\s*['"]sync['"]\s*\)/.test(src),
+    'no AmrProgress.clear(\'sync\') — ifChanged only clears it when nothing changed');
+
+  /* Render must run the check, not leave it to somebody remembering the
+     button: a deck built from figures the sheet replaced an hour ago builds
+     perfectly and goes red nowhere. */
+  const render = src.slice(src.indexOf('function dbRenderAll'));
+  check('deck builder · Render runs the source check first',
+    /function dbRenderAll[\s\S]{0,700}?dbSyncCore\s*\(/.test(render),
+    'dbRenderAll does not call dbSyncCore');
+}
+
 /* ---- the recipe ---------------------------------------------------------- */
 {
   const ctx = {};
