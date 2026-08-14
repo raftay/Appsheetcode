@@ -131,6 +131,16 @@ MTD and YTD, on all four backends. Each adapter used to hard-code `month: 0` in 
 call, so the picker could not reach it; the harness fails on any `month: 0` left in an
 adapter or in the Deck Builder.
 
+**The loading overlay comes back down.** `AmrFresh.ifChanged` raises the shell's full-screen
+`sync` job but only clears it on the one path where nothing changed — every other caller is a
+report page that goes straight into its own rebuild and owns the screen from there. The Deck
+Builder prints a banner and stops, so when the data *had* moved the overlay sat there saying
+*Checking the sheet…* over a page that had already finished: the server call showed
+`Completed` in the execution log and nothing was wrong except that nobody cleared the job.
+The harness fails if `Page_DeckBuilder.html` stops calling `AmrProgress.clear('sync')`, and
+fails if `dbRenderAll` stops running the source check — a deck built from replaced figures
+builds perfectly and goes red nowhere, so it must not be left to somebody pressing a button.
+
 It also checks `Deck_Styles.html` is scoped (**every** selector under `.slide-bare`, the
 wrapper `captureBare` photographs, so the file can never reach a page or the Deck Builder's
 own UI) and included, and that the Southwest **Land / Docks** recipe rows filter the

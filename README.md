@@ -260,9 +260,26 @@ sync strands the old entries by itself and the next Render picks up the new figu
 Render *does* reuse for the life of the page is what the **adapters** already fetched; that
 is the whole point of `prepare()` being cheap the second time. So a sheet that changes while
 the tab is open is invisible there, and pressing Render again will not do it either — a row
-that already has a picture is skipped. The button clears every adapter through
+that already has a picture is skipped. So it clears every adapter through
 `AmrDeckSource.resetAll()` and drops the rendered pictures, because they were photographed
 from figures that are now the old ones — the same reasoning as changing the report month.
+
+**And it is a stage, not a button to remember.** It is step 2 of four (Plan → Update from
+source → Render → Publish) and **Render runs it itself, every time**. A deck built from
+figures the sheet replaced an hour ago is the one failure this page cannot show you: every
+slide builds, nothing goes red, and the pack is quietly last week's. The check costs one ask
+for the workbooks' modified time — the same number the caches are already keyed on — so when
+nothing has moved it throws nothing away and renders exactly as before. The button remains
+for checking where things stand before committing to 43 slides; it is the same code path
+(`dbSyncCore`), just louder about a no-op.
+
+**One trap worth knowing if you call `AmrFresh.ifChanged` from a new page.** It raises the
+shell's full-screen `sync` job but only calls `AmrProgress.done` on the *nothing changed*
+path — every other caller had been a report page that goes straight into its own rebuild and
+owns the screen from there. A page that just prints a banner and stops has to call
+`AmrProgress.clear('sync')` itself, on every path including failure, or the overlay sits
+there saying *Checking the sheet…* over a page that finished seconds ago. Pinned by
+`tests/deckstatic.js`.
 
 A page's version covers **every workbook its figures depend on**, not just its own: the
 Overview reads Price & Volume, Ready-Mix and Segment, so its version moves when any of the

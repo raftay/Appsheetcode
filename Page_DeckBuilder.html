@@ -134,8 +134,6 @@
     </span>
   </div>
   <button class="ghost" onclick="window.amrGoHome&&amrGoHome()" title="Back to the suite home">&#8962; Home</button>
-  <button class="ghost" id="dbSyncBtn" onclick="dbUpdateFromSource()"
-    title="Re-read every source sheet the deck draws on, and drop anything already rendered from the old figures">&#8635; Update from source</button>
   <button class="ghost" onclick="dbValidate()" title="Check the template before building on it">&#10003; Check template</button>
 </header>
 
@@ -181,9 +179,13 @@
         <button class="dbbtn" id="dbBtnPlan" onclick="dbPlan()">Plan</button></div>
       <span class="db-arrow">&rarr;</span>
       <div class="db-stage" id="dbStage2"><span class="db-step">2</span>
-        <button class="dbbtn" id="dbBtnRender" onclick="dbRenderAll()" disabled>Render</button></div>
+        <button class="dbbtn" id="dbBtnSync" onclick="dbUpdateFromSource()"
+          title="Re-read every source sheet the deck draws on. Render does this for you; the button is for checking before you start.">&#8635; Update from source</button></div>
       <span class="db-arrow">&rarr;</span>
       <div class="db-stage" id="dbStage3"><span class="db-step">3</span>
+        <button class="dbbtn" id="dbBtnRender" onclick="dbRenderAll()" disabled>Render</button></div>
+      <span class="db-arrow">&rarr;</span>
+      <div class="db-stage" id="dbStage4"><span class="db-step">4</span>
         <button class="dbbtn primary" id="dbBtnPublish" onclick="dbPublish()" disabled>Publish to Slides</button></div>
       <div class="db-spacer"></div>
       <div class="db-prog" id="dbProg"></div>
@@ -206,13 +208,17 @@
 
 <script>
 /* ===========================================================================
- * Deck Builder — PLAN, then RENDER, then PUBLISH.
+ * Deck Builder — PLAN, UPDATE FROM SOURCE, RENDER, PUBLISH.
  * ---------------------------------------------------------------------------
- * Three stages, never one shot. 43 slides of client-side rendering plus 43
+ * Four stages, never one shot. 43 slides of client-side rendering plus 43
  * Slides API round trips does not fit in one execution, and a failure at slide
  * 40 must not cost the first 39. So:
  *
  *   PLAN     read the recipe. No data, instant. Untick what this month skips.
+ *   UPDATE   ask whether the source workbooks have actually moved. Unchanged,
+ *            which is the normal answer, it costs one question and throws
+ *            nothing away. Changed, it drops what the adapters are holding and
+ *            every picture built from it.
  *   RENDER   one slide at a time, in the browser: ask the source page for its
  *            content block, photograph it, keep the PNG. All the compute is
  *            here. One slide per tick keeps the page responsive and lets you
@@ -225,9 +231,12 @@
  * A row that fails is marked red and left alone — press Render again and only
  * the unfinished rows are retried. Nothing is ever redone from scratch.
  *
- * That last sentence is exactly why ↻ UPDATE FROM SOURCE exists: reusing
- * everything is right until the data underneath moves, and then it is the one
- * thing keeping the old figures on screen. See dbUpdateFromSource below.
+ * That last sentence is exactly why stage 2 exists, and why RENDER RUNS IT
+ * ITSELF rather than leaving it to be remembered: reusing everything is right
+ * until the data underneath moves, and then it is the one thing keeping the
+ * old figures on screen — with every slide building and nothing going red.
+ * A deck that is quietly last week's is the failure this page cannot show you,
+ * so it is not left to a button. See dbSyncCore below.
  * ========================================================================= */
 
 var IS_LIVE = (typeof google !== 'undefined' && google.script && google.script.run);
@@ -266,7 +275,7 @@ function setBusy(b){
   document.getElementById('dbReloadTpl').disabled  = b;
   /* Not during a render or a publish: it drops the very pictures those are
      producing. The header button is absent on nothing, but guard anyway. */
-  var s = document.getElementById('dbSyncBtn');
+  var s = document.getElementById('dbBtnSync');
   if(s) s.disabled = b;
 }
 
@@ -392,82 +401,118 @@ function dbSyncDeckName(){
 
 
 /* =========================================================================
- * ↻ UPDATE FROM SOURCE
+ * STAGE 2 — ↻ UPDATE FROM SOURCE
  * -------------------------------------------------------------------------
- * Render does NOT re-read the sheets. It never had to: every backend cache
+ * Rendering does not re-read the sheets. It never had to: every backend cache
  * key is prefixed with the source workbook's modified time, so a sync moves
- * the version and strands the old entries on its own. What Render does reuse,
- * for the whole life of this page, is what the ADAPTERS have already fetched —
- * that is the point of prepare() being cheap the second time. So a sheet that
- * changes while this tab is open is invisible here until something drops
- * those, and pressing Render again would not do it: a row that already has a
- * picture is skipped entirely.
+ * the version and strands the old entries on its own. What IS reused, for the
+ * whole life of this page, is what the ADAPTERS have already fetched — that is
+ * the point of prepare() being cheap the second time. So a sheet that changes
+ * while this tab is open is invisible here until something drops those, and
+ * pressing Render again would not do it: a row that already has a picture is
+ * skipped entirely.
  *
- * Hence this button, and hence it does three things and not one:
- *   1. ask whether the data ACTUALLY changed — an unchanged sheet costs
- *      nothing and throws nothing away (AmrFresh.ifChanged),
- *   2. drop every adapter's in-browser copy,
- *   3. drop every rendered picture, because it was photographed from figures
+ * So this is a STAGE, not a button somebody has to remember. Render runs it
+ * first, every time, and it is nearly free when nothing has moved: the whole
+ * check is one ask for the workbooks' modified time, which is the same number
+ * the caches are already keyed on. Unchanged sheet, nothing thrown away,
+ * straight on to rendering. Changed sheet, and it does what it must:
+ *   1. drop every adapter's in-browser copy,
+ *   2. drop every rendered picture, because it was photographed from figures
  *      that are now the old ones. Same reasoning as changing the month.
+ *
+ * The button stays because checking before committing to 43 slides is a
+ * reasonable thing to want. It is the same code path either way.
  *
  * The template is deliberately NOT reloaded: it is a Slides file, nothing to
  * do with the data, and it has its own button.
  * ======================================================================= */
-function dbUpdateFromSource(){
-  if(!IS_LIVE){
-    clearBanners();
-    banner('bad', 'Update from source only works in the live Apps Script web app.');
-    return;
-  }
-  if(BUSY) return;
-  clearBanners();
-  setBusy(true);
-  var btn = document.getElementById('dbSyncBtn');
-  if(btn) btn.disabled = true;
-  prog('Checking the source sheets…');
+var SYNCED = false;        // has the check run at least once this session?
 
-  function finish(){
-    if(btn) btn.disabled = false;
-    setBusy(false);
-    updateStages();
-  }
+/* Resolves to true when the data moved (and was therefore cleared), false when
+   there was nothing to do. Never rejects — a check that cannot run must not
+   stop a render, so it resolves false and says so on the row's own terms. */
+function dbSyncCore(opts){
+  opts = opts || {};
+  return new Promise(function(resolve){
 
-  if(!window.AmrFresh){
-    prog('');
-    banner('bad', 'The shell did not load, so the data version cannot be checked.');
-    finish();
-    return;
-  }
+    /* AmrFresh.ifChanged puts up the shell's full-screen 'sync' job, but only
+       takes it down again on the "nothing changed" path — every other caller
+       is a report page that goes straight into its own rebuild and owns the
+       screen from there. This page just prints a banner and stops, so it has
+       to take the screen down itself, on EVERY path including failure.
+       Without this the overlay sits there saying "Checking the sheet…" over a
+       page that has already finished. */
+    function release(){
+      if(window.AmrProgress){
+        try { AmrProgress.clear('sync'); } catch(e){}
+      }
+    }
 
-  AmrFresh.ifChanged(function(changed){
-    if(!changed){
-      prog('');
-      banner('ok', 'Already up to date — none of the source sheets have changed, '+
-        'so nothing was thrown away.');
-      finish();
+    if(!IS_LIVE || !window.AmrFresh){
+      if(!opts.quiet){
+        banner('bad', !IS_LIVE
+          ? 'Update from source only works in the live Apps Script web app.'
+          : 'The shell did not load, so the data version cannot be checked.');
+      }
+      release();
+      resolve(false);
       return;
     }
 
-    var n = window.AmrDeckSource ? AmrDeckSource.resetAll() : 0;
+    prog(opts.quiet ? 'Checking the source sheets before rendering…'
+                    : 'Checking the source sheets…');
 
-    /* Every picture on screen was taken from the old figures. */
-    var dropped = 0;
-    ROWS.forEach(function(r){
-      if(r.png || r.status === 'ready' || r.status === 'error'){
-        r.png = null; r.w = r.h = 0; r.status = 'pending'; r.err = '';
-        dropped++;
+    AmrFresh.ifChanged(function(changed){
+      release();
+      SYNCED = true;
+
+      if(!changed){
+        if(!opts.quiet){
+          prog('');
+          banner('ok', 'Already up to date — none of the source sheets have '+
+            'changed, so nothing was thrown away.');
+        }
+        resolve(false);
+        return;
       }
-    });
-    redraw();
 
-    prog('Source data updated');
-    banner('ok', '<b>New figures.</b> ' + n + ' content source' + (n===1?'':'s') +
-      ' cleared' +
-      (dropped ? ' and ' + dropped + ' rendered slide' + (dropped===1?'':'s') +
-                 ' dropped — press <b>Render</b> to rebuild ' +
-                 (dropped===1?'it':'them') + ' from the new data.'
-               : '. Press <b>Render</b> when you are ready.'));
-    finish();
+      var n = window.AmrDeckSource ? AmrDeckSource.resetAll() : 0;
+
+      /* Every picture on screen was taken from the old figures. */
+      var dropped = 0;
+      ROWS.forEach(function(r){
+        if(r.png || r.status === 'ready' || r.status === 'error'){
+          r.png = null; r.w = r.h = 0; r.status = 'pending'; r.err = '';
+          dropped++;
+        }
+      });
+      redraw();
+
+      /* Said on both paths: when Render triggered it, the fact that everything
+         already built was just dropped is the explanation for the work about
+         to happen, and leaving it out makes the progress line look wrong. */
+      banner('ok', '<b>New figures.</b> ' + n + ' content source' +
+        (n===1?'':'s') + ' cleared' +
+        (dropped ? ' and ' + dropped + ' rendered slide' + (dropped===1?'':'s') +
+                   ' dropped' + (opts.quiet ? ' — rebuilding from the new data.'
+                                            : ' — press <b>Render</b> to rebuild '+
+                                              (dropped===1?'it':'them') + '.')
+                 : (opts.quiet ? '.' : '. Press <b>Render</b> when you are ready.')));
+      if(!opts.quiet) prog('Source data updated');
+      resolve(true);
+    });
+  });
+}
+
+/* The button. Same path, just louder about a no-op. */
+function dbUpdateFromSource(){
+  if(BUSY) return;
+  clearBanners();
+  setBusy(true);
+  dbSyncCore({ quiet:false }).then(function(){
+    setBusy(false);
+    updateStages();
   });
 }
 
@@ -525,19 +570,32 @@ function dbPlan(){
 
 
 /* =========================================================================
- * STAGE 2 — RENDER, one slide at a time
+ * STAGE 3 — RENDER, one slide at a time
  * ------------------------------------------------------------------------
  * Serial on purpose. Parallel captures fight over the same off-screen layout
  * and the same Chart.js canvases, and the progress line stops meaning
  * anything. Slow and legible beats fast and unexplainable.
+ *
+ * STAGE 2 RUNS FIRST, ALWAYS. Photographing 43 slides from figures the sheet
+ * replaced an hour ago is the one failure this page cannot show you — every
+ * slide builds, nothing goes red, and the deck is quietly last week's. The
+ * check costs one ask for the workbooks' modified time, and when nothing has
+ * moved it throws nothing away and renders exactly as before. So it is not
+ * something to remember to press.
  * ======================================================================= */
 function dbRenderAll(){
   if(!TPL){ banner('bad', 'Load the template first — the capture size comes from it.'); return; }
   clearBanners();
   setBusy(true);
 
+  /* The check may DROP rows that already have pictures, so `todo` cannot be
+     worked out until it has run. */
+  dbSyncCore({ quiet:true }).then(dbRenderPass);
+}
+
+function dbRenderPass(){
   var todo = ROWS.filter(function(r){ return r.on && !r.png; });
-  if(!todo.length){ prog('Nothing to render'); setBusy(false); return; }
+  if(!todo.length){ prog('Nothing to render'); setBusy(false); updateStages(); return; }
 
   var i = 0;
   function next(){
@@ -611,7 +669,7 @@ function renderOne(row){
 
 
 /* =========================================================================
- * STAGE 3 — PUBLISH, one google.script.run per slide
+ * STAGE 4 — PUBLISH, one google.script.run per slide
  * ======================================================================= */
 function dbPublish(){
   clearBanners();
@@ -839,8 +897,13 @@ document.getElementById('dbLb').addEventListener('click', function(e){
 
 function updateStages(){
   document.getElementById('dbStage1').classList.toggle('done', ROWS.length > 0);
-  document.getElementById('dbStage2').classList.toggle('done', countReady() > 0);
-  document.getElementById('dbStage3').classList.toggle('done', countDone() > 0);
+  /* Ticked once the sheets have actually been checked — by the button or by a
+     Render, which runs the same check. It is about the CHECK having happened,
+     not about anything having changed: "nothing moved" is the answer that
+     stage is there to get. */
+  document.getElementById('dbStage2').classList.toggle('done', SYNCED);
+  document.getElementById('dbStage3').classList.toggle('done', countReady() > 0);
+  document.getElementById('dbStage4').classList.toggle('done', countDone() > 0);
 }
 
 
@@ -884,20 +947,24 @@ document.addEventListener('DOMContentLoaded', function(){
     'The <b>title</b> and the <b>comment box</b> land as editable Slides text — only the '+
     'table or chart goes in as a picture. That is the difference from the PNG export on '+
     'each report page, which flattens the whole slide into one image.</p>'+
-    '<h3>Three stages</h3><p><b>Plan</b> lists the slides from the recipe — untick anything '+
-    'this month skips. <b>Render</b> photographs each content block in your browser, one at a '+
+    '<h3>Four stages</h3><p><b>Plan</b> lists the slides from the recipe — untick anything '+
+    'this month skips. <b>↻ Update from source</b> checks whether the sheets behind the deck '+
+    'have moved. <b>Render</b> photographs each content block in your browser, one at a '+
     'time; you can watch the previews fill in. <b>Publish</b> sends them to Slides, one slide '+
     'per call.</p>'+
     '<h3>If a slide fails</h3><p>It goes red with the reason. Press <b>Render</b> again — only '+
     'the unfinished rows are retried, nothing already done is rebuilt.</p>'+
-    '<h3>Getting new figures</h3><p>You do not normally need to do anything: the deck reads the '+
-    'same cached tables the report pages do, and those are keyed to each source sheet\u2019s '+
-    'version, so a sync makes the next Render pick up the new numbers by itself. The one case '+
-    'that needs a press is a sheet that changes <b>while this tab is open</b> — what has already '+
-    'been fetched stays fetched, and a slide that already has a picture is skipped by Render. '+
-    '<b>↻ Update from source</b> handles that: it checks whether the data really moved, and '+
-    'only if it did does it clear what was fetched and drop the pictures built from it. On an '+
-    'unchanged sheet it costs nothing and throws nothing away.</p>'+
+    '<h3>Getting new figures</h3><p>You do not have to think about this — <b>Render runs '+
+    'stage 2 for you</b>, every time. It asks whether the source workbooks have actually been '+
+    'touched. Almost always they have not, and then it costs one question, throws nothing away '+
+    'and renders exactly as before: the workbooks carry a last-modified time, so an unchanged '+
+    'sheet is recognised as unchanged rather than rebuilt on the off-chance.</p>'+
+    '<p>When something <i>has</i> moved it clears what was fetched and drops the pictures built '+
+    'from it, then builds those again. That is the case worth having: whatever has been loaded '+
+    'stays loaded for as long as this tab is open, and Render skips any slide that already has '+
+    'a picture — so without the check, a sheet updated mid-session would leave you with a deck '+
+    'that builds perfectly and is quietly out of date. Press the button yourself when you just '+
+    'want to know where things stand before starting.</p>'+
     '<h3>The Region dropdown</h3><p>Slides with a KPI strip read one region sheet of an EBITDA '+
     'workbook, and there are two workbooks: Manitoba and Saskatchewan are on their own, '+
     'everything else is on the main one. Each row is only offered the regions from ITS workbook. '+
