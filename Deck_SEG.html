@@ -571,6 +571,9 @@ var AmrSegSlide = (function(){
 
   AmrDeckSource.register('seg', {
     prepare: function(spec){ return Promise.all([loadSeg(spec), loadKpi()]); },
+    /* Just the KPI workbook, so the Region dropdown is answerable at Plan
+       time. The segment tables themselves are per row and stay in prepare(). */
+    warm: function(){ return loadKpi(); },
     content: function(spec){
       if(!CACHE[key(spec)]) throw new Error('Product Segment data is not loaded yet.');
       var el = AmrSegSlide.content(ctxFor(spec));

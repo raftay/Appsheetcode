@@ -52,7 +52,7 @@ node tests/deckpath.js
 
 Add a case here for every new source id a phase registers.
 
-It also pins two things the Deck Builder's ↻ Update from source depends on.
+It also pins two things the Deck Builder's source check depends on.
 
 **The Region dropdown is per row, not per page.** Manitoba and Saskatchewan read the *second*
 EBITDA workbook; every other market reads the first. One merged list meant a Saskatchewan row
@@ -67,7 +67,9 @@ same book, and that a missing workbook reads as missing rather than as an empty 
 that is what makes `prepare()` cheap the second time — so moving the server's cache version
 does nothing about the copy already in the browser. The harness fails if any registered
 source has no `reset()`, and checks that a slide rebuilt after `resetAll()` actually goes
-back to the server instead of re-photographing what it was holding.
+back to the server instead of re-photographing what it was holding. It also checks the pair
+`resetAll()` / `warmAll()`: clearing blanks the Region dropdown, and warming fills it back in
+**with nothing rendered**, still scoped to each row's own workbook.
 
 ## `fscheader.js` — the Fuel Recovery reader
 
@@ -139,7 +141,14 @@ Builder prints a banner and stops, so when the data *had* moved the overlay sat 
 `Completed` in the execution log and nothing was wrong except that nobody cleared the job.
 The harness fails if `Page_DeckBuilder.html` stops calling `AmrProgress.clear('sync')`, and
 fails if `dbRenderAll` stops running the source check — a deck built from replaced figures
-builds perfectly and goes red nowhere, so it must not be left to somebody pressing a button.
+builds perfectly and goes red nowhere, so it is part of Render rather than a button that can
+be skipped.
+
+**The Region dropdown answers before a render.** It lists the KPI workbook's sheets, and that
+workbook was only fetched by `prepare()`, which runs *during* a render — so every row read
+*no workbook* until the first render had already been paid for, which is the wrong way round:
+the region is chosen to avoid rendering the wrong one. The harness fails if `dbPlan` stops
+calling `dbWarmPickers`, or if a source declares a `kpiPicker` without a `warm()` to fill it.
 
 It also checks `Deck_Styles.html` is scoped (**every** selector under `.slide-bare`, the
 wrapper `captureBare` photographs, so the file can never reach a page or the Deck Builder's

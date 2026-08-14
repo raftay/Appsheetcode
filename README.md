@@ -249,12 +249,12 @@ re-syncing forever neither fixes it nor tells anybody.
 loaded with. When it isn't, the page greys out and offers one button that reloads it.
 
 **↻ Update from source** asks before it acts, on every page that has the button — Price &
-Volume, Ready-Mix, Segment, the Overview, both Fuel Recovery pages and the Deck Builder. If
-nothing behind the page has been touched it says *Already up to date* and throws nothing
-away; pressing it on an unchanged sheet used to make every user rebuild every table for
-nothing.
+Volume, Ready-Mix, Segment, the Overview and both Fuel Recovery pages. If nothing behind the
+page has been touched it says *Already up to date* and throws nothing away; pressing it on an
+unchanged sheet used to make every user rebuild every table for nothing. The Deck Builder has
+no such button on purpose: it runs the same check inside Render, every time (below).
 
-**On the Deck Builder it does one thing more.** Render does not re-read the sheets and never
+**On the Deck Builder the check has more to clear.** Render does not re-read the sheets and never
 had to — every backend cache key is prefixed with the source workbook's modified time, so a
 sync strands the old entries by itself and the next Render picks up the new figures. What
 Render *does* reuse for the life of the page is what the **adapters** already fetched; that
@@ -264,14 +264,22 @@ that already has a picture is skipped. So it clears every adapter through
 `AmrDeckSource.resetAll()` and drops the rendered pictures, because they were photographed
 from figures that are now the old ones — the same reasoning as changing the report month.
 
-**And it is a stage, not a button to remember.** It is step 2 of four (Plan → Update from
-source → Render → Publish) and **Render runs it itself, every time**. A deck built from
-figures the sheet replaced an hour ago is the one failure this page cannot show you: every
-slide builds, nothing goes red, and the pack is quietly last week's. The check costs one ask
-for the workbooks' modified time — the same number the caches are already keyed on — so when
-nothing has moved it throws nothing away and renders exactly as before. The button remains
-for checking where things stand before committing to 43 slides; it is the same code path
-(`dbSyncCore`), just louder about a no-op.
+**And there is no button for it — it is the first half of Render.** The stages stay Plan →
+Render → Publish, and Render opens with the check every time. A deck built from figures the
+sheet replaced an hour ago is the one failure this page cannot show you: every slide builds,
+nothing goes red, and the pack is quietly last week's. A step that must never be skipped does
+not belong behind a button somebody has to remember, and a button that Render then repeats is
+one more thing to explain. The check costs one ask for the workbooks' modified time — the
+same number the caches are already keyed on — so when nothing has moved it says nothing,
+throws nothing away and renders exactly as before (`dbSourceCheck`).
+
+**The Region dropdown is answerable before any of that.** It lists the KPI workbook's region
+sheets, and that workbook was only ever fetched by `prepare()` — which runs during a render.
+So every row read *no workbook* until the first render had already happened, including rows
+whose workbook was uploaded, and the region could only be corrected after paying for a render
+that used the wrong one. Precisely backwards. The source contract grew `warm()`: load what the
+Deck Builder needs to DESCRIBE a row, called once after Plan via `AmrDeckSource.warmAll()`.
+Per-row data stays in `prepare()`.
 
 **One trap worth knowing if you call `AmrFresh.ifChanged` from a new page.** It raises the
 shell's full-screen `sync` job but only calls `AmrProgress.done` on the *nothing changed*
