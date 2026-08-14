@@ -119,45 +119,45 @@ wrapper `captureBare` photographs, so the file can never reach a page or the Dec
 own UI) and included, and that the Southwest **Land / Docks** recipe rows filter the
 Southwest *market* with a `refine`, rather than naming a market that does not exist.
 
-## `publish.js` — pulling vs. showing
+## `publish.js` — pulling, showing, and telling everyone
 
 Runs `Code.gs` + `QlikSync.gs` under Node with the two page backends stubbed at their
-generation-bumping edge.
+generation-bumping edge, plus static checks over `Shell.html`.
 
 ```bash
 node tests/publish.js            # no dependencies
 ```
 
-**Why it exists.** The pull used to end with `syncAll()`, moving every page's data version
-the instant the sheet was written. That version is the only thing that ever clears a
-device's saved tables, so a sync yanked the ground out from under whoever was reading: the
-page you were on kept its tables (nothing re-checks mid-session, so the pull looked like it
-did nothing), and navigating away and back wiped the device copy against a cold server cache
-— one page load then had to rebuild 50k rows, which is where the blank page came from.
+**Why it exists.** The pull used to end with `syncAll()`, moving every page's data version the
+instant the sheet was written. That version is the only thing that ever clears a device's
+saved tables, so a sync yanked the ground out from under whoever was reading: the page you
+were on kept its tables (nothing re-checks mid-session, so the pull looked like it did
+nothing), and navigating away and back wiped the device copy against a cold server cache —
+one page load then had to rebuild 50k rows, which is where the blank page came from.
 
-So it pins the split: a pull moves **no** generation and leaves a note saying which pages are
-waiting; `publishQlikData()` moves them. Successive pulls merge and keep the *first*
-timestamp. Publishing touches only the waiting pages, is a no-op the second time, and a page
-whose bump throws stays on the list with `ok:false` rather than being dropped behind a stale
-cache. It also checks the answer rides along on `getDataVersion` so a page open costs no
-extra round trip, that `syncAll` still does everything at once for "Update from source", and
-that the 600 ms reload is gone from the ⇣ button.
+Server side it pins: the pull records what it wrote **before** publishing and only forgets it
+once the publish went through; publishing touches only the pages that were waiting; a page
+whose bump throws stays on the list with `ok:false`; and the answer rides along on
+`getDataVersion` so a page open costs no extra round trip.
 
-One section guards a trap the prompt walked into: `AmrProgress.detail()` was a single
-page-wide registration, so a shared module using it would have taken the popover away from
-the Overview's month history. Detail bodies are keyed by job now, and the harness fails if
-either side stops honouring that.
+It also pins the **running flag expiring**. A run killed at the runtime limit never reaches
+its `finally`, so a stuck flag would grey out every page in the suite forever. Anything older
+than the window, or corrupt, reads as finished and is cleaned up.
 
-The last section pins the **forced** prompt, which is the whole point of it: the modal is
-marked `data-locked` and both shared dismissal handlers skip locked modals; the card carries
-no ✕ and no `data-close`; the running state offers no action at all; and the ready state
-offers exactly one, `publish`, with no *Later*. It also pins the two judgement calls — a
-pull that had trouble but still landed tabs is still forced, and a *failed publish* is not,
-because a tab nobody can leave is worse than a stale one.
+Client side (static, no jsdom): a scrim exists in the shell with no dismiss control, the
+watcher pauses while the tab is hidden and polls faster during a pull, a finished pull *or* a
+generation that moved while we weren't looking reloads the page, and a failed poll is not
+treated as news. The forced prompt is checked for having no way out — `data-locked` honoured
+by both dismissal handlers, no ✕, exactly one action and no *Later* — along with the two
+judgement calls: a failed publish keeps a way out, and page open forces rather than offers.
 
-These are static checks on `Shell.html`, in the same spirit as `deckstatic.js`: jsdom is not
-vendored, so the modal is never rendered here. **The wording and layout still need looking at
-in a real browser** — this harness only proves there is no way out of it.
+One section guards a trap the prompt walked into on the way here: `AmrProgress.detail()` was a
+single page-wide registration, so a shared module using it would have taken the popover away
+from the Overview's month history. Detail bodies are keyed by job now.
+
+These are static checks in the spirit of `deckstatic.js`: jsdom is not vendored, so nothing
+here renders. **The scrim and the modal still want looking at in a real browser** — the
+harness proves the wiring, not the look.
 
 ## `pvlookup.js` — the mapping check, and where the header row is
 

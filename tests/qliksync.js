@@ -187,9 +187,12 @@ function exportBook() {
 let PROPS = {};
 let BOOKS = {};
 let SYNC_ALL_CALLS = 0;
+let PUBLISHED = [];
+let PUBLISH_THROWS = false;
 
-function load({ tick = 0, lockFree = true } = {}) {
+function load({ tick = 0, lockFree = true, publishThrows = false } = {}) {
   PROPS = {}; OPS = []; TICK = tick; SYNC_ALL_CALLS = 0;
+  PUBLISHED = []; PUBLISH_THROWS = publishThrows;
   CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);
 
   const sheets = { raw: rawSheet(), other: otherSheet() };
@@ -244,6 +247,14 @@ function load({ tick = 0, lockFree = true } = {}) {
     ScriptApp: { getOAuthToken: () => 'tok' },
     UrlFetchApp: { fetch: () => { throw new Error('no conversion expected'); } },
     syncAll: () => { SYNC_ALL_CALLS++; return { ok: true }; },
+    /* The seam run() publishes through. Code.gs owns the real one; here it
+       just records, so the harness can tell an automatic publish from a
+       failed one rather than passing because the symbol was missing. */
+    APP_publishPages_: pages => {
+      if (PUBLISH_THROWS) throw new Error('publish is having a bad day');
+      PUBLISHED.push.apply(PUBLISHED, pages);
+      return pages.slice();
+    },
   };
   ctx.global = ctx;
   vm.createContext(ctx);
@@ -398,23 +409,36 @@ console.log('\na run that never finished is called out for what it is:');
 /* ======================================================================
  * 5b. The pull writes the sheet and stops there
  * ==================================================================== */
-console.log('\nthe pull records what is waiting rather than publishing it:');
+console.log('\nthe pull publishes what it wrote, and only then forgets it:');
 {
   const ctx = load();
   const res = ctx.qlikSyncNow('pricevolume');
 
-  check('it does not invalidate anybody\'s caches', SYNC_ALL_CALLS, 0);
-  check('it says the site has not been told yet', res.awaitingPublish, true);
-  check('and which page is waiting', res.pagesUpdated, ['pricevolume']);
+  check('the blunt everything-at-once path is not used', SYNC_ALL_CALLS, 0);
+  check('the page it wrote is published', res.published, ['pricevolume']);
+  check('through the shared seam', PUBLISHED, ['pricevolume']);
+  check('so nothing is left awaiting a click', res.awaitingPublish, false);
+  check('and which page changed is still reported', res.pagesUpdated, ['pricevolume']);
+  checkThat('the pending note is cleared once it went through',
+    !PROPS.QLIK_PENDING_UPDATE, PROPS.QLIK_PENDING_UPDATE);
+  checkThat('and the running flag is down', !PROPS.QLIK_SYNC_RUNNING, PROPS.QLIK_SYNC_RUNNING);
+}
+
+console.log('\na publish that throws leaves the note behind:');
+{
+  const ctx = load({ publishThrows: true });
+  const res = ctx.qlikSyncNow('pricevolume');
+
+  check('nothing was published', res.published, []);
+  check('so the site is still waiting', res.awaitingPublish, true);
 
   const note = JSON.parse(PROPS.QLIK_PENDING_UPDATE || '{}');
-  check('the note survives the run', note.pages, ['pricevolume']);
+  check('the note survives for the next page open to insist on', note.pages, ['pricevolume']);
   checkThat('with the export it came from',
-    (note.files || []).join() .indexOf('AGG export.xlsx') !== -1, JSON.stringify(note.files));
+    (note.files || []).join().indexOf('AGG export.xlsx') !== -1, JSON.stringify(note.files));
 
-  /* A second pull of the same page must not reset when this started — the
-     prompt should say how long the site has been behind, not how long since
-     the most recent pull. */
+  /* A second pull must not reset when this started: the prompt should say how
+     long the site has been behind, not how long since the most recent pull. */
   const firstSince = note.since;
   ctx.qlikSyncNow('pricevolume');
   const note2 = JSON.parse(PROPS.QLIK_PENDING_UPDATE || '{}');
