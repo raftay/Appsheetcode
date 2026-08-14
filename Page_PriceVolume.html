@@ -2046,19 +2046,28 @@ function renderKpis(){
   var html=kpiCardsHtml();
   if(!html){ sec.style.display='none'; return; }
   sec.style.display='';
-  strip.innerHTML = '<div style="display:flex;gap:12px;flex-wrap:wrap">'+html+'</div>';
+  /* AmrKpi builds AND sizes the strip. Every size inside a card is em, so the
+     row's font-size is the card's size — and this used to set none at all, so
+     the cards were laid out against the 16px body font, clipped their own text
+     (`TOTAL SALES — PRODUC`) and pushed the fifth card onto a second line. */
+  strip.innerHTML = AmrKpi.stripHtml(html);
+  AmrKpi.fitStrip(strip.firstChild);
   var m=document.getElementById('kpiMeta');
   if(m) m.textContent = kpiLabel()+'\u00B7  '+(STATE.period==='YTD'?'year to date':'month to date');
 }
 
+/* The strip, on its own, as a picture — for pasting into an email or a deck.
+   AmrKpi photographs a CLONE in an off-screen box at the strip's natural width
+   with a white margin round it. Photographing the live #kpiStrip meant the PNG
+   inherited whatever the panel was doing to it: the clipped card text and the
+   fifth card sitting alone under four cards' worth of white. */
 function downloadKpiPng(){
   var el=document.getElementById('kpiStrip'); if(!el || !el.firstChild) return;
-  var btn=document.getElementById('kpiDl'); if(btn) btn.classList.add('busy');
-  html2canvas(el, {scale:3, backgroundColor:'#ffffff', logging:false}).then(function(cv){
-    if(btn) btn.classList.remove('busy');
+  AmrKpi.stripPng(el, { button:'kpiDl' }).then(function(url){
+    if(!url) return;
     var tag=(kpiLabel()||'region').replace(/[^a-z0-9]+/gi,'_').toLowerCase();
-    triggerDownload(cv.toDataURL('image/png'), 'amrize_kpis_'+tag+'_'+STATE.period.toLowerCase()+'.png');
-  }).catch(function(){ if(btn) btn.classList.remove('busy'); });
+    triggerDownload(url, 'amrize_kpis_'+tag+'_'+STATE.period.toLowerCase()+'.png');
+  }).catch(function(){});
 }
 
 /* The SAME two workbooks feed the Product Segment and Overview pages. They

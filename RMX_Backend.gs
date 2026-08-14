@@ -45,7 +45,10 @@ var CONFIG = {
   APPLIED_BASE_PY: null,   // null => total PY concrete m3 across all markets (≈947,519).
   MAX_DIMS: 24,            // effectively unlimited (only 4 breakdowns exist); grouping happens client-side
   CACHE_TTL: 21600,        // 6 hours
-  CACHE_VER: 'v16',  // bumped: the bundle now carries latestMonth (the REPORT month) and
+  CACHE_VER: 'v17',  // bumped: getKeys / getExtras / getSlideTables now cache their own
+                     // FINISHED payload per market+period+month (selCached_), the way
+                     // PV.getReport and getCrossReport already do. New key shape.
+                     // v16: the bundle now carries latestMonth (the REPORT month) and
                      // months (what the picker may offer). A v15 bundle was written
                      // BEFORE `months` existed, and a cached one with the field missing
                      // is what made the month picker read "Latest" with no month and the
@@ -167,6 +170,43 @@ function cacheGet_(key){
     for (var j=0;j<n;j++){ var p = got[key + '__' + j]; if (p == null) return null; parts.push(p); }
     return JSON.parse(parts.join(''));
   } catch(e){ return null; }
+}
+
+/* =================== per-selection cache ===================
+ * ONE FINISHED PAYLOAD PER SELECTION, not one raw bundle per request.
+ *
+ * Everything on this page is computed from `loadDataCached_()`, the whole
+ * Ready-Mix dataset as one cached object. That object is the right thing to
+ * cache — it is read once instead of forty thousand rows being pulled out of
+ * Sheets again — but it was the ONLY thing cached, and it is several megabytes.
+ * So every getKeys / getExtras / getSlideTables call, including the ones that
+ * asked for a market somebody had already looked at a minute earlier, paid for:
+ *
+ *   · the chunked CacheService read (one get per 90 KB),
+ *   · JSON.parse of the whole dataset,
+ *   · keyRows_ / ppiMaps_ / plantRows_ over every row of it.
+ *
+ * The Aggregates side has never done that: PV.getReport caches the FINISHED
+ * report for the exact selection and returns it before it touches the pivot,
+ * which is the whole reason Price & Volume feels instant next to Ready-Mix.
+ * getCrossReport (the Overview's Ready-Mix panels) already copies that pattern.
+ * These three are the ones that never got it.
+ *
+ * The entry is per market + period + month, and cacheKey_ already folds in the
+ * workbook's modified time and CACHE_VER — so a sync or a code change strands
+ * every one of them at once and there is nothing to invalidate by hand.
+ *
+ * UPLOADS ARE NEVER CACHED HERE. "Run on my own QlikView files" is one user's
+ * session; its bundle has its own key (upKey_) that deliberately leaves the
+ * generation out, and the payloads computed from it must not be handed to
+ * anybody else. Same rule as PV.getReport.
+ */
+function selCached_(parts, opts, build){
+  var ck = opts.upload ? null : cacheKey_(parts);
+  if (ck && !opts.force){ var hit = cacheGet_(ck); if (hit) return hit; }
+  var out = build();
+  if (ck) cachePut_(ck, out);
+  return out;
 }
 
 /* =================== unmapped-row collector ===================
@@ -937,23 +977,26 @@ function pickMarket_(main){
 function getKeys(opts){
   opts = opts || {};
   var period = (opts.period==='MTD') ? 'MTD' : 'YTD';
-  var bundle = opts.upload ? loadUploaded_(opts.upload) : loadDataCached_(!!opts.force);
-  var month = monthFor_(bundle, period, opts.month);
-  var market = opts.market || pickMarket_(scopeMonth_(bundle.main, month));
+  return selCached_(['keys', period, 'm' + (Number(opts.month) || 0),
+                     opts.market || 'auto'], opts, function(){
+    var bundle = opts.upload ? loadUploaded_(opts.upload) : loadDataCached_(!!opts.force);
+    var month = monthFor_(bundle, period, opts.month);
+    var market = opts.market || pickMarket_(scopeMonth_(bundle.main, month));
 
-  // Passed strictly main data (no extras/assoc)
-  var keys = keyRows_(bundle.main, market, month);
-  var ppi  = ppiMaps_(bundle.main, market, month);
-  /* Pre-rolled, one row per plant - the Top 10 Plants chip reads this instead
-     of the key rows. See plantRows_ for why it is not in the key grain. */
-  var plants = plantRows_(bundle.main, market, month);
+    // Passed strictly main data (no extras/assoc)
+    var keys = keyRows_(bundle.main, market, month);
+    var ppi  = ppiMaps_(bundle.main, market, month);
+    /* Pre-rolled, one row per plant - the Top 10 Plants chip reads this instead
+       of the key rows. See plantRows_ for why it is not in the key grain. */
+    var plants = plantRows_(bundle.main, market, month);
 
-  return { ok:true, market:market, period:period, keys:keys, ppi:ppi, plants:plants,
-           month: monthSel_(bundle, opts.month),
-           latestMonth: bundleMonth_(bundle),
-           months: bundleMonths_(bundle),
-           build: BUILD,
-           breakdowns:CONFIG.BREAKDOWNS, generation:generation_() };
+    return { ok:true, market:market, period:period, keys:keys, ppi:ppi, plants:plants,
+             month: monthSel_(bundle, opts.month),
+             latestMonth: bundleMonth_(bundle),
+             months: bundleMonths_(bundle),
+             build: BUILD,
+             breakdowns:CONFIG.BREAKDOWNS, generation:generation_() };
+  });
 }
 
 /**
@@ -996,14 +1039,17 @@ function getReport(opts){
 function getExtras(opts){
   opts = opts || {};
   var period = (opts.period==='MTD') ? 'MTD' : 'YTD';
-  var bundle = opts.upload ? loadUploaded_(opts.upload) : loadDataCached_(!!opts.force);
-  var month = monthFor_(bundle, period, opts.month);
-  var main = scopeMonth_(bundle.main, month);
-  var market = opts.market || pickMarket_(main);
-  var out = extrasPayload_(bundle, main, market, month);
-  out.ok = true; out.market = market; out.period = period;
-  out.month = monthSel_(bundle, opts.month);
-  return out;
+  return selCached_(['extras', period, 'm' + (Number(opts.month) || 0),
+                     opts.market || 'auto'], opts, function(){
+    var bundle = opts.upload ? loadUploaded_(opts.upload) : loadDataCached_(!!opts.force);
+    var month = monthFor_(bundle, period, opts.month);
+    var main = scopeMonth_(bundle.main, month);
+    var market = opts.market || pickMarket_(main);
+    var out = extrasPayload_(bundle, main, market, month);
+    out.ok = true; out.market = market; out.period = period;
+    out.month = monthSel_(bundle, opts.month);
+    return out;
+  });
 }
 
 /* THE EXTRAS / VAP TABLES for one market + month scope.
@@ -1178,20 +1224,23 @@ function slideSegment_(bundle, market, month){
 function getSlideTables(opts){
   opts = opts || {};
   var period = (opts.period==='MTD') ? 'MTD' : 'YTD';
-  var bundle = opts.upload ? loadUploaded_(opts.upload) : loadDataCached_(!!opts.force);
-  var month  = monthFor_(bundle, period, opts.month);
-  var main   = scopeMonth_(bundle.main, month);
-  var market = opts.market || ALL_MARKETS;
-  return { ok:true, market:market, period:period,
-           month:       monthSel_(bundle, opts.month),
-           latestMonth: bundleMonth_(bundle),
-           months:      bundleMonths_(bundle),
-           markets:     bundle.markets || [],
-           allMarkets:  ALL_MARKETS,
-           segment:     slideSegment_(bundle, market, month),
-           extras:      extrasPayload_(bundle, main, market, month),
-           rowCount:    main.length,
-           build: BUILD, generation: generation_() };
+  return selCached_(['slide', period, 'm' + (Number(opts.month) || 0),
+                     opts.market || ALL_MARKETS], opts, function(){
+    var bundle = opts.upload ? loadUploaded_(opts.upload) : loadDataCached_(!!opts.force);
+    var month  = monthFor_(bundle, period, opts.month);
+    var main   = scopeMonth_(bundle.main, month);
+    var market = opts.market || ALL_MARKETS;
+    return { ok:true, market:market, period:period,
+             month:       monthSel_(bundle, opts.month),
+             latestMonth: bundleMonth_(bundle),
+             months:      bundleMonths_(bundle),
+             markets:     bundle.markets || [],
+             allMarkets:  ALL_MARKETS,
+             segment:     slideSegment_(bundle, market, month),
+             extras:      extrasPayload_(bundle, main, market, month),
+             rowCount:    main.length,
+             build: BUILD, generation: generation_() };
+  });
 }
 
 

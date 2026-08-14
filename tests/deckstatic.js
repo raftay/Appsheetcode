@@ -126,6 +126,44 @@ for (const mod of [...Object.keys(MODULES), 'SlideExport.html', 'Page_DeckBuilde
     'found ' + code.join(', ') + ' — the deck and the pages must share fitSlide');
 }
 
+/* ---- ONE COPY OF THE SLIDE ------------------------------------------------
+ * Phases 2 and 3 rewired their report pages so there is exactly one copy of
+ * each algorithm; Phase 4 shipped Deck_SEG.html / Deck_RMX.html as DUPLICATES
+ * of what the pages already held, and said so. That debt is what let the two
+ * copies disagree: the module defaulted `By extra type` OFF while the page had
+ * it ON, and the KPI-strip fitter had to be fixed in both places or in neither.
+ *
+ * Page_Segment.html delegates now. It keeps its own on-page cards, its own
+ * table renderer and all its UI, but the SLIDE's content, its KPI cards and its
+ * fitter come from AmrSegSlide. A page that re-defines any of them has grown a
+ * second copy back.
+ *
+ * Page_Rmx.html is the one still to pay down; it is listed here as a reminder,
+ * not as a failure.
+ */
+{
+  const src = read('Page_Segment.html');
+  const owned = [
+    ['buildSlideContent', /function\s+buildSlideContent\s*\([^)]*\)\s*\{\s*return\s+AmrSegSlide\./],
+    ['fitTables',         /function\s+fitTables\s*\([^)]*\)\s*\{\s*return\s+AmrSegSlide\./],
+    ['segKpiCardsHtml',   /function\s+segKpiCardsHtml\s*\([^)]*\)\s*\{\s*return\s+AmrSegSlide\./]
+  ];
+  for (const [name, re] of owned) {
+    check('Page_Segment.html · ' + name + ' delegates to AmrSegSlide', re.test(src),
+      'it holds its own copy again — fix the slide in Deck_SEG.html and let the page call it');
+  }
+  /* the fitter that only ever lived on the page */
+  check('Page_Segment.html · no second KPI-strip fitter',
+    !/function\s+fitSegKpiRow/.test(src),
+    'the strip is sized by AmrSegSlide, inside the fitter that knows the frame height');
+  /* exportSel must be RESOLVED, not passed half-filled: an absent key means
+     "the module's default", and the two disagree about `By extra type`. */
+  check('Page_Segment.html · passes a fully resolved exportSel',
+    /'seg:segment':\s*isOn\(/.test(src) && /'seg:byType':\s*isOn\(/.test(src)
+      && /'seg:detail':\s*isOn\(/.test(src),
+    'a key left out falls back to the module default, which differs from this page\'s');
+}
+
 /* ---- ONE MONTH ------------------------------------------------------------
  * The deck is built for ONE report month — pick July and every slide is July,
  * MTD and YTD, on all four backends. Every adapter used to hard-code `month: 0`

@@ -99,7 +99,13 @@
 .db-slot.title{background:transparent; color:var(--blue-100); font:800 5px Archivo;
   display:flex; align-items:center; overflow:hidden; white-space:nowrap}
 .db-slot.comment{background:#DCEEFB; border:.5px solid #BBD9F2; border-radius:1px}
+/* An EMPTY image slot is a dashed placeholder, so it reads as "a picture goes
+   here". A FILLED one is not: the grey and the dash would sit behind the
+   picture and, wherever the picture's shape and the slot's shape do not agree
+   to the pixel, show as a grey band along its edge — which reads as part of the
+   slide rather than as part of the mock. */
 .db-slot.image{background:#F0F4FA; border:.5px dashed #C6D5E8}
+.db-slot.image.filled{background:transparent; border:0}
 .db-slot.image img{width:100%; height:100%; object-fit:contain; display:block}
 .db-slot.page{color:var(--muted); font:600 4px Inter; display:flex; align-items:flex-end}
 
@@ -854,7 +860,8 @@ function slotHtml(r, L, scale){
       'px;width:'+(rect.w*scale)+'px;height:'+(rect.h*scale)+'px">'+(inner||'')+'</div>';
   }
   out += box('comment', s.comment, '');
-  out += box('image', s.image, r.png ? '<img src="'+r.png+'" alt="">' : '');
+  out += box('image' + (r.png ? ' filled' : ''), s.image,
+             r.png ? '<img src="'+r.png+'" alt="">' : '');
   out += box('image', s.image2, '');
   out += box('title', s.title, esc(r.spec.title));
   out += box('page', s.page, '');

@@ -307,6 +307,47 @@ node tests/slidefit.js              # checks only
 node tests/slidefit.js /tmp/shots   # …and a PNG per case, to look at
 ```
 
+### The Product Segment cases
+
+`seg` / `seg-short` / `seg-squat` / `seg-page`. These are the ones worth understanding,
+because for a while they were passing while measuring nothing.
+
+**The fixture used to be wrong.** Its `extras` half carried a `{extras, vap}` shape that
+`extrasTypeTable()` reads nothing from, so that table came back null and every seg case was
+silently a ONE-table slide. The case that actually broke in the July deck — two tall tables
+and a KPI strip in an image box that is wider than it is tall — was never being laid out.
+The payload is the real July 2026 Innocon slide now, and the frames run down to 560px tall.
+
+**What they pin, beyond the shared checks:**
+
+- **Nothing is scaled twice.** `AmrSlide.build` scales the whole stack when it overflows the
+  frame. That is a last-resort clamp, not a layout: it shrinks the type the fitter just
+  chose, and it pulls the content away from the edges (transform-origin is top *centre*),
+  which is where the white bands down both sides of the July slides came from. The old seg
+  fitter grew tables on WIDTH alone to a 30px cap and left the height to that clamp.
+  `kpiScaled` reports what the strip is worth in the finished picture, and on the pre-fix
+  tree the four seg cases fail exactly as the deck looked: *fitted at 10px, scaled down to
+  4.4px.*
+- **The caption keeps its first letter.** A bare frame keeps `AmrSlide`'s 8px pad. The
+  negative body margin that lets the report page's whitespace sliders reach the real slide
+  edge must not apply to a deck capture, or `SEGMENT · MTD` photographs as `EGMENT · MTD`
+  the moment the fitter starts using the full width.
+- **Both tables are there.** `tables !== 2` fails, so a fixture that quietly stops building
+  one cannot pass again.
+
+### The on-page KPI strip
+
+`kpi-1100` / `kpi-900` / `kpi-1400` — not a slide at all: the *KPIs* panel above the slide
+preview, which is also exactly what **Download KPI PNG** photographs. The cards are the same
+ones, sized by `AmrKpi.fitStrip` instead of a slide fitter.
+
+It is in this file because it fails the same way and only a browser can see it. Every size
+inside a KPI card is `em` against the row, so the row's font-size *is* the card's size —
+and Price & Volume set none at all. The cards were laid out against the 16px body font,
+clipped their own text (`TOTAL SALES — PRODUC`, `▼ −0.71 / −`) and pushed the fifth card
+onto a line of its own with four cards' width of white beside it. The cases fail on any
+clip, any second line, or the row overflowing its panel, at the widths a report page has.
+
 The web fonts are not vendored either, so it runs in whatever sans the machine has: every
 check is a relationship between measured boxes, so it holds either way — only the exact font
 sizes it prints differ from production.
