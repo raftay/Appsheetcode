@@ -119,6 +119,40 @@ wrapper `captureBare` photographs, so the file can never reach a page or the Dec
 own UI) and included, and that the Southwest **Land / Docks** recipe rows filter the
 Southwest *market* with a `refine`, rather than naming a market that does not exist.
 
+## `qliksync.js` — the sync, and the six minutes
+
+Runs `QlikSync.gs` for real against a fake Spreadsheet/Drive service, over a fixture shaped
+like the Price & Volume workbook: banner row above the header, array formulas on the first
+data row in columns the export never feeds, and more rows in the sheet than in the export so
+it has to shrink.
+
+```bash
+node tests/qliksync.js           # no dependencies
+```
+
+**Why it exists.** The daily triggers reported *failed* while the sheets came out correctly
+updated. Nothing in `run()` throws — every error path returns a value — so the only thing
+that can mark a trigger failed is Apps Script killing the execution for running past its
+runtime limit, and that kill is invisible to a `try/catch`. What was spending the time was
+per-cell work: the band of array formulas was cleared one `getRange().clearContent()` at a
+time and restored one `setFormula()` at a time, a round trip to Sheets for each. Both now go
+a contiguous **run** at a time.
+
+So the harness counts calls. Six formula cells in one row must be cleared in two calls and
+restored in two, and no `setFormula` may be reached at all. Alongside that it pins the
+*result* of the batching — every anchor still re-pointed at the new height, its own
+(`B3:B50040` → `B3:B7`) and across tabs (`'…Other Revenue'!C3:C50040` → `C3:C4`) — because a
+faster sync that writes different formulas is not the same sync.
+
+It also drives a virtual clock through the fake service to check the budget: a run that
+would overshoot stops itself, keeps and re-anchors what it finished, and names the rest in
+`notRun`, instead of being killed mid-write. And it reads the Script Properties breadcrumb
+*while the run is still going*, which is exactly what `qlikSyncLastRun()` reports after a run
+that never got to finish.
+
+Last case: a trigger event object handed in as `scope`, which is what happens if a trigger
+is wired to `qlikSyncNow` rather than to one of the `qlikSyncDaily*` wrappers.
+
 ## Also worth running
 
 ```bash

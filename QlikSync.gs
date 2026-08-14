@@ -49,6 +49,19 @@
  *   Nothing else to enable: the Drive REST copy below runs on the script's own
  *   OAuth token, so the Advanced Drive Service does NOT need to be turned on.
  *
+ * TRIGGERS
+ *   Attach them to qlikSyncDailyAgg / qlikSyncDailyRmx / qlikSyncDailySegment,
+ *   one scope each — not to qlikSyncNow, which takes an argument a trigger
+ *   would fill with its own event object.
+ *
+ *   run() RETURNS its errors, it never throws them, so a failed tab does not
+ *   mark the execution failed. What does is Apps Script killing the run for
+ *   passing its runtime limit — invisible to the try/catch, and late enough
+ *   that the sheets are already written. A trigger that reports "failed" over
+ *   correctly updated sheets is nearly always that. Section 0b keeps the run
+ *   inside its budget and leaves a breadcrumb either way; qlikSyncLastRun()
+ *   at the bottom of this file reads it back.
+ *
  * NOTE — no validation yet. This copies what the export says, as the export
  * says it. Reconciliation checks come later.
  *****************************************************************************/
@@ -94,6 +107,98 @@ var QLIKSYNC = (function () {
       if (filled >= 3) return r;
     }
     return 0;
+  }
+
+  /* Contiguous runs of non-empty cells across one row of a grid, as
+     { start (0-based), len }. A band of array formulas sits in a handful of
+     adjacent columns, so clearing and restoring it a RUN at a time is a few
+     calls per row instead of one per cell — see the note on the six minutes
+     below for why that difference decides whether a trigger survives. */
+  function cellRuns_(rowArr) {
+    var out = [], i = 0;
+    while (i < rowArr.length) {
+      if (!rowArr[i]) { i++; continue; }
+      var s = i;
+      while (i < rowArr.length && rowArr[i]) i++;
+      out.push({ start: s, len: i - s });
+    }
+    return out;
+  }
+
+
+  /* =====================================================================
+   * 0b. THE SIX MINUTES, AND THE BREADCRUMB
+   * ---------------------------------------------------------------------
+   * Apps Script kills any execution that passes its runtime limit. That kill
+   * is not an exception: the try/catch in run() never sees it, the return
+   * value never reaches anybody, and all that is left is a trigger the
+   * dashboard marks "failed" and a "failed to complete successfully" email —
+   * even though every sheet the run had already written is sitting there
+   * correctly updated. A sync that "works but keeps saying failed" is very
+   * often exactly this, and nothing about it is visible after the fact.
+   *
+   * Two things here, together:
+   *
+   *   BUDGET   No new tab is started once the run is this far in. The work
+   *            already done is kept, the rest is reported as not-run, and the
+   *            execution ENDS instead of being killed — so the trigger says
+   *            what actually happened rather than just "failed".
+   *
+   *   REPORT   A breadcrumb written to Script Properties as the run moves
+   *            through its phases. Property writes survive the kill, so even
+   *            a run that does get cut off leaves behind the tab it was on.
+   *            Read it back with qlikSyncLastRun().
+   * =================================================================== */
+  var BUDGET_MS  = 4 * 60 * 1000;      /* of the six; the rest finishes up */
+  var REPORT_KEY = 'QLIK_SYNC_LAST_RUN';
+
+  /* A Script Property holds 9 kB. One "none of the export columns matched"
+     message carries the whole export header and can be most of that on its
+     own, so every line is clipped before it goes in: a report that cannot be
+     stored is worth nothing on the morning it is needed. */
+  function clip_(s) {
+    s = String(s == null ? '' : s);
+    return s.length > 200 ? s.slice(0, 197) + '…' : s;
+  }
+
+  function report_(patch) {
+    try {
+      var p = PropertiesService.getScriptProperties();
+      var cur = {};
+      try { cur = JSON.parse(p.getProperty(REPORT_KEY) || '{}'); } catch (e) { cur = {}; }
+      Object.keys(patch).forEach(function (k) { cur[k] = patch[k]; });
+      var s = JSON.stringify(cur);
+      if (s.length > 8500) {
+        ['done', 'skipped', 'failed', 'notRun'].forEach(function (k) {
+          if (cur[k] && cur[k].length > 6) {
+            cur[k] = cur[k].slice(0, 6).concat(['… and ' + (cur[k].length - 6) + ' more']);
+          }
+        });
+        s = JSON.stringify(cur).slice(0, 8500);
+        try { JSON.parse(s); } catch (e2) { s = JSON.stringify({ phase: cur.phase, ok: cur.ok,
+          error: 'The full report was too long to store.' }); }
+      }
+      p.setProperty(REPORT_KEY, s);
+    } catch (e) {}                     /* diagnostics never break the sync */
+  }
+
+  /* What the last run got to. `phase` is the breadcrumb: if it still reads
+     mid-run, that run was killed there rather than finishing. */
+  function lastRun() {
+    try {
+      var raw = PropertiesService.getScriptProperties().getProperty(REPORT_KEY);
+      if (!raw) return { ok: false, error: 'No QlikView sync has been recorded yet.' };
+      var r = JSON.parse(raw);
+      if (r.phase && r.phase !== 'finished') {
+        r.verdict = 'This run never reached the end. It stopped during "' + r.phase +
+          '" — on a time-driven trigger that almost always means it ran past the ' +
+          'Apps Script runtime limit and was killed, which is what the "failed" ' +
+          'notice is reporting.';
+      }
+      return r;
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
   }
 
 
@@ -631,8 +736,9 @@ var QLIKSYNC = (function () {
        written into a live spill range. */
     var band = sh.getRange(1, 1, firstData, nCols).getFormulas();
     for (var br = 0; br < band.length; br++) {
-      for (var bc = 0; bc < band[br].length; bc++) {
-        if (band[br][bc]) sh.getRange(br + 1, bc + 1).clearContent();
+      var clearRuns = cellRuns_(band[br]);
+      for (var cr = 0; cr < clearRuns.length; cr++) {
+        sh.getRange(br + 1, clearRuns[cr].start + 1, 1, clearRuns[cr].len).clearContent();
       }
     }
 
@@ -748,11 +854,25 @@ var QLIKSYNC = (function () {
 
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(5000)) {
-      return { ok: false, error: 'Another update is already running. Try again in a moment.' };
+      /* Three daily triggers set to the same time is the usual way here: two
+         of them find the lock held and come back with this. Nothing is wrong,
+         but nothing was updated either, so it goes on the record as a run that
+         ended on its own — not as a half-written one. */
+      var busyMsg = 'Another update is already running. Try again in a moment.';
+      report_({ phase: 'finished', ok: false, scope: want, error: busyMsg,
+                startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
+                seconds: 0, done: [], skipped: [], failed: [], notRun: [] });
+      return { ok: false, scope: want, error: busyMsg,
+               files: [], done: [], skipped: [], failed: [], notRun: [] };
     }
 
     var started = new Date();
-    var done = [], skipped = [], failed = [];
+    var done = [], skipped = [], failed = [], notRun = [];
+    function elapsed_()  { return new Date() - started; }
+    function outOfTime_() { return elapsed_() > BUDGET_MS; }
+
+    report_({ startedAt: started.toISOString(), scope: want, phase: 'starting',
+              ok: null, done: [], skipped: [], failed: [], notRun: [], error: null });
 
     try {
       var ids  = folderIds_();
@@ -770,6 +890,7 @@ var QLIKSYNC = (function () {
       [['AGG', ids.AGG_FOLDER_ID], ['RMX', ids.RMX_FOLDER_ID]].forEach(function (pair) {
         if (!needed[pair[0]]) return;
         excelFilesIn_(pair[1], pair[0]).forEach(function (f) {
+          report_({ phase: 'reading ' + pair[0] + ' export: ' + f.name });
           filesSeen.push(pair[0] + ': ' + f.name);
           tabsByFolder[pair[0]] = tabsByFolder[pair[0]].concat(readExport_(f));
         });
@@ -793,6 +914,14 @@ var QLIKSYNC = (function () {
         var plan = [], ends = {};
 
         byPage[page].forEach(function (spec) {
+          /* Starting another tab now would run past the limit and get the
+             whole execution killed mid-write. Stop while the run still owns
+             its own ending. */
+          if (outOfTime_()) {
+            notRun.push({ tab: spec.tab, error: 'Ran out of time before this tab was reached.' });
+            return;
+          }
+          report_({ phase: 'writing ' + spec.tab });
           try {
             var sh = ss.getSheetByName(spec.tab);
             if (!sh) {
@@ -830,17 +959,23 @@ var QLIKSYNC = (function () {
         /* Every tab in this workbook has its final height now, so the array
            formulas can be re-pointed — including the ones that reach across
            into another tab of the same workbook. */
+        report_({ phase: 'restoring formulas in ' + APP_CONFIG.PAGES[page].label });
         plan.forEach(function (p) {
           var ownEnd = p.sh.getMaxRows();
           for (var r = 0; r < p.band.length; r++) {
-            for (var c = 0; c < p.band[r].length; c++) {
-              if (!p.band[r][c]) continue;
+            var fRuns = cellRuns_(p.band[r]);
+            for (var q = 0; q < fRuns.length; q++) {
+              var start = fRuns[q].start, len = fRuns[q].len, seg = new Array(len);
+              for (var k = 0; k < len; k++) {
+                seg[k] = reanchor_(p.band[r][start + k], ownEnd, ends);
+              }
               try {
-                p.sh.getRange(r + 1, c + 1).setFormula(reanchor_(p.band[r][c], ownEnd, ends));
+                p.sh.getRange(r + 1, start + 1, 1, len).setFormulas([seg]);
               } catch (e) {
                 failed.push({ tab: p.sh.getName(),
-                  error: 'Could not restore the formula in ' +
-                         p.sh.getRange(r + 1, c + 1).getA1Notation() + ': ' + e.message });
+                  error: 'Could not restore the formulas in ' +
+                         p.sh.getRange(r + 1, start + 1, 1, len).getA1Notation() +
+                         ': ' + e.message });
               }
             }
           }
@@ -850,26 +985,66 @@ var QLIKSYNC = (function () {
       });
 
       /* --- every cached copy, everywhere, is now stale --- */
+      report_({ phase: 'clearing caches' });
       try { syncAll(); } catch (e) {}
 
-      return {
-        ok: failed.length === 0,
+      var out = {
+        ok: failed.length === 0 && notRun.length === 0,
         scope: want,
         files: filesSeen,
         done: done,
         skipped: skipped,
         failed: failed,
-        seconds: Math.round((new Date() - started) / 100) / 10
+        notRun: notRun,
+        seconds: Math.round(elapsed_() / 100) / 10
       };
+      if (notRun.length) {
+        out.error = 'Ran out of time with ' + notRun.length + ' tab' +
+          (notRun.length === 1 ? '' : 's') + ' still to do. Everything written so far ' +
+          'is good — run the update again, or give each page its own trigger so no ' +
+          'single run has to do all of them.';
+      }
+      finish_(out);
+      return out;
 
     } catch (e) {
-      return { ok: false, error: e.message, files: [], done: done, skipped: skipped, failed: failed };
+      var bad = { ok: false, scope: want, error: e.message, files: [],
+                  done: done, skipped: skipped, failed: failed, notRun: notRun };
+      finish_(bad);
+      return bad;
     } finally {
       try { lock.releaseLock(); } catch (e2) {}
     }
+
+    /* The record of a run that reached its own ending. Only the shape of the
+       outcome is kept — the full row-by-row detail goes back to the caller,
+       not into a Script Property. */
+    function finish_(res) {
+      report_({
+        phase:      'finished',
+        ok:         res.ok,
+        error:      clip_(res.error || '') || null,
+        finishedAt: new Date().toISOString(),
+        seconds:    Math.round(elapsed_() / 100) / 10,
+        done:       res.done.map(function (d) { return d.tab + ' (' + d.rows + ' rows)'; }),
+        skipped:    res.skipped.map(function (s) { return clip_(s.tab + ': ' + s.error); }),
+        failed:     res.failed.map(function (f) { return clip_(f.tab + ': ' + f.error); }),
+        notRun:     res.notRun.map(function (n) { return n.tab; })
+      });
+      /* Visible in the Executions list without marking the run failed — a run
+         that finished and reported its own problems is not a crash. */
+      if (!res.ok) {
+        try {
+          console.error('QlikView sync (' + want + ') finished with problems: ' +
+            (res.error || '') + ' ' + res.failed.map(function (f) {
+              return f.tab + ': ' + f.error;
+            }).join(' | '));
+        } catch (e3) {}
+      }
+    }
   }
 
-  return { run: run };
+  return { run: run, lastRun: lastRun };
 })();
 
 
@@ -885,7 +1060,15 @@ var QLIKSYNC = (function () {
  * everybody wait for the other exports to be converted and read.
  * ======================================================================== */
 function qlikSyncNow(scope) {
-  return QLIKSYNC.run(scope);
+  /* A time-driven trigger hands its own event object to whatever function it
+     is attached to. Wire a trigger straight to THIS one and `scope` arrives as
+     { triggerUid: …, authMode: … }, which matches no page, filters the spec
+     down to nothing and returns "nothing is set up to update for [object
+     Object]" — a daily run that quietly does nothing. Only a real page id
+     counts; anything else means everything.
+     The three qlikSyncDaily* functions below are the ones to attach a trigger
+     to, precisely because they take no argument. */
+  return QLIKSYNC.run(typeof scope === 'string' ? scope : 'all');
 }
 function qlikSyncDailyAgg() {
   return qlikSyncNow('pricevolume');
@@ -895,4 +1078,25 @@ function qlikSyncDailyRmx() {
 }
 function qlikSyncDailySegment() {
   return qlikSyncNow('segment');
+}
+
+/* ==========================================================================
+ * What did the last run actually do?
+ *
+ * Run this from the Apps Script editor after a trigger reports a failure. A
+ * run that was killed for going over the runtime limit cannot report anything
+ * itself — the breadcrumb it left behind is all there is, and this reads it:
+ *
+ *   phase: "finished"          it ended on its own; `ok`, `failed` and
+ *                              `error` say how it went.
+ *   phase: anything else       it was killed there. On a trigger that means
+ *                              the runtime limit, and the sheets it had
+ *                              already written are still correctly updated —
+ *                              which is why the sync "works" and the trigger
+ *                              still says failed.
+ * ======================================================================== */
+function qlikSyncLastRun() {
+  var r = QLIKSYNC.lastRun();
+  try { console.log(JSON.stringify(r, null, 2)); } catch (e) {}
+  return r;
 }

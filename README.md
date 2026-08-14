@@ -112,7 +112,7 @@ namespace objects are captured at evaluation time.
 | `RFSC_Backend.gs` | 898 | RMX fuel recovery |
 | `Sask_Backend.gs` | 240 | Saskatchewan per-customer mid-year price increase (read + name matching only) |
 | `Kpi_Backend.gs` | 181 | Shared EBITDA KPI workbook values in a Drive folder |
-| `QlikSync.gs` | 898 | Pulls QlikView exports out of Drive and replaces sheet tabs; scheduled triggers |
+| `QlikSync.gs` | 1066 | Pulls QlikView exports out of Drive and replaces sheet tabs; scheduled triggers |
 | `TP01_Backend.gs` | 72 | Transfer Price — per-market email send, recipients in User Properties |
 | `IR_Backend.gs` | 76 | Inventory Report — stores/derives a Drive PDF file ID (never touches DriveApp) |
 | `Deck_Backend.gs` | 714 | Deck Builder server plumbing: template geometry, create/addSlide/finish/status, validator. See §8 |
@@ -198,6 +198,34 @@ Alongside those: the EBITDA KPI workbooks in a shared Drive folder
 optional closed-year history books (`histagg`, `histrmx`, `histagg2`, `histrmx2`).
 
 Scheduled sync triggers fire at 2 PM, one per data source.
+
+#### When a trigger says "failed" and the sheets look fine
+
+Attach triggers to `qlikSyncDailyAgg`, `qlikSyncDailyRmx` or `qlikSyncDailySegment` — never
+to `qlikSyncNow` itself. A time-driven trigger passes its own event object to whatever
+function it fires, so a trigger on `qlikSyncNow` would hand `{ triggerUid: … }` in as the
+scope. (That argument is now ignored unless it is a real page id, so such a trigger runs
+everything rather than nothing — but one scope per trigger is still the right setup, and
+`scope: 'all'` is the slowest thing this script can be asked to do.)
+
+`run()` returns its errors, it does not throw them, so a genuinely failed tab does **not**
+mark the execution failed. The one thing that does is Apps Script killing the run for going
+past its runtime limit — and that kill is invisible to the `try/catch`, arrives after most
+of the writing is already done, and leaves the trigger reporting failure over sheets that
+are correctly updated. That is the usual explanation for "it works but keeps saying failed".
+
+Two things address it. The run stops on its own once it is four minutes in rather than being
+killed mid-write, reporting the tabs it did not reach in `notRun`. And it writes a
+breadcrumb to Script Properties as it goes, so a run that *was* killed still leaves a record
+of where. Read it back from the Apps Script editor:
+
+```js
+qlikSyncLastRun()
+```
+
+`phase: "finished"` means the run ended on its own and `ok` / `failed` / `error` say how it
+went. Any other `phase` is where it was killed. If that keeps happening, give each page its
+own trigger at its own time rather than one `all` run.
 
 ### `APP_CONFIG.PAGES` keys
 
