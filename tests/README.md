@@ -119,6 +119,72 @@ wrapper `captureBare` photographs, so the file can never reach a page or the Dec
 own UI) and included, and that the Southwest **Land / Docks** recipe rows filter the
 Southwest *market* with a `refine`, rather than naming a market that does not exist.
 
+## `publish.js` — pulling vs. showing
+
+Runs `Code.gs` + `QlikSync.gs` under Node with the two page backends stubbed at their
+generation-bumping edge.
+
+```bash
+node tests/publish.js            # no dependencies
+```
+
+**Why it exists.** The pull used to end with `syncAll()`, moving every page's data version
+the instant the sheet was written. That version is the only thing that ever clears a
+device's saved tables, so a sync yanked the ground out from under whoever was reading: the
+page you were on kept its tables (nothing re-checks mid-session, so the pull looked like it
+did nothing), and navigating away and back wiped the device copy against a cold server cache
+— one page load then had to rebuild 50k rows, which is where the blank page came from.
+
+So it pins the split: a pull moves **no** generation and leaves a note saying which pages are
+waiting; `publishQlikData()` moves them. Successive pulls merge and keep the *first*
+timestamp. Publishing touches only the waiting pages, is a no-op the second time, and a page
+whose bump throws stays on the list with `ok:false` rather than being dropped behind a stale
+cache. It also checks the answer rides along on `getDataVersion` so a page open costs no
+extra round trip, that `syncAll` still does everything at once for "Update from source", and
+that the 600 ms reload is gone from the ⇣ button.
+
+One section guards a trap the prompt walked into: `AmrProgress.detail()` was a single
+page-wide registration, so a shared module using it would have taken the popover away from
+the Overview's month history. Detail bodies are keyed by job now, and the harness fails if
+either side stops honouring that.
+
+The last section pins the **forced** prompt, which is the whole point of it: the modal is
+marked `data-locked` and both shared dismissal handlers skip locked modals; the card carries
+no ✕ and no `data-close`; the running state offers no action at all; and the ready state
+offers exactly one, `publish`, with no *Later*. It also pins the two judgement calls — a
+pull that had trouble but still landed tabs is still forced, and a *failed publish* is not,
+because a tab nobody can leave is worse than a stale one.
+
+These are static checks on `Shell.html`, in the same spirit as `deckstatic.js`: jsdom is not
+vendored, so the modal is never rendered here. **The wording and layout still need looking at
+in a real browser** — this harness only proves there is no way out of it.
+
+## `pvlookup.js` — the mapping check, and where the header row is
+
+Runs `PV_Backend.gs` + `PV_Lookup.gs` under Node over a grid shaped like `Combined Data CPI
+Raw` — **totals band on row 1, header on row 2**, which is how that tab actually sits.
+
+```bash
+node tests/pvlookup.js           # no dependencies
+```
+
+**Why it exists.** `getPvUnmapped` failed with *"The raw tab has no "Plant" column, so the
+mapping check can't run"* against a tab whose row 2 says `Plant`. `PV_Lookup.gs` had its own
+copy of "the header is row 1", took the totals band for the header, resolved every column to
+`-1`, and blamed the sheet. On the pre-fix file this harness reproduces that error verbatim.
+
+That was the **third** copy of the header-row rule: `PV_Backend.readTab_` located it properly
+(SCHEMA `v5`), `FSC_Backend.headerRow_` was fixed separately for the same reason, and this
+one never got it. So the fix was to stop having a third copy — `PV` exports `readTab` and
+`RAW_HEADER_NAMES`, `PV_Lookup` calls them — and the harness fails if a local reader comes
+back or `PV.readTab` stops being used.
+
+It also pins the other half of the rule: the two **LOOKUP** tabs are read by column
+*position* and must keep row 1, so the reader has to be told nothing for them. A located
+header row there would silently drop the first mapping and report a mapped plant as missing.
+And it checks the two files still share one cache entry per tab, which is the only reason
+the mapping check does not re-read 40k rows the page has already read.
+
 ## `qliksync.js` — the sync, and the six minutes
 
 Runs `QlikSync.gs` for real against a fake Spreadsheet/Drive service, over a fixture shaped

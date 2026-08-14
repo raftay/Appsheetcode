@@ -206,6 +206,12 @@ tfoot td:first-child{text-align:left}
 .amr-pop .acts button{flex:1; border:1px solid var(--line); background:#fff; color:var(--blue-100);
   font:700 11px Inter; padding:7px 9px; border-radius:8px; cursor:pointer}
 .amr-pop .acts button:hover{border-color:var(--blue-40); background:var(--blue-10)}
+/* The publish button stays put while the server works — a second click would
+   bump the data version twice and wipe every device's tables for nothing. */
+.amr-pop .acts button:disabled{opacity:.55; cursor:default; border-color:var(--line);
+  background:#fff}
+/* The first action in the row is the one being recommended. */
+.amr-pop .acts button[data-act="publish"]{border-color:var(--blue-40); color:var(--blue-100)}
 .amr-pop .amr-jobs{margin:8px 0 0; padding:0; list-style:none}
 .amr-pop .amr-jobs li{display:flex; justify-content:space-between; gap:10px;
   font:600 11px Inter; color:var(--muted); padding:3px 0}

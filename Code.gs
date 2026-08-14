@@ -152,7 +152,10 @@ function APP_bumpGen_(page) {
  * The browser compares it with what it stored on its last visit. */
 function getDataVersion(page) {
   page = String(page || '');
-  return { page: page, generation: APP_getGen_(page) };
+  /* The pending note rides along: every page already makes this call on open
+     (AmrCache.boot), so asking separately would be a second round trip on
+     every load to answer a question that is almost always "no". */
+  return { page: page, generation: APP_getGen_(page), pendingUpdate: getQlikPending() };
 }
 
 /* Several pages need more than one page's version before they can trust their
@@ -168,7 +171,7 @@ function getDataVersions(pages) {
     if (!p) continue;
     try { out[p] = APP_getGen_(p); } catch (e) { out[p] = ''; }
   }
-  return { ok: true, generations: out };
+  return { ok: true, generations: out, pendingUpdate: getQlikPending() };
 }
 
 /* chunked CacheService helpers (6 h TTL) used by the Slide data below */
@@ -204,6 +207,90 @@ function syncAll() {
   try { APP_bumpGen_('kpi');     } catch (e) {}  // shared KPI workbooks
   try { CacheService.getScriptCache().remove('amrize_logo_datauri'); } catch (e) {}
   return { ok: true, at: new Date().toISOString() };
+}
+
+/* ------------------------------------------------------------------------
+ * PUBLISHING ONE PAGE'S NEW DATA
+ * ------------------------------------------------------------------------
+ * Same act as syncAll, narrowed. A QlikView pull touches the tabs behind one
+ * page — the Aggregates tabs, or the Ready-Mix tabs, or the Slide Builder's —
+ * and there is no reason a pull of one should throw away the other two pages'
+ * caches and make every device rebuild them for nothing.
+ *
+ * Pages that COMPOSE others need nothing here: the Executive Overview reads
+ * Price & Volume and Ready-Mix and folds both of their versions into the token
+ * it compares (getDataVersions), so bumping 'pricevolume' already reaches it.
+ * ---------------------------------------------------------------------- */
+function APP_publishPages_(pages) {
+  var did = [];
+  (pages || []).forEach(function (p) {
+    try {
+      if      (p === 'pricevolume') { PV.clearCache();          }
+      else if (p === 'rmx')         { RMX_NS.bumpGeneration();  }
+      else if (p === 'segment')     { APP_bumpGen_('segment');  }
+      else if (p === 'kpi')         { APP_bumpGen_('kpi');      }
+      else return;
+      did.push(p);
+    } catch (e) {}
+  });
+  return did;
+}
+
+/* ========================================================================
+ * THE ⇣ PULL AND THE "SHOW IT ON THE SITE" ARE TWO STEPS
+ * ------------------------------------------------------------------------
+ * QlikSync writes the sheet and records which pages now have new data behind
+ * them. Until somebody publishes, every page keeps serving the numbers it
+ * already has — nobody gets their tables pulled out mid-read, and the rebuild
+ * that a new data version forces happens when a human asks for it and can be
+ * shown what is going on. See section 0c of QlikSync.gs.
+ *
+ * Both of these are called from Shell.html (google.script.run).
+ * ====================================================================== */
+
+/* Is there new data sitting in the sheet that the site is not showing yet?
+   Folded into getDataVersion below as well, so a page open costs no extra
+   round trip to find out. */
+function getQlikPending() {
+  try {
+    var p = QLIKSYNC.pending();
+    if (!p.pending) return { pending: false };
+    var labels = p.pages.map(function (pg) {
+      return (APP_CONFIG.PAGES[pg] && APP_CONFIG.PAGES[pg].label) || pg;
+    });
+    return { pending: true, pages: p.pages, labels: labels, since: p.since, at: p.at };
+  } catch (e) { return { pending: false }; }
+}
+
+/* Take the new data. Moves the data version for each page that was waiting,
+   which is what clears the server cache AND every device's saved tables.
+   The caller reloads afterwards; the next load rebuilds from the sheet. */
+function publishQlikData(pages) {
+  try {
+    var p = QLIKSYNC.pending();
+    var want = (pages && pages.length) ? pages : p.pages;
+    if (!want || !want.length) {
+      return { ok: true, published: [], note: 'There was nothing waiting to be published.' };
+    }
+    var did = APP_publishPages_(want);
+
+    /* Only forget the ones that actually moved: a page whose bump threw is
+       still waiting, and saying otherwise would strand it behind a stale
+       cache with nothing left to say so. */
+    if (did.length === want.length) {
+      QLIKSYNC.clearPending();
+    } else {
+      var left = want.filter(function (x) { return did.indexOf(x) === -1; });
+      return { ok: false, published: did, stillWaiting: left,
+               error: 'Published ' + did.length + ' of ' + want.length +
+                      '. Still waiting: ' + left.join(', ') + '.' };
+    }
+    var gens = {};
+    did.forEach(function (pg) { try { gens[pg] = APP_getGen_(pg); } catch (e) {} });
+    return { ok: true, published: did, generations: gens, at: new Date().toISOString() };
+  } catch (e) {
+    return { ok: false, published: [], error: e.message };
+  }
 }
 
 

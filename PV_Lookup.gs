@@ -43,11 +43,20 @@
  * SUBMARKET). Writing by header name could quietly disagree with how the data
  * is read. The header row is used for the dialog's labels only.
  *
- * SELF-CONTAINED BY NECESSITY: PV_Backend.gs is wrapped in an IIFE, so its
- * helpers (readTab_, buildLookups_, gk_, cacheGet_ …) are closure-private and
- * unreachable from here. Everything below is local. The only outside things
- * used are the genuine globals: APP_CONFIG, APP_openSpreadsheet_, APP_getGen_,
- * APP_bumpGen_, and PV.clearCache().
+ * MOSTLY SELF-CONTAINED: PV_Backend.gs is wrapped in an IIFE, so its helpers
+ * (buildLookups_, cacheGet_ …) are closure-private and unreachable from here,
+ * and the small ones below are local copies.
+ *
+ * THE TAB READER IS NOT ONE OF THEM. Reading a tab means knowing which row the
+ * header is on, and this file's own copy of that rule said "row 1" — which is
+ * wrong for Combined Data CPI Raw, where the totals band sits above the
+ * header, and is exactly how the mapping check came to report no "Plant"
+ * column on a tab that has one. PV now exports its reader (PV.readTab) and
+ * this file calls it, so that rule exists once.
+ *
+ * The outside things used are the genuine globals — APP_CONFIG,
+ * APP_openSpreadsheet_, APP_getGen_, APP_bumpGen_ — plus PV.readTab,
+ * PV.RAW_HEADER_NAMES and PV.clearCache().
  *****************************************************************************/
 
 var PVLOOK = (function () {
@@ -89,9 +98,10 @@ function code_(v){
 }
 
 /* =================== cache ===================
- * Deliberately the SAME key + chunk format PV_Backend uses, so a tab PV has
- * already read this generation is free here (and vice versa). If the format
- * ever changes, this simply misses and re-reads the sheet. */
+ * This file's OWN entries only — the mapping-check result. The tabs it reads
+ * are cached by PV.readTab under PV's key, which is how a tab either page has
+ * already read this generation is free for the other.
+ * Generation-keyed, so a sync invalidates it with everything else. */
 function gen_(){ return APP_getGen_('pricevolume'); }
 function gk_(k){ return 'pv|g' + gen_() + '|' + k; }
 
@@ -124,15 +134,23 @@ function sheet_(name){
   for (var i = 0; i < all.length; i++) if (lk_(all[i].getName()) === want) return all[i];
   throw new Error('Sheet not found: "' + name + '". Check the tab names in Config.gs.');
 }
-/* header = row 1 (normalised name -> index), rows = the rest. Values, not
-   formulas — which is what we want: J:L arrive as the text they evaluate to. */
+/* { header: normalised name -> index, rows: everything under it }. Values, not
+   formulas — which is what we want: J:L arrive as the text they evaluate to.
+
+   THE HEADER IS NOT ROW 1 ON THE RAW TAB. It used to be read as row 1 here,
+   and Combined Data CPI Raw sums ABOVE its header — so the totals band was
+   taken for the header, every column came back -1, and the mapping check died
+   with 'no "Plant" column' against a tab whose row 2 says Plant. (Other
+   Revenue sums BELOW its header, so the same blind read happens to work
+   there, which is why this only ever failed on the one tab.)
+
+   PV.readTab locates the header by scoring the first rows against the names
+   the tab should carry, and is the SAME reader PV_Backend uses for the same
+   tabs — same cache entry, so a tab either page has read this generation is
+   free for the other. Naming nothing keeps row 1, which is what the two
+   LOOKUP tabs want: they are read by column POSITION, not by name. */
 function tab_(name){
-  var ck = gk_('tab:' + name), hit = pvGet_(ck); if (hit) return hit;
-  var values = sheet_(name).getDataRange().getValues(), header = {};
-  (values[0] || []).forEach(function (h, i){ var n = norm_(h); if (n && !(n in header)) header[n] = i; });
-  var out = { header: header, rows: values.slice(1) };
-  pvPut_(ck, out);
-  return out;
+  return PV.readTab(name, name === S_().SHEET ? PV.RAW_HEADER_NAMES : null);
 }
 /* The header row as WRITTEN (original casing), for the dialog's column labels. */
 function labels_(name){

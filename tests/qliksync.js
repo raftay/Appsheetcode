@@ -186,9 +186,10 @@ function exportBook() {
  * ==================================================================== */
 let PROPS = {};
 let BOOKS = {};
+let SYNC_ALL_CALLS = 0;
 
 function load({ tick = 0, lockFree = true } = {}) {
-  PROPS = {}; OPS = []; TICK = tick;
+  PROPS = {}; OPS = []; TICK = tick; SYNC_ALL_CALLS = 0;
   CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);
 
   const sheets = { raw: rawSheet(), other: otherSheet() };
@@ -242,7 +243,7 @@ function load({ tick = 0, lockFree = true } = {}) {
     MimeType: { GOOGLE_SHEETS: 'application/vnd.google-apps.spreadsheet' },
     ScriptApp: { getOAuthToken: () => 'tok' },
     UrlFetchApp: { fetch: () => { throw new Error('no conversion expected'); } },
-    syncAll: () => ({ ok: true }),
+    syncAll: () => { SYNC_ALL_CALLS++; return { ok: true }; },
   };
   ctx.global = ctx;
   vm.createContext(ctx);
@@ -392,6 +393,40 @@ console.log('\na run that never finished is called out for what it is:');
   const r = ctx.qlikSyncLastRun();
   checkThat('the verdict names the runtime limit',
     /runtime limit/i.test(r.verdict || '') && /Main Raw Data/.test(r.verdict || ''), r.verdict);
+}
+
+/* ======================================================================
+ * 5b. The pull writes the sheet and stops there
+ * ==================================================================== */
+console.log('\nthe pull records what is waiting rather than publishing it:');
+{
+  const ctx = load();
+  const res = ctx.qlikSyncNow('pricevolume');
+
+  check('it does not invalidate anybody\'s caches', SYNC_ALL_CALLS, 0);
+  check('it says the site has not been told yet', res.awaitingPublish, true);
+  check('and which page is waiting', res.pagesUpdated, ['pricevolume']);
+
+  const note = JSON.parse(PROPS.QLIK_PENDING_UPDATE || '{}');
+  check('the note survives the run', note.pages, ['pricevolume']);
+  checkThat('with the export it came from',
+    (note.files || []).join() .indexOf('AGG export.xlsx') !== -1, JSON.stringify(note.files));
+
+  /* A second pull of the same page must not reset when this started — the
+     prompt should say how long the site has been behind, not how long since
+     the most recent pull. */
+  const firstSince = note.since;
+  ctx.qlikSyncNow('pricevolume');
+  const note2 = JSON.parse(PROPS.QLIK_PENDING_UPDATE || '{}');
+  check('a second pull keeps the original timestamp', note2.since, firstSince);
+  check('and does not duplicate the page', note2.pages, ['pricevolume']);
+}
+
+console.log('\na pull that wrote nothing leaves nothing waiting:');
+{
+  const ctx = load({ lockFree: false });
+  ctx.qlikSyncNow('pricevolume');
+  checkThat('no note was left', !PROPS.QLIK_PENDING_UPDATE, PROPS.QLIK_PENDING_UPDATE);
 }
 
 /* ======================================================================
