@@ -349,11 +349,11 @@ var SB = (function () {
   // one - the running month is only part-billed.
   //
   // It used to come from QLIK_REPORT_MONTH, stamped by QlikSync off the
-  // Ready-Mix export's month column. That column is MYMONTH: a bare "Jul" with
-  // no year, both years on the one row. The export carries every month of the
-  // prior year, so the newest value in it is always DECEMBER, and the page
-  // defaulted to December in August. The stamp is still written (the sync
-  // report shows it) but it is no longer what the picker starts on.
+  // Ready-Mix export's Bill Month column. That export carries every month of
+  // the prior year ("Dec-25" against nothing this year), so the newest value
+  // in it is always DECEMBER, and the page defaulted to December in August.
+  // The stamp is still written (the sync report shows it) but it is no longer
+  // what the picker starts on.
   function reportMonth_() {
     var tz = Session.getScriptTimeZone();
     var y  = +Utilities.formatDate(new Date(), tz, 'yyyy');

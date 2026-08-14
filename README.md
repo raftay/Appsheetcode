@@ -348,14 +348,25 @@ business reconciles against Qlik.
 - **Duplicate column names** require first-unused matching.
 - **Bill Month spelling is inconsistent** in QlikView (`Jul-26` vs `July-26`) and breaks
   SUMIFS joins.
+- **Bill Month has two header spellings.** QlikView exports `bill_month`; the sheet header
+  reads `Bill Month`. No `norm_` in this codebase folds underscores, so both spellings are
+  listed explicitly wherever the column is resolved (`MONTH_COLS_` in `RMX_Backend.gs`,
+  `MONTH_NAMES_` in `RFSC_Backend.gs`, `SYNONYM` in `QlikSync.gs`, `ovcHistRmx_` in
+  `Ov_Backend.gs`).
+- **Bill Month splits each month across two rows** — `Jul-25` carries the prior-year
+  columns, `Jul-26` the current-year ones, with the off-year columns blank. Everything
+  downstream must therefore **sum into its bucket before taking any ratio**. It already
+  does: ASP, the PPI `covered_()` floors and the PPI weight are all computed on summed
+  plant × mix buckets, never on a single row. Any new per-row ratio would be a bug.
 
 ### The reporting month
 
 Always **last calendar month** (current month − 1), computed from the clock — never derived
-from the data. The QlikView `MyMonth` column is a bare month name with no year and carries
-every month of the prior year, so a maximum-based scan always returns December. `latestMonth_`
-is capped at last calendar month for year-less values only; year-bearing history values
-(`Aug-25`) are not capped.
+from the data. The export carries every month of the *prior* year (`Dec-25` sitting against
+nothing this year), so a maximum-based scan always returns December. `latestMonth_` in
+`QlikSync.gs` takes the newest value literally and is **not** capped — a Bill Month names its
+own year, and the closed-year history workbooks legitimately end in December. That stamp
+(`QLIK_REPORT_MONTH`) is informational only; the pages compute the month from the calendar.
 
 Pre-aggregated tabs (Slide Segment, Slide Product) have **no month column at all** and
 cannot be re-sliced — whatever month the export was run for, both tabs are for that month.

@@ -201,14 +201,15 @@ table.gt.wrapText tbody td.tlbl{white-space:normal}
         <span><b>Main Raw Data</b> <button type="button" class="amr-qm" data-amr-hint="sb_main" title="Source layout for the segment table">?</button> <span style="color:var(--muted)">— the Segment table</span></span>
         <span><b>Extra Raw Data</b> / <b>Associate Raw Data</b> <button type="button" class="amr-qm" data-amr-hint="sb_extras" title="Source layout for the Extras / VAP tables">?</button> <span style="color:var(--muted)">— the two Extras &amp; VAP tables</span></span>
       </div>
-      <!-- NOTE — MONTH FORMAT, STILL OPEN.
-           Everything here buckets on the month ordinal RMX_Backend.gs works out,
-           which reads BOTH the current MyMonth export ("Jul") and the older Bill
-           Month one ("Jul-26"). If we go back to Bill Month, nothing on this page
-           should need editing — but read the "OPEN - WE MAY HAVE TO GO BACK TO THE
-           OLD BILL MONTH FORMAT" block above MONTH_COLS_ in RMX_Backend.gs first.
-           The risk is not this page, it is the mixed spelling ("Jul-26" vs
-           "July-26") silently dropping rows from the sheet's own SUMIFS joins. -->
+      <!-- NOTE — MONTH FORMAT.
+           The month column is Bill Month ("Jul-25" / "Jul-26"), spelled
+           `bill_month` in the QlikView export. Everything here buckets on the
+           month ordinal RMX_Backend.gs works out, and the year on the cell is
+           ignored there, so each month arriving as TWO rows (one per year) is
+           re-aggregated in the buckets — see the MONTH COLUMN block above
+           MONTH_COLS_ in RMX_Backend.gs. The risk is not this page, it is the
+           mixed spelling ("Jul-26" vs "July-26") silently dropping rows from
+           the sheet's own SUMIFS joins. -->
     </div>
 
     <div id="segKpiSection" style="display:none">
@@ -1256,11 +1257,12 @@ Segment and By extra type start ticked, the detail table starts off; the preview
 <code>PLANT LOOKUP</code>, <code>PRODUCT MASTER</code> and <code>EXTRAS LOOKUP</code> tabs. To point this page at a
 different workbook, use &#9881; <b>Data sheet</b> &mdash; it is the same setting the Ready-Mix page uses, so changing it
 changes both.</p>
-<h3>Month format &mdash; still open</h3>
-<p>The month column is read as <b>MyMonth</b> (&ldquo;Jul&rdquo;, both years on one row) or the older <b>Bill Month</b>
-(&ldquo;Jul-26&rdquo;). We may go back to Bill Month. If we do, the thing to watch is the mixed spelling
-(&ldquo;Jul-26&rdquo; vs &ldquo;July-26&rdquo;), which silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash;
-see the note above <code>MONTH_COLS_</code> in <code>RMX_Backend.gs</code>.</p>`;
+<h3>Month format</h3>
+<p>The month column is <b>Bill Month</b> (&ldquo;Jul-25&rdquo; / &ldquo;Jul-26&rdquo;), spelled <code>bill_month</code> in the
+QlikView export. It carries the year, so each month arrives as <b>two rows</b> &mdash; one per year &mdash; which the
+buckets re-aggregate. The thing to watch is the mixed spelling (&ldquo;Jul-26&rdquo; vs &ldquo;July-26&rdquo;), which
+silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note above <code>MONTH_COLS_</code> in
+<code>RMX_Backend.gs</code>.</p>`;
 </script>
 <?!= include('KpiShared') ?>
 <?!= include('SlideExport') ?>
