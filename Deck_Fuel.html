@@ -325,18 +325,27 @@ var AmrFuelExec = (function(){
     };
   }
 
+  /* ↻ Update from source: drop the model for every month this session has
+     loaded, so the next Render asks the backend again. Both adapters share
+     MODEL, so each clears only its own half. */
+  function resetter(key){
+    return function(){ MODEL[key] = {}; };
+  }
+
   AmrDeckSource.register('fsc', {
     prepare: loader('fsc', 'getFscData', 'AGG Fuel Recovery'),
     content: contentFor('fsc', 'agg', 'AGG Fuel Recovery'),
     /* the page's own fitter, on the page's own frame */
-    fit: AmrFuelExec.fitSlide
+    fit: AmrFuelExec.fitSlide,
+    reset: resetter('fsc')
   });
 
   AmrDeckSource.register('rfsc', {
     prepare: loader('rfsc', 'getRmxFuelData', 'RMX Fuel Recovery'),
     content: contentFor('rfsc', 'rmx', 'RMX Fuel Recovery'),
     /* the page's own fitter, on the page's own frame */
-    fit: AmrFuelExec.fitSlide
+    fit: AmrFuelExec.fitSlide,
+    reset: resetter('rfsc')
   });
 })();
 </script>

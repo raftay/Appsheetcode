@@ -249,15 +249,28 @@ re-syncing forever neither fixes it nor tells anybody.
 loaded with. When it isn't, the page greys out and offers one button that reloads it.
 
 **↻ Update from source** asks before it acts, on every page that has the button — Price &
-Volume, Ready-Mix, Segment, the Overview and both Fuel Recovery pages. If nothing behind the
-page has been touched it says *Already up to date* and throws nothing away; pressing it on an
-unchanged sheet used to make every user rebuild every table for nothing.
+Volume, Ready-Mix, Segment, the Overview, both Fuel Recovery pages and the Deck Builder. If
+nothing behind the page has been touched it says *Already up to date* and throws nothing
+away; pressing it on an unchanged sheet used to make every user rebuild every table for
+nothing.
+
+**On the Deck Builder it does one thing more.** Render does not re-read the sheets and never
+had to — every backend cache key is prefixed with the source workbook's modified time, so a
+sync strands the old entries by itself and the next Render picks up the new figures. What
+Render *does* reuse for the life of the page is what the **adapters** already fetched; that
+is the whole point of `prepare()` being cheap the second time. So a sheet that changes while
+the tab is open is invisible there, and pressing Render again will not do it either — a row
+that already has a picture is skipped. The button clears every adapter through
+`AmrDeckSource.resetAll()` and drops the rendered pictures, because they were photographed
+from figures that are now the old ones — the same reasoning as changing the report month.
 
 A page's version covers **every workbook its figures depend on**, not just its own: the
 Overview reads Price & Volume, Ready-Mix and Segment, so its version moves when any of the
 three does. That comes from `APP_EXTRA_SOURCES` in `Config.gs`, which already listed exactly
 that. Without it a page with no sheet of its own would report a version that never moved and
-sit on stale figures with the button insisting there was nothing to do.
+sit on stale figures with the button insisting there was nothing to do. The Deck Builder is
+the same case and is listed there too — its five sources reduce to four workbooks
+(`pricevolume`, `rmx`, `segment`, `saskrates`).
 
 **Loading is full-screen.** `AmrProgress` was a small pill in the corner, which was easy to
 miss — people read half-loaded tables without realising. Same API (`set` / `done` / `fail` /
@@ -863,6 +876,19 @@ needs a decision.
   whose source declares a `kpiPicker`, reads and writes **that same map**, and drops the
   row's rendered picture when it changes — so a market whose region was never set, or set
   wrong, is fixed without leaving the page, and the report page sees the change too.
+- **The picker follows the row's own workbook.** There are **two** EBITDA workbooks:
+  Manitoba and Saskatchewan are the whole of the second one (`mbsk`), everything else is on
+  the main one. The dropdown used to be the merged list from both, so a Saskatchewan row was
+  offered Ontario's regions and defaulted to the first of them — a real region sheet,
+  silently the wrong one. It showed no wrong numbers only because `kpiMissingBook()`
+  suppresses the KPI strip for those two markets while their workbook is absent; the moment
+  that file is uploaded the guard stops firing and the stale default would have gone onto
+  the slide. `AmrKpi.plantIndex(vals, book)` now takes a book, `AmrKpi.bookFor(market)` says
+  which one a market reads, and `kpiSheets` / `kpiFor` scope **both the offered list and the
+  fallback default** to it. A row whose workbook is missing reads *no workbook* instead of a
+  dropdown, and the dropdown appears on its own when the file is uploaded — no code change.
+  Labels are worked out from the merged set before filtering, so the `· MB/SK` suffix means
+  the same thing either way and the remembered choice is never stranded.
 - **Central Canada** resolves to the backend's `__ALL__`; it is a rollup with no market tab.
 
 **Verified:** `tests/pvcheck.js` — 11/11 byte-identical between old page code and the module

@@ -134,6 +134,8 @@
     </span>
   </div>
   <button class="ghost" onclick="window.amrGoHome&&amrGoHome()" title="Back to the suite home">&#8962; Home</button>
+  <button class="ghost" id="dbSyncBtn" onclick="dbUpdateFromSource()"
+    title="Re-read every source sheet the deck draws on, and drop anything already rendered from the old figures">&#8635; Update from source</button>
   <button class="ghost" onclick="dbValidate()" title="Check the template before building on it">&#10003; Check template</button>
 </header>
 
@@ -222,6 +224,10 @@
  *
  * A row that fails is marked red and left alone — press Render again and only
  * the unfinished rows are retried. Nothing is ever redone from scratch.
+ *
+ * That last sentence is exactly why ↻ UPDATE FROM SOURCE exists: reusing
+ * everything is right until the data underneath moves, and then it is the one
+ * thing keeping the old figures on screen. See dbUpdateFromSource below.
  * ========================================================================= */
 
 var IS_LIVE = (typeof google !== 'undefined' && google.script && google.script.run);
@@ -258,6 +264,10 @@ function setBusy(b){
   document.getElementById('dbBtnRender').disabled  = b || !ROWS.length;
   document.getElementById('dbBtnPublish').disabled = b || !countReady();
   document.getElementById('dbReloadTpl').disabled  = b;
+  /* Not during a render or a publish: it drops the very pictures those are
+     producing. The header button is absent on nothing, but guard anyway. */
+  var s = document.getElementById('dbSyncBtn');
+  if(s) s.disabled = b;
 }
 
 function countOn(){ return ROWS.filter(function(r){ return r.on; }).length; }
@@ -378,6 +388,87 @@ function dbSyncDeckName(){
   if(el.getAttribute('data-touched')) return;
   var m = DECK_MONTH || dbPrevMonth();
   el.value = 'Amrize Commercial Deck — ' + DB_MON[m-1] + ' ' + dbYearOf(m);
+}
+
+
+/* =========================================================================
+ * ↻ UPDATE FROM SOURCE
+ * -------------------------------------------------------------------------
+ * Render does NOT re-read the sheets. It never had to: every backend cache
+ * key is prefixed with the source workbook's modified time, so a sync moves
+ * the version and strands the old entries on its own. What Render does reuse,
+ * for the whole life of this page, is what the ADAPTERS have already fetched —
+ * that is the point of prepare() being cheap the second time. So a sheet that
+ * changes while this tab is open is invisible here until something drops
+ * those, and pressing Render again would not do it: a row that already has a
+ * picture is skipped entirely.
+ *
+ * Hence this button, and hence it does three things and not one:
+ *   1. ask whether the data ACTUALLY changed — an unchanged sheet costs
+ *      nothing and throws nothing away (AmrFresh.ifChanged),
+ *   2. drop every adapter's in-browser copy,
+ *   3. drop every rendered picture, because it was photographed from figures
+ *      that are now the old ones. Same reasoning as changing the month.
+ *
+ * The template is deliberately NOT reloaded: it is a Slides file, nothing to
+ * do with the data, and it has its own button.
+ * ======================================================================= */
+function dbUpdateFromSource(){
+  if(!IS_LIVE){
+    clearBanners();
+    banner('bad', 'Update from source only works in the live Apps Script web app.');
+    return;
+  }
+  if(BUSY) return;
+  clearBanners();
+  setBusy(true);
+  var btn = document.getElementById('dbSyncBtn');
+  if(btn) btn.disabled = true;
+  prog('Checking the source sheets…');
+
+  function finish(){
+    if(btn) btn.disabled = false;
+    setBusy(false);
+    updateStages();
+  }
+
+  if(!window.AmrFresh){
+    prog('');
+    banner('bad', 'The shell did not load, so the data version cannot be checked.');
+    finish();
+    return;
+  }
+
+  AmrFresh.ifChanged(function(changed){
+    if(!changed){
+      prog('');
+      banner('ok', 'Already up to date — none of the source sheets have changed, '+
+        'so nothing was thrown away.');
+      finish();
+      return;
+    }
+
+    var n = window.AmrDeckSource ? AmrDeckSource.resetAll() : 0;
+
+    /* Every picture on screen was taken from the old figures. */
+    var dropped = 0;
+    ROWS.forEach(function(r){
+      if(r.png || r.status === 'ready' || r.status === 'error'){
+        r.png = null; r.w = r.h = 0; r.status = 'pending'; r.err = '';
+        dropped++;
+      }
+    });
+    redraw();
+
+    prog('Source data updated');
+    banner('ok', '<b>New figures.</b> ' + n + ' content source' + (n===1?'':'s') +
+      ' cleared' +
+      (dropped ? ' and ' + dropped + ' rendered slide' + (dropped===1?'':'s') +
+                 ' dropped — press <b>Render</b> to rebuild ' +
+                 (dropped===1?'it':'them') + ' from the new data.'
+               : '. Press <b>Render</b> when you are ready.'));
+    finish();
+  });
 }
 
 
@@ -612,11 +703,30 @@ function kpiPickerHtml(r, i){
   var src = window.AmrDeckSource ? AmrDeckSource.get(r.spec.source) : null;
   var p = src && src.kpiPicker;
   if(!p) return '<div></div>';
+
+  /* The row's own list, not the merged one. Manitoba and Saskatchewan read the
+     SECOND EBITDA workbook; every other market reads the first. Offering one
+     list to both meant a Manitoba row was offered Ontario's regions and
+     defaulted to the first of them — a real region sheet, silently the wrong
+     one. Now each row is asked what IT can choose from. */
   var sheets = [];
-  try { sheets = p.sheets() || []; } catch(e){ sheets = []; }
+  try { sheets = p.sheets(r.spec) || []; } catch(e){ sheets = []; }
+
   if(!sheets.length){
-    return '<div class="db-kpi-none" title="Upload the EBITDA workbook on the '+
-      'Price &amp; Volume page to fill the KPI cards">no workbook</div>';
+    /* Empty means one of two different things, and they are fixed by
+       different actions, so they are not allowed to read the same. */
+    var book = '';
+    try { book = (typeof p.book === 'function') ? p.book(r.spec) : ''; } catch(e){}
+    var missing = true;
+    try { missing = (typeof p.hasBook === 'function') ? !p.hasBook(r.spec) : true; } catch(e){}
+    var name = (window.AmrKpi && AmrKpi.bookLabel) ? AmrKpi.bookLabel(book) : 'EBITDA';
+    return '<div class="db-kpi-none" title="'+esc(missing
+        ? 'This slide\u2019s KPI cards come from the ' + name + ' workbook, which '+
+          'has not been uploaded yet. Upload it on the Price & Volume page and '+
+          'the region dropdown appears here.'
+        : 'The ' + name + ' workbook is uploaded but has no region sheet for '+
+          'this market.')+'">'+
+      esc(missing ? 'no workbook' : 'no region')+'</div>';
   }
   var cur = '';
   try { cur = p.current(r.spec) || ''; } catch(e){}
@@ -753,6 +863,12 @@ document.addEventListener('DOMContentLoaded', function(){
     this.setAttribute('data-touched', '1');       // a typed name stops following the month
   });
 
+  /* One small call for the data version this page opened with. It is what
+     lets ↻ Update from source answer "nothing has changed" honestly instead
+     of throwing the session away on the first press, and it starts the shell's
+     watcher, so a sync that lands while the deck is half-built says so. */
+  if(IS_LIVE && window.AmrCache) AmrCache.boot(function(){});
+
   if(IS_LIVE) dbLoadTemplate();
   else document.getElementById('dbTplInfo').innerHTML =
     '<span style="color:var(--neg);font-weight:700">This page only works inside '+
@@ -774,6 +890,19 @@ document.addEventListener('DOMContentLoaded', function(){
     'per call.</p>'+
     '<h3>If a slide fails</h3><p>It goes red with the reason. Press <b>Render</b> again — only '+
     'the unfinished rows are retried, nothing already done is rebuilt.</p>'+
+    '<h3>Getting new figures</h3><p>You do not normally need to do anything: the deck reads the '+
+    'same cached tables the report pages do, and those are keyed to each source sheet\u2019s '+
+    'version, so a sync makes the next Render pick up the new numbers by itself. The one case '+
+    'that needs a press is a sheet that changes <b>while this tab is open</b> — what has already '+
+    'been fetched stays fetched, and a slide that already has a picture is skipped by Render. '+
+    '<b>↻ Update from source</b> handles that: it checks whether the data really moved, and '+
+    'only if it did does it clear what was fetched and drop the pictures built from it. On an '+
+    'unchanged sheet it costs nothing and throws nothing away.</p>'+
+    '<h3>The Region dropdown</h3><p>Slides with a KPI strip read one region sheet of an EBITDA '+
+    'workbook, and there are two workbooks: Manitoba and Saskatchewan are on their own, '+
+    'everything else is on the main one. Each row is only offered the regions from ITS workbook. '+
+    'A row whose workbook has not been uploaded says <i>no workbook</i> instead — upload it on '+
+    'the Price &amp; Volume page and the dropdown appears there on its own.</p>'+
     '<h3>Changing the layout</h3><p>Move or resize a box in the template deck, then press '+
     '<b>&#8635; Reload template</b>. The previews and the generated slides both follow — the '+
     '{{IMAGE}} box is a guide, not a frame, so the picture is always fitted inside it and can '+

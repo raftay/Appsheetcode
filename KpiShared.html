@@ -21,7 +21,12 @@
        AmrKpi.load(cb)              → cb(values) — cached, instant on repeat visits
        AmrKpi.upload(book, file, cb)→ parse + share (book = 'main' | 'mbsk')
        AmrKpi.clear(book, cb)       → remove that workbook for everyone
-       AmrKpi.plantIndex(values)    → merged Region dropdown: [{label, book, tab}]
+       AmrKpi.plantIndex(values[,book]) → Region dropdown: [{label, book, tab}].
+                                    Merged across both books when `book` is
+                                    omitted; one book's entries when it is.
+       AmrKpi.bookFor(market)       → 'mbsk' for Manitoba / Saskatchewan, else 'main'
+       AmrKpi.bookLabel(book)       → that workbook's name, for a message
+       AmrKpi.hasBook(values, book) → has that workbook been uploaded at all
        AmrKpi.plant(values, entry, period)  → {aspCy,aspPy,salesCy,salesPy,volCy,volPy}
        AmrKpi.rmx(values, marketKey, period)→ {tab, units, rev, conc, raw}
        AmrKpi.rmxHeaders(values)    → block header text found (for status lines)
@@ -194,7 +199,7 @@ window.AmrKpi = (function(){
 
   /* Merged Region dropdown, same labels as before: a " · MB/SK" suffix is
      added only when the same tab name exists in BOTH workbooks. */
-  function plantIndex(v){
+  function plantIndex(v, book){
     var found=[];
     ['main','mbsk'].forEach(function(bk){
       var b = v && v[bk]; if(!b || !b.plant) return;
@@ -202,10 +207,42 @@ window.AmrKpi = (function(){
     });
     var counts={}; found.forEach(function(f){ counts[f.tab]=(counts[f.tab]||0)+1; });
     var SUF={main:'', mbsk:' \u00b7 MB/SK'};
-    return found.map(function(f){
+    var out = found.map(function(f){
       return { label: f.tab + (counts[f.tab]>1 ? SUF[f.book] : ''), book:f.book, tab:f.tab };
     });
+    if(!book) return out;
+    return out.filter(function(e){ return e.book === book; });
   }
+
+  /* Which workbook a market's numbers live in: Manitoba and Saskatchewan are
+     the whole of the 'mbsk' book, everything else is 'main'. RMX_MARKETS above
+     already records this per market, so it is read from there rather than
+     spelling the two names out a third time. Pages pass their own spelling
+     ('Saskatchewan', 'SASKATCHEWAN', 'HNS_SW'), which is why the key AND its
+     tokens are matched, normalised. An unknown market is 'main' - that is
+     where every market outside the MB/SK book lives. */
+  function bookFor(market){
+    var n = norm(market);
+    if(!n) return 'main';
+    var keys = Object.keys(RMX_MARKETS);
+    for(var i=0;i<keys.length;i++){
+      var cfg = RMX_MARKETS[keys[i]];
+      if(norm(keys[i]) === n) return cfg.book;
+      for(var t=0;t<cfg.tokens.length;t++){
+        if(norm(cfg.tokens[t]) === n) return cfg.book;
+      }
+    }
+    return 'main';
+  }
+
+  /* What to call a workbook when telling somebody it is missing. */
+  var BOOK_LABEL = { main:'AGG & RMX EBITDA', mbsk:'Manitoba / Saskatchewan EBITDA' };
+  function bookLabel(book){ return BOOK_LABEL[book] || BOOK_LABEL.main; }
+
+  /* Has that workbook been uploaded at all? Distinct from "it has no region
+     tabs": both leave the dropdown empty, and only this one is fixed by
+     uploading a file. */
+  function hasBook(v, book){ return !!(v && v[book || 'main']); }
 
   function plant(v, entry, period){
     if(!v || !entry) return null;
@@ -349,6 +386,9 @@ window.AmrKpi = (function(){
     },
 
     plantIndex: plantIndex,
+    bookFor: bookFor,
+    bookLabel: bookLabel,
+    hasBook: hasBook,
     plant: plant,
     rmx: rmx,
     rmxHeaders: rmxHeaders,
