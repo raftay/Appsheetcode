@@ -137,13 +137,11 @@ var QLIKSYNC = (function () {
    * =================================================================== */
 
   /* SYNONYMS — names that mean the same column on either side.
-     The month column is the live case: QlikView now sends MYMONTH ("Apr", with
-     both years populated on the one row) where it used to send Bill Month
-     ("Apr-25", one year per row). Whichever of the two the export says and
-     whichever the sheet header still says, the two match each other, so the
-     column lands in the right place before, during and after the changeover. */
+     The month column is the case that needs it: QlikView exports it as
+     `bill_month`, the sheet's header spells it "Bill Month", and norm_ only
+     folds case and whitespace — not underscores — so the two would otherwise
+     never match. Both carry the year ("Apr-25" / "Apr-26"), one year per row. */
   var SYNONYM = {
-    'mymonth':    'monthcol', 'my month':    'monthcol', 'my_month':   'monthcol',
     'bill month': 'monthcol', 'billmonth':   'monthcol', 'bill_month': 'monthcol'
   };
   function canon_(name) { return SYNONYM[name] || name; }
@@ -479,9 +477,9 @@ var QLIKSYNC = (function () {
     return out;
   }
 
-  /* The month cell as { y, m } (m is 0-based). y is null for MyMonth, which
-     carries no year at all — used to work out which month the exports are for,
-     so the Slide Builder's month picker can default to it. */
+  /* The Bill Month cell as { y, m } (m is 0-based) — used to work out which
+     month the exports are for, so the Slide Builder's month picker can default
+     to it. A value carrying no year is not readable and returns null. */
   function monthYM_(v) {
     var MON = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
                 jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
@@ -492,12 +490,6 @@ var QLIKSYNC = (function () {
 
     var s = String(v == null ? '' : v).trim();
 
-    var bare = s.match(/^([A-Za-z]{3,})$/);             // MyMonth: no year
-    if (bare) {
-      m = MON[bare[1].slice(0, 3).toLowerCase()];
-      return (m === undefined) ? null : { y: null, m: m };
-    }
-
     var mt = s.match(/^([A-Za-z]{3,})[\s\-\/.]*(\d{2,4})$/);
     if (!mt) return null;
     m = MON[mt[1].slice(0, 3).toLowerCase()];
@@ -507,43 +499,21 @@ var QLIKSYNC = (function () {
   }
 
   /* The latest month the export actually carries.
-     MyMonth gives no year, so the year comes from the "#### Vol" headers
-     instead — the newest one there is the current year.
 
-     CAPPED AT LAST CALENDAR MONTH — but only when the winning value is itself
-     year-less. A MyMonth column carries both years on the one row, so a row
-     headed "Dec" is last year's December sitting against nothing at all this
-     year, and the export carries all twelve. Taking the newest value literally
-     therefore said DECEMBER every month of the year, which is what made the
-     Product Segment page open on December in August.
+     NOT CAPPED at last calendar month. A Bill Month ("Dec-25") names its own
+     year and is not ambiguous, so the newest value is taken literally — the
+     2024-2023 and 2025-2024 history workbooks are in this format too, and a
+     closed year legitimately ends in December.
 
-     A Bill Month ("Dec-25") names its own year and is not ambiguous, so it is
-     never capped — the 2024-2023 and 2025-2024 history workbooks are still in
-     that format, and a closed year legitimately ends in December. `bare` is
-     therefore set from the WINNING value, not from "some row somewhere was
-     year-less": on a source carrying both formats the year-bearing value wins
-     the comparison anyway (a bare month sorts as year 0), and capping it would
-     have pulled a known December back to last month for no reason. */
+     This stamp is informational: it is written to QLIK_REPORT_MONTH and shown
+     in the sync report, but the Product Segment page works its reporting month
+     out from the calendar (see Code.gs reportMonth_) rather than reading it. */
   function latestMonth_(src, col) {
-    var best = null, bare = false, i;
-    for (i = 0; i < src.rows.length; i++) {
+    var best = null;
+    for (var i = 0; i < src.rows.length; i++) {
       var ym = monthYM_(src.rows[i][col]);
       if (!ym) continue;
-      if (!best || (ym.y || 0) > (best.y || 0) ||
-          ((ym.y || 0) === (best.y || 0) && ym.m > best.m)) { best = ym; bare = (ym.y == null); }
-    }
-    if (best && best.y == null) {
-      var y = 0;
-      for (i = 0; i < src.hdr.length; i++) {
-        var hm = String(src.hdr[i] || '').match(/\b(20\d{2})\b/);
-        if (hm && +hm[1] > y) y = +hm[1];
-      }
-      best = y ? { y: y, m: best.m } : null;
-    }
-    if (best && bare) {
-      var now = new Date(), cy = now.getFullYear(), cm = now.getMonth() - 1;   // last calendar month
-      if (cm < 0) { cm = 11; cy -= 1; }
-      if (best.y > cy || (best.y === cy && best.m > cm)) best = { y: cy, m: cm };
+      if (!best || ym.y > best.y || (ym.y === best.y && ym.m > best.m)) best = ym;
     }
     return best;
   }
@@ -551,15 +521,14 @@ var QLIKSYNC = (function () {
   /* The month column is stored as TEXT, never a date — a real date in that cell
      is what makes the year hide in the day field.
 
-     MyMonth stays a bare month ("Aug"); Bill Month keeps its year ("Aug-25").
-     A string goes through untouched, which is the normal case for both; only a
-     value that arrived as a date or a serial has to be formatted, and then the
-     shape follows the EXPORT's own spelling. A MyMonth column must never gain
-     a year it did not have — that missing year is exactly what tells every
-     reader that both years sit on the one row. */
-  function monthText_(v, isMyMonth) {
+     Bill Month keeps its year ("Aug-25"): the year is what tells every reader
+     which of the two year-columns the row's figures belong to, so it must
+     never be dropped. A string goes through untouched, which is the normal
+     case; only a value that arrived as a date or an Excel serial has to be
+     formatted back into "MMM-yy". */
+  function monthText_(v) {
     if (v === '' || v == null) return '';
-    var fmt = isMyMonth ? 'MMM' : 'MMM-yy';
+    var fmt = 'MMM-yy';
     if (Object.prototype.toString.call(v) === '[object Date]') {
       return Utilities.formatDate(v, Session.getScriptTimeZone(), fmt);
     }
@@ -584,7 +553,7 @@ var QLIKSYNC = (function () {
     var probe = sh.getRange(1, 1, probeRows, nCols).getValues();
     var head  = tgtHeaderRow_(probe, wanted);
     var hdrRow = head.row;
-    /* compared in canonical form, so "MyMonth" finds a "Bill Month" column */
+    /* compared in canonical form, so "bill_month" finds a "Bill Month" column */
     var tgtHdr = probe[hdrRow - 1].map(function (h) { return canon_(norm_(h)); });
 
     /* Export column  →  sheet column (1-based). Names first; where a name is
@@ -620,11 +589,7 @@ var QLIKSYNC = (function () {
       }
       if (tc === -1 || used[tc]) { unmatched.push(src.hdrRaw[sc]); continue; }
       used[tc] = 1;
-      /* myMonth: the EXPORT's own spelling decides the shape written, not the
-         sheet's header — an export still sending Bill Month keeps its year
-         even if the sheet column has already been renamed. */
-      pairs.push({ src: sc, col: tc + 1, isMonth: (name === 'monthcol'),
-                   myMonth: /^my[ _]?month$/.test(norm_(raw)) });
+      pairs.push({ src: sc, col: tc + 1, isMonth: (name === 'monthcol') });
     }
     if (!pairs.length) {
       throw new Error('None of the export columns matched "' + spec.tab + '". ' +
@@ -683,7 +648,7 @@ var QLIKSYNC = (function () {
           for (var k = 0; k < w; k++) row[k] = '';
           for (var q = 0; q < mine.length; q++) {
             var p = mine[q], v = src.rows[off + r][p.src];
-            row[p.col - b.start] = p.isMonth ? monthText_(v, p.myMonth) : (v === undefined ? '' : v);
+            row[p.col - b.start] = p.isMonth ? monthText_(v) : (v === undefined ? '' : v);
           }
           grid[r] = row;
         }

@@ -289,47 +289,52 @@ function dimsForProduct_(LK, productMix){
   var hit = LK.product[code.toUpperCase()];
   return hit || { strength:'#N/A', cls:'#N/A', app:'#N/A', miss:true };
 }
-/* The month column, whatever it is called.
-   The QlikView export now sends MYMONTH - just the month ("Apr"), with the
-   current AND prior year both populated on the SAME row. The old Bill Month
-   ("Apr-25" / "Apr-26") carried the year and split the two years across two
-   rows. Both are accepted: the Google Sheet is MyMonth from now on, and Bill
-   Month stays supported so a manually uploaded Excel file still reads.
-
-   Nothing in THIS file ever needed the year - it buckets by month ordinal and
-   takes current vs prior year from the "2025 Vol" / "2026 Vol" COLUMNS, which
-   sit on the same row either way. So the two shapes agree here: two Bill Month
-   rows for Apr summed to one Apr bucket, and one MyMonth row for Apr lands in
-   that same bucket already summed. */
-/* OPEN - WE MAY HAVE TO GO BACK TO THE OLD BILL MONTH FORMAT.
+/* THE MONTH COLUMN — BILL MONTH ("Apr-25" / "Apr-26").
    ---------------------------------------------------------------------------
-   Nothing here is settled. MyMonth ("Apr", both years on one row) is what the
-   export sends today and what everything below assumes. If we switch back to
-   Bill Month ("Apr-25" / "Apr-26", the two years on SEPARATE rows), this is
-   what has to be checked, in this order:
+   The QlikView export sends it as `bill_month`; the Google Sheet's header
+   spells it "Bill Month". Both are listed below because norm_ collapses
+   whitespace but NOT underscores, so "bill_month" would not otherwise match.
 
-     1. monthOrd_ already reads both shapes, so the month bucket is fine.
-     2. The YEAR is the thing that changes. Bill Month splits CY and PY across
-        two rows; this file takes the two years from the "2025 Vol" / "2026 Vol"
-        COLUMNS, which are populated on whichever row the year belongs to, so
-        the two shapes still sum to the same bucket. That is why the swap was
-        safe in this direction and should be safe going back.
-     3. THE FORMATTING DEFECT IS THE REAL RISK. Bill Month arrives as text and
-        has already come through mixed ("Jul-26" on some rows, "July-26" on
-        others). Anything joining on that cell with an exact match - the sheet's
-        own SUMIFS LOOKUP KEY joins, not this file - drops the rows that do not
-        match its spelling, and drops them SILENTLY. Fix the spelling in the
-        sheet before trusting any figure, exactly as we did last time.
-     4. Everything downstream of here (Segment slide, Fuel Recovery, the
-        Overview month cube) buckets on the ordinal this file produces, so no
-        other file should need editing. Re-check anyway.
+   BILL MONTH CARRIES THE YEAR, AND THAT SPLITS EACH MONTH ACROSS TWO ROWS:
+   "Apr-25" carries the prior-year figures, "Apr-26" the current-year ones, and
+   the off-year columns on each are blank. So one plant x mix x segment x month
+   arrives as TWO rows that have to be RE-AGGREGATED before any ratio is taken.
+
+   That re-aggregation is not a special case here — it is how the whole file
+   already works. Every consumer buckets and SUMS first, then divides:
+     keyRows_   submarket x segment x app x class x strength
+     plantRows_ plant
+     ppiMaps_   plant x mix (x breakdown label), summed in add() before roll()
+                takes ASP, applies the covered_() floors and sets the weight
+     rxfPpi_ / the plant x mix detail — same shape
+   Nothing computes an ASP, a coverage decision or a weight off a single row,
+   so the "Apr-25" and "Apr-26" halves meet in the bucket and the arithmetic is
+   the same as if one row had carried both years.
+
+   THE YEAR ON THE CELL IS DELIBERATELY IGNORED. This file buckets on the month
+   ordinal alone and takes current vs prior year from the "2025 Vol" /
+   "2026 Vol" COLUMNS, which are populated on whichever row the year belongs
+   to. Reading the year off the cell as well would add nothing and would drop
+   any row whose spelling failed to parse a year.
+
+   THE FORMATTING DEFECT IS THE STANDING RISK. Bill Month arrives as text and
+   has come through mixed ("Jul-26" on some rows, "July-26" on others).
+   monthOrd_ only reads the first three letters, so THIS file is immune — but
+   anything joining on that cell with an exact match, the sheet's own SUMIFS
+   LOOKUP KEY joins in particular, drops the mismatched rows SILENTLY. Fix the
+   spelling in the sheet before trusting any figure.
    -------------------------------------------------------------------------- */
-var MONTH_COLS_ = ['mymonth','my month','my_month','bill month','billmonth','month'];
+var MONTH_COLS_ = ['bill month','billmonth','bill_month','month'];
 function monthCol_(s){
   for (var i=0;i<MONTH_COLS_.length;i++){ var c = col_(s, MONTH_COLS_[i]); if (c !== -1) return c; }
   return -1;
 }
 
+/* The cell is TEXT ("Apr-25"), never a date — that is the path that matters and
+   the only one the sheet produces. "Apr-25", "Apr-26" and the mis-spelled
+   "April-26" all collapse to the same ordinal: only the first three letters are
+   read, and the year is discarded. The Date branch is a guard for a workbook
+   that has been through Excel and come back with the cell coerced. */
 var MONTH_ORD_ = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
 function monthOrd_(v){
   if (v instanceof Date) return v.getMonth()+1;
@@ -351,7 +356,7 @@ function extrasLookup_(LK, descr){
    Period filtering is applied at QUERY time, not at load time. */
 function loadMain_(LK, src, bag){
   var s = src || readSheet_(CONFIG.SHEETS.MAIN, ['plant','product mix','major project segment']);
-  var cMonth=monthCol_(s),                         // MyMonth ("Apr"), or Bill Month ("Apr-25")
+  var cMonth=monthCol_(s),                         // Bill Month ("Apr-25" / "Apr-26")
       cPlant=col_(s,'plant'), cMix=col_(s,'product mix'),
       cSeg=col_(s,'major project segment'),
       cPyV=col_(s,'2025 vol'), cPyR=col_(s,'2025 net sales ex va (cad)'),
@@ -384,7 +389,7 @@ function loadMain_(LK, src, bag){
 
 function loadStream_(LK, sheetName, src, bag){
   var s = src || readSheet_(sheetName, ['plant','mat_prod_hier_3','major project segment']);
-    var cMo=monthCol_(s),                          // MyMonth ("Apr"), or Bill Month ("Apr-25")
+    var cMo=monthCol_(s),                          // Bill Month ("Apr-25" / "Apr-26")
       cPlant=col_(s,'plant'), cH3=col_(s,'mat_prod_hier_3'),
       cDescr=col_(s,'mat_descr'),
       cSeg=col_(s,'major project segment'),
@@ -476,13 +481,14 @@ function mktOk_(rowMarket, sel){
    would put a few days of this month against a full month a year ago. In
    August the answer is July, in January it is December.
 
-   This has to be stated rather than inferred, because the MYMONTH export now
-   carries the WHOLE year: the prior-year figures sit on the same row as the
-   current-year ones, so there is a row for every month Jan-Dec whether or not
-   this year has reached it. "The latest month in the data" is therefore always
-   December - a month with last year's volume and none of this year's - which
-   is what made MTD read an empty month and YTD compare part of this year
-   against ALL of last year.
+   This has to be stated rather than inferred, because the export carries the
+   WHOLE of last year: the "-25" rows run Jan through Dec whether or not this
+   year has reached those months. "The latest month in the data" is therefore
+   always December - a month with last year's volume and none of this year's -
+   which is what made MTD read an empty month and YTD compare part of this year
+   against ALL of last year. The test below is on CURRENT-year figures only,
+   which under Bill Month means the "-26" rows, so it stops at the last month
+   actually billed.
 
    THE ONE EXCEPTION is a month that has not been exported yet. Early in the
    month, before the QlikView pull has run, last month may carry no
@@ -541,7 +547,7 @@ function monthsOf_(main){
 
    THIS MUST NEVER RETURN 0. A zero here means "no month filter at all", and
    that is not a safe default: it silently reports part of this year against
-   the WHOLE of last year, because the MyMonth export carries all twelve
+   the WHOLE of last year, because the export carries all twelve of last year's
    months. A missing field has to degrade to last calendar month, never to
    showing everything. reportMonth_ always returns 1-12, even on no rows. */
 function bundleMonth_(bundle){
@@ -849,7 +855,7 @@ function uploadData(payload){
   requireCols_(sMain, ['plant','product mix','major project segment',
     '2025 vol','2026 vol','2025 net sales ex va (cad)','2026 net sales ex va (cad)'], 'Main Raw Data');
   if (monthCol_(sMain)===-1)
-    throw new Error('Main Raw Data upload needs a "MyMonth" column (or the older "Bill Month").');
+    throw new Error('Main Raw Data upload needs a "Bill Month" column (the export spells it "bill_month").');
 
   var sExtra = indexValues_(combineTwoRowHeader_(payload.extras), ['plant','mat_prod_hier_3','major project segment']);
   var sAssoc = indexValues_(combineTwoRowHeader_(payload.assoc),  ['plant','mat_prod_hier_3','major project segment']);
@@ -857,8 +863,8 @@ function uploadData(payload){
     'total revenue - 2025','total revenue - 2026','m3 applied to - 2025','m3 applied to - 2026'];
   requireCols_(sExtra, streamCols, 'Extra Raw Data');
   requireCols_(sAssoc, streamCols, 'Associate Raw Data');
-  if (monthCol_(sExtra)===-1) throw new Error('Extra Raw Data upload needs a "MyMonth" column (or the older "Bill Month").');
-  if (monthCol_(sAssoc)===-1) throw new Error('Associate Raw Data upload needs a "MyMonth" column (or the older "Bill Month").');
+  if (monthCol_(sExtra)===-1) throw new Error('Extra Raw Data upload needs a "Bill Month" column (the export spells it "bill_month").');
+  if (monthCol_(sAssoc)===-1) throw new Error('Associate Raw Data upload needs a "Bill Month" column (the export spells it "bill_month").');
 
   var bag = newUnmapped_();
   var main = loadMain_(LK, sMain, bag);   // blank-Plant rows (incl. the totals row) are skipped by the loaders

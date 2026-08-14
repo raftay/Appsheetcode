@@ -353,11 +353,12 @@ function ovSegment_(grid, period, markets){
    alongside its own selection would mislead. 1-12, or 0 if unreadable. */
 function ovSegMonth_(){
   /* The calendar, not QLIK_REPORT_MONTH. That stamp is taken off the Ready-Mix
-     export's month column, which is MYMONTH - a bare "Jul" with no year, both
-     years on the one row - so it is not evidence of anything on its own, and
-     reading it here while Code.gs reads the calendar would let this panel and
-     the Product Segment page name two different months for the same tabs. One
-     rule: last calendar month, 1-12. */
+     export's Bill Month column, which runs through the whole of the PRIOR year
+     ("Dec-25" against nothing this year), so the newest value in it is not
+     evidence of the reporting month on its own — and reading it here while
+     Code.gs reads the calendar would let this panel and the Product Segment
+     page name two different months for the same tabs. One rule: last calendar
+     month, 1-12. */
   var m = (new Date()).getMonth();               // 0-based this month = 1-12 last month
   return m ? m : 12;                             // in January, December
 }
@@ -564,12 +565,9 @@ function ovcBillYm_(v){
   }
   var s = ovcStr_(v);
 
-  /* MyMonth: a bare month, no year. Returned as the month alone (1-12) so the
-     caller can tell it apart from a year+month value (>= 100000) and read the
-     row against every year the workbook holds. */
-  var bare = s.match(/^([A-Za-z]{3,})$/);
-  if (bare) return OVCUBE_MON_[bare[1].slice(0, 3).toLowerCase()] || 0;
-
+  /* A value with no year ("Jul") cannot say which year it belongs to, so it is
+     not readable here: 0 sends the row to the caller's `skipped` count rather
+     than into an arbitrary year. */
   var m = s.match(/^([A-Za-z]{3,})[\s\-\/.]*(\d{2,4})$/);
   if (!m) return 0;
   var mo = OVCUBE_MON_[m[1].slice(0, 3).toLowerCase()];
@@ -797,24 +795,16 @@ function ovcRmxRoll_(t, c, byYear, live, cyYear, seed){
       var ym = ovcBillYm_(row[c.bill]);
       if (!ym){ skipped++; continue; }
 
-      /* Bill Month ("Jul-26") names its own year. MyMonth ("Jul") does not:
-         the row holds BOTH years side by side, so it is pushed once per year
-         the workbook carries — exactly the two rows Bill Month would have. */
-      var mo = ym % 100, yrs = [];
-      if (ym >= 100000){ yrs.push(Math.floor(ym / 100)); }
-      else { for (var yk in byYear) yrs.push(Number(yk)); }
-
-      var pushed = 0;
-      for (var yi = 0; yi < yrs.length; yi++){
-        var col = byYear[yrs[yi]];
-        if (!col) continue;                    // year outside this workbook's two
-        pushed++;
-        push(yrs[yi] * 100 + mo, D.plant.idx(row[c.plant]), D.mix.idx(row[c.mix]),
-             D.segment.idx(row[c.seg]), ovcNum_(row[col.v]), ovcNum_(row[col.r]),
-             (col.ex != null && col.ex >= 0) ? ovcNum_(row[col.ex]) : 0,
-             (col.va != null && col.va >= 0) ? ovcNum_(row[col.va]) : 0);
-      }
-      if (!pushed){ skipped++; continue; }     // month outside this workbook's two years
+      /* Bill Month ("Jul-26") names its own year, and that is the one year the
+         row feeds. Each month therefore arrives twice — once per year — and
+         push() sums the two into the same ym bucket. */
+      var mo = ym % 100, yr = Math.floor(ym / 100);
+      var col = byYear[yr];
+      if (!col){ skipped++; continue; }        // year outside this workbook's two
+      push(yr * 100 + mo, D.plant.idx(row[c.plant]), D.mix.idx(row[c.mix]),
+           D.segment.idx(row[c.seg]), ovcNum_(row[col.v]), ovcNum_(row[col.r]),
+           (col.ex != null && col.ex >= 0) ? ovcNum_(row[col.ex]) : 0,
+           (col.va != null && col.va >= 0) ? ovcNum_(row[col.va]) : 0);
     }
   } else {
     for (var j = 0; j < live.length; j++){
@@ -996,10 +986,12 @@ function ovcHistRmx_(page){
   var byYear = {};
   vcols.forEach(function(x){ (byYear[x.y] = byYear[x.y] || {}).v = x.i; });
   rcols.forEach(function(x){ (byYear[x.y] = byYear[x.y] || {}).r = x.i; });
-  var cBill = ovcCol_(t, 'mymonth');
-  if (cBill < 0) cBill = ovcCol_(t, 'my month');
-  if (cBill < 0) cBill = ovcCol_(t, 'bill month');
-  if (cBill < 0) throw new Error('History Ready-Mix: no "MyMonth" (or "Bill Month") column was found.');
+  /* ovcH_ leaves underscores alone, so the export's "bill_month" needs its own
+     entry alongside the sheet's "Bill Month". */
+  var cBill = ovcCol_(t, 'bill month');
+  if (cBill < 0) cBill = ovcCol_(t, 'billmonth');
+  if (cBill < 0) cBill = ovcCol_(t, 'bill_month');
+  if (cBill < 0) throw new Error('History Ready-Mix: no "Bill Month" column was found.');
   var c = { bill: cBill, plant: ovcCol_(t, 'plant'),
             mix: ovcCol_(t, 'product mix'), seg: ovcCol_(t, 'major project segment') };
   return ovcRmxRoll_(t, c, byYear, null, 0, null);

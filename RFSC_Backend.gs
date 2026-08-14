@@ -147,11 +147,14 @@ var RFSC = (function () {
 
      Only the first three letters are read, so "July-26" and "Jul-26" land on the
      same month. */
-  /* The month cell, in either shape.
-       MyMonth    "Apr"          -> { y:null, m:4 }   both years on THIS row
-       Bill Month "Apr-25"       -> { y:2025, m:4 }   one year per row
-     A null year means "this row carries every year the columns hold", which is
-     what yearsOn_ below turns into the list of year slots to read. */
+  /* The month cell: Bill Month "Apr-25" -> { y:2025, m:4 }. The year is on the
+     cell, and it is the ONE year that row feeds — "Apr-25" carries the
+     prior-year columns, "Apr-26" the current-year ones, and each month
+     therefore arrives as TWO rows that the buckets below re-aggregate.
+
+     A value with no year at all is not readable here and returns null; the
+     caller skips the row and the "no usable rows" error below is what surfaces
+     it, rather than a silently half-empty report. */
   function monthNum_(name){
     var k = String(name || '').slice(0,3).toLowerCase();
     for (var i = 0; i < 12; i++) if (MONTHS[i].toLowerCase() === k) return i + 1;
@@ -164,9 +167,6 @@ var RFSC = (function () {
     }
     var s = String(v == null ? '' : v).trim();
 
-    var my = s.match(/^([A-Za-z]{3,})$/);              // MyMonth: no year at all
-    if (my){ var m0 = monthNum_(my[1]); return m0 ? { y:null, m:m0 } : null; }
-
     var mt = s.match(/^([A-Za-z]{3,})[\s\-\/.]*(\d{2,4})$/);
     if (!mt) return null;
     var mo = monthNum_(mt[1]);
@@ -174,22 +174,6 @@ var RFSC = (function () {
     var yr = parseInt(mt[2], 10);
     if (yr < 100) yr += 2000;
     return { y: yr, m: mo };
-  }
-
-  /* Which years a row feeds. Bill Month names one; MyMonth feeds every year
-     the metric columns carry, because both sit on the same row. `maps` is one
-     or more year -> column objects; a year counts if any of them has it. */
-  function yearsOn_(bm, maps){
-    if (!bm) return [];
-    if (bm.y != null) return [bm.y];
-    var seen = {}, out = [];
-    for (var i = 0; i < maps.length; i++){
-      for (var y in (maps[i] || {})){
-        var n = Number(y);
-        if (n && !seen[n]){ seen[n] = 1; out.push(n); }
-      }
-    }
-    return out.sort(function(a,b){ return a - b; });
   }
 
   function findTab_(ss, names){
@@ -203,13 +187,13 @@ var RFSC = (function () {
   /* The header is not always the first row - Main Raw Data carries a totals
      strip above it and Extra Raw Data carries a warning note - so it is found
      by content, exactly as the AGG reader does. */
-  /* Accepted names for the month column. MyMonth ("Apr") is what the export
-     sends now; Bill Month ("Apr-25") is still read so an uploaded Excel file
-     from before the change keeps working. */
-  var MONTH_NAMES_ = ['mymonth','my month','my_month','bill month','billmonth'];
+  /* Accepted names for the month column. The sheet's header is "Bill Month";
+     the QlikView export spells it "bill_month", and norm_ leaves underscores
+     alone, so that spelling has to be listed in its own right. */
+  var MONTH_NAMES_ = ['bill month','billmonth','bill_month'];
 
   /* `must` names every column the row needs; `oneOf` is a set where ANY one
-     will do (the month column, which has two spellings). */
+     will do (the month column, which has more than one spelling). */
   function headerRow_(grid, must, oneOf){
     for (var r = 0; r < Math.min(grid.length, 10); r++){
       var row = (grid[r] || []).map(norm_), ok = true;
@@ -243,7 +227,7 @@ var RFSC = (function () {
     });
     var miss = [];
     if (c.plant < 0) miss.push('Plant');
-    if (c.bill  < 0) miss.push('MyMonth (or Bill Month)');
+    if (c.bill  < 0) miss.push('Bill Month');
     if (!Object.keys(c.vol).length) miss.push('"#### Vol"');
     if (miss.length) throw new Error('The Main Raw Data tab is missing these column(s): '
       + miss.join(', ') + '. Check the header row spelling.');
@@ -270,7 +254,7 @@ var RFSC = (function () {
     });
     var miss = [];
     if (c.plant < 0) miss.push('Plant');
-    if (c.bill  < 0) miss.push('MyMonth (or Bill Month)');
+    if (c.bill  < 0) miss.push('Bill Month');
     if (c.hier3 < 0) miss.push('mat_prod_hier_3');
     if (!Object.keys(c.m3).length)  miss.push('"M3 Applied To - ####"');
     if (!Object.keys(c.rev).length) miss.push('"Total Revenue - ####"');
@@ -336,23 +320,19 @@ var RFSC = (function () {
       var bm = billYm_(drow[c.bill] != null && drow[c.bill] !== '' ? drow[c.bill] : row[c.bill]);
       if (!bm) continue;
 
-      /* Bill Month names one year; MyMonth carries every year the columns hold
-         on this one row, so the row is read once per year. */
-      var yrs = yearsOn_(bm, [c.m3, c.rev]);
-      for (var yi = 0; yi < yrs.length; yi++){
-        var yr = yrs[yi];
-        var mc = c.m3[yr], rc = c.rev[yr];
-        if (mc == null && rc == null) continue;    // no columns for that year
-        years[yr] = true; lines++;
+      /* Bill Month names the one year this row feeds. */
+      var yr = bm.y;
+      var mc = c.m3[yr], rc = c.rev[yr];
+      if (mc == null && rc == null) continue;      // no columns for that year
+      years[yr] = true; lines++;
 
-        var m3  = (mc == null) ? 0 : toNum_(row[mc]);
-        var fsc = (rc == null) ? 0 : toNum_(row[rc]);
-        if (!m3 && !fsc) continue;                 // a $0 line still proved the year is covered
+      var m3  = (mc == null) ? 0 : toNum_(row[mc]);
+      var fsc = (rc == null) ? 0 : toNum_(row[rc]);
+      if (!m3 && !fsc) continue;                   // a $0 line still proved the year is covered
 
-        var key = pk + '|' + norm_(seg_(row[c.seg])) + '|' + yr + '|' + bm.m;
-        var f = fact[key] || (fact[key] = { m3:0, fsc:0 });
-        f.m3 += m3; f.fsc += fsc;                  // sum every surcharge code on the cell
-      }
+      var key = pk + '|' + norm_(seg_(row[c.seg])) + '|' + yr + '|' + bm.m;
+      var f = fact[key] || (fact[key] = { m3:0, fsc:0 });
+      f.m3 += m3; f.fsc += fsc;                    // sum every surcharge code on the cell
     }
     return lines ? { fact: fact, years: years, lines: lines } : null;
   }
@@ -369,21 +349,21 @@ var RFSC = (function () {
     var okPlant = allow_(filter && filter.plants);
     var okSeg   = allow_(filter && filter.segments);
 
-    /* The newest year is CY, and the surcharge column follows from that.
-       With Bill Month the year is on the row, so it is read from the rows.
-       With MyMonth there is no year on the row at all, so it comes from the
-       "#### Vol" column headers instead \u2014 the same two years, just written
-       once at the top rather than on every line. */
+    /* The newest year is CY, and the surcharge column follows from that. Bill
+       Month carries the year on the row, so it is read from the rows; the
+       "#### Vol" column headers are only a fallback for a tab whose month
+       cells are all unreadable, which the "no usable rows" check below then
+       reports rather than quietly halving the book. */
     var yMax = 0, i, bm, y;
     for (i = hdr + 1; i < grid.length; i++){
       bm = billYm_(grid[i][c.bill]);
-      if (bm && bm.y != null && bm.y > yMax) yMax = bm.y;
+      if (bm && bm.y > yMax) yMax = bm.y;
     }
     if (!yMax){
       for (y in c.vol) if (Number(y) > yMax) yMax = Number(y);
     }
     if (!yMax) throw new Error('No usable month values were found in Main Raw Data \u2014 '
-      + 'MyMonth should read like "Jul", or Bill Month like "Jul-26".');
+      + 'Bill Month should read like "Jul-26".');
 
     /* PASS 1 - plant x segment x year x month, the grain the surcharge arrives
        at. `spread` is Main Raw Data's own surcharge column, kept only as the
@@ -403,37 +383,34 @@ var RFSC = (function () {
       var unk = '';
       if (!mk){ unk = String(row[c.plant]).trim(); mk = unknownLabel; }
 
-      /* One year with Bill Month, both with MyMonth. Everything below is per
-         year, so a MyMonth row lands in exactly the same two buckets that two
-         Bill Month rows used to. */
-      var yrs = yearsOn_(bm, [c.vol, c.ns]);
-      for (var yi = 0; yi < yrs.length; yi++){
-        var yr = yrs[yi];
-        var vc  = c.vol[yr], nc = c.ns[yr];
-        var vol = (vc == null) ? 0 : toNum_(row[vc]);
-        var ns  = (nc == null) ? 0 : toNum_(row[nc]);
-        var spr = (yr === yMax) ? (c.cyFsc < 0 ? 0 : toNum_(row[c.cyFsc]))
-                                : (c.pyFsc < 0 ? 0 : toNum_(row[c.pyFsc]));
-        if (!vol && !ns && !spr) continue;            // padding rows
-        used++;
+      /* Bill Month names the one year this row feeds, so a plant x segment x
+         month bucket is filled by the "-25" row and the "-26" row in turn —
+         both land in `bucket` and are summed there before anything divides. */
+      var yr  = bm.y;
+      var vc  = c.vol[yr], nc = c.ns[yr];
+      var vol = (vc == null) ? 0 : toNum_(row[vc]);
+      var ns  = (nc == null) ? 0 : toNum_(row[nc]);
+      var spr = (yr === yMax) ? (c.cyFsc < 0 ? 0 : toNum_(row[c.cyFsc]))
+                              : (c.pyFsc < 0 ? 0 : toNum_(row[c.pyFsc]));
+      if (!vol && !ns && !spr) continue;              // padding rows
+      used++;
 
-        if (!seen[mk]){ seen[mk] = true; markets.push(mk); }
+      if (!seen[mk]){ seen[mk] = true; markets.push(mk); }
 
-        var bKey = pk + '|' + sk + '|' + yr + '|' + mo;
-        var b = bucket[bKey];
-        if (!b){ b = bucket[bKey] = { pk:pk, sk:sk, sg:sg, mk:mk, yr:yr, mo:mo,
-                                      vol:0, gross:0, ns:0, spread:0, sprVol:0, sprNS:0 };
-                 order.push(bKey); }
-        b.vol += vol; b.ns += ns; b.spread += spr;
-        /* gross = delivered m3, credits excluded. The coverage denominator, and
-           the only place a negative row is deliberately ignored. */
-        if (vol > 0) b.gross += vol;
-        if (spr !== 0){ b.sprVol += vol; b.sprNS += ns; }   // the old rule, fallback only
+      var bKey = pk + '|' + sk + '|' + yr + '|' + mo;
+      var b = bucket[bKey];
+      if (!b){ b = bucket[bKey] = { pk:pk, sk:sk, sg:sg, mk:mk, yr:yr, mo:mo,
+                                    vol:0, gross:0, ns:0, spread:0, sprVol:0, sprNS:0 };
+               order.push(bKey); }
+      b.vol += vol; b.ns += ns; b.spread += spr;
+      /* gross = delivered m3, credits excluded. The coverage denominator, and
+         the only place a negative row is deliberately ignored. */
+      if (vol > 0) b.gross += vol;
+      if (spr !== 0){ b.sprVol += vol; b.sprNS += ns; }   // the old rule, fallback only
 
-        if (unk){
-          var u = unknown[unk] || (unknown[unk] = { vol:0, ns:0, fsc:0 });
-          u.vol += vol; u.ns += ns; u.fsc += spr;
-        }
+      if (unk){
+        var u = unknown[unk] || (unknown[unk] = { vol:0, ns:0, fsc:0 });
+        u.vol += vol; u.ns += ns; u.fsc += spr;
       }
     }
     if (!used) throw new Error('No usable rows were found in Main Raw Data \u2014 every row needs a '
@@ -505,9 +482,9 @@ var RFSC = (function () {
 
     /* THE REPORT MONTH — LAST CALENDAR MONTH.
        The running month is only part-billed, so reporting it would put a few
-       days of this month against a full month a year ago. The MyMonth export
-       carries every month of the year (the prior-year figures ride on the same
-       row), so this has to be stated rather than read off the data.
+       days of this month against a full month a year ago. The export carries
+       every month of the PRIOR year ("Jan-25" through "Dec-25"), so this has
+       to be stated rather than read off the data.
 
        Re-read from what SURVIVED the netting above, so a dropped market can
        never be the thing that decides which month MTD means. And if last month
