@@ -1001,6 +1001,15 @@ function syncData(){
     if(STATE.view === 'markets') load(); else loadCustomers();
   }
   if(!IS_LIVE){ reload(); return; }
+  /* Ask first. An unchanged sheet means there is nothing to rebuild, for
+     anyone — see AmrFresh.ifChanged in Shell.html. */
+  if(window.AmrFresh){ AmrFresh.ifChanged(function(changed){
+    if(!changed){ if(btn) btn.classList.remove('busy'); hideLoader(); return; }
+    doSyncNow();
+  }); return; }
+  doSyncNow();
+
+  function doSyncNow(){
   if(window.AmrProgress) AmrProgress.set('sync', { text:'Re-reading the Google Sheet…', order:5 });
   google.script.run
     .withSuccessHandler(function(res){
@@ -1019,6 +1028,7 @@ function syncData(){
       showBanner('Update failed: ' + (err && err.message ? err.message : err)); reload();
     })
     .clearCache();
+  }
 }
 /* ---------- run on uploaded QlikView files (session only) ---------- */
 var MON3=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];

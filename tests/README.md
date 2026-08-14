@@ -210,6 +210,28 @@ that bumping a file's modified time is picked up. It also pins the retry rule �
 *could not happen* (lock held) leaves the stamp alone and is retried, a run that *finished
 with a bad tab* records the stamp and logs, because that tab will be just as broken next hour.
 
+## `freshness.js` — the data version
+
+Runs `Config.gs` + `Code.gs` under Node with Drive stubbed, and counts the Drive calls.
+
+```bash
+node tests/freshness.js          # no dependencies
+```
+
+**Why it exists.** The version used to be a counter something had to remember to bump. A hand
+edit to `REGION LOOKUP` bumped nothing, so every page kept serving figures that no longer
+matched the sheet with nothing anywhere to notice — and a bump with no real change threw every
+cache away for nothing. It is the workbook's last-modified time now.
+
+Pins: it moves on a hand edit with nothing being told; it does *not* move on an untouched
+sheet; each page follows its own workbook and a `readsFrom` page follows its owner's; twenty
+asks cost one Drive call but forgetting the stamp reads again; an unreachable sheet still
+answers rather than taking the page down; and ↻ Update from source reports *no change* on an
+untouched sheet, always re-reads Drive rather than trusting the 30-second copy, and treats a
+page with no version yet as changed. It also checks PV and RMX read that same stamp instead of
+keeping counters, and that the loading screen is the full-screen one with the API pages
+already call left intact.
+
 ## Also worth running
 
 ```bash
