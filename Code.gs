@@ -127,13 +127,28 @@ var APP_STAMP_MEMO  = {};      /* within one execution */
 
 function APP_stampKey_(id){ return 'srcmtime|' + id; }
 
-/* The modified time of the workbook a page reads, in ms, as a string.
-   '' when the page has no sheet of its own (the Overview, the Deck Builder):
-   those compose other pages and compare THEIR versions. */
-function APP_sourceStamp_(page){
-  var id;
-  try { id = getSpreadsheetIdForPage_(APP_sheetOwner_(page)); } catch (e) { return ''; }
-  if (!id) return '';
+/* Every workbook a page's figures depend on: its own, plus anything listed
+   for it in APP_EXTRA_SOURCES. The Executive Overview has no sheet of its own
+   — it reads Price & Volume, Ready-Mix and Segment — so on its own id it would
+   resolve to nothing at all, report a version that never moves, and would sit
+   on stale figures forever with Update from source insisting there was
+   nothing to do. */
+function APP_sourceIds_(page){
+  var seen = {}, ids = [];
+  function add(p){
+    if (!p) return;
+    var id;
+    try { id = getSpreadsheetIdForPage_(APP_sheetOwner_(p)); } catch (e) { return; }
+    if (id && !seen[id]) { seen[id] = 1; ids.push(id); }
+  }
+  add(page);
+  var extra = (typeof APP_EXTRA_SOURCES === 'object' && APP_EXTRA_SOURCES[page]) || [];
+  extra.forEach(add);
+  return ids;
+}
+
+/* The version of one workbook: its modified time in ms, as a string. */
+function APP_oneStamp_(id){
   if (APP_STAMP_MEMO[id]) return APP_STAMP_MEMO[id];
 
   var key = APP_stampKey_(id), c = null;
@@ -149,20 +164,28 @@ function APP_sourceStamp_(page){
   return ms;
 }
 
+/* The stamp for a page: every workbook behind it, joined. Moves when ANY of
+   them does, which is what a page reading three sheets needs. */
+function APP_sourceStamp_(page){
+  var ids = APP_sourceIds_(page);
+  if (!ids.length) return '';
+  var parts = ids.map(APP_oneStamp_);
+  return parts.join('-');
+}
+
 /* Read Drive again on the next ask rather than trusting the half-minute copy.
    Called after this app itself writes to a sheet, and by the Update button. */
 function APP_forgetStamp_(page){
   var ids = [];
-  try {
-    if (page) ids = [getSpreadsheetIdForPage_(APP_sheetOwner_(page))];
-    else ids = APP_dataPages_().map(function(p){
-      try { return getSpreadsheetIdForPage_(APP_sheetOwner_(p)); } catch (e) { return ''; }
+  if (page) ids = APP_sourceIds_(page);
+  else {
+    APP_dataPages_().forEach(function(p){
+      APP_sourceIds_(p).forEach(function(id){ if (ids.indexOf(id) === -1) ids.push(id); });
     });
-  } catch (e) { ids = []; }
+  }
   var c = null;
   try { c = CacheService.getScriptCache(); } catch (e) {}
   ids.forEach(function(id){
-    if (!id) return;
     delete APP_STAMP_MEMO[id];
     if (c) { try { c.remove(APP_stampKey_(id)); } catch (e) {} }
   });

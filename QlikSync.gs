@@ -51,8 +51,8 @@
  *   OAuth token, so the Advanced Drive Service does NOT need to be turned on.
  *
  * TRIGGERS
- *   ONE time-driven trigger on qlikSyncCheck (qlikSyncHourly still works and
- *   calls it). Every firing compares each export's modified time against the
+ *   ONE time-driven trigger on qlikSyncCheck. Every firing compares each
+ *   export's modified time against the
  *   one it last synced and does nothing at all for the ones that have not
  *   moved — so an ordinary firing is three Drive lookups.
  *
@@ -918,16 +918,16 @@ var QLIKSYNC = (function () {
 /* ==========================================================================
  * THE ONLY THING THAT STARTS A SYNC: one hourly trigger.
  * --------------------------------------------------------------------------
- * Set ONE time-driven trigger, hourly, on qlikSyncHourly.
+ * Set ONE time-driven trigger on qlikSyncCheck, at whatever interval suits.
  *
- * It looks at when the export files in Drive were last modified. If none of
- * them has changed since the last look, it stops — no folders opened, no
- * sheets touched, no caches thrown away, and every page keeps serving from
- * cache. Only a genuinely new export costs anything.
+ * It looks at when each export file was last modified. The ones that have not
+ * changed since they were last synced are skipped outright — nothing opened,
+ * nothing written, every page still serving from cache. Only a genuinely new
+ * export costs anything, and only for the page it feeds.
  *
- * When something HAS changed it syncs and calls syncAll(), which moves every
- * page's data version. That version is what each open page is watching, so
- * the prompt appears on its own — see AmrFresh in Shell.html.
+ * Writing to a workbook moves its modified time, and that IS the data version
+ * every open page is watching — so the prompt appears on its own, with
+ * nothing here having to tell anybody. See AmrFresh in Shell.html.
  * ======================================================================== */
 var QLIK_STAMP_KEY = 'QLIK_FILE_STAMPS';
 
@@ -978,9 +978,6 @@ function qlikSyncCheck() {
   if (out.failed.length) Logger.log('QlikView check: ' + out.failed.join(' | '));
   return out;
 }
-
-/* The name the existing trigger points at. Keep it working. */
-function qlikSyncHourly() { return qlikSyncCheck(); }
 
 /* Run this once from the editor after setting the trigger up, so the FIRST
    check has something to compare against.

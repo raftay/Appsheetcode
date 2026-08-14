@@ -128,6 +128,40 @@ console.log('\na page that reads another page\'s sheet follows that one:');
   check('and moves with it', ctx.APP_getGen_('fuelsurcharge'), ctx.APP_getGen_('pricevolume'));
 }
 
+console.log('\na page with no sheet of its own follows all of them:');
+{
+  const { ctx, state, PV_ID, RMX_ID } = load();
+  /* The Overview reads Price & Volume, Ready-Mix and Segment. On its own id it
+     resolves to no workbook at all — so without APP_EXTRA_SOURCES its version
+     would be a constant, it would sit on stale figures forever, and Update
+     from source would insist there was nothing to do. */
+  const ov = ctx.APP_getGen_('overview');
+  checkThat('it has a real version, not a constant', ov !== '0.' + ctx.APP_CODE_BUILD, ov);
+
+  state.mtime[PV_ID] = 8888;
+  ctx.APP_forgetStamp_(null);
+  checkThat('Price & Volume moving moves it', ctx.APP_getGen_('overview') !== ov,
+    ctx.APP_getGen_('overview'));
+
+  const ov2 = ctx.APP_getGen_('overview');
+  state.mtime[RMX_ID] = 9999;
+  ctx.APP_forgetStamp_(null);
+  checkThat('and so does Ready-Mix', ctx.APP_getGen_('overview') !== ov2,
+    ctx.APP_getGen_('overview'));
+
+  ctx.APP_forgetStamp_(null);
+  check('an untouched set leaves it alone', ctx.APP_getGen_('overview'),
+    ctx.APP_getGen_('overview'));
+
+  /* And the button on that page must be able to act. */
+  const have = ctx.APP_getGen_('overview');
+  check('update from source sees no change when nothing moved',
+    ctx.updateFromSource('overview', have).changed, false);
+  state.mtime[RMX_ID] = 12345;
+  check('and sees one when a source moves',
+    ctx.updateFromSource('overview', have).changed, true);
+}
+
 /* ======================================================================
  * 2. Asking is cheap — pages do it every few minutes
  * ==================================================================== */
@@ -212,6 +246,14 @@ console.log('\nthe loading screen is full-screen, not a corner pill:');
   const shell = fs.readFileSync(`${REPO}/Shell.html`, 'utf8');
   const styles = fs.readFileSync(`${REPO}/Styles.html`, 'utf8');
   checkThat('AmrProgress builds the big one', /class = 'amr-load'|className = 'amr-load'/.test(shell));
+  /* Every page with the button must ask before rebuilding for everyone. */
+  ['Page_PriceVolume', 'Page_Rmx', 'Page_Segment', 'Page_Overview',
+   'Page_FuelSurcharge', 'Page_RmxFuel'].forEach(function(f){
+    const src = fs.readFileSync(`${REPO}/${f}.html`, 'utf8');
+    if (!/id="syncBtn"/.test(src)) return;
+    checkThat(f + ' asks before rebuilding', /AmrFresh\.ifChanged\(/.test(src),
+      'the button rebuilds unconditionally');
+  });
   checkThat('no pill is left in the shell', !/amr-pill/.test(shell), 'the pill is back');
   checkThat('and it covers the page', /\.amr-load\{position:fixed; inset:0/.test(styles));
   checkThat('the API pages already call is unchanged',

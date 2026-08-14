@@ -216,8 +216,8 @@ same stamp instead of their old `pv_cache_gen` / `cache_gen` counters.
 
 ### Syncing: one trigger, and nothing else
 
-There is no ⇣ pull button. Set **one** time-driven trigger on `qlikSyncCheck` (the old
-`qlikSyncHourly` name still works and calls it — an existing trigger keeps working).
+There is no ⇣ pull button. Set **one** time-driven trigger on `qlikSyncCheck`, at whatever
+interval suits — 15 minutes costs three Drive lookups when nothing has changed.
 
 The three exports are named by **file id** in `APP_CONFIG.QLIK_SYNC`, one per page:
 
@@ -248,9 +248,16 @@ re-syncing forever neither fixes it nor tells anybody.
 `AmrFresh` in `Shell.html` asks every 5 minutes whether the version is still the one the page
 loaded with. When it isn't, the page greys out and offers one button that reloads it.
 
-**↻ Update from source** now asks before it acts. If the sheet hasn't been touched since the
-page loaded it says *Already up to date* and throws nothing away — pressing it on an unchanged
-sheet used to make every user rebuild every table for nothing.
+**↻ Update from source** asks before it acts, on every page that has the button — Price &
+Volume, Ready-Mix, Segment, the Overview and both Fuel Recovery pages. If nothing behind the
+page has been touched it says *Already up to date* and throws nothing away; pressing it on an
+unchanged sheet used to make every user rebuild every table for nothing.
+
+A page's version covers **every workbook its figures depend on**, not just its own: the
+Overview reads Price & Volume, Ready-Mix and Segment, so its version moves when any of the
+three does. That comes from `APP_EXTRA_SOURCES` in `Config.gs`, which already listed exactly
+that. Without it a page with no sheet of its own would report a version that never moved and
+sit on stale figures with the button insisting there was nothing to do.
 
 **Loading is full-screen.** `AmrProgress` was a small pill in the corner, which was easy to
 miss — people read half-loaded tables without realising. Same API (`set` / `done` / `fail` /

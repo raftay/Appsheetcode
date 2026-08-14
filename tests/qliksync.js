@@ -390,13 +390,6 @@ console.log('\na run that could not happen is retried next time:');
     Object.keys(seen).length, 0);
 }
 
-console.log('\nthe trigger name that is already set up still works:');
-{
-  const ctx = load();
-  checkThat('qlikSyncHourly is still callable', typeof ctx.qlikSyncHourly === 'function');
-  check('and does the same thing', ctx.qlikSyncHourly().changed.length, 3);
-}
-
 console.log('\nqlikStamps says what the next check will do:');
 {
   const ctx = load();
