@@ -31,14 +31,17 @@ file by file) and it runs.
 
 ## Working on this repo — read first
 
-**Commit straight to `main`. Do not open pull requests.** Everything in this repo goes to
-`main` directly; a PR just adds a review step nobody is waiting on and leaves branches to
-clean up. If you are an agent picking this up: check out `main`, commit there, push there.
+**Branch when the work is big enough to want one; commit straight to `main` when it is
+not.** Small fixes go to `main` directly — a PR on a one-line change is a review step nobody
+is waiting on. Anything that spans several files or several sessions gets a branch, so it can
+be reviewed in pieces and abandoned cheaply if it goes wrong. The merge in [§9](#9-the-great-merge--one-apphtml-one-appgs)
+is on `claude/merging-files-plan-5qmmak` for exactly that reason.
 
 Two things that will bite you if you skip them:
 
-- **Preserve CRLF line endings** in every `.gs` and `.html` file. Scripted edits must open
-  files with `newline=''` and write `\r\n`, or the whole file shows as changed.
+- **Do not flip a file's line endings.** The repo is mixed: most `.html` files are CRLF,
+  some `.gs` files are LF. Scripted edits must open with `newline=''` and write back the
+  endings the file already had, or a two-line change shows up as a whole-file diff.
 - **Run the harnesses in `tests/` before and after touching a report page.** They are the
   only way to prove an extraction did not change what a page renders — see `tests/README.md`.
 
@@ -1520,9 +1523,8 @@ Corrections this audit forced into the rest of the README are logged in §11.
   template; every page CSS block is scoped; no page IIFE leaks a global) and
   `tests/pageparity.js` (old page vs new page under jsdom with `google.script.run` stubbed,
   DOM diffed — the same pattern `regress.js` already uses).
-- **Branch.** This work is on `claude/merging-files-plan-5qmmak`, not `main`, despite the
-  standing "commit straight to `main`" rule at the top of this README — the merge is large
-  enough to want a branch, and the rule assumes small changes to a working tree.
+- **Branch.** This work is on `claude/merging-files-plan-5qmmak`, not `main`. Each chunk is
+  its own commit on that branch, so any one of them can be reviewed or reverted on its own.
 
 ---
 
