@@ -793,6 +793,71 @@ function ckeyFor_(market, period, month){
 }
 function ckey_(){ return ckeyFor_(STATE.market, STATE.period, STATE.month); }
 
+/* ONE LOADING SCREEN, ONE PULL.
+   -----------------------------------------------------------------------
+   RMX_prepare reads the Ready-Mix data ONCE and leaves every market's finished
+   tables in the server cache (see the prepareAll block comment in
+   RMX_Backend.gs). It hands back this market's payload in the same reply, so
+   the page renders off one round trip and every later market or period is a
+   small cache read instead of another 14 MB bundle fetch.
+
+   That is also why the warm loop is gone. It fired twelve RMX_getSlideTables
+   calls in the background and every one of them re-read the whole bundle -
+   twelve times eighteen seconds of server work to save a wait that is now
+   about a second. Apps Script runs one user's calls end to end, so those
+   twelve also sat in front of whatever the user did next.
+
+   THE SCREEN IS ONE JOB, RAISED ONCE. AmrProgress shows the lowest-order job
+   and lists the rest, so several keys going up and down at different moments
+   is what read as flicker. Everything here uses LOAD_JOB with the same
+   wording, and it comes down in exactly one place - applyData, once the tables
+   are actually on the page. */
+var LOAD_JOB = 'data';
+var LOAD_TEXT = 'Pulling from Google Sheets\u2026';
+
+function showLoading(note){
+  if(window.AmrProgress) AmrProgress.set(LOAD_JOB, { text:LOAD_TEXT, order:0, note:note||'' });
+}
+function hideLoading(){
+  if(window.AmrProgress) AmrProgress.clear(LOAD_JOB);
+}
+
+/* The first pull. One call: this market's tables, the market list, the month
+   options, and every other market warmed server-side ready to be asked for. */
+function bootLoad(){
+  var st=document.getElementById('loadStat');
+  if(!IS_LIVE){ setStat(st,false,'This page only reads data inside the live Apps Script web app.'); return; }
+
+  showLoading('Reading the Ready-Mix workbook and preparing every market');
+  if(st){ st.className='dzstat'; st.textContent=LOAD_TEXT; }
+
+  google.script.run
+    .withSuccessHandler(function(res){
+      if(window.AmrCache && res && res.generation != null) AmrCache.check(cacheToken_(res));
+      if(res && res.markets && res.markets.length) MARKETS = res.markets.slice();
+      if(!res || !res.payload){
+        /* prepare answered but carried no payload for this market: fall through
+           to the ordinary per-market read rather than leave the page empty */
+        loadTables();
+        return;
+      }
+      var d = res.payload;
+      CACHE[ckeyFor_(STATE.market, STATE.period, STATE.month)] = d;
+      if(!STATE.upload && window.AmrCache)
+        AmrCache.set('slide:'+ckeyFor_(STATE.market, STATE.period, STATE.month), d);
+      applyData(d, 'Loaded');
+    })
+    .withFailureHandler(function(err){
+      if(window.AmrProgress) AmrProgress.fail(LOAD_JOB, 'Could not read the Ready-Mix workbook');
+      setStat(st, false, (err && err.message) ? err.message : 'Could not read the Ready-Mix workbook.');
+    })
+    .RMX_prepare({ want:'slide', market:STATE.market, period:STATE.period,
+                   month:STATE.month, upload:STATE.upload });
+}
+
+/* A market or period switch. Almost always a hit - in memory, on the device, or
+   in the server cache prepare filled - so a short wait rather than the
+   twenty-second rebuild it used to be. */
 function loadTables(force){
   var st=document.getElementById('loadStat');
   var ck=ckey_();
@@ -804,8 +869,8 @@ function loadTables(force){
   }
   if(!IS_LIVE){ setStat(st,false,'This page only reads data inside the live Apps Script web app.'); return; }
 
-  if(st){ st.className='dzstat'; st.textContent = force ? 'Re-reading the Ready-Mix workbook…' : 'Computing the tables…'; }
-  if(window.AmrProgress) AmrProgress.set('sheet', { text:'Computing '+marketLabel(STATE.market)+'…', order:5 });
+  if(st){ st.className='dzstat'; st.textContent = force ? 'Re-reading the Ready-Mix workbook\u2026' : LOAD_TEXT; }
+  showLoading(marketLabel(STATE.market) + ' \u00b7 ' + STATE.period);
 
   google.script.run
     .withSuccessHandler(function(d){
@@ -813,83 +878,18 @@ function loadTables(force){
       CACHE[ck]=d;
       if(!STATE.upload && window.AmrCache) AmrCache.set('slide:'+ck, d);
       applyData(d, force?'Updated':'Loaded');
-      warmMarkets();
     })
     .withFailureHandler(function(err){
-      if(window.AmrProgress) AmrProgress.fail('sheet', 'Could not read the Ready-Mix data');
+      if(window.AmrProgress) AmrProgress.fail(LOAD_JOB, 'Could not read the Ready-Mix data');
       setStat(st, false, (err && err.message) ? err.message : 'Could not read the Ready-Mix workbook.');
     })
     .RMX_getSlideTables({ market:STATE.market, period:STATE.period, month:STATE.month,
                           upload:STATE.upload, force:!!force });
 }
 
-/* ---- background warming --------------------------------------------------
-   EVERY MARKET, BOTH PERIODS, QUIETLY, ONCE.
-   This page used to warm only the OTHER PERIOD of the market you were already
-   looking at, so the MTD / YTD toggle was instant and the Market dropdown —
-   the control people actually use — went back to the server every single time
-   and put "Computing <market>…" over the whole page. Ready-Mix has warmed its
-   full market list for a while (warmKeys in Page_Rmx.html); this is the same
-   loop, against the same backend, and the reason that page feels different.
-
-   Deliberately serial and silent, exactly as there: a failed warm is a warm
-   that did not happen, never a banner, and the visible request is never queued
-   behind these — Apps Script runs one user's calls end to end, so a parallel
-   fan-out would put the market somebody is waiting for behind four they are
-   not. Answers land in memory AND in AmrCache, so tomorrow's first visit is
-   already warm too. */
-var WARM_DONE = false;
-function warmMarkets(){
-  if(WARM_DONE || STATE.upload || !IS_LIVE) return;
-  WARM_DONE = true;
-
-  var markets = [ALL_MKT].concat(MARKETS || []);
-  var jobs = [];
-  ['MTD','YTD'].forEach(function(p){
-    markets.forEach(function(m){
-      if(!m) return;
-      var k = ckeyFor_(m, p, STATE.month);
-      if(CACHE[k]) return;
-      jobs.push({ market:m, period:p, ck:k });
-    });
-  });
-  var total = jobs.length, done = 0;
-  if(!total) return;
-
-  function tick(){
-    done++;
-    if(!window.AmrProgress) return;
-    if(done >= total) AmrProgress.done('warm', 'Every market ready');
-    else AmrProgress.set('warm', { text:'Preparing markets\u2026', order:30,
-                                   pct: Math.round(done / total * 100) });
-  }
-  if(window.AmrProgress) AmrProgress.set('warm', { text:'Preparing markets\u2026', pct:0, order:30 });
-
-  (function next(){
-    var j = jobs.shift(); if(!j) return;
-    if(CACHE[j.ck]){ tick(); return next(); }
-    if(window.AmrCache){
-      var dev = AmrCache.get('slide:' + j.ck);
-      if(dev){ CACHE[j.ck] = dev; tick(); return next(); }
-    }
-    google.script.run
-      .withSuccessHandler(function(d){
-        if(d){
-          CACHE[j.ck] = d;
-          if(window.AmrCache) AmrCache.set('slide:' + j.ck, d);
-          /* if this is the pair being stared at, paint it now */
-          if(!DATA && j.market === STATE.market && j.period === STATE.period) applyData(d, 'Loaded');
-        }
-        tick(); next();
-      })
-      .withFailureHandler(function(){ tick(); next(); })
-      .RMX_getSlideTables({ market:j.market, period:j.period, month:STATE.month });
-  })();
-}
-
 function applyData(d, note){
   DATA = d || null;
-  if(window.AmrProgress) AmrProgress.clear('sheet');
+  hideLoading();          // the ONE place the loading screen comes down
 
   /* the real market list, once we have it */
   if(d && d.markets && d.markets.length && d.markets.join('|') !== MARKETS.join('|')){
@@ -934,19 +934,20 @@ function updateFromSheets(){
 }
 function updateFromSheetsNow(){
   var btn=document.getElementById('syncBtn');
-  if(window.AmrProgress) AmrProgress.set('sync', { text:'Re-reading the Google Sheet…', order:5 });
-  CACHE={}; WARM_DONE=false;
+  showLoading('Re-reading the Google Sheet');   // the same one screen, not a second
+  CACHE={};
   STATE.titleDirty=false; STATE.month=0;
   google.script.run
     .withSuccessHandler(function(res){
       if(window.AmrCache && res && res.generation != null) AmrCache.check(cacheToken_(res));
       if(btn){ btn.disabled=false; btn.classList.remove('busy'); }
-      if(window.AmrProgress) AmrProgress.done('sync', 'Re-read from the sheet');
-      loadTables(true);
+      /* No tick here: a 'done' flash followed by the next job going up is
+         exactly the flicker. The screen stays until applyData takes it down. */
+      bootLoad();
     })
     .withFailureHandler(function(err){
       if(btn){ btn.disabled=false; btn.classList.remove('busy'); }
-      if(window.AmrProgress) AmrProgress.fail('sync', 'Could not re-read the sheet');
+      if(window.AmrProgress) AmrProgress.fail(LOAD_JOB, 'Could not re-read the sheet');
       setStat(document.getElementById('loadStat'), false, (err && err.message) || String(err));
     })
     .RMX_syncData({ period:STATE.period });
@@ -1066,7 +1067,6 @@ document.addEventListener('DOMContentLoaded', function(){
   });
   document.getElementById('monthSel').addEventListener('change', function(){
     STATE.month=parseInt(this.value,10)||0;
-    WARM_DONE=false;                 // the warmed pairs were for the old month
     autoTitle(); autoSub(); loadTables();
   });
   // MTD / YTD toggle — the active period is filled navy
@@ -1113,7 +1113,7 @@ document.addEventListener('DOMContentLoaded', function(){
   window.addEventListener('resize', scheduleRender);
 
   renderPreview();
-  loadTables();      // the reply carries the Ready-Mix version, which gates the device cache
+  bootLoad();        // ONE call: this market's tables + every other market warmed
 });
 
 </script>

@@ -319,14 +319,22 @@ function fPct(n){ return ((n||0)*100).toFixed(1)+'%'; }
 function fPctS(n){ var v=(n||0)*100; return (v>=0?'+':'')+v.toFixed(1)+'%'; }
 function f$S(n){ return (n>=0?'+':'-')+'$'+Math.abs(n||0).toFixed(2); }
 function showBanner(m){ $('bannerText').textContent=m; $('banner').classList.add('show'); }
-/* Same names and call sites, but nothing is frozen while they are up: the
-   tables you already have stay readable and clickable while the next market
-   is computed. */
-function showLoader(m){
-  if(window.AmrProgress) AmrProgress.set('page', { text:m||'Loading…', order:10 });
+/* ONE LOADING SCREEN, ONE WORDING, ONE KEY.
+   AmrProgress shows the lowest-order job and lists the others underneath, so
+   several keys ('page', 'warm', 'sync') going up and down at their own moments
+   is what read as a flicker of half-second screens. Everything here raises
+   LOAD_JOB with the same text, and it comes down when the tables are on the
+   page - not once per call. The argument is a NOTE under that one heading now,
+   so "Innocon" or "Re-reading the Google Sheet" is a subtitle rather than a new
+   screen. Nothing is frozen while it is up: the tables you already have stay
+   readable and clickable while the next market is computed. */
+var LOAD_JOB = 'data';
+var LOAD_TEXT = 'Pulling from Google Sheets…';
+function showLoader(note){
+  if(window.AmrProgress) AmrProgress.set(LOAD_JOB, { text:LOAD_TEXT, order:0, note:note||'' });
 }
 function hideLoader(){
-  if(window.AmrProgress) AmrProgress.clear('page');
+  if(window.AmrProgress) AmrProgress.clear(LOAD_JOB);
 }
 function setSyncStamp(){ var d=new Date(); $('syncStamp').textContent='Updated '+d.toLocaleTimeString('en-CA',{hour:'numeric',minute:'2-digit'}); }
 function f$0(n){ return '$'+Math.round(n||0).toLocaleString('en-CA'); }
@@ -389,25 +397,39 @@ document.addEventListener('DOMContentLoaded', function(){
     });
   });
   if(IS_LIVE){
-    /* THE LOADING SCREEN GOES UP FIRST, before the call it is about.
-       RMX_getMarkets is not the cheap little call it reads as: on a cold cache
-       it is what builds the whole Ready-Mix bundle, and it was fired with
-       nothing on screen. The loading screen only appeared later, when refresh()
-       finally ran — so the slowest part of opening this page was also the only
-       part with no sign that anything was happening, and it looked like the
-       page had simply come up empty.
+    /* ONE CALL OPENS THIS PAGE.
+       RMX_prepare reads the Ready-Mix data ONCE, computes every market x period
+       off it, leaves each finished payload in the server cache and hands this
+       market's back in the same reply. So the page renders off one round trip
+       and every later market switch is a small cache read. The measurement is
+       in the prepareAll block comment in RMX_Backend.gs and in
+       tests/rmxcost.js: the data bundle is 160 cache chunks, an answer taken
+       off it is one to five.
 
-       The logo waits its turn for the same reason: Apps Script runs one user's
+       It replaces RMX_getMarkets, which was never the cheap little call it read
+       as: it opened with loadDataCached_() to fill the month picker, so the
+       first thing this page did was drag 14 MB out of CacheService before
+       anything could be drawn. prepare returns the same market list, breakdown
+       list and month options.
+
+       The logo waits its turn on purpose. Apps Script runs one user's
        google.script.run calls END TO END, so firing getLogo() first put a whole
-       round trip in front of the data. It is fetched once the markets are in. */
-    showLoader('Reading the Ready-Mix workbook\u2026');
+       round trip in front of the data. */
+    showLoader('Reading the Ready-Mix workbook and preparing every market');
     google.script.run
-      .withSuccessHandler(function(d){
-        initOptions(d);
+      .withSuccessHandler(function(res){
+        initOptions(res);
+        /* prepare already computed the market we open on - keep it, so refresh()
+           renders instead of asking for the same thing again */
+        if(res && res.payload) STATE.keyCache[ckey_()] = res.payload;
+        refresh({}); loadExtras();
+        /* after the report: the data-quality panel and the logo, neither of
+           which anybody is waiting on */
+        setTimeout(loadUnmapped, 0);
         try{ google.script.run.withSuccessHandler(function(u){STATE.logo=u||'';}).getLogo(); }catch(e){}
       })
       .withFailureHandler(function(e){ hideLoader(); showBanner('Could not read sheet: '+(e&&e.message||e)); })
-      .RMX_getMarkets();
+      .RMX_prepare({ want:'keys', market:STATE.market, period:STATE.period, month:STATE.month });
   } else {
     showBanner('Run this inside the Apps Script web app (bound to your spreadsheet) to load data.');
   }
@@ -499,7 +521,6 @@ function initOptions(d){
     msel.setAttribute('data-wired','1');
     msel.addEventListener('change', function(){
       STATE.month = parseInt(this.value, 10) || 0;
-      WARM_DONE = false;                 // the warmed set was for the old month
       refresh({}); loadExtras();
     });
   }
@@ -508,13 +529,12 @@ function initOptions(d){
      once - the same idea as "All markets" on AGG - Price & Volume. */
   var opts = ['<option value="'+esc(ALL_MKT)+'">'+esc(ALL_MKT_LABEL)+'</option>']
     .concat(mk.map(function(m){return '<option value="'+esc(m)+'">'+esc(m)+'</option>';}));
-  STATE.markets = mk.slice();          // the warmer needs the full list
-  /* Start warming NOW. warmKeys() used to be called only from the success
-     handler of the first visible fetch, so the very switch most likely to be
-     made early — straight to a market — was the one still guaranteed to wait.
-     The market list is all the warmer needs, and it is silent and serial, so
-     the visible request is never queued behind it. */
-  setTimeout(warmKeys, 0);
+  STATE.markets = mk.slice();
+  /* Nothing is warmed from here. RMX_prepare has already computed and cached
+     every market x period server-side, off ONE read of the data bundle - see
+     the prepareAll comment in RMX_Backend.gs. The loop that used to live here
+     asked for the same twelve selections one at a time, and each one re-read
+     the whole 14 MB bundle to answer. */
   $('market').innerHTML = opts.join('');
   renderChips();
   renderExtraChips();
@@ -524,7 +544,15 @@ function initOptions(d){
   STATE.market = (STATE.market && (STATE.market===ALL_MKT || mk.indexOf(STATE.market)!==-1))
     ? STATE.market : ALL_MKT;
   $('market').value = STATE.market;
-  refresh({}); loadExtras(); loadUnmapped();
+  /* NOT refresh()/loadExtras() from here any more: the caller does it once,
+     after stashing the payload prepare already returned. Doing it here as well
+     is what fetched the opening market twice.
+
+     loadUnmapped() is deferred rather than dropped - the Mapping check is a card
+     that is always on the page, so it still has to load. It is no longer part of
+     the critical path: prepare has already cached that payload (it is one field
+     of the bundle it had open), so this is a small read that happens after the
+     tables are up and never holds the loading screen. */
 }
 
 /* ---------- Extras / VAP chips ----------
@@ -743,67 +771,19 @@ function refresh(opts){
     if(!STATE.upload && window.AmrCache) AmrCache.set('keys:'+STATE.market+'|'+STATE.period+'|m'+STATE.month, res);
     if(!STATE.synced){ STATE.synced=true; setSyncStamp(); }
     renderNow();
-    warmKeys();
   }).withFailureHandler(function(e){ hideLoader(); showBanner('Error: '+(e&&e.message||e)); })
     .RMX_getKeys({ market:STATE.market, period:STATE.period, month:STATE.month, force:!!opts.force, upload:STATE.upload });
 }
 
-/* ---- background warming -------------------------------------------------
-   Every cross-filter, breakdown and rolling window on this page is already
-   computed in the browser from the key rows, so the ONLY thing that ever waits
-   is the first fetch of a market+period pair. Once one pair is in, the rest are
-   pulled quietly behind it and every later switch is instant.
+/* NO BACKGROUND WARM LOOP.
+   There was one here that fetched every market x both periods, serially, on
+   first load. Every one of those calls re-read the whole 14 MB data bundle out
+   of CacheService, so twelve of them was minutes of server work - and because
+   Apps Script runs one user's calls end to end, they queued in front of
+   whatever the user did next. RMX_prepare does the same job in ONE execution
+   with ONE bundle read, server-side, so there is nothing left to warm from
+   here: a market switch reads a finished payload straight out of the cache. */
 
-   Deliberately serial and silent: a failed warm is a warm that did not happen,
-   never a banner, and the visible request is never queued behind these. */
-var WARM_DONE = false;
-function warmKeys(){
-  if (WARM_DONE || STATE.upload || !IS_LIVE) return;
-  WARM_DONE = true;
-  var markets = [ALL_MKT].concat((STATE.markets || []));
-  var jobs = [];
-  ['MTD','YTD'].forEach(function(p){
-    markets.forEach(function(m){
-      if (!m) return;
-      var ck = 'sheet|' + m + '|' + p + '|m' + STATE.month;
-      if (STATE.keyCache[ck]) return;
-      jobs.push({ market:m, period:p, month:STATE.month, ck:ck });
-    });
-  });
-  var total = jobs.length, done = 0;
-  if (!total) return;
-  function tick(){
-    done++;
-    if (!window.AmrProgress) return;
-    if (done >= total) AmrProgress.done('warm', 'Every market ready');
-    else AmrProgress.set('warm', { text:'Preparing markets…', order:30,
-                                   pct: Math.round(done / total * 100) });
-  }
-  if (window.AmrProgress) AmrProgress.set('warm', { text:'Preparing markets…', pct:0, order:30 });
-  (function next(){
-    var j = jobs.shift(); if (!j) return;
-    if (STATE.keyCache[j.ck]){ tick(); return next(); }
-    if (window.AmrCache){
-      var dev = AmrCache.get('keys:' + j.market + '|' + j.period + '|m' + j.month);
-      if (dev){ STATE.keyCache[j.ck] = dev; tick(); return next(); }
-    }
-    google.script.run
-      .withSuccessHandler(function(res){
-        if (res){
-          STATE.keyCache[j.ck] = res;
-          if (window.AmrCache) AmrCache.set('keys:' + j.market + '|' + j.period + '|m' + j.month, res);
-          /* if the user is staring at exactly this pair, paint it now */
-          if (!STATE.upload && j.market === STATE.market && j.period === STATE.period
-              && j.month === STATE.month){
-            hideLoader(); renderNow();
-          }
-        }
-        tick(); next();
-      })
-      .withFailureHandler(function(){ tick(); next(); })
-      .RMX_getKeys({ market:j.market, period:j.period, month:j.month });
-  })();
-}
 /* EVEN COLUMNS. Every value column asks for the same share of the width and
    the row-name column for a double share. Layout stays `auto`, so a column
    whose content genuinely needs more than its share still takes it - the
@@ -986,26 +966,31 @@ function doSync(){
 
 function doSyncNow(){
   var b=$('syncBtn');
-  if(window.AmrProgress) AmrProgress.set('sync', { text:'Re-reading the Google Sheet…', order:5 });
+  showLoader('Re-reading the Google Sheet');      // the same one screen, not a second
   STATE.keyCache={}; STATE.extrasCache={}; STATE.mapCache={}; STATE.extras=null;
   STATE.sug=null; STATE.sugErr=null;
-  WARM_DONE = false;                       // every market has to be warmed again
   google.script.run.withSuccessHandler(function(res){
     if(window.AmrCache && res && res.generation != null) AmrCache.check(cacheToken_(res));
     b.classList.remove('busy'); setSyncStamp();
-    if(window.AmrProgress) AmrProgress.done('sync', 'Re-read from the sheet');
-    /* Rebuild the sidebar from the new sheet exactly as a fresh page load does.
-       initOptions() repopulates the market list + breakdown chips and then runs
-       refresh()/loadExtras()/loadUnmapped() itself, so don't call them twice. */
-    google.script.run.withSuccessHandler(initOptions)
+    /* No 'done' tick: a flash of one screen followed by the next going up is
+       exactly the flicker. It stays up until the tables are rendered.
+
+       Rebuild the sidebar as a fresh load does - and through prepare, so the
+       new figures are computed and cached once rather than a market at a time. */
+    google.script.run
+      .withSuccessHandler(function(res){
+        initOptions(res);
+        if(res && res.payload) STATE.keyCache[ckey_()] = res.payload;
+        refresh({}); loadExtras(); setTimeout(loadUnmapped, 0);
+      })
       .withFailureHandler(function(e){
         showBanner('Could not re-read the market list: '+(e&&e.message||e));
-        refresh({}); loadExtras(); loadUnmapped();
-      }).RMX_getMarkets();
+        refresh({}); loadExtras(); setTimeout(loadUnmapped, 0);
+      })
+      .RMX_prepare({ want:'keys', market:STATE.market, period:STATE.period, month:STATE.month });
   }).withFailureHandler(function(e){
     b.classList.remove('busy'); showBanner('Update failed: '+(e&&e.message||e));
-    if(window.AmrProgress) AmrProgress.fail('sync', 'Update failed');
-    WARM_DONE = false;
+    if(window.AmrProgress) AmrProgress.fail(LOAD_JOB, 'Update failed');
   }).RMX_syncData({ period:STATE.period });
 }
 

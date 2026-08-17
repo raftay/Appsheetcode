@@ -223,15 +223,30 @@ let bad = 0;
   const ok = (label, cond) => { if (!cond) bad++; console.log(`  ${cond ? 'ok  ' : 'FAIL'} ${label}`); };
   const gta  = pick('pv',  { market: 'GTA' });
   const sask = pick('pv',  { market: 'Saskatchewan' });
-  const segS = pick('seg', { market: 'SASKATCHEWAN' });
 
   ok('an Ontario row is offered the main book',        gta.book === 'main');
   ok('...and only its regions',                        JSON.stringify(gta.sheets) === '["Central","GTA"]');
   ok('a Saskatchewan row is sent to the MB/SK book',   sask.book === 'mbsk');
   ok('...and is NOT offered an Ontario region',        sask.sheets.indexOf('GTA') === -1);
-  ok('the recipe\'s capitalised spelling lands there too', segS.book === 'mbsk');
   ok('a missing MB/SK workbook reads as missing',      sask.has === false);
   ok('...while the main book is present',              gta.has === true);
+
+  /* AND THE RMX SLIDES HAVE NO DROPDOWN AT ALL.
+     A region is a per-region PLANT STATEMENT tab, which is what the Price &
+     Volume cards read. The Product Segment cards come from AmrKpi.rmx(), which
+     finds the market's own block in "RMX Summary" by name and reads no sheet
+     index at all — so there is nothing to choose. The seg adapter used to
+     declare a picker built from the AGG region list anyway: AmrSegSlide ignored
+     every field of it, so it changed nothing, and it put "AGG GTA" on ten
+     Ready-Mix rows in the Deck Builder. */
+  ok('an RMX Segment row offers no region dropdown',   !R.get('seg').kpiPicker);
+  ok('...while the AGG rows still have one',           !!R.get('pv').kpiPicker);
+  const segCtxKpi = (() => {
+    /* the ctx the seg adapter hands the module: values only, no sheet/index */
+    const src = R.get('seg');
+    return typeof src.content === 'function';
+  })();
+  ok('the seg source still builds its slide without one', segCtxKpi);
 
   /* ------------------------------------------------------------------
    * reset() — what ↻ Update from source relies on.

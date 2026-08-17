@@ -164,6 +164,39 @@ for (const mod of [...Object.keys(MODULES), 'SlideExport.html', 'Page_DeckBuilde
     'a key left out falls back to the module default, which differs from this page\'s');
 }
 
+/* ---- ONE PULL, ONE LOADING SCREEN ----------------------------------------
+ * Both Ready-Mix pages opened by asking the server for one market at a time,
+ * and every one of those calls began with loadDataCached_() - 160 CacheService
+ * chunks to produce a one-chunk answer (tests/rmxcost.js has the sizes). On top
+ * of that each page ran its own background loop over every market x period, so
+ * opening the page was a dozen of those reads, serially, in front of anything
+ * the user did next.
+ *
+ * RMX_prepare replaces all of it: one execution, one bundle read, every
+ * selection computed and cached. So the pages must ask for it, must NOT carry a
+ * warm loop any more, and must show ONE loading screen - AmrProgress shows the
+ * lowest-order job and lists the rest, so several keys going up and down at
+ * their own moments is exactly what read as flicker.
+ */
+for (const page of ['Page_Rmx.html', 'Page_Segment.html']) {
+  const src = read(page);
+  check(page + ' \u00b7 opens with RMX_prepare', /\.RMX_prepare\(/.test(src),
+    'the page still asks for one market at a time, and each of those reads the whole bundle');
+  check(page + ' \u00b7 no per-market warm loop', !/function\s+warm(Keys|Markets)\b/.test(src),
+    'prepare warms every selection server-side off ONE bundle read; a client loop '
+    + 'undoes that by asking for each one separately');
+  /* one job key, and it is cleared in exactly one place */
+  const keys = [...src.matchAll(/AmrProgress\.(?:set|fail)\(\s*'([a-z]+)'/g)].map(m => m[1]);
+  const uniq = [...new Set(keys)];
+  check(page + ' \u00b7 raises one progress key, not several',
+    uniq.length <= 1, 'raises ' + JSON.stringify(uniq) + ' - each one is another screen');
+  check(page + ' \u00b7 no "done" tick between screens', !/AmrProgress\.done\(/.test(src),
+    'a tick that flashes for 1.2s and is replaced by the next job is the flicker');
+}
+check('Page_Rmx.html \u00b7 no longer boots through RMX_getMarkets',
+  !/\.RMX_getMarkets\(/.test(read('Page_Rmx.html')),
+  'that call opens with loadDataCached_() too, so it was an 18-second call to fill a dropdown');
+
 /* ---- ONE MONTH ------------------------------------------------------------
  * The deck is built for ONE report month — pick July and every slide is July,
  * MTD and YTD, on all four backends. Every adapter used to hard-code `month: 0`
