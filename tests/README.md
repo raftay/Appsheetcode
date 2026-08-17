@@ -155,6 +155,18 @@ progress job stacked underneath, or a market switch costing more than a couple o
 
 It is a wiring test, not a data test — the payloads are synthetic.
 
+## `fscheader.js` also proves the fuel read is cached
+
+Added when the other backends were audited. `readData_()` did a full
+`getDataRange().getValues()` of the raw tab on **every** call, and `getFscData` had no result
+cache either — so the page re-read tens of thousands of rows on every open, every *↻ Update
+from source*, and once more for each of the deck's two fuel slides. Nothing else in the suite
+does that.
+
+The harness counts sheet reads: the same question twice must read the sheet **once**, and a
+different month must be its own entry rather than a stale hit. That is also what catches a
+cache key that varies when it should not.
+
 ## `deckstatic.js` — the CSS the deck can actually see, and the recipe
 
 No browser, no Google, no dependencies. Run it after touching a deck module, a report

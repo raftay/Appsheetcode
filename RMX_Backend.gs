@@ -1017,7 +1017,7 @@ function prepareAll(opts){
   var markets = bundle.markets || [];
   var list    = [ALL_MARKETS].concat(markets);
   var asked   = opts.market || ALL_MARKETS;
-  var payload = null, warmed = 0;
+  var payloads = {}, warmed = 0;
 
   /* Every reply carries these, exactly as the individual calls do, so a page
      can fill its pickers from this one answer. */
@@ -1035,6 +1035,23 @@ function prepareAll(opts){
   function keep(kind, period, market, out){
     if (!opts.upload) cachePut_(cacheKey_(selKey_(kind, period, month, market)), out);
     warmed++;
+    return out;
+  }
+
+  /* ...AND HAND THEM ALL BACK, not just the one that was asked for.
+     Warming the server cache alone still leaves a round trip per market: pick
+     GTA and the page waits on a call, which is exactly what Aggregates does NOT
+     do - its opening call carries every market, so switching is instant and
+     costs nothing. These are the same finished payloads that just went into the
+     cache, so this is one response instead of twelve, and after it the pages
+     switch market with no server call at all.
+
+     Sizes, from tests/rmxcost.js: one market is ~72 KB, Central Canada ~361 KB,
+     so both periods together are around a megabyte. That is a fine response and
+     a poor localStorage entry - the pages keep them in memory and go on writing
+     AmrCache one market at a time (it caps near 900 KB per entry). */
+  function wire(kind, period, market, out){
+    payloads[kind + '|' + market + '|' + period] = out;
     return out;
   }
 
@@ -1056,7 +1073,7 @@ function prepareAll(opts){
           breakdowns: CONFIG.BREAKDOWNS
         }));
         if (mk === auto) keep('keys', period, '', k);      // the '' -> 'auto' alias
-        if (opts.want === 'keys' && mk === asked && period === (opts.period || 'MTD')) payload = k;
+        wire('keys', period, mk, k);
       }
 
       if (want === 'slide' || want === 'all'){
@@ -1067,7 +1084,7 @@ function prepareAll(opts){
           extras:  extrasPayload_(bundle, scoped, mk, m),
           rowCount: scoped.length
         }));
-        if (opts.want === 'slide' && mk === asked && period === (opts.period || 'MTD')) payload = s;
+        wire('slide', period, mk, s);
       }
 
       if (want === 'all'){
@@ -1093,7 +1110,12 @@ function prepareAll(opts){
            months:bundleMonths_(bundle),
            build:BUILD, generation:generation_(),
            ms: new Date().getTime() - t0,
-           payload: payload };
+           /* every market x period the page will ever ask for, keyed
+              '<kind>|<market>|<period>' */
+           payloads: payloads,
+           /* the one the caller opens on, for a page that wants only that */
+           payload: payloads[(want === 'slide' ? 'slide' : 'keys') + '|' + asked
+                             + '|' + (opts.period === 'YTD' ? 'YTD' : 'MTD')] || null };
 }
 
 /* Every value the lookups couldn't match, across ALL markets and ALL months

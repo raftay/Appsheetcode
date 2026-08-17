@@ -300,6 +300,29 @@ sit on stale figures with the button insisting there was nothing to do. The Deck
 the same case and is listed there too — its five sources reduce to four workbooks
 (`pricevolume`, `rmx`, `segment`, `saskrates`).
 
+**ONE loading screen, up until everything is ready.** `AmrBoot` (`Shell.html`) is a
+refcount over a single `AmrProgress` job. A page names what has to be true before it is worth
+looking at — `AmrBoot.need('data')`, `need('month history')` — and answers each with
+`AmrBoot.done(...)`; the screen goes up on the first `need()`, paints immediately (the page
+behind it is empty), and comes down exactly once, when the **last** step lands. After that
+boot is over and `need()` is ignored, so nothing can re-raise the opening screen.
+
+Two rules came with it, and both were bugs before:
+
+- **`AmrProgress` waits out a grace period (400 ms) before painting.** A screen that appears
+  and disappears inside half a second is worse than no screen — it reads as the page
+  stuttering. Jobs are registered immediately but only painted if they outlive the grace, so
+  anything quick shows nothing at all. `{ now:true }` and any failure paint at once.
+- **`AmrProgress.done()` is banned on report pages.** It flashes a tick for 1.2 s and is then
+  replaced by whatever goes up next, which *is* the flicker. Clear the job instead.
+  `tests/deckstatic.js` fails on a `done()` or on a page that opens without naming its boot
+  steps; `tests/segboot.js` drives the real thing in a browser.
+
+The failure mode of a refcount is a step that never reports, and its symptom is the worst one
+available: a loading screen over a finished page, forever. So `AmrBoot` has a watchdog that
+names what it is still waiting for. If you ever see that message, some path forgot its
+`done()`.
+
 **Loading is full-screen.** `AmrProgress` was a small pill in the corner, which was easy to
 miss — people read half-loaded tables without realising. Same API (`set` / `done` / `fail` /
 `clear` / `detail`), different chrome. The consequence worth knowing: work that used to run
@@ -340,7 +363,7 @@ Four layers, each with a different job:
 |---|---|---|
 | `APP_cachePut_` / `APP_cacheGet_` | Apps Script `CacheService` | chunked at 90 KB, max 250 chunks, 6 h TTL. Silently skips payloads it can't fit |
 | `cachePutBig_` | `CacheService` | the chunked writer for large payloads — **required** for customer reports and raw tab caches |
-| `AmrCache` | `localStorage` | device-level report cache, no expiry, keyed by generation token |
+| `AmrCache` | `localStorage` | device-level report cache, no expiry, keyed by generation token. **Caps near 900 KB per entry** — write one market at a time, never a whole set |
 | `AmrCube` / `AmrKpiStore` | IndexedDB | multi-MB cube data |
 
 **Invalidation is by generation token, never by deletion.** Every server *and* browser
@@ -393,6 +416,16 @@ byte-for-byte against the single-call result. Two rules came out of it:
   every market × period in the background. That is twelve of the expensive read, serially —
   and because Apps Script runs one user's `google.script.run` calls end to end, they queue in
   front of whatever the user does next. Warm on the server, in one execution, or not at all.
+
+**Ship every market to the browser, not one per click.** Warming the *server* cache is only
+half the job: the page still pays a round trip per market, which is what "pick GTA and it
+loads again" was. Aggregates never did that — its opening call carries every market, so
+switching is instant. `RMX_prepare` returns `payloads`, the same finished objects it just
+cached, keyed `<kind>|<market>|<period>`; both Ready-Mix pages seed their in-memory caches
+from it and a market switch costs **zero** server calls. `tests/segboot.js` fails on one.
+Seed under **both** the resolved month and whatever the picker is on — the RMX month picker
+opens on "Last closed month", whose value is `0`, so seeding only the resolved month files
+every payload under a name nothing ever looks up.
 
 **Cache the ANSWER, not just the ingredients.** Every Ready-Mix page computes from
 `loadDataCached_()` — the whole dataset as one cached object. Caching that is right: it is
@@ -1185,7 +1218,10 @@ before assuming it is finished.**
 | 2026-08-17 | **Found the real cost**: every RMX call re-read the 14 MB bundle (160 cache chunks) to produce a 72 KB answer. `RMX_prepare` does it once; `tests/rmxcost.js` is the evidence and the gate | ✅ done |
 | 2026-08-17 | Both Ready-Mix pages open on ONE call, with ONE loading screen, and no client-side warm loop; `RMX_getMarkets` and the boot-time Mapping check are off the critical path (`tests/segboot.js`) | ✅ done |
 | 2026-08-17 | The RMX Segment deck rows lose their KPI Region dropdown — `AmrKpi.rmx` resolves by market name and reads no region sheet, so the control did nothing | ✅ done |
-| | **The rest of the suite still has one `get*` per page per sheet.** PV, FSC, RFSC, Overview and TP01 were not touched. Worth auditing each for the same "read the ingredients to answer one question" shape before unifying anything | ☐ |
+| 2026-08-17 | **Audited the other backends** for the same shape. PV and the Overview already answer from a cached result before touching their pivot — nothing to do. **FSC and RFSC cached nothing at all**: a full `getDataRange()` of the raw tab on every call, no result cache. Both layers cached now (`tests/fscheader.js` proves one sheet read for two identical calls) | ✅ done |
+| 2026-08-17 | `RMX_prepare` returns **every** market's payload, so a market switch costs no server call — the way Aggregates already worked | ✅ done |
+| 2026-08-17 | **One loading screen** across the suite: `AmrBoot` holds it until every named step lands, `AmrProgress` gained a 400 ms grace so quick work paints nothing, and `done()` ticks are gone from every report page | ✅ done |
+| | TP01, the Inventory Report and the Landing page have no boot screen wired — they read no report data, so there may be nothing to do. Check before adding one | ☐ |
 
 ### What has and has not been run
 

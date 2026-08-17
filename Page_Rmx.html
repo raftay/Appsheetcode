@@ -330,10 +330,16 @@ function showBanner(m){ $('bannerText').textContent=m; $('banner').classList.add
    readable and clickable while the next market is computed. */
 var LOAD_JOB = 'data';
 var LOAD_TEXT = 'Pulling from Google Sheets…';
+/* During BOOT the screen is AmrBoot's - one screen, up until everything the page
+   needs has landed. After boot these are ordinary AmrProgress jobs, and
+   AmrProgress waits out a grace period before painting, so a market switch that
+   takes under half a second shows nothing at all. */
 function showLoader(note){
+  if(window.AmrBoot && !AmrBoot.finished()) return;      // the boot screen owns it
   if(window.AmrProgress) AmrProgress.set(LOAD_JOB, { text:LOAD_TEXT, order:0, note:note||'' });
 }
 function hideLoader(){
+  if(window.AmrBoot) AmrBoot.done('data');
   if(window.AmrProgress) AmrProgress.clear(LOAD_JOB);
 }
 function setSyncStamp(){ var d=new Date(); $('syncStamp').textContent='Updated '+d.toLocaleTimeString('en-CA',{hour:'numeric',minute:'2-digit'}); }
@@ -415,25 +421,60 @@ document.addEventListener('DOMContentLoaded', function(){
        The logo waits its turn on purpose. Apps Script runs one user's
        google.script.run calls END TO END, so firing getLogo() first put a whole
        round trip in front of the data. */
-    showLoader('Reading the Ready-Mix workbook and preparing every market');
+    /* ONE screen for the whole opening. It comes down in renderReport, when the
+       tables are actually on the page - not when the first call returns. */
+    if(window.AmrBoot) AmrBoot.need('data');
     google.script.run
       .withSuccessHandler(function(res){
         initOptions(res);
-        /* prepare already computed the market we open on - keep it, so refresh()
-           renders instead of asking for the same thing again */
-        if(res && res.payload) STATE.keyCache[ckey_()] = res.payload;
+        seedKeyCache(res);        // every market, in the browser, from this one reply
         refresh({}); loadExtras();
         /* after the report: the data-quality panel and the logo, neither of
            which anybody is waiting on */
         setTimeout(loadUnmapped, 0);
         try{ google.script.run.withSuccessHandler(function(u){STATE.logo=u||'';}).getLogo(); }catch(e){}
       })
-      .withFailureHandler(function(e){ hideLoader(); showBanner('Could not read sheet: '+(e&&e.message||e)); })
+      .withFailureHandler(function(e){
+        if(window.AmrBoot) AmrBoot.fail('Could not read the Ready-Mix workbook');
+        hideLoader(); showBanner('Could not read sheet: '+(e&&e.message||e));
+      })
       .RMX_prepare({ want:'keys', market:STATE.market, period:STATE.period, month:STATE.month });
   } else {
     showBanner('Run this inside the Apps Script web app (bound to your spreadsheet) to load data.');
   }
 });
+
+/* EVERY MARKET, IN THE BROWSER, FROM ONE REPLY.
+   Warming the server cache still left a round trip per market - pick GTA and the
+   page waits on a call. Aggregates does not do that: its opening call carries
+   every market, so switching is instant. RMX_prepare hands back the same
+   finished payloads it just cached, so seed them all and every later switch is a
+   memory hit with no server call at all.
+
+   AmrCache is localStorage and caps near 900 KB per entry, so these are written
+   one market at a time, exactly as a single fetch would have written them. */
+function seedKeyCache(res){
+  var pl = (res && res.payloads) || {};
+  var mo = (res && res.month) || 0;
+  /* TWO KEYS PER PAYLOAD, on purpose. prepare answers for a RESOLVED month (7),
+     but this page's month picker opens on "Last closed month", whose value is 0 -
+     so ckey_() asks for m0 while the reply describes m7. Seeding only the
+     resolved month meant every payload was in the cache under a name nothing ever
+     looked up, and the page went straight back to the server. Same reasoning as
+     the backend's 'auto' alias. */
+  var months = [mo];
+  if (months.indexOf(STATE.month) === -1) months.push(STATE.month);
+  Object.keys(pl).forEach(function(k){
+    var bits = k.split('|');                        // '<kind>|<market>|<period>'
+    if(bits[0] !== 'keys') return;
+    var mk = bits[1], per = bits[2];
+    months.forEach(function(m){
+      STATE.keyCache[(STATE.upload||'sheet')+'|'+mk+'|'+per+'|m'+m] = pl[k];
+      if(!STATE.upload && window.AmrCache)
+        AmrCache.set('keys:'+mk+'|'+per+'|m'+m, pl[k]);
+    });
+  });
+}
 
 /* The in-memory cache key for one view. Market, period AND month, so switching
    any of the three can never repaint another one's numbers. */
@@ -845,6 +886,7 @@ function renderReport(d){
 
   if(window.paintImpact) paintImpact();
   renderRmxPreview();
+  hideLoader();          // the tables are on the page: THIS is "ready"
 }
 
 /* ---------- EXTRAS ---------- */
@@ -950,6 +992,7 @@ function renderExtras(d){
 
   if(window.paintImpact) paintImpact();
   renderRmxPreview();
+  hideLoader();          // the tables are on the page: THIS is "ready"
 }
 
 /* ---------- Sync: clear caches, re-read sheet, refresh current view ---------- */
@@ -980,7 +1023,7 @@ function doSyncNow(){
     google.script.run
       .withSuccessHandler(function(res){
         initOptions(res);
-        if(res && res.payload) STATE.keyCache[ckey_()] = res.payload;
+        seedKeyCache(res);
         refresh({}); loadExtras(); setTimeout(loadUnmapped, 0);
       })
       .withFailureHandler(function(e){

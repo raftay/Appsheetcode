@@ -111,7 +111,18 @@ window.google = { script: { run: (function(){
           allMarkets:'__ALL__', month:7, latestMonth:7,
           months:{ all:[1,2,3,4,5,6,7], cy:[1,2,3,4,5,6,7] },
           breakdowns:keys({}).breakdowns, build:'b1', generation:'g1', ms:9000 };
-        man.payload = (o.want === 'slide') ? slide(o) : keys(o);
+        /* every market x period, the way the real prepare answers - this is what
+           makes a market switch cost no call at all */
+        var kind = (o.want === 'slide') ? 'slide' : 'keys';
+        var mk = ['__ALL__'].concat(${JSON.stringify(MARKETS)});
+        man.payloads = {};
+        ['MTD','YTD'].forEach(function(per){
+          mk.forEach(function(m){
+            var spec = { market:m, period:per };
+            man.payloads[kind+'|'+m+'|'+per] = (kind === 'slide') ? slide(spec) : keys(spec);
+          });
+        });
+        man.payload = man.payloads[kind+'|'+(o.market||'__ALL__')+'|'+(o.period||'MTD')] || null;
         return man; }),
       RMX_getSlideTables: reply('RMX_getSlideTables', slide),
       RMX_getKeys:        reply('RMX_getKeys', keys),
@@ -177,7 +188,9 @@ const CASES = [
       calls: window.__CALLS.map(c => c[0]),
       overlay: !!document.querySelector('.amr-load.show'),
       jobs: document.querySelectorAll('.amr-load-jobs li').length,
-      text: (document.querySelector('.amr-load-text') || {}).textContent || ''
+      text: (document.querySelector('.amr-load-text') || {}).textContent || '',
+      bootOver: !!(window.AmrBoot && window.AmrBoot.finished()),
+      waiting: (window.AmrBoot && window.AmrBoot.waiting()) || []
     }));
     const fail = [];
     const n = f => boot.calls.filter(x => x === f).length;
@@ -189,6 +202,8 @@ const CASES = [
     if (perMarket) fail.push('re-fetched the opening market ' + perMarket +
       'x — prepare already handed that payload back');
     if (boot.overlay) fail.push('the loading screen is still up after the tables rendered');
+    if (!boot.bootOver) fail.push('AmrBoot never finished — still waiting for ' +
+      JSON.stringify(boot.waiting) + ' (a step is missing its done())');
     if (boot.jobs) fail.push(boot.jobs + ' other progress job(s) stacked underneath — that is the flicker');
 
     /* switching market: prepare warmed it server-side, so ONE small call, and
@@ -197,7 +212,12 @@ const CASES = [
     await pg.waitForTimeout(700);
     const afterSwitch = await pg.evaluate(() => window.__CALLS.map(c => c[0]));
     const switchCalls = afterSwitch.length - boot.calls.length;
-    if (switchCalls > 2) fail.push('a market switch cost ' + switchCalls + ' calls');
+    /* THE POINT OF RETURNING EVERY MARKET. Aggregates' opening call carries all
+       of them, so switching is instant; warming only the server cache still left
+       a round trip per market. Zero is the requirement, not "few". */
+    if (switchCalls !== 0) fail.push('a market switch cost ' + switchCalls +
+      ' server call(s) — prepare already handed that market back, so it should '
+      + 'be a memory hit');
 
     const tables = await pg.evaluate(s => document.querySelectorAll(s).length, c.tables);
     if (!tables) fail.push('no tables rendered');
@@ -209,6 +229,59 @@ const CASES = [
       ' boot=[' + boot.calls.join(',') + '] switch=+' + switchCalls +
       ' tables=' + tables + ' overlay=' + boot.overlay);
     if (fail.length) { bad++; console.log('       ' + fail.join('\n       ')); }
+    await pg.close();
+  }
+
+  /* ---- AmrBoot / AmrProgress on their own ------------------------------
+     The two bugs this found are both in the SHELL, not the pages, and both
+     showed as "a loading screen over a finished page":
+       - the grace gate returned early without hiding an overlay that was
+         already up, so the previous job's wording sat there;
+       - clear() stopped repainting once nothing was left, so the last job
+         never took its own screen down.
+     Neither is visible from a page test that happens to end in a good state,
+     so they get their own checks. */
+  {
+    const pg = await browser.newPage();
+    await pg.goto('file://' + path.join(require('os').tmpdir(), 'amr_Page_Segment.html'),
+      { waitUntil: 'load' });
+    await pg.waitForTimeout(700);
+    const shown = () => pg.evaluate(() => !!document.querySelector('.amr-load.show'));
+    const t = [];
+    const ck = (label, got, want) => { t.push([label, got === want, got]); };
+
+    /* boot is over by now, and the screen is down */
+    ck('boot finished after load', await pg.evaluate(() => AmrBoot.finished()), true);
+    ck('no screen once boot is done', await shown(), false);
+
+    /* a job that resolves inside the grace period never paints at all */
+    await pg.evaluate(() => { AmrProgress.grace(400); AmrProgress.set('q', { text:'quick' }); });
+    ck('a quick job paints nothing', await shown(), false);
+    await pg.evaluate(() => AmrProgress.clear('q'));
+    await pg.waitForTimeout(600);
+    ck('...and never appears afterwards', await shown(), false);
+
+    /* one that outlives it does paint, and hides again when cleared */
+    await pg.evaluate(() => AmrProgress.set('slow', { text:'slow' }));
+    await pg.waitForTimeout(600);
+    ck('a slow job does paint', await shown(), true);
+    await pg.evaluate(() => AmrProgress.clear('slow'));
+    ck('and hides the moment it is cleared', await shown(), false);
+
+    /* a failure is never delayed */
+    await pg.evaluate(() => AmrProgress.fail('bad', 'nope'));
+    ck('a failure paints immediately', await shown(), true);
+    await pg.evaluate(() => AmrProgress.clear('bad'));
+
+    /* boot cannot be re-raised once it is over */
+    await pg.evaluate(() => AmrBoot.need('late'));
+    ck('AmrBoot.need after boot is ignored', await shown(), false);
+
+    const failed = t.filter(x => !x[1]);
+    console.log((failed.length ? 'FAIL ' : 'ok   ') + 'loading screen'.padEnd(20) +
+      ' ' + t.length + ' checks');
+    failed.forEach(x => console.log('       ' + x[0] + ' -> ' + JSON.stringify(x[2])));
+    if (failed.length) bad++;
     await pg.close();
   }
 
