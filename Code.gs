@@ -50,6 +50,12 @@ function doGet(e) {
   else if (page === 'inventoryreport') file = 'Page_InventoryReport';
   else if (page === 'overview')     file = 'Page_Overview';
   else if (page === 'deckbuilder')  file = 'Page_DeckBuilder';
+  /* The merged single-file client, behind its own route while it is built.
+     It calls these same backends unchanged, so every legacy page above keeps
+     working untouched. Delete this line to revert. See PLAN.md §2.
+        ?page=app            the landing page
+        ?page=app&view=rmx   any other page, for side-by-side comparison   */
+  else if (page === 'app')          file = 'app';
   else                              file = 'Landing';
 
   // We render through a template so each page can inject the web-app URL
@@ -57,6 +63,13 @@ function doGet(e) {
   var t = HtmlService.createTemplateFromFile(file);
   t.appUrl  = getAppUrl_();   // available inside the HTML as <?= appUrl ?>
   t.page    = page || 'landing';
+  /* app.html mounts ONE page, chosen by <body data-page>. While it is behind
+     ?page=app, &view= is what picks which one; after the cutover ?page= does
+     it directly and this falls away. */
+  if (page === 'app') {
+    var view = (e && e.parameter && e.parameter.view) ? String(e.parameter.view).toLowerCase() : '';
+    t.page = view || 'landing';
+  }
 
   return t.evaluate()
     .setTitle('Amrize Commercial Suite')

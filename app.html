@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amrize Commercial Suite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!--
+================================================================================
+ app.html — THE ENTIRE CLIENT SIDE OF THE AMRIZE COMMERCIAL SUITE
+================================================================================
+
+ One file. Every page. See PLAN.md for why, and read it before editing this.
+
+ HOW TO NAVIGATE THIS FILE
+ -------------------------
+ Search for the section banner, e.g.  Ctrl+F  "§A3"  or  "§P inventoryreport".
+
+   §A1  TOKENS ................ :root custom properties. The only place a colour,
+                                radius, shadow or breakpoint is defined.
+   §A2  BASE .................. reset, typography, form controls, focus.
+   §A3  COMPONENTS ............ every block used by MORE THAN ONE page.
+   §A4  PAGE CSS .............. one block per page, scoped body[data-page="x"].
+   §B   SLIDE CSS ............. .slide-bare capture styles.        (chunk 10)
+   §D   RUNTIME ............... AMR core: logging, lib loader, nav, modals,
+                                the QlikView guide, the page registry.
+   §E   SHARED MODULES ........ AmrCube / AmrKpi / AmrSlide / …     (chunk 3+)
+   §P   PAGES ................. one <template> + one registration per page.
+
+ HOW A PAGE WORKS HERE
+ ---------------------
+ Every page is TWO things, next to each other in §P:
+
+   1. a template element, id "tpl-NAME" — its markup. A template's contents
+      live in an inert document fragment, so getElementById CANNOT see an
+      unmounted page. That is what lets twenty pages share one document without
+      their ids colliding, and why page code did not have to change when it
+      moved in here.
+
+   2. an AMR.page("NAME", ...) call — one IIFE holding everything that page's
+      old script block declared at top level. Nothing is renamed; it is simply
+      no longer global.
+
+ On load, doGet passes ?page=  →  <body data-page>  →  AMR.start() mounts that
+ ONE page and runs its boot(). Nothing else on the page has any effect.
+
+ THREE RULES, BROKEN AT YOUR PERIL
+ ---------------------------------
+ 1. A rule a second page would want belongs in §A3, not §A4. The test is not
+    "does another page use it today" — it is "would another page's version of
+    this be the same".
+ 2. Ids are JS hooks. They do not carry style. If you need to style something,
+    give it a class.
+ 3. No raw values below §A1. A hex code further down is a token that has not
+    been created yet.
+================================================================================
+-->
+
+<style>
+/* ============================================================================
+   §A1  TOKENS — the single source of truth
+   ----------------------------------------------------------------------------
+   Colours are the Amrize deck's ramp: blue-100 is the deep navy the header and
+   every heading use, blue-10 the palest wash behind inputs and hovered rows.
+
+   BREAKPOINTS. There are three, and they are named. The suite previously had
+   NINE — 760, 820, 860, 900, 980, 1080, 1180, 1720 and a reduced-motion query —
+   which is not a scale, it is seven people each picking a number. Custom
+   properties cannot be used in a media query, so the values are repeated in the
+   @media rules; these three declarations are the reference, and the comment
+   beside every @media below names which step it is.
+
+     --bp-narrow  760px   phone / narrow tablet: single column, rails unstick
+     --bp-mid     980px   the main layout switch: side rail drops below content
+     --bp-wide   1720px   enough margin outside 1080px of content for an aside
+   ========================================================================== */
+:root{
+  /* Blue ramp — 100 = deepest navy, 10 = palest. */
+  --blue-100:#011E6A; --blue-90:#0404BD; --blue-80:#0F4FD6; --blue-70:#185CB5;
+  --blue-60:#2C74CC;  --blue-50:#2A6EFF; --blue-40:#24A0FF; --blue-30:#5FC0FF;
+  --blue-20:#7CD3FF;  --blue-10:#EEF7FF;
+
+  --accent:#2A6EFF;        /* bright icon blue         */
+  --accent-light:#7CD3FF;  /* light sky (mark on navy) */
+  --accent-dark:#7CD3FF;   /* alias kept for older markup */
+
+  --ink:#16243B; --muted:#5C6B82; --line:#DCE6F2; --paper:#F4F7FC; --white:#fff;
+  --pos:#1F7A4D; --pos-bg:#E4F3EB; --neg:#B23A48; --neg-bg:#F7E7EA;
+  --neg-line:#EBC9CE;                 /* border on negative-tinted panels */
+  --green:#2E7D5B; --pink:#9C4767;    /* RMX table-group accents */
+  --slate:#3c4859;                    /* PDF/preview viewer backdrop */
+
+  --r:14px;                           /* the card radius */
+  --r-sm:10px;                        /* inputs, small buttons */
+  --r-xs:8px;
+  --shadow:0 1px 2px rgba(1,30,106,.06), 0 8px 24px rgba(1,30,106,.07);
+  --shadow-lift:0 10px 30px rgba(1,30,106,.14);
+  --shadow-modal:0 24px 60px rgba(1,30,106,.30);
+
+  --bp-narrow:760px; --bp-mid:980px; --bp-wide:1720px;   /* reference only */
+}
+</style>
+
+<style>
+/* ============================================================================
+   §A2  BASE — reset, typography, form controls
+   ========================================================================== */
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font-family:Inter,system-ui,Arial,sans-serif; color:var(--ink); background:var(--paper);
+  font-feature-settings:"tnum" 1; -webkit-font-smoothing:antialiased}
+.num,.tnum{font-variant-numeric:tabular-nums}
+
+/* Form controls. `select{width:100%}` is deliberate and load-bearing for the
+   side rails — anything that must NOT stretch (the page switcher) pins its own
+   width. */
+input[type=text],select,.search{width:100%; border:1px solid var(--line); border-radius:var(--r-sm);
+  background:var(--blue-10); padding:9px 12px; font:500 13px Inter; color:var(--ink)}
+select{appearance:none; cursor:pointer}
+input[type=range]{accent-color:var(--blue-70); width:100%; cursor:pointer; margin:2px 0 0}
+label.lbl,.lbl{display:block; font:600 12px Inter; color:var(--muted); margin-bottom:6px}
+.field{margin-bottom:14px}
+.field:last-child{margin-bottom:0}
+.hint{font:500 11.5px Inter; color:var(--muted); margin-top:9px; line-height:1.45}
+</style>
+
+<style>
+/* ============================================================================
+   §A3  COMPONENTS — everything used by more than one page
+   ----------------------------------------------------------------------------
+   Add here only when a second page would want the same thing. Adding a rule
+   here that only one page uses is how §A4 empties into a shared layer nobody
+   can safely change.
+   ========================================================================== */
+
+/* ---- the one spinner -------------------------------------------------------
+   There were three: `spin` in Styles.html, `amrload` also in Styles.html, and
+   `irspin` in the Inventory Report — three keyframes rotating a circle 360°.
+   One now. Size and colour come from the modifier, never a second keyframe. */
+@keyframes amr-spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block; width:42px; height:42px; border-radius:50%;
+  border:3px solid var(--blue-20); border-top-color:var(--blue-70);
+  animation:amr-spin .8s linear infinite}
+.spinner.sm{width:13px; height:13px; border-width:2px; vertical-align:middle; margin-right:6px}
+@media (prefers-reduced-motion:reduce){ .spinner{animation-duration:2.4s} }
+
+/* ---- top bar + brand ---- */
+header.bar{position:sticky; top:0; z-index:20; background:var(--blue-100); color:#fff;
+  display:flex; align-items:center; gap:18px; padding:14px 24px;
+  box-shadow:0 1px 0 rgba(255,255,255,.06), 0 6px 20px rgba(1,30,106,.18)}
+.brand{display:flex; align-items:baseline; gap:12px}
+.brand .mark{font-family:Archivo; font-weight:800; letter-spacing:.22em; font-size:15px;
+  color:var(--accent-light); padding-right:12px; border-right:1px solid rgba(255,255,255,.18)}
+.brand .title{font-family:Archivo; font-weight:700; font-size:16px; letter-spacing:.01em}
+.brand .sub{font-size:12px; color:#A9C3E8; margin-left:2px}
+header .spacer{flex:1}
+
+/* ---- buttons ---- */
+/* .ghost lives on the navy header → outline + white text. */
+.ghost{border:1px solid rgba(255,255,255,.28); background:transparent; color:#fff;
+  font:600 12.5px Inter; padding:8px 14px; border-radius:var(--r-sm); cursor:pointer; transition:.15s}
+.ghost:hover{background:rgba(255,255,255,.12)}
+.ghost.primary{background:#fff; color:var(--blue-100); border-color:#fff}
+.ghost+.ghost{margin-left:8px}
+/* white button inside light cards */
+.dl,.lk{border:1px solid var(--line); background:#fff; color:var(--blue-80); cursor:pointer;
+  font:600 11.5px Inter; padding:6px 10px; border-radius:9px; transition:.14s}
+.dl:hover,.lk:hover{background:var(--blue-10); border-color:var(--blue-40)}
+.lk.full{width:100%}
+/* busy state: hide the label, spin in place. Uses the one keyframe above. */
+.ghost.busy,.dl.busy{position:relative; color:transparent !important}
+.ghost.busy::after,.dl.busy::after{content:""; position:absolute; inset:0; margin:auto;
+  width:14px; height:14px; border-radius:50%; animation:amr-spin .7s linear infinite}
+.ghost.busy::after{border:2px solid rgba(255,255,255,.45); border-top-color:#fff}
+.dl.busy::after{border:2px solid var(--blue-20); border-top-color:var(--blue-70)}
+
+/* ---- page layout ---- */
+.shell{display:grid; grid-template-columns:288px 1fr; gap:24px; padding:24px; max-width:1480px; margin:0 auto}
+.rail{position:sticky; top:86px; align-self:start; display:flex; flex-direction:column; gap:18px}
+.main{display:flex; flex-direction:column; gap:22px; min-width:0}
+@media (max-width:980px){          /* --bp-mid */
+  .shell{grid-template-columns:1fr}
+  .rail{position:static}
+}
+
+/* ---- panels ---- */
+.panel{background:var(--white); border:1px solid var(--line); border-radius:var(--r);
+  padding:16px; box-shadow:var(--shadow)}
+.eyebrow{font:700 10.5px Archivo; letter-spacing:.18em; text-transform:uppercase;
+  color:var(--blue-70); margin:0 0 12px}
+.btnrow{display:flex; gap:8px}
+
+/* ---- chips ---- */
+.chips{display:flex; flex-wrap:wrap; gap:7px}
+.chip{border:1px solid var(--line); background:#fff; color:var(--ink); font:600 12px Inter;
+  padding:7px 11px; border-radius:999px; cursor:pointer; transition:.14s; user-select:none}
+.chip:hover{border-color:var(--blue-40)}
+.chip[aria-pressed="true"]{background:var(--blue-70); border-color:var(--blue-70); color:#fff}
+.chip[disabled]{opacity:.4; cursor:not-allowed}
+
+/* ---- segmented control ----
+   Was written five times across the pages. Promoted on the first port. */
+.seg{display:inline-flex; border:1px solid var(--line); border-radius:var(--r-sm);
+  overflow:hidden; background:#fff}
+.seg button{border:0; background:transparent; color:var(--ink); font:600 12px Inter;
+  padding:8px 13px; cursor:pointer; transition:.14s}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button:hover{background:var(--blue-10)}
+.seg button[aria-pressed="true"]{background:var(--blue-70); color:#fff}
+
+/* ---- headings + cards ---- */
+.section-head{display:flex; align-items:baseline; gap:12px; margin:2px}
+.section-head h2{font:700 18px Archivo; margin:0; letter-spacing:.01em}
+.section-head .meta{font:500 12px Inter; color:var(--muted)}
+.card{background:var(--white); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); overflow:hidden}
+.card-head{display:flex; align-items:center; gap:10px; padding:16px 18px 0}
+.card-head .eb,.eb{font:700 10.5px Archivo; letter-spacing:.16em; text-transform:uppercase; color:var(--blue-70)}
+.card-head h3,h3{font:700 15.5px Archivo; margin:2px 0 0}
+.card-head .cap{font:500 11.5px Inter; color:var(--muted); margin-top:1px}
+.card-head .right{margin-left:auto; display:flex; align-items:center; gap:10px}
+
+/* ---- badge ---- */
+.badge{display:inline-flex; align-items:center; gap:7px; padding:6px 11px; border-radius:999px;
+  font:700 12.5px Inter; letter-spacing:.01em}
+.badge .k{font:700 9.5px Archivo; letter-spacing:.14em; opacity:.7}
+.badge.up{background:var(--pos-bg); color:var(--pos)}
+.badge.down{background:var(--neg-bg); color:var(--neg)}
+
+/* ---- tables ---- */
+table{width:100%; border-collapse:collapse; font-size:13px}
+thead th{background:var(--blue-80); color:#fff; font:600 11px Inter; letter-spacing:.04em;
+  text-transform:uppercase; padding:10px 12px; text-align:left; white-space:nowrap}
+tbody td{padding:10px 12px; text-align:right; border-bottom:1px solid var(--line); white-space:nowrap}
+tbody td:first-child{text-align:left; font-weight:600; color:var(--ink)}
+tbody tr:hover{background:var(--blue-10)}
+tfoot td{padding:12px; text-align:right; font-weight:700; border-top:2px solid var(--blue-100)}
+tfoot td:first-child{text-align:left}
+.pos{color:var(--pos)} .neg{color:var(--neg)}
+
+/* ---- empty / waiting states ---- */
+.empty{padding:40px; text-align:center; color:var(--muted); font:500 13px Inter}
+.amr-waiting{font:600 11.5px Inter; color:var(--muted); padding:14px 0}
+
+/* ---- info banner ---- */
+.banner{display:none; align-items:center; gap:10px; background:var(--blue-10);
+  border:1px solid var(--blue-20); color:var(--blue-90); font:600 12.5px Inter;
+  padding:10px 14px; border-radius:12px}
+.banner.show{display:flex}
+.banner .dot{width:8px; height:8px; border-radius:50%; background:var(--accent)}
+
+/* ---- modals (shared shell: help, settings, hints, and page modals) ---- */
+.amr-modal{position:fixed; inset:0; z-index:9100; display:none; align-items:center;
+  justify-content:center; background:rgba(1,30,106,.34); padding:20px}
+.amr-modal.amr-open{display:flex}
+.amr-card{background:#fff; border-radius:16px; max-width:680px; width:100%; max-height:86vh;
+  overflow:auto; box-shadow:var(--shadow-modal)}
+.amr-card .amr-head{display:flex; align-items:center; gap:12px; padding:18px 22px;
+  border-bottom:1px solid #EEF3F9; position:sticky; top:0; background:#fff}
+.amr-card .amr-head h2{font:800 17px Archivo; margin:0; color:var(--blue-100); flex:1}
+.amr-x{border:0; background:var(--blue-10); color:var(--blue-100); width:30px; height:30px;
+  border-radius:var(--r-xs); cursor:pointer; font:700 16px Inter; line-height:1}
+.amr-body{padding:20px 22px; font:400 13.5px Inter; color:var(--ink); line-height:1.55}
+.amr-body h3{font:700 13px Archivo; margin:18px 0 6px; color:var(--blue-100)}
+.amr-body h3:first-child{margin-top:0}
+.amr-body code{background:var(--blue-10); border-radius:5px; padding:1px 5px; font-size:12px}
+.amr-body table{border-collapse:collapse; width:100%; margin:8px 0 4px; font-size:12px}
+.amr-body th{background:var(--blue-100); color:#fff; text-align:left; padding:6px 8px;
+  font-weight:600; white-space:nowrap}
+.amr-body td{border:1px solid var(--line); padding:5px 8px; white-space:nowrap}
+.amr-scroll{overflow-x:auto}
+
+/* modal form bits, shared by the settings modal and page modals */
+.amr-input{width:100%; border:1px solid var(--line); border-radius:var(--r-sm);
+  background:var(--paper); padding:10px 12px; font:500 13px Inter; color:var(--ink)}
+.amr-save{border:0; background:var(--blue-100); color:#fff; font:700 13px Inter;
+  padding:10px 18px; border-radius:var(--r-sm); cursor:pointer}
+.amr-save:hover{background:var(--blue-90)}
+.amr-save:disabled{opacity:.55; cursor:default}
+.amr-status{margin-top:10px; font:600 12px Inter}
+.amr-status.ok{color:var(--pos)} .amr-status.err{color:var(--neg)} .amr-status.muted{color:var(--muted)}
+.amr-cur{background:var(--blue-10); border:1px solid #D7E9FB; border-radius:var(--r-sm);
+  padding:10px 12px; font:500 12.5px Inter; color:var(--ink); margin-bottom:10px; word-break:break-word}
+.amr-label{display:block; font:600 12px Inter; color:var(--muted); margin:12px 0 6px}
+.amr-label:first-of-type{margin-top:0}
+.amr-set-row{margin-bottom:20px; padding-bottom:18px; border-bottom:1px solid #EEF3F9}
+.amr-set-row:last-child{margin-bottom:0; padding-bottom:0; border-bottom:0}
+.amr-default-link{font:600 12px Inter; color:var(--muted); text-decoration:none}
+.amr-default-link:hover{color:var(--blue-80)}
+
+/* ---- the stale-data grey-out ---- */
+.amr-stale{position:fixed; inset:0; z-index:9200; display:none; align-items:center;
+  justify-content:center; padding:24px; background:rgba(1,30,106,.45);
+  backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px)}
+.amr-stale.amr-open{display:flex}
+.amr-stale-card{background:#fff; border-radius:16px; max-width:400px; width:100%; padding:26px;
+  text-align:center; box-shadow:0 24px 60px rgba(1,30,106,.34)}
+.amr-stale-card h2{font:800 16px Archivo; margin:0 0 10px; color:var(--blue-100)}
+.amr-stale-card p{font:400 13px Inter; color:var(--ink); line-height:1.55; margin:0 0 18px}
+.amr-stale-btn{width:100%; border:1px solid var(--blue-100); background:var(--blue-100); color:#fff;
+  font:700 12.5px Inter; padding:11px 14px; border-radius:9px; cursor:pointer}
+.amr-stale-btn:hover:not(:disabled){background:#0A2E86}
+.amr-stale-btn:disabled{opacity:.6; cursor:default}
+
+/* ---- per-table source hint ---- */
+.amr-qm{display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px;
+  border-radius:50%; border:1px solid #C7DEF8; background:var(--blue-10); color:var(--blue-80);
+  font:700 12px Inter; cursor:pointer; line-height:1; padding:0; vertical-align:middle}
+.amr-qm:hover{background:#fff; border-color:var(--blue-40)}
+
+/* ---- page-switcher dropdown ----
+   §A2 sets select{width:100%} for the rails, so width and flex are pinned here
+   or this stretches across the whole header. */
+.amr-pageSel{appearance:none; -webkit-appearance:none;
+  flex:0 0 auto; width:auto; max-width:180px;
+  border:1px solid rgba(255,255,255,.28); background-color:transparent; color:#fff;
+  font:600 12px Inter; padding:7px 26px 7px 12px; border-radius:9px; cursor:pointer; transition:.15s;
+  background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23ffffff' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 9px center}
+.amr-pageSel:hover{background-color:rgba(255,255,255,.12)}
+.amr-pageSel option{color:var(--ink); background:#fff}
+
+/* ---- the QlikView / month-end guide aside ----
+   Was copy-pasted into seven pages, ~817 lines. One copy. The per-page step
+   text, title and button label are arguments to AmrQlikGuide.mount(). */
+.qlikGuide{position:fixed; top:96px; right:18px; width:250px; max-height:calc(100vh - 120px);
+  overflow:auto; background:#fff; border:1px solid var(--line); border-radius:var(--r);
+  padding:14px 14px 10px; box-shadow:0 8px 24px rgba(1,30,106,.08); z-index:5; display:none}
+.qlikGuide h4{margin:0 0 4px; font:800 12px Archivo; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--blue-100)}
+.qlikGuide p{margin:8px 0 6px; font:500 12px/1.5 Inter; color:var(--ink)}
+.qlikGuide .qg-sub{margin:0 0 4px; font:500 11px/1.5 Inter; color:var(--muted)}
+.qlikGuide img{width:100%; border:1px solid var(--line); border-radius:var(--r-xs); display:block}
+.qlikGuide .ph{border:1.5px dashed var(--line); border-radius:var(--r-xs); padding:22px 8px;
+  text-align:center; font:600 11px Inter; color:var(--muted)}
+.qlikGuide .qgImgWrap{position:relative}
+.qlikGuide .qgImgWrap img{cursor:zoom-in}
+.qlikGuide .qgExpand{position:absolute; top:6px; right:6px; width:24px; height:24px; border:0;
+  border-radius:6px; background:rgba(1,30,106,.75); color:#fff; font:700 13px Inter;
+  cursor:pointer; line-height:1}
+.qlikGuide.open{display:block; z-index:60; box-shadow:0 16px 48px rgba(1,30,106,.28)}
+.qlikGuide .qgHide{display:none; width:100%; margin-top:12px; border:1px solid var(--line);
+  background:#fff; color:var(--blue-100); font:600 12px Inter; padding:8px;
+  border-radius:9px; cursor:pointer}
+.qlikGuide.open .qgHide{display:block}
+.qgFab{position:fixed; right:18px; bottom:18px; z-index:59; border:0; border-radius:999px;
+  padding:12px 18px; cursor:pointer; background:var(--blue-100); color:#fff;
+  font:700 12.5px Archivo; letter-spacing:.04em; box-shadow:0 8px 24px rgba(1,30,106,.35)}
+.qgFab:hover{background:var(--blue-70)}
+.qgLightbox{position:fixed; inset:0; z-index:9999; background:rgba(1,30,106,.82); display:flex;
+  align-items:center; justify-content:center; padding:28px; cursor:zoom-out}
+.qgLightbox img{max-width:96vw; max-height:92vh; border-radius:var(--r-sm); background:#fff;
+  box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.qgLightbox .qgClose{position:absolute; top:14px; right:18px; border:0; background:transparent;
+  color:#fff; font:700 30px Inter; cursor:pointer; line-height:1}
+/* Wide screens: the guide is always open and the button is pointless. Pages
+   with a .shell carve the space out of it; the landing page centres 1080px of
+   content and already has room, so it does not. */
+@media (min-width:1720px){         /* --bp-wide */
+  .qlikGuide{display:block}
+  .qgFab{display:none}
+  body[data-page] .shell{max-width:calc(100vw - 312px); margin-right:288px}
+}
+</style>
+
+<style>
+/* ============================================================================
+   §A4  PAGE CSS — one block per page, scoped to body[data-page="…"]
+   ----------------------------------------------------------------------------
+   Only what is genuinely unique to one page. Everything else belongs in §A3.
+   The scope prefix is what stops a page's `.wrap` restyling another page's.
+   ========================================================================== */
+
+/* ---- §P landing ---------------------------------------------------------- */
+body[data-page="landing"] .land-hero{background:var(--blue-100); color:#fff; padding:54px 24px 64px}
+body[data-page="landing"] .land-hero .inner{max-width:1080px; margin:0 auto}
+body[data-page="landing"] .land-hero .mark{font-family:Archivo; font-weight:800;
+  letter-spacing:.22em; font-size:14px; color:var(--accent-light)}
+body[data-page="landing"] .land-hero h1{font:800 30px Archivo; margin:10px 0 6px; letter-spacing:.01em}
+body[data-page="landing"] .land-hero p{font:500 14px Inter; color:#A9C3E8; margin:0;
+  max-width:620px; line-height:1.5}
+body[data-page="landing"] .land-topnav{display:flex; justify-content:flex-end; gap:8px; margin-bottom:10px}
+body[data-page="landing"] .land-heroRow{display:flex; align-items:center; gap:64px}
+body[data-page="landing"] .land-feat{flex:none; display:flex; flex-direction:column; align-items:flex-start;
+  background:linear-gradient(115deg,var(--blue-50) 0%,var(--blue-40) 60%,var(--blue-30) 100%);
+  border-radius:16px; padding:24px 28px; min-width:280px; text-decoration:none; color:#fff;
+  box-shadow:0 10px 30px rgba(42,110,255,.4); transition:transform .15s, box-shadow .15s}
+body[data-page="landing"] .land-feat:hover{transform:translateY(-3px);
+  box-shadow:0 16px 40px rgba(42,110,255,.55)}
+body[data-page="landing"] .land-feat .tag{font:700 11px Archivo; letter-spacing:.18em;
+  text-transform:uppercase; color:var(--blue-10); opacity:.9}
+body[data-page="landing"] .land-feat h2{font:800 24px Archivo; margin:6px 0 16px; color:#fff}
+body[data-page="landing"] .land-feat .go{background:#fff; color:var(--blue-80); font:700 13.5px Inter;
+  padding:10px 18px; border-radius:999px; box-shadow:0 4px 12px rgba(1,30,106,.25)}
+body[data-page="landing"] .land-wrap{max-width:1080px; margin:-34px auto 40px; padding:0 24px;
+  display:grid; grid-template-columns:repeat(3,1fr); gap:20px}
+body[data-page="landing"] .land-card{display:flex; flex-direction:column; background:#fff;
+  border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--shadow); padding:22px;
+  text-decoration:none; color:inherit; transition:transform .14s, box-shadow .14s}
+body[data-page="landing"] .land-card:hover{transform:translateY(-3px); box-shadow:var(--shadow-lift)}
+body[data-page="landing"] .land-card .tag{font:700 10px Archivo; letter-spacing:.16em;
+  text-transform:uppercase; color:var(--blue-70)}
+body[data-page="landing"] .land-card h2{font:700 18px Archivo; margin:8px 0 6px}
+body[data-page="landing"] .land-card p{font:500 12.5px Inter; color:var(--muted); line-height:1.5;
+  margin:0 0 16px; flex:1}
+body[data-page="landing"] .land-card .go{font:700 12.5px Inter; color:var(--blue-100);
+  display:inline-flex; align-items:center; gap:6px}
+body[data-page="landing"] .land-note{max-width:1080px; margin:0 auto 60px; padding:0 24px}
+body[data-page="landing"] .land-note h3{font:700 14px Archivo; margin:0 0 6px}
+body[data-page="landing"] .land-note p{font:500 12.5px Inter; color:var(--muted); line-height:1.55; margin:0}
+body[data-page="landing"] .land-setbtn{margin-top:12px; border:1px solid var(--line);
+  background:var(--blue-10); color:var(--blue-100); font:700 12.5px Inter; padding:9px 14px;
+  border-radius:var(--r-sm); cursor:pointer}
+body[data-page="landing"] .land-setbtn:hover{border-color:var(--blue-40)}
+@media (max-width:980px){          /* --bp-mid; was 820px, the nearest step */
+  body[data-page="landing"] .land-wrap{grid-template-columns:1fr}
+}
+@media (max-width:760px){          /* --bp-narrow; was 900px */
+  body[data-page="landing"] .land-heroRow{flex-direction:column; align-items:flex-start}
+}
+
+/* ---- §P inventoryreport --------------------------------------------------
+   This page fills the viewport: the PDF frame takes whatever is left after the
+   toolbar. That needs a height chain from <body> down, which is why these two
+   rules target body itself — the one case §3 of PLAN.md warns has to be
+   scoped by hand rather than by prefixing a class selector. */
+body[data-page="inventoryreport"],
+html:has(body[data-page="inventoryreport"]){height:100%}
+body[data-page="inventoryreport"]{display:flex; flex-direction:column}
+
+body[data-page="inventoryreport"] .irwrap{flex:1; display:flex; flex-direction:column;
+  max-width:1560px; width:100%; margin:0 auto; padding:14px 20px 18px; min-height:0}
+body[data-page="inventoryreport"] .ir-toolbar{display:flex; align-items:center; gap:10px;
+  flex-wrap:wrap; background:var(--white); border:1px solid var(--line); border-bottom:0;
+  border-radius:var(--r) var(--r) 0 0; padding:10px 14px; box-shadow:var(--shadow)}
+body[data-page="inventoryreport"] .ir-file{font:700 13.5px Archivo; color:var(--ink); line-height:1.2}
+body[data-page="inventoryreport"] .ir-sub{font:500 11px Inter; color:var(--muted); margin-top:1px}
+body[data-page="inventoryreport"] .ir-spacer{flex:1}
+body[data-page="inventoryreport"] .irbtn{display:inline-flex; align-items:center; gap:6px;
+  border:1px solid var(--line); background:#fff; color:var(--blue-80); cursor:pointer;
+  text-decoration:none; font:600 12px Inter; padding:0 13px; height:34px;
+  border-radius:9px; transition:.14s; white-space:nowrap}
+body[data-page="inventoryreport"] .irbtn:hover{background:var(--blue-10); border-color:var(--blue-40)}
+body[data-page="inventoryreport"] .irbtn.primary{background:var(--blue-100);
+  border-color:var(--blue-100); color:#fff}
+body[data-page="inventoryreport"] .irbtn.primary:hover{background:var(--blue-90)}
+body[data-page="inventoryreport"] .irbtn .ico{font-size:14px; line-height:1}
+body[data-page="inventoryreport"] .ir-frame-wrap{flex:1; min-height:0; background:var(--slate);
+  border:1px solid var(--line); border-radius:0 0 var(--r) var(--r);
+  box-shadow:var(--shadow); overflow:hidden; position:relative}
+body[data-page="inventoryreport"] .ir-frame-wrap iframe{position:absolute; inset:0;
+  width:100%; height:100%; border:0; display:block; background:var(--slate)}
+body[data-page="inventoryreport"] .ir-empty{flex:1; display:flex; align-items:center;
+  justify-content:center; padding:40px 20px}
+body[data-page="inventoryreport"] .ir-empty .card{padding:34px 38px; max-width:520px; text-align:center}
+body[data-page="inventoryreport"] .ir-empty h2{font:800 18px Archivo; color:var(--ink); margin:0 0 8px}
+body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--muted);
+  line-height:1.55; margin:0 0 18px}
+</style>
+
+<style>
+/* ============================================================================
+   §B  SLIDE CSS — .slide-bare capture styles
+   ----------------------------------------------------------------------------
+   Ported in chunk 10 with the Deck Builder. Every rule scoped under
+   .slide-bare, the wrapper AmrSlide.captureBare photographs.
+   ========================================================================== */
+</style>
+</head>
+
+<body data-page="<?= page ?>">
+
+<!-- The one mounted page goes here. Each page template carries its own header:
+     the landing page deliberately has no header.bar (its hero IS the header),
+     so a single shared bar could not serve both. -->
+<main id="appRoot"></main>
+
+<!-- ==========================================================================
+     SHARED MODAL SHELLS — outside #appRoot so they survive any page swap.
+     ========================================================================== -->
+<div class="amr-modal" id="amrHelpModal">
+  <div class="amr-card">
+    <div class="amr-head"><h2 id="amrHelpTitle">How to use this page</h2>
+      <button class="amr-x" data-close="amrHelpModal">&times;</button></div>
+    <div class="amr-body" id="amrHelpBody"></div>
+  </div>
+</div>
+
+<div class="amr-modal" id="amrSetModal">
+  <div class="amr-card">
+    <div class="amr-head"><h2 id="amrSetTitle">Data source &middot; Google Sheet</h2>
+      <button class="amr-x" data-close="amrSetModal">&times;</button></div>
+    <div class="amr-body">
+      <p style="margin-top:0" id="amrSetIntro">This tool reads from its own Google Sheet.
+        Paste its link below and click Save.</p>
+      <div id="amrSetList"><div class="amr-cur">Checking current setting&hellip;</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="amr-modal" id="amrHintModal">
+  <div class="amr-card">
+    <div class="amr-head"><h2>Source data for this table</h2>
+      <button class="amr-x" data-close="amrHintModal">&times;</button></div>
+    <div class="amr-body" id="amrHintBody"></div>
+  </div>
+</div>
+
+<!-- No close control on purpose: the figures underneath are stale, so the only
+     thing to do is reload. -->
+<div class="amr-stale" id="amrStale" role="alertdialog" aria-labelledby="amrStaleTitle">
+  <div class="amr-stale-card">
+    <h2 id="amrStaleTitle">New data has arrived</h2>
+    <p>QlikView sent a new export and the sheet behind this page has been updated.
+       What you are looking at is the previous data.</p>
+    <button type="button" class="amr-stale-btn" id="amrStaleBtn">Update from source</button>
+  </div>
+</div>
+
+<script>
+/* ============================================================================
+   §D  RUNTIME — the AMR core
+   ----------------------------------------------------------------------------
+   Everything here is shared by every page and runs once, on load. It replaces
+   Shell.html. Ordered so each piece only depends on what is above it:
+
+     AMR.log        structured logging                        (PLAN.md §7)
+     AMR.live       are we inside the real web app?
+     AMR.lib        lazy CDN loader
+     AMR.nav        top-window navigation (we are in a sandbox iframe)
+     AMR.modals     help / settings / hint / stale
+     AmrHint        per-table source hints
+     AmrQlikGuide   the guide aside — one copy, was seven
+     AMR.page/start the page registry and mount
+   ========================================================================== */
+window.AMR = (function(){
+  'use strict';
+
+  /* ==========================================================================
+     LOGGING  (PLAN.md §7)
+     --------------------------------------------------------------------------
+     One helper, one format, one switch. Every function written for the merge
+     logs through this. Rules that keep it useful rather than noisy:
+
+       · Log at entry points and phase boundaries. NEVER inside a per-row loop
+         — the Ready-Mix bundle is 40,000 rows and a line each would cost more
+         than the work it describes.
+       · Always carry elapsed ms. It is the field that catches a regression
+         nobody reported.
+       · On anything that reads a cache, carry hit / miss / skip. `skip`
+         matters: the server's cache writer silently bails above its chunk
+         ceiling, and a silent bail looks exactly like a cache that is never warm.
+
+     Level is 'warn' by default so a normal session is quiet. Turn it up from
+     the console with  AMR.log.level('debug')  — it persists per device.
+     ========================================================================== */
+  var LEVELS = { debug:10, info:20, warn:30, error:40, off:99 };
+  var LOG_KEY = 'amr_log_level';
+  var logLevel = (function(){
+    try { return localStorage.getItem(LOG_KEY) || 'warn'; } catch(e){ return 'warn'; }
+  })();
+
+  function log(level, where, msg, data){
+    if ((LEVELS[level] || 0) < (LEVELS[logLevel] || 30)) return;
+    var line = '[' + (where || '?') + '] ' + (msg || '');
+    var fn = (level === 'error') ? 'error' : (level === 'warn') ? 'warn' : 'log';
+    try { data ? console[fn](line, data) : console[fn](line); } catch(e){}
+  }
+  log.level = function(l){
+    if (l && LEVELS[l]){ logLevel = l; try { localStorage.setItem(LOG_KEY, l); } catch(e){} }
+    return logLevel;
+  };
+  /* Wrap a unit of work so its elapsed ms is logged without every call site
+     having to hold a start time. Returns whatever fn returns. */
+  log.timed = function(where, msg, fn){
+    var t0 = Date.now();
+    try {
+      var out = fn();
+      log('info', where, msg, { ms: Date.now() - t0 });
+      return out;
+    } catch(err){
+      log('error', where, msg + ' — threw', { ms: Date.now() - t0, error: String(err) });
+      throw err;
+    }
+  };
+
+  /* Are we inside the real Apps Script web app, or is this a static preview?
+     Every server call is guarded by this so the file can be opened directly. */
+  var LIVE = (typeof google !== 'undefined' && google.script && google.script.run);
+
+  /* ==========================================================================
+     LAZY LIBRARY LOADER
+     --------------------------------------------------------------------------
+     No page needs all three libraries and two need none, so nothing is loaded
+     until a page asks. Each page declares  libs:['chart','xlsx']  in its
+     registration and start() awaits them before boot().
+     ========================================================================== */
+  var LIBS = {
+    chart:       ['https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js',
+                  'https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js'],
+    html2canvas: ['https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'],
+    xlsx:        ['https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js']
+  };
+  var libPromises = {};
+
+  function loadScript(src){
+    return new Promise(function(resolve, reject){
+      var s = document.createElement('script');
+      s.src = src; s.async = false;              /* order matters for plugins */
+      s.onload = function(){ resolve(src); };
+      s.onerror = function(){ reject(new Error('Could not load ' + src)); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function need(names){
+    var list = [].concat(names || []);
+    return Promise.all(list.map(function(name){
+      if (!LIBS[name]) return Promise.reject(new Error('Unknown library: ' + name));
+      if (libPromises[name]) return libPromises[name];
+      var t0 = Date.now();
+      libPromises[name] = Promise.all(LIBS[name].map(loadScript)).then(function(){
+        log('info', 'AMR.lib', 'loaded ' + name, { ms: Date.now() - t0 });
+      });
+      return libPromises[name];
+    }));
+  }
+
+  /* ==========================================================================
+     NAVIGATION
+     --------------------------------------------------------------------------
+     We run inside an Apps Script sandbox iframe, so changing location does
+     nothing useful. A target=_top anchor is what actually navigates.
+     ========================================================================== */
+  var URL_BASE = window.APP_URL || '';
+  var PAGE = document.body.getAttribute('data-page') || 'landing';
+
+  function navTop(href){
+    var a = document.createElement('a');
+    a.href = href; a.target = '_top';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ if (a.parentNode) a.parentNode.removeChild(a); }, 1500);
+  }
+  function goHome(){ navTop(URL_BASE); }
+  function reloadThisPage(){
+    var sep = (PAGE && PAGE !== 'landing') ? ('?page=' + PAGE + '&') : '?';
+    navTop(URL_BASE + sep + 'r=' + Date.now());
+  }
+
+  /* The page switcher. To add a page: one line here, one route in app.gs,
+     one <template> + registration in §P. */
+  var AMR_PAGES = [
+    { p:'landing',         label:'Home' },
+    { p:'overview',        label:'Overview' },
+    { p:'pricevolume',     label:'AGG - Price & Volume' },
+    { p:'rmx',             label:'RMX - Price & Volume' },
+    { p:'segment',         label:'RMX - Product Segment' },
+    { p:'fuelsurcharge',   label:'AGG - Fuel Recovery' },
+    { p:'rmxfuel',         label:'RMX - Fuel Recovery' },
+    { p:'tp01',            label:'AGG - Transfer Price' },
+    { p:'inventoryreport', label:'Inventory Report' },
+    { p:'deckbuilder',     label:'Deck Builder' }
+  ];
+  function mountPageSwitcher(){
+    /* The landing page IS the page picker, so it does not get one. */
+    if (PAGE === 'landing' || !URL_BASE) return;
+    var bar = document.querySelector('header.bar') || document.querySelector('header');
+    if (!bar) return;
+    var sel = document.createElement('select');
+    sel.className = 'amr-pageSel';
+    sel.title = 'Switch to another tool';
+    sel.setAttribute('aria-label', 'Switch page');
+    sel.innerHTML = AMR_PAGES.map(function(x){
+      return '<option value="' + x.p + '"' + (x.p === PAGE ? ' selected' : '') + '>' + x.label + '</option>';
+    }).join('');
+    sel.addEventListener('change', function(){
+      if (this.value === PAGE) return;
+      navTop(this.value === 'landing' ? URL_BASE : URL_BASE + '?page=' + this.value);
+    });
+    var brand = bar.querySelector('.brand') || bar.firstElementChild;
+    if (brand && brand.nextSibling) bar.insertBefore(sel, brand.nextSibling);
+    else bar.insertBefore(sel, bar.firstChild);
+  }
+
+  /* ========================================================================== */
+  function esc(x){
+    return String(x == null ? '' : x).replace(/[&<>]/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c];
+    });
+  }
+  function escAttr(x){
+    return String(x == null ? '' : x).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  }
+
+  /* ==========================================================================
+     MODALS — help, settings, hints
+     ========================================================================== */
+  function openHelp(){
+    document.getElementById('amrHelpBody').innerHTML =
+      window.HELP_HTML || '<p>No help for this page yet.</p>';
+    document.getElementById('amrHelpModal').classList.add('amr-open');
+  }
+
+  function sourceBadge(s){
+    if (s === 'override') return '<span style="color:var(--pos);font-weight:700">saved override</span>';
+    if (s === 'code')     return '<span style="color:var(--muted)">code default</span>';
+    if (s === 'legacy')   return '<span style="color:var(--muted)">legacy shared sheet</span>';
+    return '<span style="color:var(--neg);font-weight:700">not set</span>';
+  }
+
+  function renderSettingsRow(s){
+    var head = s.configured
+      ? '<b>' + esc(s.label) + '</b> &middot; reading <b>' + esc(s.name || '(sheet)') + '</b> &middot; ' +
+        sourceBadge(s.source) +
+        (s.url ? ' &middot; <a href="' + escAttr(s.url) + '" target="_blank" style="color:var(--blue-80)">open</a>' : '')
+      : '<b>' + esc(s.label) + '</b> &middot; ' + sourceBadge(s.source) +
+        (s.error ? '<br><span style="color:var(--neg)">' + esc(s.error) + '</span>' : '');
+    var hint = s.hint
+      ? '<div style="margin:-4px 0 8px;font:500 12px Inter;color:var(--muted);line-height:1.5">' + esc(s.hint) + '</div>'
+      : '';
+    return '<div class="amr-set-row" data-page="' + escAttr(s.page) + '">' +
+             '<div class="amr-cur">' + head + '</div>' + hint +
+             '<input class="amr-input amr-sheet-input" type="text" value="' +
+               escAttr(s.url || s.spreadsheetId || '') + '" ' +
+               'placeholder="https://docs.google.com/spreadsheets/d/XXXXXXXX/edit">' +
+             '<div style="margin-top:10px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">' +
+               '<button class="amr-save amr-save-btn">Save &amp; reload</button>' +
+               (s.source === 'override' ? '<a href="#" class="amr-default-link">Use code default</a>' : '') +
+               '<span class="amr-status muted amr-row-status" style="margin-top:0"></span>' +
+             '</div>' +
+           '</div>';
+  }
+
+  function openSettings(){
+    var setModal = document.getElementById('amrSetModal');
+    var setList  = document.getElementById('amrSetList');
+    var setIntro = document.getElementById('amrSetIntro');
+    var setTitle = document.getElementById('amrSetTitle');
+    function fillError(m){ setList.innerHTML = '<div class="amr-cur">' + esc(m) + '</div>'; }
+
+    setModal.classList.add('amr-open');
+    if (!LIVE){ fillError('Settings can only be changed inside the live web app.'); return; }
+    setList.innerHTML = '<div class="amr-cur">Checking current setting&hellip;</div>';
+
+    if (PAGE === 'landing'){
+      setTitle.textContent = 'Data sources · Google Sheets';
+      setIntro.textContent = 'Each tool reads from its own Google Sheet. Update any of them below.';
+      google.script.run
+        .withSuccessHandler(function(list){ setList.innerHTML = (list || []).map(renderSettingsRow).join(''); })
+        .withFailureHandler(function(e){ fillError('Could not read settings: ' + (e && e.message || e)); })
+        .getAllSettings();
+    } else {
+      setTitle.textContent = 'Data source · Google Sheet';
+      setIntro.textContent = 'This tool reads from its own Google Sheet. Paste its link below and click Save.';
+      /* getSettingsFor returns this page's own sheet plus any extra source it
+         reads, so a page can list more than one. */
+      google.script.run
+        .withSuccessHandler(function(list){
+          var rows = [].concat(list || []);
+          if (!rows.length){ fillError('No data source is configured for this page.'); return; }
+          if (rows.length > 1){
+            setTitle.textContent = 'Data sources · Google Sheets';
+            setIntro.textContent = 'This tool reads from the sheets below. Paste a link and click Save.';
+          }
+          setList.innerHTML = rows.map(renderSettingsRow).join('');
+        })
+        .withFailureHandler(function(e){ fillError('Could not read settings: ' + (e && e.message || e)); })
+        .getSettingsFor(PAGE);
+    }
+  }
+
+  function wireSettingsRows(){
+    var setList = document.getElementById('amrSetList');
+    setList.addEventListener('click', function(e){
+      var row = e.target.closest ? e.target.closest('.amr-set-row') : null;
+      if (!row) return;
+
+      if (e.target.closest('.amr-reload-now')){ e.preventDefault(); reloadThisPage(); return; }
+
+      var page   = row.getAttribute('data-page');
+      var status = row.querySelector('.amr-row-status');
+
+      var saveBtn = e.target.closest('.amr-save-btn');
+      if (saveBtn){
+        if (!LIVE) return;
+        var val = row.querySelector('.amr-sheet-input').value;
+        status.className = 'amr-status muted amr-row-status';
+        status.textContent = 'Saving…';
+        saveBtn.disabled = true;
+        log('info', 'AMR.settings', 'saving sheet id', { page: page });
+        google.script.run.withSuccessHandler(function(r){
+          status.className = 'amr-status ok amr-row-status';
+          if (PAGE === 'landing'){
+            status.textContent = 'Saved “' + (r.name || 'sheet') + '”.';
+            setTimeout(openSettings, 700);
+            return;
+          }
+          status.innerHTML = 'Saved “' + esc(r.name || 'sheet') + '”. Reloading with the new sheet… ' +
+            '<a href="#" class="amr-reload-now" style="color:var(--blue-80);font-weight:700">reload now</a>';
+          document.getElementById('amrSetModal').classList.remove('amr-open');
+          /* Prefer the page's own in-place reload: it re-reads the new sheet
+             AND resets the sidebar presets without a full navigation. */
+          if (typeof window.amrReloadData === 'function'){
+            try { window.amrReloadData(); return; } catch(err){}
+          }
+          reloadThisPage();
+        }).withFailureHandler(function(err){
+          saveBtn.disabled = false;
+          status.className = 'amr-status err amr-row-status';
+          status.textContent = (err && err.message || err);
+          log('error', 'AMR.settings', 'save failed', { page: page, error: String(err) });
+        }).saveSpreadsheetId(val, page);
+        return;
+      }
+
+      var defLink = e.target.closest('.amr-default-link');
+      if (defLink){
+        e.preventDefault();
+        if (!LIVE) return;
+        status.className = 'amr-status muted amr-row-status';
+        status.textContent = 'Reverting to code default…';
+        google.script.run.withSuccessHandler(function(){
+          if (PAGE === 'landing'){ openSettings(); return; }
+          if (typeof window.amrReloadData === 'function'){
+            try { window.amrReloadData(); return; } catch(err){}
+          }
+          reloadThisPage();
+        }).withFailureHandler(function(err){
+          status.className = 'amr-status err amr-row-status';
+          status.textContent = (err && err.message || err);
+        }).clearSpreadsheetOverride(page);
+      }
+    });
+  }
+
+  /* close buttons, click-outside, Esc — one set of handlers for every modal */
+  function wireModalDismiss(){
+    document.addEventListener('click', function(e){
+      var x = e.target.closest ? e.target.closest('[data-close]') : null;
+      if (x){
+        var m = document.getElementById(x.getAttribute('data-close'));
+        if (m) m.classList.remove('amr-open');
+        return;
+      }
+      if (e.target.classList && e.target.classList.contains('amr-modal')){
+        e.target.classList.remove('amr-open');
+      }
+    });
+    document.addEventListener('keydown', function(e){
+      if (e.key !== 'Escape') return;
+      [].forEach.call(document.querySelectorAll('.amr-modal'), function(m){
+        m.classList.remove('amr-open');
+      });
+    });
+  }
+
+  /* ==========================================================================
+     AmrHint — the "?" next to a generated table
+     ========================================================================== */
+  var HINTS = {};
+  var AmrHint = {
+    register: function(key, html){ HINTS[key] = html; },
+    btn: function(key){
+      return '<button type="button" class="amr-qm" data-amr-hint="' + key + '" ' +
+             'title="What source data feeds this table" aria-label="Source data hint">?</button>';
+    },
+    show: function(key){
+      document.getElementById('amrHintBody').innerHTML =
+        HINTS[key] || '<p>No source hint available for this table.</p>';
+      document.getElementById('amrHintModal').classList.add('amr-open');
+    }
+  };
+
+  /* ==========================================================================
+     AmrQlikGuide — the guide aside. ONE copy; there were seven.
+     --------------------------------------------------------------------------
+     mount({ title, sub, steps, fabLabel, fabBottom }). `steps` is
+     [{ text, img }] where img is any Drive share link or file id; the server
+     turns those into data URIs so the images work without public sharing.
+     ========================================================================== */
+  var AmrQlikGuide = {
+    mount: function(cfg){
+      cfg = cfg || {};
+      var steps = cfg.steps || [];
+      if (!steps.length) return;
+
+      var aside = document.createElement('aside');
+      aside.className = 'qlikGuide';
+      aside.id = 'qlikGuide';
+      aside.setAttribute('aria-label', cfg.title || 'Guide');
+      aside.innerHTML = '<div id="qlikGuideSteps"></div>' +
+                        '<button class="qgHide" id="qgHide">Close guide</button>';
+
+      var fab = document.createElement('button');
+      fab.className = 'qgFab';
+      fab.id = 'qgFab';
+      fab.title = cfg.title || 'Guide';
+      fab.innerHTML = cfg.fabLabel || '&#128229; Guide';
+      if (cfg.fabBottom) fab.style.bottom = cfg.fabBottom;
+
+      document.body.appendChild(aside);
+      document.body.appendChild(fab);
+
+      var host = aside.querySelector('#qlikGuideSteps');
+      host.innerHTML = '<h4>' + esc(cfg.title || 'Guide') + '</h4>' +
+        (cfg.sub ? '<p class="qg-sub">' + esc(cfg.sub) + '</p>' : '') +
+        steps.map(function(s, i){
+          return '<p>' + s.text + '</p><div class="ph" id="qg' + i + '">loading…</div>';
+        }).join('');
+
+      function openLightbox(src){
+        var lb = document.createElement('div');
+        lb.className = 'qgLightbox';
+        lb.innerHTML = '<button class="qgClose" title="Close">&times;</button><img src="' + src + '" alt="">';
+        function close(){ lb.remove(); document.removeEventListener('keydown', onKey); }
+        function onKey(e){ if (e.key === 'Escape') close(); }
+        lb.addEventListener('click', close);
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(lb);
+      }
+      function slot(i, uri){
+        var el = document.getElementById('qg' + i);
+        if (!el) return;
+        if (!uri){ el.outerHTML = '<div class="ph">screenshot goes here</div>'; return; }
+        var w = document.createElement('div');
+        w.className = 'qgImgWrap';
+        w.innerHTML = '<img src="' + uri + '" alt=""><button class="qgExpand" title="Expand">&#x26F6;</button>';
+        el.replaceWith(w);
+        w.addEventListener('click', function(){ openLightbox(uri); });
+      }
+
+      var ids = steps.map(function(s){
+        var m = String(s.img || '').match(/[-\w]{25,}/);
+        return m ? m[0] : '';
+      });
+      if (LIVE){
+        google.script.run
+          .withSuccessHandler(function(uris){ (uris || []).forEach(function(u, i){ slot(i, u); }); })
+          .withFailureHandler(function(e){
+            log('warn', 'AmrQlikGuide', 'images failed, showing placeholders', { error: String(e) });
+            ids.forEach(function(_, i){ slot(i, ''); });
+          })
+          .getGuideImages(ids);
+      } else {
+        ids.forEach(function(_, i){ slot(i, ''); });
+      }
+
+      fab.addEventListener('click', function(){ aside.classList.toggle('open'); });
+      aside.querySelector('#qgHide').addEventListener('click', function(){ aside.classList.remove('open'); });
+      document.addEventListener('click', function(e){
+        if (!aside.classList.contains('open')) return;
+        if (aside.contains(e.target) || fab.contains(e.target) ||
+            (e.target.closest && e.target.closest('.qgLightbox'))) return;
+        aside.classList.remove('open');
+      });
+    }
+  };
+
+  /* ==========================================================================
+     THE PAGE REGISTRY
+     --------------------------------------------------------------------------
+     AMR.page(id, spec) registers; AMR.start() mounts exactly one.
+
+     spec = {
+       title    : browser tab title
+       help     : HTML for the Help modal
+       libs     : ['chart'|'html2canvas'|'xlsx']  loaded before boot()
+       boot     : function(root)  root = the mounted DOM, already in the document
+     }
+
+     boot() runs AFTER the template is cloned in, so getElementById works
+     exactly as it did when the page was its own file.
+     ========================================================================== */
+  var REGISTRY = {};
+
+  function page(id, spec){
+    if (REGISTRY[id]) log('warn', 'AMR.page', 'registered twice, last wins', { page: id });
+    REGISTRY[id] = spec || {};
+  }
+
+  function start(){
+    var id = PAGE;
+    var spec = REGISTRY[id];
+    if (!spec){
+      log('error', 'AMR.start', 'no page registered', { page: id });
+      document.getElementById('appRoot').innerHTML =
+        '<div class="empty">This page is not available yet.</div>';
+      return;
+    }
+
+    var tpl = document.getElementById('tpl-' + id);
+    if (!tpl){
+      log('error', 'AMR.start', 'no template', { page: id });
+      return;
+    }
+
+    var t0 = Date.now();
+    document.getElementById('appRoot').appendChild(tpl.content.cloneNode(true));
+    if (spec.title) document.title = spec.title;
+    if (spec.help)  window.HELP_HTML = spec.help;
+
+    mountPageSwitcher();
+    wireSettingsRows();
+    wireModalDismiss();
+    log('info', 'AMR.start', 'mounted', { page: id, ms: Date.now() - t0 });
+
+    need(spec.libs || []).then(function(){
+      if (typeof spec.boot === 'function'){
+        var b0 = Date.now();
+        try {
+          spec.boot(document.getElementById('appRoot'));
+          log('info', 'AMR.start', 'booted', { page: id, ms: Date.now() - b0 });
+        } catch(err){
+          log('error', 'AMR.start', 'boot threw', { page: id, error: String(err) });
+          throw err;
+        }
+      }
+    }).catch(function(err){
+      log('error', 'AMR.start', 'libraries failed', { page: id, error: String(err) });
+    });
+  }
+
+  /* ---- the public surface ---- */
+  var api = {
+    log: log,
+    live: LIVE,
+    lib: { need: need },
+    nav: { top: navTop, home: goHome, reload: reloadThisPage },
+    esc: esc, escAttr: escAttr,
+    openHelp: openHelp, openSettings: openSettings,
+    page: page, start: start,
+    pages: AMR_PAGES,
+    currentPage: PAGE
+  };
+
+  /* Names the page markup calls through inline handlers or that page code
+     still expects on window. Kept deliberately short. */
+  window.amrGoHome      = goHome;
+  window.amrNavTop      = navTop;
+  window.amrOpenHelp    = openHelp;
+  window.amrOpenSettings= openSettings;
+  window.AmrHint        = AmrHint;
+  window.AmrQlikGuide   = AmrQlikGuide;
+
+  return api;
+})();
+</script>
+
+<script>
+/* ============================================================================
+   §E  SHARED MODULES
+   ----------------------------------------------------------------------------
+   AmrCache, AmrProgress, AmrBoot, AmrKpiStore, AmrFresh, AmrTick, AmrCube,
+   AmrKpi, AmrSlide, AmrDeckSource, AmrFuelExec, AmrPvSlide, AmrSegSlide,
+   AmrRmxSlide.
+
+   These land in the chunk of the first page that exercises them, not here:
+   porting a module blind, with no page to prove it against, is how a silent
+   break gets committed. AmrCache / AmrProgress / AmrBoot arrive in chunk 3
+   with AGG Fuel Recovery, which is the first page that reads report data.
+
+   The two pages in this chunk — the landing page and the Inventory Report —
+   read no report data and need none of it.
+   ========================================================================== */
+</script>
+
+
+<!-- ==========================================================================
+     §P  PAGES
+     ==========================================================================
+     One <template> + one AMR.page() per page, in the order of the switcher.
+     ========================================================================== -->
+
+<!-- ===================== §P landing ===================== -->
+<template id="tpl-landing">
+  <div class="land-hero">
+    <div class="inner">
+      <div class="land-topnav">
+        <button class="ghost" data-act="help" title="How this suite works">? Help</button>
+        <button class="ghost" data-act="settings" title="Choose each tool's Google Sheet">&#9881; Settings</button>
+      </div>
+      <div class="land-heroRow">
+        <div>
+          <div class="mark">AMRIZE</div>
+          <h1>Commercial Suite</h1>
+          <p>Every reporting tool in one place. Pick a tool below. Each reads from a Google Sheet you choose
+             in Settings &mdash; use one sheet for everything, or give each tool its own. When the month is
+             closed, the Deck Builder turns all of them into one Google Slides deck.</p>
+        </div>
+        <a class="land-feat" data-page-link="overview" target="_top">
+          <div class="tag">Dashboard</div>
+          <h2>Executive Overview</h2>
+          <span class="go">Open &rarr;</span>
+        </a>
+        <a class="land-feat" data-page-link="deckbuilder" target="_top">
+          <div class="tag">Google Slides</div>
+          <h2>Deck Builder</h2>
+          <span class="go">Open &rarr;</span>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="land-wrap">
+    <a class="land-card" data-page-link="pricevolume" target="_top">
+      <div class="tag">Markets &amp; Customers</div>
+      <h2>Price &amp; Volume Analysis</h2>
+      <p>Volume / ASP / PPI growth bridges, market breakdowns by any dimension, and a customer drill-down.
+         Reads the <code>Combined Data CPI Raw</code> tab.</p>
+      <span class="go">Open &rarr;</span>
+    </a>
+    <a class="land-card" data-page-link="rmx" target="_top">
+      <div class="tag">Ready-Mix</div>
+      <h2>Amrize RMX</h2>
+      <p>BASE vs ALL-IN ASP, PPI and mix effect by submarket / segment / strength / class, plus the Extras &amp;
+         VAP analysis. Reads the <code>Main / Extra / Associate Raw Data</code> tabs.</p>
+      <span class="go">Open &rarr;</span>
+    </a>
+    <a class="land-card" data-page-link="segment" target="_top">
+      <div class="tag">Ready-Mix slide</div>
+      <h2>Commercial Product Segment</h2>
+      <p>Builds a finished 16:9 RMX commercial slide as a PNG, with adjustable blank bands for comments.
+         Reads the <code>Slide Segment / Product</code> tabs.</p>
+      <span class="go">Open &rarr;</span>
+    </a>
+    <a class="land-card" data-page-link="fuelsurcharge" target="_top">
+      <div class="tag">Editable slide</div>
+      <h2>Fuel Recovery</h2>
+      <p>Fuel recovery summary (MTD / YTD) and a market&rsquo;s month-by-month FSC/t &mdash; every cell editable
+         before export. Reads the <code>Data</code> tab.</p>
+      <span class="go">Open &rarr;</span>
+    </a>
+    <a class="land-card" data-page-link="rmxfuel" target="_top">
+      <div class="tag">Ready-Mix</div>
+      <h2>RMX Fuel Recovery</h2>
+      <p>Flex Fuel surcharge per m&sup3; by market and month, against the same months last year, plus where the
+         dollars sit by segment, class and plant. Reads the <code>Main / Extra Raw Data</code> tabs.</p>
+      <span class="go">Open &rarr;</span>
+    </a>
+    <a class="land-card" data-page-link="tp01" target="_top">
+      <div class="tag">Transfer Pricing</div>
+      <h2>Transfer Price Tool</h2>
+      <p>Drop the SAP TP01-ZIPR file and the QlikView report &mdash; builds the comparison with
+         revenue corrections, splits it by market, and emails each market its own file.</p>
+      <span class="go">Open &rarr;</span>
+    </a>
+    <a class="land-card" data-page-link="deckbuilder" target="_top">
+      <div class="tag">Google Slides</div>
+      <h2>Deck Builder</h2>
+      <p>Builds the monthly deck in Google Slides &mdash; every market and period from the other tools, each
+         table dropped into the template with the title and comment box left as real, editable text.</p>
+      <span class="go">Open &rarr;</span>
+    </a>
+    <a class="land-card" data-page-link="inventoryreport" target="_top">
+      <div class="tag">Inventory</div>
+      <h2>Inventory Report</h2>
+      <p>The monthly Central Region inventory report PDF, served straight from Google Drive.
+        Change which file is shown from the page itself.</p>
+      <span class="go">Open &rarr;</span>
+    </a>
+  </div>
+
+  <div class="land-note">
+    <div class="panel">
+      <h3>First time here?</h3>
+      <p>Each tool reads its raw data from a Google Sheet. You can point them all at the <b>same</b> sheet, or give
+         each tool its <b>own</b>. Click the button below (or the &#9881;&nbsp;<b>Settings</b> button at the top of this
+         page, or the &#9881;&nbsp;<b>Data&nbsp;sheet</b> button at the top of each tool) and paste your sheet link(s).
+         You can change them any time.</p>
+      <button class="land-setbtn" data-act="settings">&#9881;&nbsp; Set the data sheets</button>
+    </div>
+    <div class="panel">
+      <h3>QlikView data</h3>
+      <p>Drop the QlikView exports into their Drive folders. Every hour the suite checks whether
+         they have changed, and syncs them if they have &mdash; there is nothing to press.</p>
+      <p>If a page is open when new data lands, it says so and offers a button to load it.</p>
+    </div>
+  </div>
+</template>
+
+<script>
+/* ---- §P landing — registration -------------------------------------------
+   The old page had a "QlikView sync status" panel (#qsPanel / #qsOut) with 17
+   lines of CSS behind it. Nothing ever wrote to it — it was the display for a
+   sync-status feature that was never built. Dropped; the sync is trigger-only
+   and stays that way (PLAN.md §11).                                          */
+AMR.page('landing', {
+  title: 'Amrize Commercial Suite',
+  help:
+    '<h3>What is this?</h3><p>A home page that links to every Amrize reporting tool. Open any card to start.</p>' +
+    '<h3>Setting the data sheets</h3><p>Click the <b>&#9881; Settings</b> button (top of this page) and paste a ' +
+    'Google Sheet link for each tool. Use one sheet for everything, or give each its own.</p>' +
+    '<h3>Month end guide</h3><p>The step-by-step month-end walkthrough is behind the ' +
+    '<b>&#128229; Month End Guide</b> button at the bottom-right.</p>',
+
+  boot: function(root){
+    /* Card links. The deployment URL is only known at render time, so the
+       markup carries a page key and the href is built here — that also keeps
+       the template free of <?= ?> and therefore diffable. */
+    [].forEach.call(root.querySelectorAll('[data-page-link]'), function(a){
+      var p = a.getAttribute('data-page-link');
+      a.href = (window.APP_URL || '') + '?page=' + p;
+    });
+
+    /* Inline onclick handlers do not work from inside an IIFE, so the two
+       buttons are wired by delegation on their data-act attribute. */
+    root.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!b) return;
+      if (b.getAttribute('data-act') === 'help')     AMR.openHelp();
+      if (b.getAttribute('data-act') === 'settings') AMR.openSettings();
+    });
+
+    AmrQlikGuide.mount({
+      title: 'Month End Guide',
+      sub: 'A walkthrough of setting up the google slides for month end reports.',
+      fabLabel: '&#128229; Month End Guide',
+      fabBottom: '66px',
+      steps: [
+        { text: 'Step 1 - Open the Data Sheet for the corresponding tab',
+          img: 'https://drive.google.com/file/d/1gjTTgnwShQgOX2QijvqJGQXrM7jdVELI/view?usp=sharing' },
+        { text: 'Step 2 - Make a Copy of the Google Sheet and store in the appropriate location',
+          img: 'https://drive.google.com/file/d/1NPZuuuvWqYp8G0T5eNH5Pkec2acMAvF7/view?usp=sharing' },
+        { text: 'Step 3 - Download Qlik View Data (See Qlikview Guide)',
+          img: 'https://drive.google.com/file/d/1GzmBNCByS05zo3SBjsPbKKivGxYpwZet/view?usp=sharing' },
+        { text: 'Step 4 - Delete the columns with blue background fill and replace with the data downloaded from Qlikview',
+          img: 'https://drive.google.com/file/d/1Nv54pEMNn4NeGP2Yw5w5fmkX2oPRKvxp/view?usp=sharing' },
+        { text: 'Step 5 - Copy Spreadsheet link and paste into Data Sheet tab to update the source.',
+          img: 'https://drive.google.com/file/d/1js9FnLqqVq9Ty5KtFj9LSWfrMH9L2Qov/view?usp=sharing' }
+      ]
+    });
+  }
+});
+</script>
+
+
+<!-- ===================== §P inventoryreport ===================== -->
+<template id="tpl-inventoryreport">
+  <header class="bar">
+    <div class="brand">
+      <span class="mark">AMRIZE</span>
+      <span>
+        <span class="title">Inventory Report</span>
+        <span class="sub">Monthly inventory report PDF &mdash; served from Google Drive</span>
+      </span>
+    </div>
+    <button class="ghost" data-act="home" title="Back to the suite home">&#8962; Home</button>
+    <button class="ghost" data-act="help" title="How to use this page">? Help</button>
+    <button class="ghost" data-act="ir-source" title="Point this page at a different Drive file">&#9881; Report source</button>
+  </header>
+
+  <div class="irwrap" id="irWrap"><!-- filled by irRender --></div>
+
+  <div class="amr-modal" id="irModal">
+    <div class="amr-card">
+      <div class="amr-head">
+        <h2>Report source &middot; Google Drive</h2>
+        <button class="amr-x" data-close="irModal">&times;</button>
+      </div>
+      <div class="amr-body">
+        <p style="margin-top:0">This page displays a PDF stored on Google Drive. Paste the file's Drive link
+          below and click Save &mdash; the setting is stored permanently and everyone using this page will see
+          the new file. To publish a new month upload the new PDF and paste its link.</p>
+        <div class="amr-cur" id="irCurrent">Checking current setting&hellip;</div>
+        <label class="amr-label">Google Drive link or file ID</label>
+        <input class="amr-input" id="irInput" type="text"
+               placeholder="https://drive.google.com/file/d/XXXXXXXX/view">
+        <label class="amr-label">Display name <span style="font-weight:500">(optional &mdash; shown above the report, e.g. &ldquo;Central Region &mdash; June 2026&rdquo;)</span></label>
+        <input class="amr-input" id="irLabelInput" type="text" placeholder="Monthly Central Region Report">
+        <button class="amr-save" id="irSaveBtn" style="margin-top:14px">Save &amp; display</button>
+        <div class="amr-status muted" id="irStatus"></div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+/* ---- §P inventoryreport — registration ------------------------------------
+   Everything below was top-level in Page_InventoryReport.html: IS_LIVE, esc,
+   IR_CUR, irRender, irReload, irOpenModal, irCloseModal, irSave. Nothing is
+   renamed — it is simply scoped to this IIFE now, so `esc` here and `esc` on
+   any other page can never collide.
+
+   The page's own modal now uses the shared .amr-modal / .amr-card shell rather
+   than a private .ir-modal copy of it, and its private spinner keyframe is
+   gone in favour of the one in §A3.                                          */
+AMR.page('inventoryreport', {
+  title: 'Amrize · Inventory Report',
+  help:
+    '<h3>What is this?</h3><p>Displays the monthly inventory report PDF stored on Google Drive, right inside the suite.</p>' +
+    '<h3>Reading it</h3><p>Use the zoom controls at the bottom of the viewer (they appear on hover) if the text is small, ' +
+    'or <b>&#8599; Open in new tab</b> for the full-screen Drive viewer.</p>' +
+    '<h3>Changing the report</h3><p>Click <b>&#9881; Report source</b> and paste the Drive link of the PDF. ' +
+    'The setting is saved permanently and shared with everyone using this app.</p>' +
+    '<h3>Publishing a new month</h3><p>Easiest: in Drive, right-click the existing file &rarr; <b>Manage versions</b> ' +
+    '&rarr; upload the new PDF. The link stays the same, so this page updates automatically — just hit ' +
+    '<b>&#8635; Refresh</b>. Alternatively, upload a new file and paste its link into Report source.</p>' +
+    '<h3>Access</h3><p>The PDF is loaded through Drive in your own browser session, so viewers need at least view access to the file itself.</p>',
+
+  boot: function(root){
+    var IR_CUR = null;                      /* last settings object from the server */
+    var esc = AMR.esc;
+
+    function irRender(s){
+      IR_CUR = s || { configured:false };
+      var w = document.getElementById('irWrap');
+
+      if (!IR_CUR.configured){
+        w.innerHTML =
+          '<div class="ir-empty"><div class="card">' +
+            '<h2>No report selected yet</h2>' +
+            (IR_CUR.error ? '<p style="color:var(--neg);font-weight:600">' + esc(IR_CUR.error) + '</p>' : '') +
+            '<p>Point this page at the inventory report PDF on Google Drive. ' +
+            'The choice is saved permanently and shared with everyone using this app.</p>' +
+            '<button class="irbtn primary" data-act="ir-source" style="margin:0 auto">' +
+              '<span class="ico">&#9881;</span> Set the report file</button>' +
+          '</div></div>';
+        return;
+      }
+
+      w.innerHTML =
+        '<div class="ir-toolbar">' +
+          '<div>' +
+            '<div class="ir-file">' + esc(IR_CUR.label || 'Inventory Report') + '</div>' +
+            '<div class="ir-sub">Source set ' + esc(IR_CUR.savedAt || '') + '</div>' +
+          '</div>' +
+          '<div class="ir-spacer"></div>' +
+          '<a class="irbtn" href="' + esc(IR_CUR.viewUrl) + '" target="_blank" rel="noopener" ' +
+            'title="Open full-screen in Google Drive"><span class="ico">&#8599;</span> Open in new tab</a>' +
+          '<button class="irbtn" data-act="ir-refresh" title="Re-load the file (picks up an overwritten PDF)">' +
+            '<span class="ico">&#8635;</span> Refresh</button>' +
+          '<button class="irbtn" data-act="ir-source"><span class="ico">&#9881;</span> Change source</button>' +
+        '</div>' +
+        '<div class="ir-frame-wrap" id="irFrameWrap">' +
+          '<iframe id="irFrame" src="' + esc(IR_CUR.previewUrl) + '" allow="autoplay" allowfullscreen></iframe>' +
+        '</div>';
+    }
+
+    function irReload(){
+      var w = document.getElementById('irWrap');
+      w.innerHTML = '<div class="ir-empty"><div class="card"><p style="margin:0">' +
+                    '<span class="spinner sm"></span>Loading report&hellip;</p></div></div>';
+      if (!AMR.live){ irRender({ configured:false }); return; }
+      var t0 = Date.now();
+      google.script.run
+        .withSuccessHandler(function(s){
+          AMR.log('info', 'IR.getSettings', 'loaded', { ms: Date.now() - t0, configured: !!(s && s.configured) });
+          irRender(s);
+        })
+        .withFailureHandler(function(e){
+          AMR.log('error', 'IR.getSettings', 'failed', { ms: Date.now() - t0, error: String(e) });
+          irRender({ configured:false, error:(e && e.message) || String(e) });
+        })
+        .IR_getSettings();
+    }
+
+    function irOpenModal(){
+      document.getElementById('irModal').classList.add('amr-open');
+      var cur = document.getElementById('irCurrent');
+      var st  = document.getElementById('irStatus');
+      st.className = 'amr-status muted'; st.textContent = '';
+      if (!AMR.live){ cur.textContent = 'The source can only be changed inside the live web app.'; return; }
+      if (IR_CUR && IR_CUR.configured){
+        cur.innerHTML = '<b>Currently showing:</b> ' + esc(IR_CUR.label || IR_CUR.fileId) +
+          (IR_CUR.savedAt ? ' &middot; set ' + esc(IR_CUR.savedAt) : '');
+        document.getElementById('irInput').value = IR_CUR.viewUrl || IR_CUR.fileId || '';
+        document.getElementById('irLabelInput').value = IR_CUR.label || '';
+      } else {
+        cur.innerHTML = '<b>No file selected yet.</b>' +
+          (IR_CUR && IR_CUR.error ? '<br>' + esc(IR_CUR.error) : '');
+      }
+    }
+    function irCloseModal(){ document.getElementById('irModal').classList.remove('amr-open'); }
+
+    function irSave(){
+      if (!AMR.live) return;
+      var btn = document.getElementById('irSaveBtn');
+      var st  = document.getElementById('irStatus');
+      var val = document.getElementById('irInput').value;
+      var lbl = document.getElementById('irLabelInput').value;
+      st.className = 'amr-status muted';
+      st.innerHTML = '<span class="spinner sm"></span>Saving…';
+      btn.disabled = true;
+      AMR.log('info', 'IR.saveSource', 'saving');
+      google.script.run
+        .withSuccessHandler(function(r){
+          btn.disabled = false;
+          st.className = 'amr-status ok'; st.textContent = 'Saved.';
+          irRender(r);
+          setTimeout(irCloseModal, 600);
+        })
+        .withFailureHandler(function(e){
+          btn.disabled = false;
+          st.className = 'amr-status err'; st.textContent = (e && e.message) || String(e);
+          AMR.log('error', 'IR.saveSource', 'failed', { error: String(e) });
+        })
+        .IR_saveSource(val, lbl);
+    }
+
+    /* One delegated handler on the page root covers the header buttons AND the
+       buttons irRender writes into #irWrap after load. */
+    root.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!b) return;
+      switch (b.getAttribute('data-act')){
+        case 'home':      AMR.nav.home();   break;
+        case 'help':      AMR.openHelp();   break;
+        case 'ir-source': irOpenModal();    break;
+        case 'ir-refresh':irReload();       break;
+      }
+    });
+    document.getElementById('irSaveBtn').addEventListener('click', irSave);
+
+    irReload();
+  }
+});
+</script>
+
+<script>
+/* ============================================================================
+   MOUNT. Nothing above this line touched the document beyond registering.
+   ========================================================================== */
+AMR.start();
+</script>
+
+</body>
+</html>

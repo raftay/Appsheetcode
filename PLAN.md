@@ -286,8 +286,8 @@ merge broke it" and "the new router broke it".
   <style>  §B  SLIDE       .slide-bare capture styles   (was Deck_Styles.html)  </style>
 </head>
 <body data-page="<?= page ?>">
-  <header class="bar" id="appBar"></header>   <!-- built from the active page's spec -->
   <main id="appRoot"></main>                  <!-- the one mounted page -->
+  …the shared modal shells, outside #appRoot so they survive a page swap…
 
   <script>  §D  SHARED RUNTIME
               AmrLib        lazy CDN loader — Chart.js / html2canvas / SheetJS   (new)
@@ -303,13 +303,20 @@ merge broke it" and "the new router broke it".
               AmrFuelExec  AmrPvSlide  AmrSegSlide  AmrRmxSlide
   </script>
 
-  <template id="tpl-landing">   … markup …   </template>
+  <template id="tpl-landing">   … markup, including this page's own header …   </template>
   <script>  AMR.page('landing', { … }); </script>
   …one pair per page…
 
   <script>  AMR.start();  </script>
 </body>
 ```
+
+> **Corrected in chunk 2:** an earlier draft had a single shared
+> `<header class="bar" id="appBar">` built from each page's spec. That cannot work —
+> the landing page deliberately has **no** header bar (its navy hero *is* the header),
+> so one shared bar could not serve both without special-casing it back out again.
+> Each page template carries its own header instead, which also keeps the markup
+> diffable against the page it came from.
 
 ### The QlikView guide is the first real win
 
@@ -512,7 +519,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 |---|---|---|---|---|
 | 0 | **Plan** | This file. No code. | reading it | ✅ |
 | 1 | **The audits** | No app code. Results in [§1a](#1a-chunk-1-results--the-three-audits): **zero** top-level `.gs` collisions, 7 of 127 functions callerless (5 keep, 2 candidates + 1 finding), and 132 id-style rules concentrated in just two pages. | the lists themselves | ✅ |
-| 2 | **Skeleton + first two pages** | `app.html` with §A1 tokens, §A2 base, §D runtime, the page registry, `AmrLib`, `AMR.log`, and `AmrQlikGuide` deduped. Landing + Inventory Report ported — the two pages with no CDN libraries and no report data. One line added to `Code.gs` for the `?page=app` route. | `?page=app` matches `?page=` and `?page=inventoryreport` | ☐ |
+| 2 | **Skeleton + first two pages** | `app.html`: §A1 tokens, §A2 base, §A3 components, §A4 page CSS, §D runtime (`AMR.log`, `AMR.lib`, nav, modals, `AmrHint`, `AmrQlikGuide`, the registry). Landing + Inventory Report ported. `Code.gs` gains the `?page=app` route and reads `&view=`. Plus `tests/merge.js`. | `node tests/merge.js` green; then `?page=app` against `?page=`, and `?page=app&view=inventoryreport` against `?page=inventoryreport` | ✅ |
 
 ### The pages
 
@@ -542,6 +549,28 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 14 | **Page switching without reload** | The nav mounts a page instead of reloading. Removes the whole per-load cost in [§9](#9-what-this-costs). | ☐ |
 | 15 | **The three drifted helpers** | Diff `toNum_` / `norm_` / `gk_` across the three namespaces, write down what each difference *does*, then unify only what is provably equivalent. | ☐ |
 | 16 | **Collapse `Deck_Styles`** | Fold the `.slide-bare` mirror into the component layer, proven against real captures. | ☐ |
+
+### What chunk 2 settled
+
+- **Shared modules port with the page that first exercises them**, not all up front.
+  `AmrCache` / `AmrProgress` / `AmrBoot` arrive in chunk 3 with AGG Fuel Recovery, the first
+  page that reads report data. Porting a module blind, with no page to prove it against, is
+  how a silent break gets committed — and the two pages in chunk 2 need none of them.
+- **The component layer paid immediately.** Three spinner keyframes (`spin`, `amrload`,
+  `irspin`) collapsed to one; the Inventory Report's private `.ir-modal` / `.ir-card` /
+  `.ir-input` shell is now the shared `.amr-modal` shell; the landing page's 820px and 900px
+  breakpoints map onto `--bp-mid` and `--bp-narrow`.
+- **One more dead thing found and dropped:** the landing page's "QlikView sync status" panel
+  (`#qsPanel` / `#qsOut`, 17 lines of CSS behind it). Nothing ever wrote to it — it was the
+  display for the sync-status feature that was never built, the same one `AmrQlik` belonged
+  to. Deleted.
+- **`tests/merge.js` is the structural gate** and it works on both sides: it passed the real
+  file, and unscoping one `.land-hero` rule made it fail with that selector named. It checks
+  six invariants — script syntax, template↔registration pairing, every `getElementById`
+  target existing, no id declared by two pages, every §A4 rule scoped, and no page leaking a
+  global.
+
+---
 
 ## 9. What this costs
 
