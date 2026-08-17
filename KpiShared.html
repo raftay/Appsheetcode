@@ -32,6 +32,9 @@
        AmrKpi.rmxHeaders(values)    → block header text found (for status lines)
        AmrKpi.sig(values)           → identity of the current files
        AmrKpi.files(values)         → {main:{name,ts}|null, mbsk:{...}|null}
+       AmrKpi.stripHtml(cardsHtml)  → the on-page strip around a row of cards
+       AmrKpi.fitStrip(rowEl)       → size that strip to the width it has
+       AmrKpi.stripPng(hostEl, o)   → the strip as a PNG (o: {filename, button})
 
      Market keys for AmrKpi.rmx(): HNS_SW · North · Innocon · Manitoba ·
      Saskatchewan  (pages map their own names onto these).
@@ -395,8 +398,108 @@ window.AmrKpi = (function(){
     files: files,
     sig: sig,
     extractBook: extractBook,
+    stripHtml: stripHtml,
+    fitStrip: fitStrip,
+    stripPng: stripPng,
     generation: function(){ return GEN; }
   };
+
+  /* =================================================================
+   * THE ON-PAGE STRIP
+   * -----------------------------------------------------------------
+   * Every size inside a KPI card is in `em`, so the ROW's font-size is
+   * the card's size and there is exactly one dial to turn. The slide
+   * builders have always known that and set it (10px, grown by the
+   * slide fitter). The on-page strips did not: Price & Volume dropped
+   * the cards into a bare flex row with no font-size at all, so they
+   * were laid out against the BODY font — 16px — where a card wants
+   * roughly half the width again of the 13em floor it is given.
+   * `overflow:hidden` did the rest: the eyebrow came out as "TOTAL
+   * SALES — PRODUC", the delta as "+0.47 / +", and the fifth card
+   * wrapped onto a line of its own with the other four's width of
+   * white beside it. That is also exactly what Download KPI PNG
+   * photographed, because it photographs this strip.
+   *
+   * So the strip is built and sized here, once, for every page that
+   * shows one: start at the size the card was drawn for and grow it
+   * until a card would clip or the row would overflow its container.
+   * ================================================================= */
+  var STRIP_BASE = 10, STRIP_MIN = 7.5, STRIP_MAX = 15;
+
+  function stripHtml(cardsHtml){
+    return '<div class="amr-kpi-strip" style="display:flex;gap:1.1em;'
+         + 'flex-wrap:nowrap;align-items:stretch;font-size:' + STRIP_BASE + 'px">'
+         + (cardsHtml || '') + '</div>';
+  }
+
+  /* Grow the row until the widest card would clip or the row outgrows the box
+     it sits in. Returns the size it settled on. */
+  function fitStrip(row, opts){
+    if(!row || !row.children || !row.children.length) return 0;
+    opts = opts || {};
+    var max   = opts.max || STRIP_MAX;
+    var host  = row.parentElement;
+    var availW = (host ? host.clientWidth : 0) || row.clientWidth || 0;
+    if(!availW) return STRIP_MIN;
+
+    function clips(){
+      if(row.scrollWidth > availW + 1) return true;
+      for(var i = 0; i < row.children.length; i++){
+        var c = row.children[i];
+        if(c.scrollWidth > c.clientWidth) return true;
+      }
+      return false;
+    }
+
+    row.style.flexWrap = 'nowrap';
+    var min = opts.min || STRIP_MIN;
+    var f = STRIP_BASE, guard = 0;
+    /* down first — a narrow panel with five cards does not fit at the base size
+       and half a point of type is a far better answer than a second row with
+       four cards' worth of white beside one card */
+    row.style.fontSize = f + 'px';
+    while(f > min && guard++ < 40 && clips()){ f -= 0.5; row.style.fontSize = f + 'px'; }
+    /* then up, as far as the widest card allows */
+    guard = 0;
+    while(f < max && guard++ < 40){
+      row.style.fontSize = (f + 0.5) + 'px';
+      if(clips()){ row.style.fontSize = f + 'px'; break; }
+      f += 0.5;
+    }
+    /* Too narrow even for the smallest card: let them wrap rather than run off
+       the side of the panel. */
+    if(clips()) row.style.flexWrap = 'wrap';
+    return f;
+  }
+
+  /* The strip as a PNG. Photographed from a CLONE in an off-screen box of its
+     own, so the picture is the strip at its natural width with a white margin
+     round it — not whatever slice of the page the panel happened to be showing,
+     and never a card's border shaved off at the edge. */
+  function stripPng(host, o){
+    o = o || {};
+    var row = host && host.firstElementChild;
+    if(!row || typeof html2canvas === 'undefined') return Promise.resolve(null);
+    var btn = o.button ? document.getElementById(o.button) : null;
+    if(btn) btn.classList.add('busy');
+
+    var pad = 18;
+    var stage = document.createElement('div');
+    stage.style.cssText = 'position:fixed;left:-99999px;top:0;background:#fff;'
+      + 'padding:' + pad + 'px;width:' + (row.scrollWidth + pad*2) + 'px';
+    var clone = row.cloneNode(true);
+    clone.style.width = row.scrollWidth + 'px';
+    stage.appendChild(clone);
+    document.body.appendChild(stage);
+
+    function done(){ if(stage.parentNode) stage.parentNode.removeChild(stage);
+                     if(btn) btn.classList.remove('busy'); }
+
+    return html2canvas(stage, { scale:o.scale || 3, backgroundColor:'#ffffff',
+        logging:false, width:stage.offsetWidth, height:stage.offsetHeight })
+      .then(function(cv){ var url = cv.toDataURL('image/png'); done(); return url; })
+      .catch(function(e){ done(); throw e; });
+  }
 
   function localGen(){
     try{ var o=JSON.parse(localStorage.getItem(LS_KEY)||'null'); return o?o.gen:''; }catch(e){ return ''; }

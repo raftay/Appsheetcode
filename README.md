@@ -156,6 +156,9 @@ Everything below lives in `Shell.html` unless noted.
   token. No expiry: entries stay valid until the token moves.
 - **`AmrQlik`** — the per-page ⇣ *Pull from QlikView* button, wired to `QlikSync.gs`.
 - **`AmrProgress`** — the shared progress pill.
+- **`AmrKpi`** (`KpiShared.html`) — the two EBITDA workbooks, plus the on-page KPI strip:
+  `stripHtml(cards)` builds it, `fitStrip(row)` sizes it to the width it has, `stripPng`
+  photographs it from an off-screen clone for *Download KPI PNG*.
 - **`AmrCube`** (`Cube.html`) — the browser-side month fact table. Reads its column layout
   from the server's manifest (`man.dims` / `man.vals`), never hardcoded. Persisted to
   **IndexedDB**, not `localStorage` — the cube is a few MB and `localStorage` stores UTF-16,
@@ -363,6 +366,19 @@ Two separate things move that token:
 needs three, and Apps Script runs one user's calls end to end, so three separate calls cost
 most of a second of dead time before the page starts loading.
 
+**Cache the ANSWER, not just the ingredients.** Every Ready-Mix page computes from
+`loadDataCached_()` — the whole dataset as one cached object. Caching that is right: it is
+what stops forty thousand rows being pulled out of Sheets again. But for a long time it was
+the *only* thing cached on that side, so every `getKeys` / `getExtras` / `getSlideTables`
+call — including one for a market somebody had looked at a minute earlier — paid for the
+chunked `CacheService` read, a `JSON.parse` of several megabytes, and `keyRows_` /
+`ppiMaps_` / `plantRows_` over every row of it. The Aggregates side has never done that:
+`PV.getReport` caches the FINISHED report for the exact selection and returns it before it
+touches the pivot, which is most of why Price & Volume feels instant next to Ready-Mix.
+Those three now do the same through `selCached_`, keyed on market + period + month.
+`getCrossReport` already did. **Uploads are never cached this way** — "run on my own
+QlikView files" is one user's session, and its payloads must not be handed to anybody else.
+
 **Known ceilings:** `cachePut_` silently bails above ~900 KB (customer reports exceed this
 — that is why `getCustomerReport` uses `cachePutBig_` while `getReport` still uses
 `cachePut_`). `CacheService` drops payloads beyond ~22.5 MB. Script Properties cap at
@@ -496,6 +512,18 @@ cannot be re-sliced — whatever month the export was run for, both tabs are for
   must set an explicit white background on `th`/`td` or it renders blue-on-blue.
 - Drive `/preview` embeds are cross-origin — custom zoom controls cannot coexist with
   Drive's native ones.
+- **A slide fitter must fit to the frame's HEIGHT as well as its width.** `AmrSlide.build`
+  scales the whole stack when it overflows — that is a last-resort clamp, not a layout. It
+  shrinks the type the fitter just chose, and because transform-origin is top *centre* it
+  also pulls the content away from the edges the fitter had just filled. A width-only fitter
+  therefore reads as "the tables are huge, everything else is a smear, and there is white
+  down both sides". That is exactly what the Product Segment slides looked like in the July
+  deck: the strip was fitted at its 10px base and then scaled to four effective pixels.
+  `tests/slidefit.js` fails on any content that still overflows its frame.
+- **Every size in a KPI card is `em`, so the row's font-size IS the card's size.** A strip
+  dropped into a bare flex row with no font-size inherits the 16px body font, and the cards
+  clip their own text (`overflow:hidden`) rather than spilling. `AmrKpi.stripHtml` /
+  `AmrKpi.fitStrip` build and size every on-page strip; the slide fitters size the slide's.
 
 ---
 
@@ -1103,12 +1131,17 @@ before assuming it is finished.**
 | 2026-08-13 | Deck Builder Phase 2 — extract the fuel exec tables into shared `Deck_Fuel.html`; both fuel pages delegate; `fsc` + `rfsc` adapters live | ✅ done |
 | 2026-08-13 | Deck Builder Phase 3 — `Deck_PV.html`; PV page delegates; `pv` + `cust` adapters live; per-row KPI Region picker on the Deck Builder | ✅ done |
 | 2026-08-13 | Deck Builder Phase 4 — `Deck_SEG.html` + `Deck_RMX.html`; `seg` + `rmx` adapters live; template/folder IDs set; recipe mapped onto the four content layouts | ✅ done |
-| | **Pay down the Phase 4 debt** — add SEG/RMX before-after harnesses, then make `Page_Segment.html` and `Page_Rmx.html` delegate instead of holding duplicate copies | ☐ |
+| 2026-08-14 | **Half of the Phase 4 debt paid** — `Page_Segment.html` delegates its slide content, KPI cards and fitter to `AmrSegSlide`; `tests/deckstatic.js` fails if a second copy comes back | ✅ done |
+| | **The other half** — make `Page_Rmx.html` delegate to `AmrRmxSlide` instead of holding a duplicate copy | ☐ |
 | 2026-08-13 | `DECK_CONFIG.TEMPLATE_ID` + `FOLDER_ID` set to the live template and deck folder | ✅ done |
 | | **Add the Slides + Drive scopes and serve `?page=deckbuilder` from the execute-as-user deployment**, then run `DECK_validateTemplate()` | ☐ |
 | | Deck Builder Phase 3 — `pv` + `cust` adapters (19 slides) | ☐ |
 | | Deck Builder Phase 4 — `rmx` + `seg` adapters (20 slides) | ☐ |
 | 2026-08-13 | AGG slide layout — fill the frame: bigger charts, bigger table type, KPI strip grown without clipping, and `tests/slidefit.js` to hold it there | ✅ done |
+| 2026-08-14 | Product Segment slide — the same treatment: fit to the frame instead of letting `build()` scale the stack, so the KPI strip is readable on a deck slide | ✅ done |
+| 2026-08-14 | The on-page KPI strip (Price & Volume + Segment) and *Download KPI PNG* — sized by `AmrKpi`, one clean row, nothing clipped | ✅ done |
+| 2026-08-14 | Ready-Mix speed — `getKeys` / `getExtras` / `getSlideTables` cache their finished payload per market+period+month, the way `PV.getReport` always has | ✅ done |
+| 2026-08-14 | The Segment page warms every market in the background; Ready-Mix shows its loading screen before the call that is slow, not after | ✅ done |
 
 ### What has and has not been run
 

@@ -389,8 +389,25 @@ document.addEventListener('DOMContentLoaded', function(){
     });
   });
   if(IS_LIVE){
-    try{ google.script.run.withSuccessHandler(function(u){STATE.logo=u||'';}).getLogo(); }catch(e){}
-    google.script.run.withSuccessHandler(initOptions).withFailureHandler(function(e){showBanner('Could not read sheet: '+(e&&e.message||e));}).RMX_getMarkets();
+    /* THE LOADING SCREEN GOES UP FIRST, before the call it is about.
+       RMX_getMarkets is not the cheap little call it reads as: on a cold cache
+       it is what builds the whole Ready-Mix bundle, and it was fired with
+       nothing on screen. The loading screen only appeared later, when refresh()
+       finally ran — so the slowest part of opening this page was also the only
+       part with no sign that anything was happening, and it looked like the
+       page had simply come up empty.
+
+       The logo waits its turn for the same reason: Apps Script runs one user's
+       google.script.run calls END TO END, so firing getLogo() first put a whole
+       round trip in front of the data. It is fetched once the markets are in. */
+    showLoader('Reading the Ready-Mix workbook\u2026');
+    google.script.run
+      .withSuccessHandler(function(d){
+        initOptions(d);
+        try{ google.script.run.withSuccessHandler(function(u){STATE.logo=u||'';}).getLogo(); }catch(e){}
+      })
+      .withFailureHandler(function(e){ hideLoader(); showBanner('Could not read sheet: '+(e&&e.message||e)); })
+      .RMX_getMarkets();
   } else {
     showBanner('Run this inside the Apps Script web app (bound to your spreadsheet) to load data.');
   }
@@ -710,7 +727,10 @@ function refresh(opts){
       if(!STATE.synced){ STATE.synced=true; setSyncStamp(); }
     }
   }
-  if(STATE.keyCache[ck]){ 
+  if(STATE.keyCache[ck]){
+    /* Already have it — but the loading screen may be up from the page's first
+       call (see the boot block), and nothing else takes it down on this path. */
+    hideLoader();
     if(opts.debounce) scheduleRender(); else renderNow();
     return;
   }

@@ -354,26 +354,55 @@ var AmrSegSlide = (function(){
     return frag;
   }
 
-  /* The KPI strip's base size: 10px is the card as it was, and the fitter may
-     take it to SEG_KPI_MAX when the row has the room. */
-  var SEG_KPI_BASE = 10, SEG_KPI_MAX = 14;
+  /* ===========================================================================
+   * THE FITTER
+   * ---------------------------------------------------------------------------
+   * The KPI strip across the top, then the tables, both sized from the frame's
+   * REAL height and width.
+   *
+   * WHAT IT IS FIXING. The old fitter grew each table by WIDTH ONLY, to a 30px
+   * cap, and left the height to somebody else. Nobody else wanted it: the two
+   * tables came out 1263px tall in a 1014px frame, so AmrSlide.build fell back
+   * to its last-resort clamp and scaled the WHOLE stack by 0.80 — 0.52 on the
+   * short, wide image box the deck actually uses. The KPI strip went down with
+   * it. Its own fitter had already handed its height back (that is what the
+   * give-back was for), so it was photographed at the 10px base and then scaled
+   * to an effective FIVE pixels: a grey smear above the tables, which is what
+   * the strip looks like on every Product Segment slide in the July deck.
+   *
+   * A second scale is also why the picture had white bands down both sides:
+   * transform-origin is top CENTRE, so shrinking the stack pulls it away from
+   * the edges the fitter had just filled.
+   *
+   * So the rule is the same one the Price & Volume slide already follows: fit
+   * to the frame, never past it. In order:
+   *   1. the KPI strip grows until the widest card would clip or it reaches its
+   *      share of the height — it is sized FIRST, so the tables are fitted into
+   *      what is left rather than the strip being squeezed by what they took;
+   *   2. the tables take the font that fills the remaining height, or the
+   *      width, whichever binds first — cell padding rides on the font (--px /
+   *      --py are em), so a bigger font is a bigger table, not bigger digits in
+   *      cells sized for a smaller one;
+   *   3. anything still short of the bottom goes back to the strip, and then to
+   *      row padding, rather than being left as white.
+   * ========================================================================= */
+  var SEG_FIT = {
+    kpiMin: 10, kpiMax: 20,      // the strip's font-size dial, px
+    kpiShare: 0.24,              // most of the body height the strip may take
+    tblMin: 8, tblMax: 30, tblBase: 13,
+    padYMin: 0.30, padYMax: 0.80 // table row padding, em of the cell font
+  };
+  /* The size the strip is BUILT at, before the fitter sees it. buildSlideContent
+     stamps it on the row so the block is measurable even if no fitter runs. */
+  var SEG_KPI_BASE = SEG_FIT.kpiMin;
 
-  /* Grow the strip until the widest card would clip, it outgrows its share of
-     the slide, or it reaches the cap. Returns a function that gives the height
-     back if the taller strip pushed the slide past its frame — the tables are
-     the point of the slide, and AmrSlide.build would otherwise shrink the whole
-     picture to fit. */
-  function fitSegKpiRow(box){
-    var krow = box.querySelector('.seg-kpi-row'); if(!krow) return null;
-    var center = box.querySelector('.slide-center');
-    var bodyR  = center && center.parentElement;
-    var availW = krow.clientWidth || (center ? center.clientWidth : 0);
-    var availH = bodyR ? bodyR.clientHeight : 0;
-    if(!availW) return null;
+  /* Grow the strip until the widest card would clip, it outgrows maxH, or it
+     reaches the cap. Returns the size it settled on. */
+  function fitSegKpiRow(krow, availW, maxH, cap){
+    if(!krow || !availW) return 0;
     var cards = [].slice.call(krow.children);
-    var maxH = availH ? availH * 0.2 : 1e9;
-    var best = SEG_KPI_BASE, f, i;
-    for(f = SEG_KPI_BASE; f <= SEG_KPI_MAX + 0.001; f += 0.5){
+    var best = SEG_FIT.kpiMin, f, i;
+    for(f = SEG_FIT.kpiMin; f <= cap + 0.001; f += 0.5){
       krow.style.fontSize = f + 'px';
       var over = krow.scrollWidth > availW + 1 || krow.offsetHeight > maxH;
       for(i = 0; i < cards.length && !over; i++){
@@ -383,13 +412,22 @@ var AmrSegSlide = (function(){
       best = f;
     }
     krow.style.fontSize = best + 'px';
-    return function(){
-      var guard = 0;
-      while(best > SEG_KPI_BASE && guard++ < 20 && bodyR &&
-            center.scrollHeight > bodyR.clientHeight){
-        best -= 0.5; krow.style.fontSize = best + 'px';
-      }
-    };
+    return best;
+  }
+
+  /* The width the widest table would LIKE. Every cell is nowrap, so max-content
+     is exactly the width at which no number is squeezed. Measured on the table
+     itself, never on its cell: a table too wide for the cell simply overflows
+     it (.ccell clips), so the cell's width says nothing about the room needed. */
+  function tablesNeedWidth(tables){
+    var w = 0;
+    tables.forEach(function(t){
+      var prev = t.style.width;
+      t.style.width = 'max-content';
+      w = Math.max(w, t.offsetWidth);
+      t.style.width = prev;
+    });
+    return Math.ceil(w);
   }
 
   function fitTables(box){
@@ -398,59 +436,136 @@ var AmrSegSlide = (function(){
     // content to the middle. Anchor it to the top instead, so the Top slider is
     // the real gap below the header and the Bottom slider the real reserved band.
     var center=box.querySelector('.slide-center');
-    if(center && center.parentElement) center.parentElement.style.alignItems='flex-start';
+    if(!center) return;
+    if(center.parentElement) center.parentElement.style.alignItems='flex-start';
 
-    // The shared frame pads the whole slide; that padding is invisible extra
-    // blank space the sliders can't remove. Pull the body row out to the slide
-    // edges (the header keeps its padding), so 0px blank space really means
-    // "right at the edge" and the sliders account for ALL the space.
-    if(center && center.parentElement){
+    // The report page's slide pads the whole frame; that padding is invisible
+    // extra blank space the whitespace sliders can't remove. Pull the body row
+    // out to the slide edges (the header keeps its padding), so 0px blank space
+    // really means "right at the edge" and the sliders account for ALL of it.
+    //
+    // NOT ON A DECK CAPTURE. A bare frame has no sliders and no bands to
+    // account for — it keeps AmrSlide's 8px so a card's border, and the first
+    // letter of a left-aligned caption, are not shaved off at the picture's
+    // edge. They were: "SEGMENT · MTD" came out as "EGMENT · MTD" the moment
+    // the fitter started using the full width instead of leaving the whole
+    // stack scaled down and centred.
+    var bare = box.classList && box.classList.contains('slide-bare');
+    if(center.parentElement && !bare){
       var pad=parseFloat(getComputedStyle(box).paddingLeft)||0;
       center.parentElement.style.marginLeft=(-pad)+'px';
       center.parentElement.style.marginRight=(-pad)+'px';
       box.style.paddingBottom='0px';
     }
 
-    var kpiGiveBack = fitSegKpiRow(box);
+    var bodyR  = center.parentElement;
+    var availW = center.clientWidth;
+    var availH = bodyR ? bodyR.clientHeight : 0;
+    var krow   = box.querySelector('.seg-kpi-row');
+    var tables = [].slice.call(box.querySelectorAll('table.gt'));
+    if(!availW || !availH || !tables.length) return;
 
-    var tables=[].slice.call(box.querySelectorAll('table.gt'));
+    /* 1 — the strip takes its share first. */
+    var kpiF = krow ? fitSegKpiRow(krow, availW, availH * SEG_FIT.kpiShare, SEG_FIT.kpiMax) : 0;
 
-    function fitOne(t, capFont, wrap, startFont){
-      var avail=t.parentElement?t.parentElement.clientWidth:0; if(!avail) return 0;
-      var maxF=capFont||parseFloat(t.getAttribute('data-maxf'))||30;
-      var padX=7, font=startFont||11, guard;
-      t.classList.toggle('wrapText', !!wrap);
-      t.style.transform=''; t.style.setProperty('--px',padX+'px'); t.style.fontSize=font+'px';
-      guard=0;
-      while(font<maxF && guard<120){ t.style.fontSize=(font+0.5)+'px'; if(t.scrollWidth>avail){ t.style.fontSize=font+'px'; break; } font+=0.5; guard++; }
-      guard=0;
-      while(t.scrollWidth>avail+1 && padX>2 && guard<40){ padX-=1; t.style.setProperty('--px',padX+'px'); guard++; }
-      if(!capFont){
-        guard=0;
-        while(t.scrollWidth>avail+1 && font>7 && guard<80){ font-=0.5; t.style.fontSize=font+'px'; guard++; }
-        if(t.scrollWidth>avail+1){ var s=avail/t.scrollWidth; t.style.transformOrigin='top left'; t.style.transform='scale('+s+')'; }
-      }
-      return font;
+    /* 2 — the tables fill what is left, in BOTH directions. */
+    var caps = tables.map(function(t){
+      var c = t.previousElementSibling;
+      return (c && c.classList && c.classList.contains('ccap')) ? c : null;
+    });
+
+    function apply(f, padY, wrap){
+      tables.forEach(function(t){
+        t.classList.toggle('wrapText', !!wrap);
+        t.style.transform = '';                    // cleared; only the last-resort
+                                                   // clamp at the end may set one
+        t.style.fontSize = f + 'px';
+        t.style.setProperty('--px', '0.72em');
+        t.style.setProperty('--py', padY + 'em');
+      });
+      caps.forEach(function(c){
+        if(c){ c.style.fontSize = Math.max(9, Math.round(f * 0.8 * 10) / 10) + 'px';
+               c.style.margin = '0 0 ' + Math.round(f * 0.42) + 'px'; }
+      });
+      var rows = box.querySelectorAll('.crow');
+      for(var i = 0; i < rows.length; i++) rows[i].style.marginBottom = Math.round(f * 0.5) + 'px';
+    }
+    /* The whole composition, not just the tables: the strip, the captions and
+       the gaps are all inside .slide-center, so this is the number that decides
+       whether build() has to scale anything. */
+    function fits(){
+      return tablesNeedWidth(tables) <= availW && center.scrollHeight <= availH;
     }
 
-    // pass 1 — natural fit for each table; remember the largest value-font reached
-    var natural=tables.map(function(t){ return fitOne(t, null, false, 11); });
-    var target=natural.reduce(function(a,b){ return Math.max(a,b); }, 0) || 11;
-
-    // pass 2 — lift the smaller tables to that value-font via wrapping
-    tables.forEach(function(t,i){
-      if(natural[i] < target-0.25){ fitOne(t, target, true, natural[i]); }
-    });
-
-    // scale each "SEGMENT · MTD" / "BY EXTRA TYPE · MTD" caption with its table's font
-    tables.forEach(function(t){
-      var cap=t.previousElementSibling;
-      if(cap && cap.classList && cap.classList.contains('ccap')){
-        cap.style.fontSize=Math.max(10.5, Math.round(parseFloat(t.style.fontSize)*0.85*10)/10)+'px';
+    function settle(wrap){
+      /* one measurement at the base size, then jump to the estimate — a nowrap
+         table's width and height are both near enough linear in the font-size
+         once the padding scales with it */
+      apply(SEG_FIT.tblBase, SEG_FIT.padYMin, wrap);
+      var w0 = tablesNeedWidth(tables) || 1;
+      var h0 = center.scrollHeight || 1;
+      /* only the table part of the height scales with the font */
+      var fixed = krow ? (krow.offsetHeight + 24) : 0;
+      var byW = SEG_FIT.tblBase * availW / w0;
+      var byH = SEG_FIT.tblBase * Math.max(1, availH - fixed) / Math.max(1, h0 - fixed);
+      var f = Math.max(SEG_FIT.tblMin,
+                Math.min(SEG_FIT.tblMax, Math.floor(Math.min(byW, byH) * 2) / 2));
+      var guard = 0;
+      apply(f, SEG_FIT.padYMin, wrap);
+      while(f > SEG_FIT.tblMin && guard++ < 60 && !fits()){
+        f -= 0.5; apply(f, SEG_FIT.padYMin, wrap);
       }
-    });
+      guard = 0;
+      while(f < SEG_FIT.tblMax && guard++ < 60){
+        apply(f + 0.5, SEG_FIT.padYMin, wrap);
+        if(!fits()){ apply(f, SEG_FIT.padYMin, wrap); break; }
+        f += 0.5;
+      }
+      return f;
+    }
 
-    if(kpiGiveBack) kpiGiveBack();
+    var wrap = false, font = settle(false);
+    /* Only wrap the headers when NOT wrapping has cost real size. The report
+       page's own slide reads "MAJOR PROJECT SEGMENT" on one line and that is
+       the look to keep; a header broken over two lines is the price of a
+       readable number, never the default. */
+    if(font <= SEG_FIT.tblMin + 0.001){
+      var wrapped = settle(true);
+      if(wrapped > font){ wrap = true; font = wrapped; } else { font = settle(false); }
+    }
+
+    /* 3 — spend what is left over rather than leaving a white band. The strip
+       first (it is the thing that reads smallest), then the row padding. */
+    if(krow && kpiF < SEG_FIT.kpiMax){
+      var guard = 0, f2 = kpiF;
+      while(f2 < SEG_FIT.kpiMax && guard++ < 40){
+        krow.style.fontSize = (f2 + 0.5) + 'px';
+        var clipped = false, kids = krow.children;
+        for(var i = 0; i < kids.length && !clipped; i++) clipped = kids[i].scrollWidth > kids[i].clientWidth;
+        if(clipped || krow.scrollWidth > availW || center.scrollHeight > availH){
+          krow.style.fontSize = f2 + 'px'; break;
+        }
+        f2 += 0.5;
+      }
+    }
+    var padY = SEG_FIT.padYMin, guardP = 0;
+    while(padY < SEG_FIT.padYMax && guardP++ < 40){
+      apply(font, Math.round((padY + 0.02) * 100) / 100, wrap);
+      if(center.scrollHeight > availH){ apply(font, padY, wrap); break; }
+      padY = Math.round((padY + 0.02) * 100) / 100;
+    }
+
+    /* Last resort, and only for a table that genuinely cannot be made to fit at
+       the smallest font with wrapped headers — the Extras & VAP detail view is
+       thirteen columns wide. A clipped column is a wrong number on a picture
+       nobody can restyle, so scale that one table rather than let .ccell cut it
+       off. Height is not scaled here: everything above already fits. */
+    tables.forEach(function(t){
+      var room = t.parentElement ? t.parentElement.clientWidth : 0;
+      if(!room || t.scrollWidth <= room + 1) return;
+      t.style.transformOrigin = 'top left';
+      t.style.transform = 'scale(' + (room / t.scrollWidth) + ')';
+    });
   }
 
 /* ---------------------------------------------------------------------------

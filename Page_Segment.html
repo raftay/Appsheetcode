@@ -486,7 +486,6 @@ function renderTable(t){
   return '<table class="gt">' + cols + '<thead>' + thead + '</thead><tbody>' + body + '</tbody></table>';
 }
 
-function renderComputedTable(t){ return renderTable(t); }                       // slide
 function renderPageTable(t){ return '<div class="tbl-scroll">' + renderTable(t) + '</div>'; }
 
 /* ======================= KPI STRIP (AGG & RMX EBITDA Report workbooks) =======================
@@ -524,74 +523,31 @@ function segKpiExtract(market){
 }
 function segKpiAllHeaders(){ return window.AmrKpi ? AmrKpi.rmxHeaders(SEGKPI.vals) : []; }
 
-/* ---- cards: same shell, fonts and colours as the Price & Volume KPI strip ---- */
-/* Every size in a card is in em, against the CONTAINER's font-size: 10px is the
-   card as it has always been, which is what the on-page strip sets. The slide's
-   row is grown past that by fitSegKpiRow(), so the strip scales with the
-   picture instead of staying 24px type on a 1600px slide.
-   Mirrored in Deck_SEG.html — change both. */
-function segKpiCardShell(eyebrow, pill, body){
-  return '<div style="flex:1 1 0;min-width:13em;overflow:hidden;background:#fff;border:1px solid var(--line);border-radius:1em;box-shadow:var(--shadow);padding:.8em 1.1em">'
-    +'<div style="display:flex;flex-direction:column;align-items:flex-start;gap:.4em">'
-      +'<span style="font:700 .95em Archivo,Arial;letter-spacing:.08em;text-transform:uppercase;color:var(--blue-100);white-space:nowrap">'+esc(eyebrow)+'</span>'
-      +'<span style="background:var(--blue-10);border:1px solid var(--blue-20);color:var(--blue-80);font:700 .8em Archivo,Arial;letter-spacing:.06em;text-transform:uppercase;border-radius:.5em;padding:.25em .75em;white-space:nowrap">'+esc(pill)+'</span>'
-    +'</div>'
-    + body + '</div>';
-}
-var SEGKPI_FMT = {
-  units:{ v:function(n){return (n==null?0:n).toLocaleString('en-CA',{minimumFractionDigits:2,maximumFractionDigits:2});},
-          d:function(n){return Math.abs(n).toFixed(2);} },
-  krc:  { v:function(n){return Math.round(n==null?0:n).toLocaleString('en-CA');},
-          d:function(n){return Math.abs(n).toFixed(2);} }
-};
-/* Same card shell/fonts/colours as Price & Volume. Units Sold keeps the classic
-   layout (big number + inline delta). The money cards show kRC and RC/m³ as
-   twin figures side by side, each with its own unit label; the workbook's
-   Δ# / Δ% (RC/m³-based) moves down to the footer line next to the prior-year
-   figures. `invert` flips the good/bad colour for cost rows. */
-function segKpiCard(eyebrow, pill, m, fmt, sub, invert){
-  var dp=(m.dp==null)?((m.py&&m.cy!=null)?(m.cy-m.py)/m.py:0):m.dp;
-  var dn=(m.dn==null)?((m.cy||0)-(m.py||0)):m.dn;
-  var up=dp>=0, good=invert?!up:up;
-  var arrow=up?'\u25B2':'\u25BC', col=good?'var(--blue-80)':'var(--neg)';
-  var sign=up?'+':'\u2212';
-  return segKpiCardShell(eyebrow, pill,
-      '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:.8em;margin:.5em 0 .2em">'
-        +'<span style="font:800 2.4em Archivo,Arial;color:var(--blue-80);white-space:nowrap">'+fmt.v(m.cy)+'</span>'
-        +'<span style="font:700 1.1em Inter;color:'+col+';white-space:nowrap">'+arrow+' '+sign+fmt.d(dn)+' / '+sign+(Math.abs(dp)*100).toFixed(1)+'%</span>'
-      +'</div>'
-     +'<div style="font:500 1.05em Inter;color:var(--muted);white-space:nowrap">Prior Yr: '+fmt.v(m.py)+(sub?' \u00B7 '+sub:'')+'</div>');
-}
-/* money card — kRC and RC/m³ side by side, delta in the footer */
-function segKpiMoneyCard(eyebrow, pill, m, invert){
-  var dp=(m.dp==null)?(((m.pyU||0)&&m.cyU!=null)?((m.cyU-m.pyU)/m.pyU):0):m.dp;
-  var dn=(m.dn==null)?((m.cyU||0)-(m.pyU||0)):m.dn;
-  var up=dp>=0, good=invert?!up:up;
-  var arrow=up?'\u25B2':'\u25BC', col=good?'var(--blue-80)':'var(--neg)';
-  var sign=up?'+':'\u2212';
-  var f=SEGKPI_FMT.krc;
-  return segKpiCardShell(eyebrow, pill,
-      '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:1.4em;margin:.5em 0 .2em;flex-wrap:nowrap">'
-        +'<span style="white-space:nowrap"><span style="font:800 2.4em Archivo,Arial;color:var(--blue-80)">'+f.v(m.cy)+'</span>'
-          +'<span style="font:700 .95em Archivo,Arial;letter-spacing:.04em;color:var(--muted);margin-left:.4em">kRC</span></span>'
-        +'<span style="white-space:nowrap"><span style="font:800 2em Archivo,Arial;color:var(--blue-100)">'+(m.cyU==null?'\u2013':m.cyU.toFixed(2))+'</span>'
-          +'<span style="font:700 .95em Archivo,Arial;letter-spacing:.04em;color:var(--muted);margin-left:.4em">RC/m\u00B3</span></span>'
-      +'</div>'
-     +'<div style="font:500 1.05em Inter;color:var(--muted);white-space:nowrap">Prior Yr: '+f.v(m.py)+' kRC \u00B7 '
-        +(m.pyU==null?'\u2013':m.pyU.toFixed(2))+' RC/m\u00B3'
-        +' \u00B7 <span style="font-weight:700;color:'+col+'">'+arrow+' '+sign+Math.abs(dn).toFixed(2)+' / '+sign+(Math.abs(dp)*100).toFixed(1)+'%</span>'
-      +'</div>');
-}
-function segKpiCardsHtml(){
-  var x=segKpiExtract(); if(!x) return '';
-  var h='';
-  if(x.units) h+=segKpiCard('Units Sold (Km\u00B3)',   'SAP / USGAAP', x.units, SEGKPI_FMT.units, '');
-  if(x.rev)   h+=segKpiMoneyCard('Total Revenue',      'SAP / USGAAP', x.rev);
-  if(x.conc)  h+=segKpiMoneyCard('Concrete Sales',     'SAP / USGAAP', x.conc);
-  if(x.raw)   h+=segKpiMoneyCard('Total Raw Materials','SAP / USGAAP', x.raw, true);
-  return h;
-}
+/* ---- cards: built by AmrSegSlide, so the page and the slide cannot drift ----
+   The card markup, its formats and its em-based sizing all live in
+   Deck_SEG.html now; this page passes its live state in as a ctx and gets the
+   same html the deck gets. It used to hold its own copy of all of it, which is
+   exactly the Phase 4 debt: a fix to the strip had to be made twice, and the
+   two copies had already drifted (the page's EXPORT_DEFAULT_OFF said one thing,
+   the module's said another).
 
+   segCtx() is the whole of what the module reads. exportSel is resolved HERE,
+   for every key, rather than passed through half-filled: an absent key means
+   "use the module's default", and the module defaults `By extra type` OFF while
+   this page has it ON. Passing isOn() for all three is what keeps the slide
+   showing what the tick boxes above it say. */
+function segCtx(){
+  return {
+    data: DATA,
+    market: STATE.market,
+    period: STATE.period,
+    exportSel: { 'seg:segment': isOn('seg:segment'),
+                 'seg:byType':  isOn('seg:byType'),
+                 'seg:detail':  isOn('seg:detail') },
+    kpi: { vals: SEGKPI.vals, sheet:'', index:{}, sheets:[], map:{} }
+  };
+}
+function segKpiCardsHtml(){ return AmrSegSlide.kpiCardsHtml(segCtx()); }
 /* on-page strip above the preview — mirrors the Price & Volume KPI section */
 function renderSegKpis(){
   var sec=document.getElementById('segKpiSection'), strip=document.getElementById('segKpiStrip');
@@ -599,7 +555,11 @@ function renderSegKpis(){
   var html=segKpiCardsHtml();
   if(!html){ sec.style.display='none'; strip.innerHTML=''; return; }
   sec.style.display='';
-  strip.innerHTML='<div style="display:flex;gap:12px;flex-wrap:wrap;font-size:'+SEG_KPI_BASE+'px">'+html+'</div>';
+  /* Same builder and same fitter as the Price & Volume strip — the cards are
+     em-based, so the row's font-size is the card's size and AmrKpi grows it to
+     the width this panel actually has. */
+  strip.innerHTML = AmrKpi.stripHtml(html);
+  AmrKpi.fitStrip(strip.firstChild);
   var meta=document.getElementById('segKpiMeta');
   if(meta){
     var x=segKpiExtract();
@@ -718,46 +678,19 @@ document.addEventListener('change', function(e){
   renderPreview();
 });
 
-/* ======================= SLIDE ======================= */
-function computedCard(cap, table, missing){
-  var wrap=document.createElement('div');
-  wrap.innerHTML='<p class="ccap">'+esc(cap)+'</p>'+(table? renderComputedTable(table)
-      : '<div class="phold">Waiting for '+esc(missing)+'</div>');
-  return wrap;
-}
+/* ======================= SLIDE =======================
+   The slide's CONTENT and its FITTER both live in Deck_SEG.html (AmrSegSlide),
+   which the Deck Builder also includes. This page delegates rather than keeping
+   a second copy: the block below used to be duplicated line for line, so a fix
+   to the layout had to be made twice and the two had already drifted.
+   Everything the module needs arrives as segCtx(). */
 
 /* ONE PERIOD PER SLIDE, and only the TICKED tables — in the order they appear
-   on the page above, each full width. Switch the Period picker and export
-   again for the other slide. The shared engine (AmrSlide) wraps this in the
-   branded 1600x900 frame, adds the comment bands, scales the stack down if it
-   outgrows the body, and exports the PNG.
+   on the page above, each full width. Switch the Period picker and export again
+   for the other slide. The shared engine (AmrSlide) wraps this in the branded
+   1600x900 frame and adds the comment bands.
    Returns null when nothing is ticked, which is what the callers check. */
-function buildSlideContent(){
-  var picked = TABLES.filter(function(T){ return isOn(T.key); });
-  if(!picked.length) return null;
-
-  var frag=document.createDocumentFragment();
-  var ml=marketLabel(STATE.market), p=STATE.period;
-  var kHtml=segKpiCardsHtml();
-  if(kHtml){
-    var krow=document.createElement('div');
-    krow.className='seg-kpi-row';
-    krow.style.cssText='display:flex;gap:1.1em;flex-wrap:nowrap;width:100%;flex:none;'
-      +'font-size:'+SEG_KPI_BASE+'px;margin:0 0 12px';
-    krow.innerHTML=kHtml;
-    frag.appendChild(krow);
-  }
-  function addRow(cards){
-    var rowEl=document.createElement('div'); rowEl.className='crow';
-    cards.forEach(function(card){ var cell=document.createElement('div'); cell.className='ccell'; cell.appendChild(card); rowEl.appendChild(cell); });
-    frag.appendChild(rowEl);
-  }
-  picked.forEach(function(T){
-    var t=null; try{ t=T.build(DATA); }catch(e){ t=null; }
-    addRow([ computedCard(T.cap+' \u00B7 '+p, t, 'Ready-Mix data for '+ml) ]);
-  });
-  return frag;
-}
+function buildSlideContent(){ return AmrSegSlide.slideContent(segCtx()); }
 
 /* shared options passed to AmrSlide for both preview and export */
 function slideOpts(){
@@ -765,110 +698,16 @@ function slideOpts(){
            margins:AmrSlide.margins(), fit:fitTables };
 }
 
-/* Shrink each computed table to fit its column (passed to AmrSlide as `fit`).
-   Two-pass: fit every table on its own and note the largest value-font reached,
-   then push any smaller-font table up to that same size by letting its
-   headers + label cells wrap. They grow taller, but the numbers all read at
-   the same size. Vertical overflow is handled by AmrSlide itself, which scales
-   the whole stack down if it is taller than the body. */
-/* The KPI strip's base size: 10px is the card as it was, and the slide fitter
-   may take it to SEG_KPI_MAX when the row has the room. Mirrored in
-   Deck_SEG.html — change both. */
-var SEG_KPI_BASE = 10, SEG_KPI_MAX = 14;
+/* The fitter, passed to AmrSlide as `fit`. Same one the deck runs, for the same
+   reason as buildSlideContent above: one copy, in Deck_SEG.html. It sizes the
+   KPI strip and the tables to the frame's REAL height and width, so nothing is
+   scaled a second time on the way out. */
+function fitTables(box){ return AmrSegSlide.fitSlide(box, segCtx()); }
 
-/* Grow the strip until the widest card would clip, it outgrows its share of the
-   slide, or it reaches the cap. Returns a function that gives the height back if
-   the taller strip pushed the slide past its frame — the tables are the point of
-   the slide, and AmrSlide.build would otherwise shrink the whole picture. */
-function fitSegKpiRow(box){
-  var krow = box.querySelector('.seg-kpi-row'); if(!krow) return null;
-  var center = box.querySelector('.slide-center');
-  var bodyR  = center && center.parentElement;
-  var availW = krow.clientWidth || (center ? center.clientWidth : 0);
-  var availH = bodyR ? bodyR.clientHeight : 0;
-  if(!availW) return null;
-  var cards = [].slice.call(krow.children);
-  var maxH = availH ? availH * 0.2 : 1e9;
-  var best = SEG_KPI_BASE, f, i;
-  for(f = SEG_KPI_BASE; f <= SEG_KPI_MAX + 0.001; f += 0.5){
-    krow.style.fontSize = f + 'px';
-    var over = krow.scrollWidth > availW + 1 || krow.offsetHeight > maxH;
-    for(i = 0; i < cards.length && !over; i++){
-      over = cards[i].scrollWidth > cards[i].clientWidth;
-    }
-    if(over) break;
-    best = f;
-  }
-  krow.style.fontSize = best + 'px';
-  return function(){
-    var guard = 0;
-    while(best > SEG_KPI_BASE && guard++ < 20 && bodyR &&
-          center.scrollHeight > bodyR.clientHeight){
-      best -= 0.5; krow.style.fontSize = best + 'px';
-    }
-  };
-}
-
-function fitTables(box){
-  // Let the spacers decide where the content sits (like RMX / Price & Volume):
-  // the shared frame vertically centres the body row, which pushes short
-  // content to the middle. Anchor it to the top instead, so the Top slider is
-  // the real gap below the header and the Bottom slider the real reserved band.
-  var center=box.querySelector('.slide-center');
-  if(center && center.parentElement) center.parentElement.style.alignItems='flex-start';
-
-  // The shared frame pads the whole slide; that padding is invisible extra
-  // blank space the sliders can't remove. Pull the body row out to the slide
-  // edges (the header keeps its padding), so 0px blank space really means
-  // "right at the edge" and the sliders account for ALL the space.
-  if(center && center.parentElement){
-    var pad=parseFloat(getComputedStyle(box).paddingLeft)||0;
-    center.parentElement.style.marginLeft=(-pad)+'px';
-    center.parentElement.style.marginRight=(-pad)+'px';
-    box.style.paddingBottom='0px';
-  }
-
-  var kpiGiveBack = fitSegKpiRow(box);
-
-  var tables=[].slice.call(box.querySelectorAll('table.gt'));
-
-  function fitOne(t, capFont, wrap, startFont){
-    var avail=t.parentElement?t.parentElement.clientWidth:0; if(!avail) return 0;
-    var maxF=capFont||parseFloat(t.getAttribute('data-maxf'))||30;
-    var padX=7, font=startFont||11, guard;
-    t.classList.toggle('wrapText', !!wrap);
-    t.style.transform=''; t.style.setProperty('--px',padX+'px'); t.style.fontSize=font+'px';
-    guard=0;
-    while(font<maxF && guard<120){ t.style.fontSize=(font+0.5)+'px'; if(t.scrollWidth>avail){ t.style.fontSize=font+'px'; break; } font+=0.5; guard++; }
-    guard=0;
-    while(t.scrollWidth>avail+1 && padX>2 && guard<40){ padX-=1; t.style.setProperty('--px',padX+'px'); guard++; }
-    if(!capFont){
-      guard=0;
-      while(t.scrollWidth>avail+1 && font>7 && guard<80){ font-=0.5; t.style.fontSize=font+'px'; guard++; }
-      if(t.scrollWidth>avail+1){ var s=avail/t.scrollWidth; t.style.transformOrigin='top left'; t.style.transform='scale('+s+')'; }
-    }
-    return font;
-  }
-
-  // pass 1 — natural fit for each table; remember the largest value-font reached
-  var natural=tables.map(function(t){ return fitOne(t, null, false, 11); });
-  var target=natural.reduce(function(a,b){ return Math.max(a,b); }, 0) || 11;
-
-  // pass 2 — lift the smaller tables to that value-font via wrapping
-  tables.forEach(function(t,i){
-    if(natural[i] < target-0.25){ fitOne(t, target, true, natural[i]); }
-  });
-
-  // scale each "SEGMENT · MTD" / "BY EXTRA TYPE · MTD" caption with its table's font
-  tables.forEach(function(t){
-    var cap=t.previousElementSibling;
-    if(cap && cap.classList && cap.classList.contains('ccap')){
-      cap.style.fontSize=Math.max(10.5, Math.round(parseFloat(t.style.fontSize)*0.85*10)/10)+'px';
-    }
-  });
-
-  if(kpiGiveBack) kpiGiveBack();
-}
+/* The base font of the ON-PAGE strip (section "KPIs" above the preview). Every
+   size inside a KPI card is em, so this one number is the card's size; the
+   slide's own copy of the strip is grown from here by the module's fitter. */
+var SEG_KPI_BASE = 10;
 
 /* ======================= WHITESPACE BANDS =======================
    The KPI cards sit above the tables on the slide. When there are no cards
@@ -974,7 +813,7 @@ function loadTables(force){
       CACHE[ck]=d;
       if(!STATE.upload && window.AmrCache) AmrCache.set('slide:'+ck, d);
       applyData(d, force?'Updated':'Loaded');
-      warmOtherPeriod();
+      warmMarkets();
     })
     .withFailureHandler(function(err){
       if(window.AmrProgress) AmrProgress.fail('sheet', 'Could not read the Ready-Mix data');
@@ -984,20 +823,68 @@ function loadTables(force){
                           upload:STATE.upload, force:!!force });
 }
 
-/* The other period, quietly, so the MTD / YTD toggle is instant. Failures are
-   ignored on purpose: this is a convenience, never a dependency. */
-function warmOtherPeriod(){
-  if(!IS_LIVE) return;
-  var other = (STATE.period==='MTD') ? 'YTD' : 'MTD';
-  var k = ckeyFor_(STATE.market, other, STATE.month);
-  if(CACHE[k]) return;
-  google.script.run
-    .withSuccessHandler(function(d){
-      CACHE[k]=d;
-      if(!STATE.upload && window.AmrCache) AmrCache.set('slide:'+k, d);
-    })
-    .withFailureHandler(function(){})
-    .RMX_getSlideTables({ market:STATE.market, period:other, month:STATE.month, upload:STATE.upload });
+/* ---- background warming --------------------------------------------------
+   EVERY MARKET, BOTH PERIODS, QUIETLY, ONCE.
+   This page used to warm only the OTHER PERIOD of the market you were already
+   looking at, so the MTD / YTD toggle was instant and the Market dropdown —
+   the control people actually use — went back to the server every single time
+   and put "Computing <market>…" over the whole page. Ready-Mix has warmed its
+   full market list for a while (warmKeys in Page_Rmx.html); this is the same
+   loop, against the same backend, and the reason that page feels different.
+
+   Deliberately serial and silent, exactly as there: a failed warm is a warm
+   that did not happen, never a banner, and the visible request is never queued
+   behind these — Apps Script runs one user's calls end to end, so a parallel
+   fan-out would put the market somebody is waiting for behind four they are
+   not. Answers land in memory AND in AmrCache, so tomorrow's first visit is
+   already warm too. */
+var WARM_DONE = false;
+function warmMarkets(){
+  if(WARM_DONE || STATE.upload || !IS_LIVE) return;
+  WARM_DONE = true;
+
+  var markets = [ALL_MKT].concat(MARKETS || []);
+  var jobs = [];
+  ['MTD','YTD'].forEach(function(p){
+    markets.forEach(function(m){
+      if(!m) return;
+      var k = ckeyFor_(m, p, STATE.month);
+      if(CACHE[k]) return;
+      jobs.push({ market:m, period:p, ck:k });
+    });
+  });
+  var total = jobs.length, done = 0;
+  if(!total) return;
+
+  function tick(){
+    done++;
+    if(!window.AmrProgress) return;
+    if(done >= total) AmrProgress.done('warm', 'Every market ready');
+    else AmrProgress.set('warm', { text:'Preparing markets\u2026', order:30,
+                                   pct: Math.round(done / total * 100) });
+  }
+  if(window.AmrProgress) AmrProgress.set('warm', { text:'Preparing markets\u2026', pct:0, order:30 });
+
+  (function next(){
+    var j = jobs.shift(); if(!j) return;
+    if(CACHE[j.ck]){ tick(); return next(); }
+    if(window.AmrCache){
+      var dev = AmrCache.get('slide:' + j.ck);
+      if(dev){ CACHE[j.ck] = dev; tick(); return next(); }
+    }
+    google.script.run
+      .withSuccessHandler(function(d){
+        if(d){
+          CACHE[j.ck] = d;
+          if(window.AmrCache) AmrCache.set('slide:' + j.ck, d);
+          /* if this is the pair being stared at, paint it now */
+          if(!DATA && j.market === STATE.market && j.period === STATE.period) applyData(d, 'Loaded');
+        }
+        tick(); next();
+      })
+      .withFailureHandler(function(){ tick(); next(); })
+      .RMX_getSlideTables({ market:j.market, period:j.period, month:STATE.month });
+  })();
 }
 
 function applyData(d, note){
@@ -1048,7 +935,7 @@ function updateFromSheets(){
 function updateFromSheetsNow(){
   var btn=document.getElementById('syncBtn');
   if(window.AmrProgress) AmrProgress.set('sync', { text:'Re-reading the Google Sheet…', order:5 });
-  CACHE={};
+  CACHE={}; WARM_DONE=false;
   STATE.titleDirty=false; STATE.month=0;
   google.script.run
     .withSuccessHandler(function(res){
@@ -1178,7 +1065,9 @@ document.addEventListener('DOMContentLoaded', function(){
     STATE.market=this.value; autoTitle(); loadTables();
   });
   document.getElementById('monthSel').addEventListener('change', function(){
-    STATE.month=parseInt(this.value,10)||0; autoTitle(); autoSub(); loadTables();
+    STATE.month=parseInt(this.value,10)||0;
+    WARM_DONE=false;                 // the warmed pairs were for the old month
+    autoTitle(); autoSub(); loadTables();
   });
   // MTD / YTD toggle — the active period is filled navy
   var pBtns=[].slice.call(document.querySelectorAll('#periodBtns button'));
