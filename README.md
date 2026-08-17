@@ -100,47 +100,51 @@ Apps Script evaluates every `.gs` file into **one** global scope; the last write
 Entry points are therefore uniquely prefixed (`RMX_`, `PV`, `DECK_`, `TP_`, `IR`) and
 namespace objects are captured at evaluation time.
 
-| File | Lines | Role |
-|---|---|---|
-| `Code.gs` | 339 | Router (`doGet`), `include()`, `getLogo()`, data-generation helpers, chunked cache helpers, `syncAll()`, and the `SB` Slide-Builder sheet reader |
-| `Config.gs` | 510 | `APP_CONFIG` — every sheet ID, tab name, market list, cube constants — plus the Settings API |
-| `PV_Backend.gs` | 1393 | AGG Price & Volume aggregation |
-| `PV_Lookup.gs` | 334 | REGION LOOKUP mapping-check for Price & Volume |
-| `RMX_Backend.gs` | 1901 | Ready-Mix PPI/ASP engine; also serves the Segment page via `RMX_getSlideTables`. **`RMX_prepare` is the one pull** — see [§6](#6-caching-model) |
-| `RMX_Suggest.gs` | 575 | Lookup-miss suggestions (PRODUCT MASTER / CUSTOM FLAG / EXTRAS), three independent models |
-| `Ov_Backend.gs` | 1453 | Executive Overview aggregator + the closed-year history cube |
-| `FSC_Backend.gs` | 581 | AGG fuel recovery |
-| `RFSC_Backend.gs` | 898 | RMX fuel recovery |
-| `Sask_Backend.gs` | 240 | Saskatchewan per-customer mid-year price increase (read + name matching only) |
-| `Kpi_Backend.gs` | 181 | Shared EBITDA KPI workbook values in a Drive folder |
-| `QlikSync.gs` | 1066 | Pulls QlikView exports out of Drive and replaces sheet tabs; scheduled triggers |
-| `TP01_Backend.gs` | 72 | Transfer Price — per-market email send, recipients in User Properties |
-| `IR_Backend.gs` | 76 | Inventory Report — stores/derives a Drive PDF file ID (never touches DriveApp) |
-| `Deck_Backend.gs` | 714 | Deck Builder server plumbing: template geometry, create/addSlide/finish/status, validator. See §8 |
-| `Deck_Recipe.gs` | 208 | **Config, not code** — which 43 slides the deck contains, in order, plus `DECK_getRecipe()` which checks them |
+| File | Role |
+|---|---|
+| `Code.gs` | Router (`doGet`), `include()`, `getLogo()`, data-generation helpers, chunked cache helpers, `syncAll()`, and the `SB` Slide-Builder sheet reader |
+| `Config.gs` | `APP_CONFIG` — every sheet ID, tab name, market list, cube constants — plus the Settings API |
+| `PV_Backend.gs` | AGG Price & Volume aggregation |
+| `PV_Lookup.gs` | REGION LOOKUP mapping-check for Price & Volume |
+| `RMX_Backend.gs` | Ready-Mix PPI/ASP engine; also serves the Segment page via `RMX_getSlideTables`. **`RMX_prepare` is the one pull** — see [§6](#6-caching-model) |
+| `RMX_Suggest.gs` | Lookup-miss suggestions (PRODUCT MASTER / CUSTOM FLAG / EXTRAS), three independent models |
+| `Ov_Backend.gs` | Executive Overview aggregator + the closed-year history cube |
+| `FSC_Backend.gs` | AGG fuel recovery |
+| `RFSC_Backend.gs` | RMX fuel recovery |
+| `Sask_Backend.gs` | Saskatchewan per-customer mid-year price increase (read + name matching only) |
+| `Kpi_Backend.gs` | Shared EBITDA KPI workbook values in a Drive folder |
+| `QlikSync.gs` | Pulls QlikView exports out of Drive and replaces sheet tabs; scheduled triggers |
+| `TP01_Backend.gs` | Transfer Price — per-market email send, recipients in User Properties |
+| `IR_Backend.gs` | Inventory Report — stores/derives a Drive PDF file ID (never touches DriveApp) |
+| `Deck_Backend.gs` | Deck Builder server plumbing: template geometry, create/addSlide/finish/status, validator. See §8 |
+| `Deck_Recipe.gs` | **Config, not code** — which 43 slides the deck contains, in order, plus `DECK_getRecipe()` which checks them |
 
 ### Client (`.html`)
 
 Shared partials, pulled in with `<?!= include('Name') ?>`:
 
-| File | Lines | Role |
-|---|---|---|
-| `Styles.html` | 215 | The one stylesheet — Amrize colour tokens (navy `#011E6A`), reset, every shared component. Goes in `<head>` |
-| `Shell.html` | 781 | Shared runtime: page switcher (`AMR_PAGES`), Help modal, ⚙ Settings modal, `AmrCache`, `AmrQlik`, `AmrProgress` |
-| `SlideExport.html` | 305 | `AmrSlide` — the 1600×900 slide frame, whitespace sliders, full-window viewer, html2canvas PNG export, and `captureBare` for the deck |
-| `KpiShared.html` | 373 | `AmrKpi` — upload/parse/share the EBITDA workbooks; used by three pages |
-| `Cube.html` | 622 | `AmrCube` — the month fact table in typed arrays, backed by IndexedDB |
-| `Deck_Sources.html` | 104 | `AmrDeckSource` — the content-source registry the Deck Builder asks for tables. Included **only** by the Deck Builder |
-| `Deck_Styles.html` | 152 | The slide CSS the deck's captures need — a mirror of the slide rules in each report page's own style block, every selector scoped under `.slide-bare`. Included **only** by the Deck Builder. See [§8](#the-css-the-deck-could-not-see) |
-| `Deck_Fuel.html` | 298 | `AmrFuelExec` — the Fuel Recovery exec tables, shared by **both** fuel pages and the deck. Also holds the `fsc` / `rfsc` adapters |
-| `Deck_SEG.html` | 535 | `AmrSegSlide` — RMX Product Segment slide content; holds the `seg` adapter |
-| `Deck_RMX.html` | 588 | `AmrRmxSlide` — RMX Price & Volume: the client-side compute layer, the table renderers, and the offscreen-host scrape; holds the `rmx` adapter |
-| `Deck_PV.html` | 869 | `AmrPvSlide` — the AGG Price & Volume slide content (KPI strip, dimension tables, waterfall charts) and the customer block. Shared by the PV page and the deck; holds the `pv` / `cust` adapters |
+| File | Role |
+|---|---|
+| `Styles.html` | The one stylesheet — Amrize colour tokens (navy `#011E6A`), reset, every shared component. Goes in `<head>` |
+| `Shell.html` | Shared runtime: page switcher (`AMR_PAGES`), Help modal, ⚙ Settings modal, `AmrCache`, `AmrProgress`, `AmrBoot` |
+| `SlideExport.html` | `AmrSlide` — the 1600×900 slide frame, whitespace sliders, full-window viewer, html2canvas PNG export, and `captureBare` for the deck |
+| `KpiShared.html` | `AmrKpi` — upload/parse/share the EBITDA workbooks; used by three pages |
+| `Cube.html` | `AmrCube` — the month fact table in typed arrays, backed by IndexedDB |
+| `Deck_Sources.html` | `AmrDeckSource` — the content-source registry the Deck Builder asks for tables. Included **only** by the Deck Builder |
+| `Deck_Styles.html` | The slide CSS the deck's captures need — a mirror of the slide rules in each report page's own style block, every selector scoped under `.slide-bare`. Included **only** by the Deck Builder. See [§8](#the-css-the-deck-could-not-see) |
+| `Deck_Fuel.html` | `AmrFuelExec` — the Fuel Recovery exec tables, shared by **both** fuel pages and the deck. Also holds the `fsc` / `rfsc` adapters |
+| `Deck_SEG.html` | `AmrSegSlide` — RMX Product Segment slide content; holds the `seg` adapter |
+| `Deck_RMX.html` | `AmrRmxSlide` — RMX Price & Volume slide content and the `rmx` adapter. **Inert on `Page_Rmx`**: the page includes it but calls nothing in it, and the adapter registration is a no-op without `AmrDeckSource` (which only the Deck Builder includes). Flagged for the legacy sweep — see [§9.10](#911-rules-for-whoever-does-the-work) |
+| `Deck_PV.html` | `AmrPvSlide` — the AGG Price & Volume slide content (KPI strip, dimension tables, waterfall charts) and the customer block. Shared by the PV page and the deck; holds the `pv` / `cust` adapters |
 
-Page files: `Landing.html`, `Page_Overview.html` (5602 lines), `Page_PriceVolume.html`
-(2543), `Page_Rmx.html` (1666), `Page_Segment.html` (1381), `Page_FuelSurcharge.html`
-(1069), `Page_RmxFuel.html` (1067), `Page_TP01.html` (1097), `Page_InventoryReport.html`
-(239).
+Page files: `Landing.html`, `Page_Overview.html`, `Page_PriceVolume.html`, `Page_Rmx.html`,
+`Page_Segment.html`, `Page_FuelSurcharge.html`, `Page_RmxFuel.html`, `Page_TP01.html`,
+`Page_InventoryReport.html`. `Page_Overview.html` is by far the largest, at roughly a
+quarter of all the client code.
+
+> **Line counts are deliberately not recorded here.** They were, and every one of the 34 had
+> drifted — the file map claimed `Shell.html` was 781 lines when it was 1037. A number that
+> is wrong is worse than no number. Run `wc -l` if you need one.
 
 Third-party libraries are loaded from CDN per page: Chart.js, SheetJS (XLSX),
 html2canvas.
@@ -155,7 +159,13 @@ Everything below lives in `Shell.html` unless noted.
   `doGet`, and (optionally) a card in `Landing.html`.
 - **`AmrCache`** — device-level report cache in `localStorage`, keyed by a data-generation
   token. No expiry: entries stay valid until the token moves.
-- **`AmrQlik`** — the per-page ⇣ *Pull from QlikView* button, wired to `QlikSync.gs`.
+- **There is no `AmrQlik`.** Earlier revisions of this README documented one — "the per-page
+  ⇣ *Pull from QlikView* button, wired to `QlikSync.gs`". No such object exists in any client
+  file, no such button exists on any page, and none of `QlikSync.gs`'s four entry points
+  (`qlikSyncCheck`, `qlikMarkCurrent`, `qlikStamps`, `qlikSyncNow`) is called from any `.html`.
+  **The sync is trigger-driven only.** What every page *does* carry is the ⇣ *Update from
+  source* button, which is a different thing: it calls `updateFromSource()` in `Code.gs` and
+  only re-checks the data version.
 - **`AmrProgress`** — the shared progress pill.
 - **The Region memory is keyed by VIEW, in one place.** `pvKpiViewMap` in `localStorage`,
   key = `MARKET:<market>` plus `:<refine>` when there is one. Southwest, Southwest·Land and
@@ -1320,7 +1330,6 @@ could be either.
   <script>  §D  SHARED RUNTIME
               AmrLib      lazy CDN loader — Chart.js / html2canvas / SheetJS
               AmrCache    device report cache            (was Shell.html)
-              AmrQlik     ⇣ Pull from QlikView           (was Shell.html)
               AmrProgress the progress pill              (was Shell.html)
               AmrBoot     the one loading screen         (was Shell.html)
               AmrHelp / AmrSettings modals               (was Shell.html)
@@ -1461,10 +1470,38 @@ Worth stating so nobody is surprised later:
   that reason weakens — but the rules are `.slide-bare`-scoped and correct today, so they
   come across as-is in chunk 6 and any dedup is proven separately, against captures.
 
-### 9.10 Rules for whoever does the work
+### 9.10 What the plan's own audit checked
+
+Everything asserted in §9.2–§9.5 was measured against the code on 2026-08-17, not recalled:
+
+| Claim | How it was checked |
+|---|---|
+| 43 files; ~1.13 MB of HTML, ~527 KB of `.gs` | `wc -c` over the tracked `.gs` / `.html` |
+| The QlikView guide is duplicated across 7 pages | the blocks diffed pairwise — CSS differs by two lines of dead margin drift, JS by the step array alone |
+| ~350 `getElementById` / `querySelector` call sites | counted per page |
+| ~51 inline `on*=` handlers | counted per page |
+| The `.gs` "collisions" are nearly all IIFE-internal | each `^function` hit traced to its enclosing scope; `PV`'s and `RMX`'s `getReport` never shared one |
+| Every `include('X')` resolves | all 11 partial names checked against the file list |
+| 43 recipe rows | `Deck_Recipe.gs` parsed — 44 `id:` hits, one of them inside `DECK_getRecipe`'s mapper |
+| Routes match §2 | `doGet`'s nine `page === '…'` branches listed and compared |
+| Line endings are mixed | `file(1)` — most `.html` CRLF, `Code.gs` LF |
+
+Corrections this audit forced into the rest of the README are logged in §11.
+
+### 9.11 Rules for whoever does the work
 
 - **Nothing is deleted on a hunch.** Every removal needs a repo-wide grep proving zero live
   references, and gets logged in §10 with what proved it. "Looks unused" is not evidence.
+- **Legacy hit-list — already confirmed, remove when its chunk lands:**
+  - **`Page_Rmx.html`'s `include('Deck_RMX')`.** The page calls nothing in `AmrRmxSlide`,
+    and `Deck_RMX`'s only load-time side effect is registering the `rmx` adapter, which
+    early-returns without `AmrDeckSource` — a file `Page_Rmx` does not include. 603 lines
+    shipped on every Ready-Mix page load to do nothing. Drop the include in chunk 4; the
+    module itself stays, the Deck Builder needs it.
+  - **`AmrQlik` and the ⇣ Pull-from-QlikView button.** Documented in §4 for a long time;
+    neither has ever existed in the code. Nothing to delete — but do not "restore" it.
+    `QlikSync.gs` is reached by scheduled trigger only, and its four entry points have no
+    client caller. If a Pull button is wanted, that is a feature, not a repair.
 - **Legacy hit-list to audit in chunk 1** — audit, do not assume: the `SB` reader /
   `getSlideData` / `syncSlideData` in `Code.gs` (§2 says the Segment page no longer reads
   those tabs, only the Overview does — confirm which); the CUSTOM FLAG LOOKUP path in
@@ -1568,6 +1605,10 @@ before assuming it is finished.**
 | 2026-08-17 | `RMX_prepare` returns **every** market's payload, so a market switch costs no server call — the way Aggregates already worked | ✅ done |
 | 2026-08-17 | **One loading screen** across the suite: `AmrBoot` holds it until every named step lands, `AmrProgress` gained a 400 ms grace so quick work paints nothing, and `done()` ticks are gone from every report page | ✅ done |
 | | TP01, the Inventory Report and the Landing page have no boot screen wired — they read no report data, so there may be nothing to do. Check before adding one | ☐ |
+| 2026-08-17 | **Planned the merge to one `app.html` + one `app.gs`** — see [§9](#9-the-great-merge--one-apphtml-one-appgs). Eight chunks, ordered around the finding that `app.gs` cannot coexist with the files it replaces | ✅ plan only, no code |
+| 2026-08-17 | **Audited this README against the code.** Three classes of error found and fixed: (1) **every one of the 34 recorded line counts was stale** — `Shell.html` was documented at 781 lines and is 1037, `Deck_PV.html` at 869 and is 1391 — so the Lines columns are gone rather than corrected; (2) **`AmrQlik` was documented as core shared runtime and does not exist** — no client file references it, no ⇣ Pull-from-QlikView button exists on any page, and none of `QlikSync.gs`'s four entry points has a client caller, so the sync is trigger-driven only; (3) **`Deck_RMX.html` was described as the RMX page's compute layer** — `Page_Rmx.html` includes it and calls nothing in it, and its adapter registration no-ops without `AmrDeckSource`, so it is 603 inert lines on every Ready-Mix load | ✅ done |
+| | **The rest of the README is not yet line-by-line verified.** §5 (sheet IDs, tab names, market lists), §6 (caching model) and §7 (domain rules) are the ones that would hurt most if stale, and they are the ones a merge session will be leaning on. Verify §7 against the code before trusting it in a chunk | ☐ |
+| | **The de-bloat is deliberately deferred to chunk 8.** This file is ~1,340 lines and describes a 43-file layout that chunks 1–7 delete. Restructuring it now means writing it twice; the rewrite lands with the cutover, against two files | ☐ |
 
 ### What has and has not been run
 
