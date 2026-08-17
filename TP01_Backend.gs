@@ -4,18 +4,28 @@
  * Three small functions:
  *   TP_sendMarketEmail  : the page builds the per-market Excel in the browser
  *                         (SheetJS, base64) and sends it here to be mailed.
- *   TP_getRecipients    : market → email map for the CURRENT user.
- *   TP_saveRecipient    : save/update one market's recipient for that user.
+ *   TP_getRecipients    : the shared market → email map (see below).
+ *   TP_saveRecipient    : save/update one market's recipient in that map.
  *
- * Recipients live in USER Properties, so each person keeps their own list
- * (unlike the suite's sheet settings, which use shared Script Properties).
+ * SENDER IDENTITY: mail goes out as whoever the web app EXECUTES AS, and
+ * appsscript.json pins that to "executeAs": "USER_DEPLOYING". So every
+ * TP01 email is sent by the account that DEPLOYED the app, whoever pressed
+ * the button. One deployment serves every page; there is no second one.
  *
- * SENDER IDENTITY: mail goes out as whoever the web app EXECUTES AS.
- * On the main deployment (execute as: Me) that is the owner. To send as the
- * person using the tool, serve ?page=tp01 from a second deployment set to
- * "Execute as: User accessing the web app". Note: with execute-as-Me, User
- * Properties are the OWNER's too — everyone would share one recipient list.
- * With execute-as-user, each person gets their own list, which is the intent.
+ * CONSEQUENCE - THE RECIPIENT LIST IS SHARED, NOT PER-PERSON.
+ * PropertiesService.getUserProperties() resolves against the executing
+ * user, which under USER_DEPLOYING is the deployer for everybody. So the
+ * market -> email map below is ONE list that every user reads and writes:
+ * whoever edits a market's recipient changes it for everyone.
+ *
+ * That is defensible - a market's transfer price report has one correct
+ * recipient, not one per sender - but it IS a shared setting, so treat an
+ * edit here the way you would treat an edit to the sheet settings.
+ *
+ * If per-person lists are ever wanted back, do NOT switch the deployment:
+ * that would change the sender too. Key Script Properties by
+ * Session.getActiveUser().getEmail() instead (Kpi_Backend.gs already reads
+ * that, with a '' fallback for when the domain does not release it).
  *****************************************************************************/
 
 var TP_RECIP_KEY = 'TP01_RECIPIENTS';

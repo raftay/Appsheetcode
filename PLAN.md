@@ -40,7 +40,9 @@ copying 37 files one at a time. The goal is:
 > **one `app.html` and one `app.gs`,** plus `appsscript.json`. Nothing else.
 
 An Apps Script project holds only `.gs`, `.html` and `appsscript.json` — so `appsscript.json`
-is the one unavoidable third file, and it is generated, not hand-maintained. The deck template
+is the one unavoidable third file. It is now committed, and it is **not** disposable: it pins
+the timezone, the V8 runtime and `executeAs: USER_DEPLOYING`. Chunk 7 adds `oauthScopes` to it;
+nothing in the merge may quietly change the rest. The deck template
 is a **Google Slides file in Drive**, addressed by `DECK_CONFIG.TEMPLATE_ID`; it was never a
 project file.
 
@@ -288,8 +290,12 @@ Services to cover, from an audit of the current `.gs` files:
 | `ScriptApp` | deployment URL, scheduled triggers |
 | `LockService` · `Session` | sync locking, timezone |
 
-The Gmail scope is requested from everyone on the main deployment, not only TP01 users. That
-is already true today — it is one script project — and the merge does not change it.
+The Gmail scope is requested from every user, not only TP01 users — it is one script project,
+already true today, and the merge does not change it. What the merge must not change either is
+`appsscript.json`'s `"executeAs": "USER_DEPLOYING"`: TP01 mail is sent by the deployer, and
+`getUserProperties()` therefore resolves to the deployer for everyone (see README §1).
+`APP_verifyPermissions()` should report the effective user so a wrong deployment setting is
+visible in one line rather than inferred from whose name is on an email.
 
 ---
 
@@ -388,7 +394,7 @@ swamp, the others still land.
 | 3 | **AGG Price & Volume** | `Page_PriceVolume` + `Deck_PV` + `SlideExport` + `KpiShared` + `Cube`. The heaviest shared-module load, and the only page needing all three libraries. | `tests/pvcheck.js`, `tests/pvlookup.js`, `tests/slidefit.js` + the page | ☐ |
 | 4 | **RMX pair** | `Page_Rmx` + `Page_Segment` + `Deck_RMX` + `Deck_SEG`. Drop `Page_Rmx`'s dead `include('Deck_RMX')` here — see [§11](#11-legacy-hit-list). | `tests/rmxcost.js`, `tests/segboot.js` + both pages | ☐ |
 | 5 | **Overview** | `Page_Overview` alone — 6,022 lines, a quarter of all the client code, and 26 of the 65 CSS scoping hazards. Nothing else in this chunk. | `tests/ovperiod.js`, `tests/freshness.js` + the page | ☐ |
-| 6 | **Deck Builder + TP01** | `Page_DeckBuilder` + `Deck_Sources` + `Deck_Styles`, and `Page_TP01`. TP01 is served from the second, execute-as-user deployment — that deployment must be re-pointed too. | `tests/deckpath.js`, `tests/deckstatic.js`, `tests/bgrender.js` + a real deck build | ☐ |
+| 6 | **Deck Builder + TP01** | `Page_DeckBuilder` + `Deck_Sources` + `Deck_Styles`, and `Page_TP01`. One deployment serves everything now (`executeAs: USER_DEPLOYING` in the committed `appsscript.json`), so there is no second deployment to re-point. | `tests/deckpath.js`, `tests/deckstatic.js`, `tests/bgrender.js` + a real deck build | ☐ |
 | 7 | **`app.gs`** | All 16 `.gs` merged, sectioned and commented. `APP_log()` and `APP_verifyPermissions()`. `appsscript.json` with explicit `oauthScopes`. Old `.gs` deleted **in this same commit** — they cannot coexist ([§2](#2-the-thing-that-would-have-broken-it)). | `tests/configcheck.js`, `tests/qliksync.js`, `node --check`, then `APP_verifyPermissions()` in the editor | ☐ |
 | 8 | **Cutover + sweep** | `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; legacy hit-list executed; the six debug functions deleted ([§7](#7-logging-and-the-debug-functions-it-replaces)); `README.md` rewritten around two files. | the whole suite, every route | ☐ |
 

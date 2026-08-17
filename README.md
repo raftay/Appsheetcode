@@ -62,11 +62,19 @@ Settings modal (stored in Script Properties, so an override is shared by everyon
 renders it through `HtmlService.createTemplateFromFile`, injecting `appUrl` so pages can
 link to each other without hard-coding the deployment URL.
 
-**Two deployments exist.** The main one executes as the owner. `?page=tp01` is served from
-a second deployment set to *Execute as: User accessing the web app*, so outgoing mail is
-sent as the person using the tool and each person keeps their own recipient list in User
-Properties. The Deck Builder will need the same execute-as-user deployment, so generated
-decks belong to whoever pressed the button.
+**One deployment, and `appsscript.json` pins how it runs:** `"executeAs": "USER_DEPLOYING"`,
+`"access": "DOMAIN"`. Everything executes as the account that deployed the app — so TP01 mail
+is sent by the deployer, generated decks are owned by the deployer, and every sheet is read
+with the deployer's Drive access rather than each user's.
+
+Two things follow from that, and both are deliberate:
+
+- **`getUserProperties()` is the deployer's for everyone.** TP01's market → email recipient
+  map is therefore **one shared list**, not one per person. Whoever edits a market's recipient
+  changes it for everybody. `TP01_Backend.gs` documents the alternative if per-person lists are
+  ever wanted back — key Script Properties by `Session.getActiveUser().getEmail()`; do *not*
+  switch the deployment, because that would change the sender too.
+- **Mail counts against the deployer's quota**, not each user's.
 
 **Scopes in use:** Sheets, Drive (KPI workbook folder, QlikView export folders, inventory
 PDF), Gmail (TP01 only). Slides will be added for the Deck Builder.
@@ -1095,7 +1103,7 @@ before assuming it is finished.**
 | 2026-08-14 | **Half of the Phase 4 debt paid** — `Page_Segment.html` delegates its slide content, KPI cards and fitter to `AmrSegSlide`; `tests/deckstatic.js` fails if a second copy comes back | ✅ done |
 | | **The other half** — make `Page_Rmx.html` delegate to `AmrRmxSlide` instead of holding a duplicate copy | ☐ |
 | 2026-08-13 | `DECK_CONFIG.TEMPLATE_ID` + `FOLDER_ID` set to the live template and deck folder | ✅ done |
-| | **Add the Slides + Drive scopes and serve `?page=deckbuilder` from the execute-as-user deployment**, then run `DECK_validateTemplate()` | ☐ |
+| | **Add the Slides + Drive scopes to `appsscript.json`**, then run `DECK_validateTemplate()`. Generated decks are owned by the deployer, which is what `executeAs: USER_DEPLOYING` gives — no second deployment needed | ☐ |
 | | A real end-to-end deck build against the live deployment. Every adapter is registered but `DECK_create` / `addSlide` / `finish` have never been run, and no capture has gone through html2canvas outside a test harness | ☐ |
 | 2026-08-13 | AGG slide layout — fill the frame: bigger charts, bigger table type, KPI strip grown without clipping, and `tests/slidefit.js` to hold it there | ✅ done |
 | 2026-08-14 | Product Segment slide — the same treatment: fit to the frame instead of letting `build()` scale the stack, so the KPI strip is readable on a deck slide | ✅ done |
@@ -1111,5 +1119,6 @@ before assuming it is finished.**
 | | TP01, the Inventory Report and the Landing page have no boot screen wired — they read no report data, so there may be nothing to do. Check before adding one | ☐ |
 | 2026-08-17 | **Planned the merge to one `app.html` + one `app.gs`** — see [`PLAN.md`](PLAN.md). Eight chunks on the `merging-files` branch, ordered around the fact that `app.gs` cannot coexist with the files it replaces | ✅ plan only, no code |
 | 2026-08-17 | Audited this file against the code and cut ~560 lines of superseded process history from it. Stale line counts removed, `AmrQlik` and the Pull-from-QlikView button struck (neither exists), `Deck_RMX`'s role corrected | ✅ done |
+| 2026-08-17 | `appsscript.json` committed, pinning `executeAs: USER_DEPLOYING`, `access: DOMAIN`, the V8 runtime and the timezone. **TP01 mail now sends as the deployer**, and the second execute-as-user deployment is retired — one deployment serves every page. Documented the consequence the code header already warned about: `getUserProperties()` is the deployer's for everyone, so TP01's recipient map is one shared list rather than one per person | ✅ done |
 | 2026-08-17 | The reference `.pptx` and sample PDF were deleted from the repo. Nothing reads them — the deck template is a Google Slides file addressed by `DECK_CONFIG.TEMPLATE_ID`, and an Apps Script project cannot hold a `.pptx` anyway. Corrected §8, which described the deleted file's contents and claimed the deck IDs were still `PUT_..._HERE` placeholders when both have been set for months | ✅ done |
 | 2026-08-17 | **Verified §5, §6 and §7 against the code.** Four errors fixed: §5 described QlikSync as scanning two Drive folders and identifying exports by content, when it addresses three files by id and never touches a folder — contradicting its own table three paragraphs down; §6 documented an `APP_GEN_PROPS` counter map that does not exist and a stale `APP_CODE_BUILD` literal, both left over from the model §5 already says was replaced by the Drive modified-time; §7 named four chart registries of which one (`CH.mkt`) does not exist, and described the two RMX coverage keys as four. **The rest of §7 verified clean** — roughly forty identifiers and rules checked, including the whole Overview period model, the panel-emptiness rule and every rendering trap | ✅ done |
