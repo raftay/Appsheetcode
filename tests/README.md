@@ -35,6 +35,62 @@ The line ranges for the old files are in the `CASES` array — they bracket the 
 through the last exec builder. Re-check them against the commit you are diffing; they are
 line numbers, and they move.
 
+The commit to stage from is **`6400026`**, the parent of `cc3adc9` where `Deck_Fuel.html` was
+added. Twelve comparisons, all identical, as of chunk 3.
+
+## `merge.js` — the structural gate for `app.html`
+
+Six invariants that nothing enforces at runtime: every inline script parses, every
+`<template id="tpl-X">` has exactly one `AMR.page('X')`, every `getElementById` target exists
+in that page's own template, no id is declared by two pages, every §A4 rule is scoped, and no
+page registration leaks a global. Plus the three Apps Script templating traps that have each
+shipped once — see `PLAN.md` §8.
+
+```bash
+node tests/merge.js
+```
+
+## `pageparity.js` — the old page against the merged page
+
+Boots the legacy page and `app.html`'s port of it **side by side** under jsdom, hands both the
+same model through a stubbed `google.script.run`, and diffs the DOM across every view.
+
+```bash
+npm install jsdom     # not vendored
+node tests/pageparity.js
+```
+
+**Add your page's case to `PAGES` before you touch the page**, not after. A case is the legacy
+filename, a model fixture, the views to walk, and — if the page renders a notice above its
+tables — the words that must survive.
+
+Three things it does deliberately, each of which took a wrong answer to find:
+
+- **It proves each side rendered before comparing them.** Two identically empty pages diff
+  clean, and that is how the first run "passed". Each side must produce a `<table>` and, where
+  declared, the data notice; the fuel fixture carries an unmatched Saskatchewan customer so a
+  notice that stopped rendering cannot read as a match.
+- **It compares the `.card` inside `#tablesHost`, not the host.** The card is the payload and
+  must be byte-identical. What sits beside it is chrome the merge is allowed to restyle, so it
+  is compared as *text*: the words and numbers still have to match, the wrapper need not.
+- **It stubs injected `<script src>` to resolve at once.** jsdom fetches nothing, so
+  `AMR.lib.need()` would wait forever on a CDN library and `boot()` would never run. Nothing
+  under test uses html2canvas or SheetJS at boot.
+
+## `modparity.js` — §E holds verbatim copies
+
+Every shared module inside `app.html`'s §E is byte-for-byte the file it was ported from. That
+is what lets `regress.js`, `slidefit.js` and `deckpath.js` — all of which point at the *old*
+files — count as proof about `app.html`. Line endings are normalised, because the repo is
+mixed and `app.html` is LF throughout by `PLAN.md` §12.
+
+```bash
+node tests/modparity.js
+```
+
+**Retire this at chunk 13.** Once the old `.html` files are deleted there is no second copy to
+compare against, and the harnesses above have to be repointed at `app.html` directly.
+
 ## `deckpath.js` — the deck's own path
 
 Loads `Deck_Sources.html` then `Deck_Fuel.html` under jsdom with `google.script.run` stubbed,

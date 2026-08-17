@@ -1,6 +1,6 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: planned. No merge code written yet.**
+**Status: in progress on `merging-files`. Chunks 0–3 done — `app.html` holds the runtime, the shared modules the fuel pages need, and three of the eleven pages. The 16 `.gs` files are untouched and stay that way until chunk 12.**
 
 > ## Read this file before doing anything. Every session, every agent.
 >
@@ -525,8 +525,8 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 
 | # | Chunk | What lands | Review by | |
 |---|---|---|---|---|
-| 3 | **AGG Fuel Recovery** | `Page_FuelSurcharge` + `Deck_Fuel`. First real port, chosen because `tests/regress.js` already proves this page byte-identical — the method gets validated where there is a gate on it. | `tests/regress.js` + the page | ☐ |
-| 4 | **RMX Fuel Recovery** | `Page_RmxFuel`, reusing the `AmrFuelExec` and components chunk 3 promoted. Should be visibly smaller than chunk 3; if it is not, the promotion test is not being applied. | `tests/regress.js` + the page | ☐ |
+| 3 | **AGG Fuel Recovery** | `Page_FuelSurcharge` + `Deck_Fuel`. First real port, chosen because `tests/regress.js` already proves this page byte-identical — the method gets validated where there is a gate on it. §E gains `AmrProgress`, `AmrBoot`, `AmrFresh`, `AmrSlide`, `AmrFuelExec`; §A3 gains the slide frame, the load screen and the fuel tables. **No §A4 block at all** — see [§8's chunk 3 notes](#what-chunk-3-settled). Plus `tests/pageparity.js` and `tests/modparity.js`. `Code.gs` needed no change. | `tests/merge.js`, `tests/modparity.js`, `tests/pageparity.js`, `OLD_DIR=… tests/regress.js` — all green | ✅ |
+| 4 | **RMX Fuel Recovery** | `Page_RmxFuel`, reusing the `AmrFuelExec` and components chunk 3 promoted. Should be visibly smaller than chunk 3; if it is not, the promotion test is not being applied. Everything it needs is already in `app.html`: the module, `.fsc-*`, `.seg.full`, `.mkt-list`, `.previewCard`, `.notice`, the slide frame. Add a case to `tests/pageparity.js` **before** touching the page. | `tests/pageparity.js`, `tests/regress.js` + the page | ☐ |
 | 5 | **AGG Price & Volume** | `Page_PriceVolume` + `Deck_PV` + `SlideExport` + `KpiShared` + `Cube`. The heaviest module load and the only page needing all three libraries. | `tests/pvcheck.js`, `tests/pvlookup.js`, `tests/slidefit.js` | ☐ |
 | 6 | **Ready-Mix** | `Page_Rmx` + `Deck_RMX`. Drop the dead `include('Deck_RMX')` here. | `tests/rmxcost.js` + the page | ☐ |
 | 7 | **Product Segment** | `Page_Segment` + `Deck_SEG`. | `tests/segboot.js`, `tests/deckstatic.js` | ☐ |
@@ -540,7 +540,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | # | Chunk | What lands | Review by | |
 |---|---|---|---|---|
 | 12 | **`app.gs`** | All 16 `.gs` merged in the [§5](#5-the-shape-of-appgs) order, sectioned and commented. `APP_log()`, `APP_verifyPermissions()`, `oauthScopes` added to `appsscript.json`. The six debug functions deleted and `qlikStamps` decided. Old `.gs` deleted **in this same commit** — they cannot coexist ([§2](#2-the-thing-that-would-have-broken-it)). | `tests/configcheck.js`, `tests/qliksync.js`, `node --check`, then `APP_verifyPermissions()` in the editor | ☐ |
-| 13 | **Cutover** | `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; `README.md` and `CLAUDE.md` rewritten around two files. | the whole suite, every route | ☐ |
+| 13 | **Cutover** | `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; `README.md` and `CLAUDE.md` rewritten around two files. **Delete `tests/modparity.js`** and repoint `regress.js` / `pageparity.js` / `slidefit.js` / `deckpath.js` at `app.html` — they compare against files that no longer exist after this commit. | the whole suite, every route | ☐ |
 
 ### After the merge is proven — see [§10](#10-three-things-this-merge-does-not-touch)
 
@@ -553,9 +553,12 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 ### What chunk 2 settled
 
 - **Shared modules port with the page that first exercises them**, not all up front.
-  `AmrCache` / `AmrProgress` / `AmrBoot` arrive in chunk 3 with AGG Fuel Recovery, the first
-  page that reads report data. Porting a module blind, with no page to prove it against, is
-  how a silent break gets committed — and the two pages in chunk 2 need none of them.
+  `AmrProgress` / `AmrBoot` arrive in chunk 3 with AGG Fuel Recovery, the first page that
+  reads report data. Porting a module blind, with no page to prove it against, is how a
+  silent break gets committed — and the two pages in chunk 2 need none of them.
+  *(Corrected in chunk 3: this sentence also named `AmrCache`, which that page never calls.
+  It goes to chunk 5. `AmrFresh` and `AmrSlide` came in its place. The rule was right; the
+  list was written from memory rather than from the page.)*
 - **The component layer paid immediately.** Three spinner keyframes (`spin`, `amrload`,
   `irspin`) collapsed to one; the Inventory Report's private `.ir-modal` / `.ir-card` /
   `.ir-input` shell is now the shared `.amr-modal` shell; the landing page's 820px and 900px
@@ -607,6 +610,91 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   six invariants — script syntax, template↔registration pairing, every `getElementById`
   target existing, no id declared by two pages, every §A4 rule scoped, and no page leaking a
   global.
+
+### What chunk 3 settled
+
+- **The page needed no `§A4` block at all.** Not one rule in `Page_FuelSurcharge.html`'s
+  style block turned out to be unique to it. `.shell{max-width:1480px}` was already §A3's
+  default; `.previewCard`, `.dzstat`, `.mkt-list`, `.logoName`, the slide frame and all 21
+  `.fsc-*` rules are shared with RMX Fuel Recovery and the deck. **71 rules went into §A3 and
+  none into §A4.** That is the promotion test working, and it sets the bar for chunk 4: if
+  RMX Fuel Recovery adds much to §A3, something was scoped that should have been promoted
+  here.
+- **`.seg` got a modifier rather than an override.** The rail's six-button view picker is the
+  full-width form of the shared control, so §A3 carries `.seg.full` (`display:flex`, buttons
+  `flex:1`, unpicked options muted) and the page writes `class="seg full"`. The alternative
+  was four `body[data-page="…"]` rules undoing the component one property at a time, and a
+  page-scoped block that spends its rules cancelling §A3 is the signal that the component is
+  wrong, not that the page is special.
+- **The Saskatchewan notice became a component.** It was a `<div style="…">` carrying six
+  raw values inline in the JS. It is `.notice` / `.notice.bad` / `.notice-ttl` in §A3 now —
+  the same words, the same place, no hex in a string.
+- **A dead button, shipped and now fixed.** Both fuel pages put `class="ghost"` on the
+  guide's *Use uploaded data* / *Back to sheet data* buttons. `.ghost` is the header-bar
+  button: white text on a transparent background. Inside the guide's white aside that is
+  white on white — the buttons work and cannot be read. They are `.lk full` in `app.html`.
+  **`Page_RmxFuel.html:792` and `:794` have the same two, so chunk 4 inherits the fix.**
+- **`AmrHint` was ported in chunk 2 without the handler that opens it.** `AmrHint.btn()`
+  writes a `.amr-qm` button and `AmrHint.show()` fills the modal, but the delegated click
+  listener that joins them stayed behind in `Shell.html`. Neither page in chunk 2 has a "?"
+  button, so nothing noticed. §D has it now, wired in `start()` alongside the other
+  delegations. **The lesson generalises: a component ported without a page that exercises it
+  is not proven, even when it looks complete** — which is the same rule chunk 2 wrote down
+  for modules, applied to §D.
+- **`AmrCache` did NOT come across, and the plan was wrong to say it would.** Chunk 2's note
+  says `AmrCache` / `AmrProgress` / `AmrBoot` all arrive here. `AmrProgress` and `AmrBoot` did;
+  `AmrCache` has no caller on this page — `Page_FuelSurcharge.html` never calls
+  `AmrCache.boot()`. It goes to **chunk 5**, with `Page_PriceVolume`, which does. `AmrFresh`
+  came instead, because the header's ↻ *Update from source* calls `AmrFresh.ifChanged`.
+- **`Code.gs` needed no change.** Chunk 2's `?page=app&view=` route already passes any view
+  name straight through to `<body data-page>`, so a new page is a `<template>` plus a
+  registration and nothing else. That holds for every remaining page chunk.
+- **`tests/pageparity.js` is the gate this chunk actually rested on**, and it is the one
+  PLAN.md §12 asked for. It boots the legacy page and `app.html`'s port of it side by side
+  under jsdom, with `google.script.run` stubbed to hand both the same model, and diffs the
+  DOM: **46 comparisons, all identical.** It does two jobs. It *diffs* what both sides render
+  — the tables in all five views, the market list, the month picker, the auto-title — and it
+  *asserts* the shared chrome the merged page provides differently and so cannot be diffed:
+  the guide mounted with this page's steps and this page's own panel moved into it, the "?"
+  hint opening the shared modal with this page's content, the page switcher knowing which
+  page it is on, every former page global now a local, every module present. That second half
+  is what caught the `AmrHint` bug above, and no diff ever would have — the button renders
+  perfectly whether or not anything listens to it. Three things the harness itself learned:
+  - **Two identically empty pages are a passing diff.** The first run compared clean because
+    both sides had died in the same place. It now asserts each side rendered a `<table>` and
+    the data notice *before* comparing them, and the fixture carries an unmatched
+    Saskatchewan customer so a notice that stopped rendering cannot read as a match.
+  - **It compares the `.card` inside `#tablesHost`, not the host.** The card is the payload
+    and must be byte-identical; what sits beside it is chrome the merge is allowed to
+    restyle, and it is compared as text so the words and numbers still have to match.
+  - **jsdom fetches nothing, so `AMR.lib` never settles.** An injected `<script src>` for a
+    CDN library gets no `onload`, the promise stays pending and `boot()` never runs. The
+    harness stubs script injection to resolve immediately; nothing under test uses
+    html2canvas or SheetJS at boot.
+  It was mutation-tested three ways: renaming one summary column header fails two views,
+  commenting out `applyView` fails eight comparisons, and putting the `AmrHint` bug back
+  fails the two hint assertions by name.
+- **`tests/modparity.js` is what makes the other harnesses count.** `regress.js` proves
+  `Deck_Fuel.html`; `slidefit.js` drives `SlideExport.html`. Those proofs say nothing about
+  the copy in `app.html` unless the copy is identical — so this checks that every §E module
+  is byte-for-byte its source file, and every gate in `tests/` transfers for free. It
+  normalises line endings on purpose: `Deck_Fuel.html` is CRLF, `Shell.html` and
+  `SlideExport.html` are LF, and `app.html` is LF throughout by §12.
+  **Delete it at chunk 13** — after the old files go there is no second copy, and
+  `regress.js`, `pageparity.js`, `slidefit.js` and `deckpath.js` all have to be repointed at
+  `app.html`.
+- **`regress.js` needs staging and the README's recipe is right.** `OLD_DIR` wants the
+  pre-extraction pages, which are commit `6400026` (the parent of `cc3adc9`, where
+  `Deck_Fuel.html` was added):
+  ```bash
+  mkdir -p /tmp/old
+  git show 6400026:Page_FuelSurcharge.html > /tmp/old/old_fsc.html
+  git show 6400026:Page_RmxFuel.html       > /tmp/old/old_rfsc.html
+  OLD_DIR=/tmp/old node tests/regress.js     # 12 comparisons, 0 failed
+  ```
+- **Three harnesses cannot run in this environment and it is not this chunk's doing.**
+  `segboot.js` and `ovperiod.js` need Playwright, which is not installed; `pvcheck.js` needs
+  its own `OLD_DIR` staging. None of the three reads `app.html`.
 
 ---
 
@@ -756,12 +844,21 @@ from a page:
 - **Comment as you merge, not after.** Every section gets its banner and its "why" note while
   the context is fresh. A 20,000-line file with no signposts is worse than 37 files.
 - **Run the harnesses in `tests/` before and after each chunk.** They are the only proof
-  available off-platform that a page still renders what it rendered. Two more are worth adding
-  in chunk 1:
-  - `tests/merge.js` — every id a page's JS references exists in that page's `<template>`;
-    every page CSS block is scoped; no page IIFE leaks a global.
-  - `tests/pageparity.js` — old page against new page under jsdom with `google.script.run`
-    stubbed, DOM diffed. The same pattern `tests/regress.js` already uses.
+  available off-platform that a page still renders what it rendered. Three of them are about
+  `app.html` itself, and all three now exist:
+  - `tests/merge.js` *(chunk 2)* — every id a page's JS references exists in that page's
+    `<template>`; every page CSS block is scoped; no page IIFE leaks a global.
+  - `tests/pageparity.js` *(chunk 3)* — old page against new page under jsdom with
+    `google.script.run` stubbed, DOM diffed. **Add your page's case to it before you touch
+    the page**, so you find out on the first run rather than the last.
+  - `tests/modparity.js` *(chunk 3, retires at chunk 13)* — every §E module is byte-for-byte
+    the file it came from, which is what makes `regress.js`, `slidefit.js` and `deckpath.js`
+    cover `app.html` too.
+- **A harness that has never failed has not been tested.** Both gates written so far were
+  mutation-tested before being trusted — unscoping one rule for `merge.js`, renaming a column
+  header and disabling a click handler for `pageparity.js`. `pageparity.js` passed clean on
+  its first run for the wrong reason (both sides had died identically), which is exactly the
+  bug this rule exists to catch.
 - **Nothing in `tests/` is uploaded to Apps Script.** It is not part of the two-file project.
 
 ---

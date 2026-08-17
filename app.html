@@ -28,7 +28,9 @@
    §B   SLIDE CSS ............. .slide-bare capture styles.        (chunk 10)
    §D   RUNTIME ............... AMR core: logging, lib loader, nav, modals,
                                 the QlikView guide, the page registry.
-   §E   SHARED MODULES ........ AmrCube / AmrKpi / AmrSlide / …     (chunk 3+)
+   §E   SHARED MODULES ........ AmrProgress, AmrBoot, AmrFresh, AmrSlide,
+                                AmrFuelExec. Each one arrives with the first
+                                page that exercises it, never before.
    §P   PAGES ................. one <template> + one registration per page.
 
  HOW A PAGE WORKS HERE
@@ -93,6 +95,10 @@
   --neg-line:#EBC9CE;                 /* border on negative-tinted panels */
   --green:#2E7D5B; --pink:#9C4767;    /* RMX table-group accents */
   --slate:#3c4859;                    /* PDF/preview viewer backdrop */
+
+  /* the editable-cell wash: invisible until a raw number is hovered or
+     focused, so an exported PNG never shows an edit highlight */
+  --edit-hover:#FFF7E6; --edit-focus:#FFF3CD;
 
   --r:14px;                           /* the card radius */
   --r-sm:10px;                        /* inputs, small buttons */
@@ -211,6 +217,11 @@ header .spacer{flex:1}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button:hover{background:var(--blue-10)}
 .seg button[aria-pressed="true"]{background:var(--blue-70); color:#fff}
+/* Full-width form: fills a 288px rail instead of sitting inline in a card
+   header, and mutes the unpicked options because there are six of them. */
+.seg.full{display:flex}
+.seg.full button{flex:1; padding:8px 6px; color:var(--muted)}
+.seg.full button[aria-pressed="true"]{color:#fff}
 
 /* ---- headings + cards ---- */
 .section-head{display:flex; align-items:baseline; gap:12px; margin:2px}
@@ -347,6 +358,8 @@ tfoot td:first-child{text-align:left}
   background:#fff; color:var(--blue-100); font:600 12px Inter; padding:8px;
   border-radius:9px; cursor:pointer}
 .qlikGuide.open .qgHide{display:block}
+/* a page's own panel, mounted under the steps (AmrQlikGuide `extra`) */
+.qlikGuide .qgExtra{border-top:1px solid var(--line); margin-top:12px; padding-top:12px}
 .qgFab{position:fixed; right:18px; bottom:18px; z-index:59; border:0; border-radius:999px;
   padding:12px 18px; cursor:pointer; background:var(--blue-100); color:#fff;
   font:700 12.5px Archivo; letter-spacing:.04em; box-shadow:0 8px 24px rgba(1,30,106,.35)}
@@ -365,6 +378,142 @@ tfoot td:first-child{text-align:left}
   .qgFab{display:none}
   body[data-page] .shell{max-width:calc(100vw - 312px); margin-right:288px}
 }
+
+/* ---- the background-work screen (AmrProgress / AmrBoot in §E) ----
+   Was Styles.html's .amr-load block. Full-screen on purpose: a marker off in
+   the corner was too easy to miss, and people were reading half-loaded tables
+   without realising. Its private `amrload` keyframe is gone — this is the
+   third spinner to fold into §A3's one `amr-spin`. */
+.amr-load{position:fixed; inset:0; z-index:9000; display:none; align-items:center;
+  justify-content:center; padding:24px; background:rgba(244,247,252,.72);
+  backdrop-filter:blur(3px); -webkit-backdrop-filter:blur(3px)}
+.amr-load.show{display:flex}
+.amr-load-card{background:#fff; border:1px solid var(--line); border-radius:16px;
+  box-shadow:var(--shadow-modal); padding:28px 30px; min-width:280px;
+  max-width:420px; width:100%; text-align:center}
+.amr-load-mark{width:34px; height:34px; margin:0 auto 14px; border-radius:50%;
+  border:3px solid var(--blue-10); border-top-color:var(--blue-70);
+  animation:amr-spin .8s linear infinite}
+.amr-load-mark.done{border:0; background:var(--pos); animation:none; position:relative}
+.amr-load-mark.done::after{content:"\2713"; position:absolute; inset:0; color:#fff;
+  font:700 19px/34px Inter; text-align:center}
+.amr-load-mark.bad{border:0; background:var(--neg); animation:none; position:relative}
+.amr-load-mark.bad::after{content:"!"; position:absolute; inset:0; color:#fff;
+  font:700 20px/34px Inter; text-align:center}
+.amr-load-text{font:700 14.5px Archivo,sans-serif; color:var(--blue-100)}
+.amr-load.bad .amr-load-text{color:var(--neg)}
+.amr-load-sub{font:500 12px Inter; color:var(--muted); margin-top:7px; line-height:1.5}
+.amr-load-detail{font:400 12.5px Inter; color:var(--ink); margin-top:11px; text-align:left; line-height:1.5}
+.amr-load-detail b{color:var(--blue-100)}
+.amr-load-detail .acts{display:flex; gap:7px; margin-top:12px}
+.amr-load-detail .acts button{flex:1; border:1px solid var(--line); background:#fff;
+  color:var(--blue-100); font:700 11.5px Inter; padding:8px 10px; border-radius:var(--r-xs); cursor:pointer}
+.amr-load-detail .acts button:hover{border-color:var(--blue-40); background:var(--blue-10)}
+.amr-load-bar{height:6px; border-radius:3px; background:var(--blue-10); margin:14px 0 0; overflow:hidden}
+.amr-load-bar i{display:block; height:100%; background:var(--blue-70); border-radius:3px; transition:width .3s}
+.amr-load-jobs{margin:14px 0 0; padding:12px 0 0; list-style:none; border-top:1px solid var(--line)}
+.amr-load-jobs li{display:flex; justify-content:space-between; gap:10px;
+  font:600 11.5px Inter; color:var(--muted); padding:3px 0}
+@media (prefers-reduced-motion:reduce){ .amr-load-mark{animation-duration:2.4s} }
+
+/* ---- the slide surface (AmrSlide in §E), captured to PNG ----
+   Was SlideExport.html's style block. Every report page builds its slide from
+   this one frame; §B's .slide-bare mirror is the deck's copy of the rules the
+   CONTENT needs, not of the frame itself. */
+.slide{position:relative; background:#fff; font-family:Inter,Arial,sans-serif; color:var(--ink);
+  display:flex; flex-direction:column; overflow:hidden}
+.slide-head{flex:none; display:flex; align-items:flex-start; gap:20px;
+  border-bottom:3px solid var(--blue-100); padding-bottom:12px; margin-bottom:6px}
+.slide-head .ttl{font:800 30px Archivo,Arial; color:var(--blue-100); letter-spacing:.01em; line-height:1.1}
+.slide-head .subttl{font:700 18px Archivo,Arial; color:var(--blue-80); margin-top:2px}
+.slide-head .hspace{flex:1}
+.slide-head img.logo{height:54px; width:auto; object-fit:contain}
+.slide-head .logosvg{display:inline-flex; align-items:center}
+.slide-head .logosvg svg{height:54px !important; width:auto !important; display:block}
+.slide-content{flex:1; min-height:0; overflow:hidden}
+.content-inner{transform-origin:top left}
+.slide-center{flex:1 1 0%; min-width:0; display:flex; flex-direction:column; gap:12px}
+
+/* the "Expand slide" full-window viewer */
+.amr-sv{position:fixed; inset:0; z-index:9999; background:rgba(1,30,106,.86);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:10px; padding:16px}
+.amr-sv .amr-sv-frame{background:#fff; border-radius:var(--r-sm); overflow:hidden;
+  box-shadow:0 20px 60px rgba(0,0,0,.45)}
+.amr-sv .amr-sv-close{position:absolute; top:12px; right:18px; border:0; background:transparent;
+  color:#fff; font:700 30px Inter,Arial; cursor:pointer; line-height:1}
+.amr-sv .amr-sv-hint{color:#fff; font:600 12px Inter,Arial; opacity:.85}
+
+/* the four whitespace sliders, mounted into a rail panel */
+.amr-ws .amr-ws-row{margin-bottom:12px}
+.amr-ws .amr-ws-row:last-child{margin-bottom:0}
+.amr-ws label{display:block; font:600 12px Inter; color:var(--muted); margin-bottom:6px}
+
+/* the slide preview host — a card with the scaled-down slide centred in it.
+   `#previewHost{display:flex}` was one of the 132 id-style rules (§1a); the id
+   stays as the JS hook and the class carries the appearance. */
+.previewCard{background:var(--white); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); padding:16px}
+.previewHost{display:flex; justify-content:center}
+
+/* ---- rail bits every report page has ---- */
+/* the one-line load/error status under a rail panel's buttons */
+.dzstat{font:500 11px Inter; color:var(--muted)}
+.dzstat.ok{color:var(--pos)} .dzstat.err{color:var(--neg)}
+/* the show/hide market checklist */
+.mkt-list{display:flex; flex-direction:column; gap:6px}
+.mkt-row{display:flex; align-items:center; gap:8px; font:600 12.5px Inter; color:var(--ink)}
+.mkt-row input{width:15px; height:15px; accent-color:var(--blue-50); cursor:pointer}
+/* the uploaded logo's filename caption */
+.logoName{font:500 11px Inter; color:var(--muted); margin-top:8px; word-break:break-all}
+
+/* a callout above a table when the data has something the reader must know
+   before believing the numbers. tone: 'bad' for a figure that is missing. */
+.notice{background:var(--blue-10); border:1px solid var(--line); border-radius:var(--r-xs);
+  padding:10px 12px; margin-bottom:14px; font:500 12px Inter; color:var(--ink); line-height:1.5}
+.notice.bad{border-left:3px solid var(--neg)}
+.notice b.notice-ttl{font:700 11px Archivo,Arial; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--blue-100)}
+
+/* ---- the Fuel Recovery tables ----
+   Not page CSS: AmrFuelExec (§E) emits these class names, and it is shared by
+   AGG Fuel Recovery, RMX Fuel Recovery and the Deck Builder. A rule that three
+   callers render against belongs here by definition. */
+.fsc-wrap{width:100%}
+table.fsc-t{width:100%; border-collapse:collapse; font-size:15px}
+table.fsc-t thead th{background:var(--blue-80); color:#fff; font:600 11px Inter; letter-spacing:.02em;
+  text-transform:uppercase; padding:7px 10px; text-align:right; white-space:nowrap;
+  border-right:1px solid rgba(255,255,255,.10)}
+table.fsc-t thead th:first-child{text-align:left}
+table.fsc-t tbody td{padding:5px 10px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--line)}
+table.fsc-t tbody td.lft{text-align:left; font-weight:600; color:var(--ink)}
+table.fsc-t tbody tr.totrow td{background:var(--blue-10); font-weight:700; color:var(--blue-100);
+  border-top:2px solid var(--blue-100)}
+table.fsc-t tbody tr td.pos, table.fsc-t tbody tr.totrow td.pos{color:var(--pos); font-weight:600}
+table.fsc-t tbody tr td.neg, table.fsc-t tbody tr.totrow td.neg{color:var(--neg); font-weight:600}
+
+/* The executive stack is em-sized throughout so the slide fitter can shrink it
+   with ONE font-size. Never a transform: a transform does not change
+   scrollHeight, so AmrSlide.build would then scale the same content twice. */
+.fsc-exec{display:flex; flex-direction:column; gap:.6em; font-size:14px}
+.fsc-period{background:var(--blue-100); color:#fff; font:700 .95em Archivo; letter-spacing:.05em;
+  text-transform:uppercase; padding:.5em .95em}
+.fsc-secbar{background:var(--blue-80); color:#fff; font:700 .85em Inter; letter-spacing:.03em;
+  text-transform:uppercase; padding:.45em 1.1em; margin-top:.15em}
+table.fsc-t.exec{font-size:1em}
+table.fsc-t.exec thead th{font:600 .8em Inter; padding:.5em .95em}
+table.fsc-t.exec thead th.grp{text-align:center; border-bottom:1px solid rgba(255,255,255,.25)}
+table.fsc-t.exec thead th.mid{vertical-align:middle}
+table.fsc-t.exec tbody td{padding:.34em .75em}
+
+/* EDITABLE raw-number cells: invisible until hover/focus so the exported PNG
+   stays clean. Only cells that still carry contenteditable light up — the
+   slide content has the attribute stripped, so it never does. */
+.fsc-in{outline:none; transition:background .1s}
+.fsc-in[contenteditable="true"]:hover{background:var(--edit-hover); box-shadow:inset 0 0 0 1px var(--blue-30); cursor:text}
+.fsc-in[contenteditable="true"]:focus{background:var(--edit-focus); box-shadow:inset 0 0 0 2px var(--blue-40)}
+/* CALCULATED cells: never editable, rewritten in place on every edit */
+.fsc-calc{cursor:default}
 </style>
 
 <style>
@@ -669,8 +818,11 @@ window.AMR = (function(){
   var PAGE     = BODY.getAttribute('data-page') || 'landing';
   var APP_MODE = BODY.getAttribute('data-app-mode') === 'true';
 
-  /* Page code and anything ported from the old files still expects this. */
-  window.APP_URL = URL_BASE;
+  /* Page code and anything ported from the old files still expects these.
+     APP_PAGE is what AmrCache keys its per-device store on and what
+     AmrFresh asks the server about, so it is not optional. */
+  window.APP_URL  = URL_BASE;
+  window.APP_PAGE = PAGE;
 
   /* The URL of another page in the suite. ONE place knows the difference
      between the scaffold and the real thing, so the cutover is a one-line
@@ -923,13 +1075,32 @@ window.AMR = (function(){
       document.getElementById('amrHintModal').classList.add('amr-open');
     }
   };
+  /* One delegated handler, on the document rather than the page, because the
+     buttons are written into tables that are rebuilt after every edit. Chunk 2
+     ported AmrHint without this and nothing caught it: neither page in that
+     chunk has a "?" button, so the first page that did would have been the
+     first to find the button dead. */
+  function wireHintButtons(){
+    document.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('.amr-qm') : null;
+      if (!b) return;
+      e.preventDefault();
+      AmrHint.show(b.getAttribute('data-amr-hint'));
+    });
+  }
 
   /* ==========================================================================
      AmrQlikGuide — the guide aside. ONE copy; there were seven.
      --------------------------------------------------------------------------
-     mount({ title, sub, steps, fabLabel, fabBottom }). `steps` is
+     mount({ title, sub, steps, fabLabel, fabBottom, extra }). `steps` is
      [{ text, img }] where img is any Drive share link or file id; the server
      turns those into data URIs so the images work without public sharing.
+
+     `extra` is an optional DOM node the page owns — the fuel pages hang their
+     "replace raw data" uploader off the bottom of the guide. It is MOVED here
+     from the page's own <template>, not built from a config blob, so its ids
+     are declared where tests/merge.js can check them and the markup stays
+     diffable against the page it came from.
      ========================================================================== */
   var AmrQlikGuide = {
     mount: function(cfg){
@@ -953,6 +1124,13 @@ window.AMR = (function(){
 
       document.body.appendChild(aside);
       document.body.appendChild(fab);
+
+      if (cfg.extra){
+        var sep = document.createElement('div');
+        sep.className = 'qgExtra';
+        sep.appendChild(cfg.extra);
+        aside.insertBefore(sep, aside.querySelector('#qgHide'));
+      }
 
       var host = aside.querySelector('#qlikGuideSteps');
       host.innerHTML = '<h4>' + esc(cfg.title || 'Guide') + '</h4>' +
@@ -1055,6 +1233,7 @@ window.AMR = (function(){
     mountPageSwitcher();
     wireSettingsRows();
     wireModalDismiss();
+    wireHintButtons();
     log('info', 'AMR.start', 'mounted', { page: id, ms: Date.now() - t0 });
 
     need(spec.libs || []).then(function(){
@@ -1112,9 +1291,1053 @@ window.AMR = (function(){
    break gets committed. AmrCache / AmrProgress / AmrBoot arrive in chunk 3
    with AGG Fuel Recovery, which is the first page that reads report data.
 
-   The two pages in this chunk — the landing page and the Inventory Report —
-   read no report data and need none of it.
+   AmrProgress / AmrBoot / AmrFresh / AmrSlide / AmrFuelExec arrived in chunk 3
+   with AGG Fuel Recovery, the first page that reads report data and the first
+   that builds a slide. Still to come: AmrCache (chunk 5 — the plan expected it
+   here, but no page in this chunk calls it, and porting a module with nothing
+   to prove it against is the thing this rule exists to stop), AmrKpiStore,
+   AmrTick, AmrCube, AmrKpi, AmrDeckSource, AmrPvSlide, AmrSegSlide, AmrRmxSlide.
    ========================================================================== */
+</script>
+
+<script>
+/* ---- §E AmrProgress — the ONE background-work screen ------------------------
+   Was Shell.html. Moved verbatim: a page that raises a job and a page that
+   clears one have to agree on the grace period, and rewriting the timing while
+   also moving it would make any flicker ambiguous between the two.           */
+/* ==================================================================
+ * AmrProgress — the ONE background-work indicator, shared by every page.
+ * ------------------------------------------------------------------
+ * Every page used to throw up a full-screen .loader overlay for work
+ * that did not actually need the page frozen, so the suite looked like
+ * it was constantly stopping to think. This is the replacement: a small
+ * pill, bottom-left, that names what is running and how far along it is
+ * while the page stays completely usable underneath.
+ *
+ *   AmrProgress.set('cube', { text:'Loading months…', pct:62 })
+ *   AmrProgress.set('sheet', { text:'Reading the data sheet…' })
+ *   AmrProgress.clear('sheet')
+ *   AmrProgress.done('cube', 'Everything is in')   // ✓, then fades out
+ *   AmrProgress.fail('cube', 'History unavailable')
+ *
+ * Several jobs can run at once. The screen shows the one with the lowest
+ * `order` (default 50); the rest are listed underneath, so "why is this
+ * still spinning" is always visible rather than one click away.
+ *
+ * It is a FULL-SCREEN card, not a corner pill. A small marker off to the
+ * side was too easy to miss, and people were reading half-loaded tables
+ * without realising. Note the consequence: work that used to run quietly in
+ * the background now covers the page while it runs.
+ *
+ * A page that wants a richer body (the Overview's month history, with its
+ * own buttons) registers one:
+ *   AmrProgress.detail({ html:function(job){...}, act:function(name){...} })
+ * A shared module must name its job instead - AmrProgress.detail('key', {…})
+ * - or the last caller wins and the page loses its body.
+ * ================================================================== */
+window.AmrProgress = (function(){
+  var jobs = {}, seq = 0, detail = null, details = {}, host = null, mounted = false;
+
+  /* ---- THE GRACE PERIOD -------------------------------------------------
+     A screen that appears and disappears inside half a second is worse than no
+     screen: it reads as the page stuttering. Most work is now fast enough to be
+     in that bracket, so a job is REGISTERED immediately (lead() and the job list
+     see it at once) but nothing is PAINTED until it has been outstanding for
+     GRACE ms. Work that finishes first never shows anything at all.
+
+     Two exceptions paint at once, because they are not stutters:
+       o:{ now:true }  the page-boot screen (AmrBoot) - the page is empty behind
+                       it, so waiting would just show a blank
+       cls:'bad'       a failure, which must never be swallowed by the timer
+     ------------------------------------------------------------------- */
+  var GRACE = 400, timer = null, armed = false;
+
+  function anyNow(){
+    for (var k in jobs) if (jobs[k].now || jobs[k].cls === 'bad') return true;
+    return false;
+  }
+  function schedule(){
+    /* nothing outstanding: repaint at once so the overlay comes DOWN. Leaving
+       this to the timer meant a cleared job never hid its own screen. */
+    var live = false; for (var k0 in jobs) live = true;
+    if (!live){ disarm(); render(); return; }
+    if (armed || anyNow()){ render(); return; }
+    if (timer) return;
+    timer = setTimeout(function(){
+      timer = null;
+      var live = false;
+      for (var k in jobs) if (jobs[k].cls !== 'done') live = true;
+      if (live){ armed = true; render(); }
+    }, GRACE);
+  }
+  function disarm(){
+    if (timer){ clearTimeout(timer); timer = null; }
+    armed = false;
+  }
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
+    });
+  }
+
+  function mount(){
+    if (mounted || !document.body) return;
+    mounted = true;
+    host = document.createElement('div');
+    host.className = 'amr-load';
+    host.id = 'amrLoad';
+    host.setAttribute('role', 'status');
+    host.setAttribute('aria-live', 'polite');
+    host.innerHTML = '<div class="amr-load-card"><div class="amr-load-body"></div></div>';
+    document.body.appendChild(host);
+    host.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('button[data-act]') : null;
+      if (!b) return;
+      var j = lead(), d = (j && details[j.key]) || detail;
+      if (d && d.act) { try { d.act(b.getAttribute('data-act'), j); } catch (err) {} }
+    });
+  }
+
+  /* The job the screen shows: errors first, then the lowest order, then
+     whichever was registered first. A 'done' job only wins when it is the
+     only thing left, so a tick never hides live work. */
+  function lead(){
+    var list = [];
+    for (var k in jobs) list.push(jobs[k]);
+    if (!list.length) return null;
+    var live = list.filter(function(j){ return j.cls !== 'done'; });
+    var pool = live.length ? live : list;
+    pool.sort(function(a, b){
+      if ((a.cls === 'bad') !== (b.cls === 'bad')) return a.cls === 'bad' ? -1 : 1;
+      if (a.order !== b.order) return a.order - b.order;
+      return a.seq - b.seq;
+    });
+    return pool[0];
+  }
+
+  function render(){
+    mount();
+    if (!host) return;
+    var j = lead();
+    if (!j){ disarm(); host.classList.remove('show'); return; }
+    /* Registered but not yet worth showing - see the grace period above. It has
+       to HIDE, not just decline to repaint: the overlay may still be up from a
+       job that has since been cleared, and returning early there left the old
+       screen sitting over a finished page with the old job's wording on it. */
+    if (!armed && !anyNow()){ host.classList.remove('show'); return; }
+
+    var body = host.querySelector('.amr-load-body');
+    var h = '';
+    h += '<div class="amr-load-mark ' + (j.cls || '') + '"></div>';
+    h += '<div class="amr-load-text">' + esc(j.text) + '</div>';
+
+    var d = details[j.key] || detail, extra = '';
+    if (d && d.html){ try { extra = d.html(j) || ''; } catch (e) { extra = ''; } }
+    if (extra) h += '<div class="amr-load-detail">' + extra + '</div>';
+    else if (j.note) h += '<div class="amr-load-sub">' + esc(j.note) + '</div>';
+
+    if (j.pct != null){
+      h += '<div class="amr-load-bar"><i style="width:' + j.pct + '%"></i></div>';
+      h += '<div class="amr-load-sub">' + j.pct + '%</div>';
+    }
+
+    var others = [];
+    for (var k in jobs) if (jobs[k] !== j) others.push(jobs[k]);
+    if (others.length){
+      h += '<ul class="amr-load-jobs">' + others.map(function(o){
+        return '<li><span>' + esc(o.text) + '</span><b>' + (o.pct != null ? o.pct + '%' : '\u2026') + '</b></li>';
+      }).join('') + '</ul>';
+    }
+    body.innerHTML = h;
+    host.className = 'amr-load show' + (j.cls ? (' ' + j.cls) : '');
+  }
+
+  var api = {
+    /* o: { text, pct (null|0-100), cls ('', 'bad', 'done'), note, order } */
+    set: function(key, o){
+      o = o || {};
+      var prev = jobs[key];
+      jobs[key] = { key: key,
+                    text: o.text != null ? o.text : (prev ? prev.text : 'Working\u2026'),
+                    pct:  o.pct  != null ? o.pct  : null,
+                    cls:  o.cls  || '',
+                    note: o.note || '',
+                    order: o.order != null ? o.order : (prev ? prev.order : 50),
+                    now:  o.now != null ? o.now : (prev ? prev.now : false),
+                    seq:  prev ? prev.seq : (++seq) };
+      schedule();
+    },
+    clear: function(key){
+      delete jobs[key]; delete details[key];
+      schedule();          // hides at once when that was the last one
+    },
+    done: function(key, text, ms){
+      if (!jobs[key] && !text) return;
+      api.set(key, { text: text || (jobs[key] && jobs[key].text) || 'Done', cls: 'done', pct: null });
+      setTimeout(function(){
+        if (jobs[key] && jobs[key].cls === 'done') api.clear(key);
+      }, ms == null ? 1200 : ms);
+    },
+    fail: function(key, text){
+      armed = true;                        // a failure is never delayed
+      api.set(key, { text: text || 'Something went wrong', cls: 'bad', pct: null, order: 0 });
+    },
+    /* for the harnesses: how long a job waits before it is painted */
+    grace: function(ms){ if (ms != null) GRACE = ms; return GRACE; },
+    has:  function(key){ return !!jobs[key]; },
+    /* One job's body — detail('key', {…}) — or, with a single argument, this
+       page's fallback for jobs that have none. */
+    detail: function(a, b){
+      if (typeof a === 'string'){ if (b) details[a] = b; else delete details[a]; }
+      else { detail = a; }
+      render();
+    },
+    repaint: render
+  };
+  return api;
+})();
+</script>
+
+<script>
+/* ---- §E AmrBoot — one loading screen until EVERYTHING is ready -------------
+   Was Shell.html. A refcount over one AmrProgress job.                       */
+/* ==================================================================
+ * AmrBoot - ONE loading screen, up until EVERYTHING is ready.
+ * ------------------------------------------------------------------
+ * The problem it exists to remove: a page's opening was several
+ * independent AmrProgress jobs, each raised and cleared by whichever
+ * callback happened to own it. AmrProgress shows the lowest-order job
+ * and lists the rest, so that read as a run of half-second screens
+ * appearing and disappearing while the page assembled itself - and
+ * done() put a 1.2s tick between them for good measure. Worse, the
+ * screen came down when the FIRST thing finished, so people were
+ * looking at a page that was still filling in.
+ *
+ * AmrBoot is a refcount over ONE job. A page names the things that
+ * have to be true before it is worth looking at:
+ *
+ *     AmrBoot.need('data');            // at DOMContentLoaded
+ *     AmrBoot.need('cube');
+ *     ...
+ *     AmrBoot.done('data');            // as each one lands
+ *     AmrBoot.done('cube');            // -> the screen comes down here
+ *
+ * The screen goes up on the first need(), paints IMMEDIATELY (the page
+ * behind it is empty, so a grace period would just show a blank), and
+ * comes down exactly once - when the last outstanding step is done.
+ * After that boot is over: AmrBoot.need() is ignored, so a later fetch
+ * can never re-raise the opening screen. Ordinary in-page work uses
+ * AmrProgress, which now waits out its grace period and so shows
+ * nothing at all for anything quick.
+ *
+ * done() is idempotent and unknown keys are harmless, which matters
+ * because a page has failure paths and early returns; calling it twice
+ * must not take the screen down while something else is still running.
+ *
+ * THE WATCHDOG. The failure mode of a refcount is a step that never
+ * reports, and the symptom is the worst one available: a loading screen
+ * over a finished page, forever. So after WATCHDOG ms the screen names
+ * what it is still waiting for and offers a reload, rather than sitting
+ * there saying nothing. That message is a bug report - if you ever see
+ * it, some path forgot its done().
+ * ================================================================== */
+window.AmrBoot = (function(){
+  var WATCHDOG = 150000;
+  var pending = {}, count = 0, over = false, started = false, wd = null;
+  var TEXT = 'Pulling from Google Sheets\u2026';
+
+  function names(){
+    var out = []; for (var k in pending) out.push(k); return out;
+  }
+  function paint(){
+    if (!window.AmrProgress) return;
+    var n = names();
+    AmrProgress.set('boot', { text: TEXT, order: 0, now: true,
+      note: n.length ? ('Waiting for ' + n.join(', ')) : '' });
+  }
+  function finish(){
+    over = true;
+    if (wd){ clearTimeout(wd); wd = null; }
+    if (window.AmrProgress) AmrProgress.clear('boot');
+  }
+
+  var api = {
+    /* What the page needs before it is worth looking at. */
+    need: function(step){
+      if (over) return api;                 // boot is finished; never re-raise it
+      if (!step) step = 'data';
+      if (!pending[step]){ pending[step] = 1; count++; }
+      if (!started){
+        started = true;
+        wd = setTimeout(function(){
+          if (over || !window.AmrProgress) return;
+          AmrProgress.fail('boot', 'Still waiting for ' + names().join(', '));
+          AmrProgress.set('boot', { cls:'bad', order:0, now:true,
+            note:'Something did not report back. Reload the page - and tell whoever '
+               + 'maintains this, because a step is missing its AmrBoot.done().' });
+        }, WATCHDOG);
+      }
+      paint();
+      return api;
+    },
+    /* One step landed. The screen comes down when the last one does. */
+    done: function(step){
+      if (over) return api;
+      if (!step) step = 'data';
+      if (pending[step]){ delete pending[step]; count--; }
+      if (count <= 0) finish(); else paint();
+      return api;
+    },
+    /* Nothing more is coming - used by a page that gives up on a step. */
+    fail: function(msg){
+      if (over) return api;
+      over = true;
+      if (wd){ clearTimeout(wd); wd = null; }
+      if (window.AmrProgress) AmrProgress.fail('boot', msg || 'Could not load this page');
+      return api;
+    },
+    /* Page-specific wording, set before the first need(). */
+    text: function(t){ if (t) TEXT = t; return TEXT; },
+    waiting: function(){ return names(); },
+    finished: function(){ return over; }
+  };
+  return api;
+})();
+</script>
+
+<script>
+/* ---- §E AmrFresh — "the figures on this page are out of date" --------------
+   Was Shell.html. Drives the #amrStale grey-out, which lives in the shared
+   modal shells above #appRoot. Reads window.APP_PAGE (set in §D).            */
+/* =========================================================================
+ * AmrFresh — "the figures on this page are out of date".
+ * -------------------------------------------------------------------------
+ * There is no sync button any more. One hourly trigger checks whether the
+ * QlikView exports in Drive have actually changed; if they have, it syncs and
+ * calls syncAll(), which moves this page's data version.
+ *
+ * So this asks one small question every few minutes: is the version still the
+ * one I loaded with? When it is not, the data behind the page has been
+ * replaced — the page is greyed out and says so, and the button reloads it.
+ *
+ * That is the whole mechanism. The version already existed and already meant
+ * exactly this; nothing new is stored anywhere.
+ * ======================================================================= */
+window.AmrFresh = (function(){
+  var EVERY = 5 * 60 * 1000;         /* the trigger runs hourly; this is plenty */
+  var mine = null, timer = null, shown = false;
+
+  function page(){ return window.APP_PAGE || ''; }
+
+  function show(){
+    if (shown) return;
+    shown = true;
+    if (timer) clearTimeout(timer);
+    var el = document.getElementById('amrStale');
+    if (!el) { window.location.reload(); return; }   /* no chrome: just refresh */
+    el.classList.add('amr-open');
+  }
+
+  function check(){
+    if (!(typeof google !== 'undefined' && google.script && google.script.run)) return;
+    if (document.hidden){ timer = setTimeout(check, EVERY); return; }
+    google.script.run
+      .withSuccessHandler(function(r){
+        var g = r && r.generation;
+        if (g && mine && g !== mine){ show(); return; }
+        if (g && !mine) mine = g;
+        timer = setTimeout(check, EVERY);
+      })
+      .withFailureHandler(function(){ timer = setTimeout(check, EVERY); })
+      .getDataVersion(page());
+  }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    var b = document.getElementById('amrStaleBtn');
+    if (b) b.onclick = function(){
+      b.disabled = true;
+      b.textContent = 'Loading the new figures\u2026';
+      window.location.reload();
+    };
+  });
+
+  return {
+    /* ↻ Update from source. Asks Drive whether the sheet has actually been
+       touched since this page loaded. If it has not, nothing is thrown away
+       and nothing is rebuilt — pressing the button on an unchanged sheet used
+       to make every user re-read 50k rows for no reason. cb(true) means go
+       ahead and rebuild. */
+    ifChanged: function(cb){
+      if (!(typeof google !== 'undefined' && google.script && google.script.run)){ cb(true); return; }
+      if (window.AmrProgress) AmrProgress.set('sync', { text:'Checking the sheet\u2026', order:5 });
+      google.script.run
+        .withSuccessHandler(function(r){
+          if (r && r.ok && r.changed === false){
+            if (window.AmrProgress) AmrProgress.done('sync', 'Already up to date', 1600);
+            cb(false);
+            return;
+          }
+          if (r && r.generation) mine = r.generation;
+          cb(true);
+        })
+        .withFailureHandler(function(){ cb(true); })   /* cannot tell: just rebuild */
+        .updateFromSource(page(), mine);
+    },
+
+    /* The version this page loaded with. AmrCache.boot already asked for it,
+       so this costs nothing extra. */
+    start: function(gen){
+      if (!gen || mine) return;
+      mine = gen;
+      timer = setTimeout(check, EVERY);
+    }
+  };
+})();
+</script>
+
+<script>
+/* ---- §E AmrSlide — the 16:9 slide frame, sliders and PNG export ------------
+   Was SlideExport.html. Its CSS is now §A3's .slide* / .amr-sv / .amr-ws
+   block; the engine below is unchanged.                                      */
+/* ================================================================
+ * AmrSlide — shared slide-frame + whitespace + PNG export engine.
+ * Depends on html2canvas (each page already loads it) and the
+ * shared .slide* / .amr-ws CSS above.
+ * ============================================================== */
+var AmrSlide = (function(){
+  var W = 1600, H = 900, PAD = 40;          // the pages' 16:9 canvas
+  /* A bare frame keeps a hair of padding so a card's border and shadow are not
+     shaved off at the picture's edge. */
+  var BARE_PAD = 8;
+  var MARGINS = { left:120, right:120, top:30, bottom:30 };  // current comment bands
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function el(tag, cls){ var n=document.createElement(tag); if(cls) n.className=cls; return n; }
+
+  /* ---- mount the four L/R/T/B sliders into a rail container ----
+     opts: {left,right,top,bottom, maxLR, maxTB, onChange(margins)} */
+  function mountControls(containerId, opts){
+    opts = opts || {};
+    var host = document.getElementById(containerId); if(!host) return;
+    var v = { left:  opts.left  !=null ? opts.left  : MARGINS.left,
+              right: opts.right !=null ? opts.right : MARGINS.right,
+              top:   opts.top   !=null ? opts.top   : MARGINS.top,
+              bottom:opts.bottom!=null ? opts.bottom: MARGINS.bottom };
+    var maxLR = opts.maxLR || 650, maxTB = opts.maxTB || 320;
+    MARGINS = v;
+    host.classList.add('amr-ws');
+    function rowHtml(label, key, max){
+      return '<div class="amr-ws-row"><label>'+label+' &middot; <span data-v="'+key+'">'+v[key]+'</span> px</label>'+
+        '<input type="range" min="0" max="'+max+'" step="5" value="'+v[key]+'" data-k="'+key+'"></div>';
+    }
+    host.innerHTML = rowHtml('Left','left',maxLR) + rowHtml('Right','right',maxLR)
+                   + rowHtml('Top','top',maxTB)   + rowHtml('Bottom','bottom',maxTB);
+    [].forEach.call(host.querySelectorAll('input[type=range]'), function(r){
+      r.addEventListener('input', function(){
+        var k = this.getAttribute('data-k');
+        v[k] = parseInt(this.value,10) || 0;
+        MARGINS = v;
+        var span = host.querySelector('[data-v="'+k+'"]'); if(span) span.textContent = v[k];
+        if(typeof opts.onChange === 'function') opts.onChange(margins());
+      });
+    });
+    if(typeof opts.onChange === 'function') opts.onChange(margins());
+  }
+
+  function margins(){ return { left:MARGINS.left, right:MARGINS.right, top:MARGINS.top, bottom:MARGINS.bottom }; }
+
+  /* ---- build the off-screen slide around a content node ----
+     contentEl : a DOM element holding the page's tables/charts
+     o : {title, subtitle, logo (dataURI), logoSVG, margins, fit(box),
+          width, height, bare, pad}
+
+     SIZE. 1600x900 by default — the pages' slide. The DECK passes the shape of
+     the template's image box instead, so the picture fills its slot exactly
+     rather than being letterboxed into it.
+
+     BARE (the deck). No header, no logo, no whitespace bands: on a generated
+     slide the title and the comment box are REAL Slides text, and baking them
+     into the picture is exactly what the deck exists to stop doing. Everything
+     else is identical, and that is the point — the frame is what gives a fitter
+     a HEIGHT to fit to. Without one the deck used to lay content out in an
+     unbounded box, so nothing ever fitted vertically: the stack ran as tall as
+     it liked, and the far side of the pipeline shrank the whole picture to get
+     it into the slot. Rows and columns disappeared into that shrink.
+
+     Returns the slide box (attached at left:-99999px; caller removes it,
+     or download()/exportSlide()/captureBare() removes it automatically). */
+  function build(contentEl, o){
+    o = o || {};
+    var bare = !!o.bare;
+    var w    = o.width  || W;
+    var h    = o.height || H;
+    var pad  = (o.pad != null) ? o.pad : (bare ? BARE_PAD : PAD);
+    /* the bands are the page's comment margins; on a deck slide that space is
+       a real text box beside the picture, so a bare frame has none */
+    var m = bare ? { left:0, right:0, top:0, bottom:0 } : (o.margins || margins());
+
+    /* slide-bare is what Deck_Styles.html hangs the deck's slide CSS on */
+    var box = el('div', bare ? 'slide slide-bare' : 'slide');
+    box.style.cssText = 'position:fixed;left:-99999px;top:0;width:'+w+'px;height:'+h+'px;padding:'+pad+'px';
+
+    if(!bare){
+      var head = el('div','slide-head');
+      head.innerHTML = '<div><div class="ttl">'+esc(o.title||'')+'</div>'
+        + (o.subtitle ? '<div class="subttl">'+esc(o.subtitle)+'</div>' : '') + '</div>'
+        + '<div class="hspace"></div>'
+        + (o.logoSVG ? '<span class="logosvg">'+o.logoSVG+'</span>'
+                     : (o.logo ? '<img class="logo" src="'+o.logo+'" alt="logo">' : ''));
+      box.appendChild(head);
+    }
+
+    var content = el('div','slide-content');
+    var inner   = el('div','content-inner');
+    inner.style.cssText = 'display:flex;flex-direction:column;height:100%';
+    content.appendChild(inner); box.appendChild(content);
+
+    var topSp = el('div'); topSp.style.cssText = 'flex:none;height:'+(m.top||0)+'px';
+    var botSp = el('div'); botSp.style.cssText = 'flex:none;height:'+(m.bottom||0)+'px';
+    var bodyR = el('div'); bodyR.style.cssText = 'flex:1 1 auto;min-height:0;display:flex;align-items:center';
+    var lsp   = el('div'); lsp.style.cssText   = 'flex:none;width:'+(m.left||0)+'px';
+    var rsp   = el('div'); rsp.style.cssText   = 'flex:none;width:'+(m.right||0)+'px';
+    var center= el('div','slide-center'); center.appendChild(contentEl);
+
+    bodyR.appendChild(lsp); bodyR.appendChild(center); bodyR.appendChild(rsp);
+    inner.appendChild(topSp); inner.appendChild(bodyR); inner.appendChild(botSp);
+    document.body.appendChild(box);
+
+    inner.style.width = (w - pad*2) + 'px';
+    if(typeof o.fit === 'function'){ try{ o.fit(box); }catch(e){} }   // page-specific table fitting
+
+    // scale the content down if it is taller than the available body height
+    var bodyH = bodyR.clientHeight, gridH = center.scrollHeight;
+    if(gridH > bodyH && gridH > 0){
+      var s = bodyH / gridH;
+      center.style.transformOrigin = 'top center';
+      center.style.transform = 'scale('+s+')';
+    }
+    /* The frame carries its own size, so everything downstream — the PNG
+       capture, the preview scale, the full-window viewer — reads it from the
+       box instead of assuming 1600x900. Sizing lives in build() and nowhere
+       else. */
+    box.__amrW = w; box.__amrH = h;
+    return box;
+  }
+
+  /* A built box's size, with the old fixed slide as the fallback for anything
+     that hands us a box it made itself. */
+  function sizeOf(box){
+    return { w: (box && box.__amrW) || W, h: (box && box.__amrH) || H };
+  }
+
+  /* ---- drop a scaled-down live preview into a host element ----
+     Builds the slide OFF the page first, then swaps it in atomically and
+     restores the window scroll position, so dragging the spacing sliders
+     (which re-renders the preview on every input) no longer jumps the page
+     back to the top. */
+  function previewInto(host, contentEl, o){
+    if(!host) return;
+    var sy = window.pageYOffset || document.documentElement.scrollTop || 0;   // remember scroll
+
+    var box = build(contentEl, o);
+    var z = sizeOf(box);
+    var avail = host.clientWidth || 1000;
+    var scale = Math.min(1, avail / z.w);
+    box.style.position='static'; box.style.left='auto'; box.style.top='auto';
+    box.style.transform = 'scale('+scale+')'; box.style.transformOrigin='top left';
+
+    var frame = el('div');
+    frame.style.cssText = 'width:'+Math.round(z.w*scale)+'px;height:'+Math.round(z.h*scale)+'px;'
+      + 'overflow:hidden;border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)';
+    frame.appendChild(box);
+
+    // atomic swap (no intermediate empty state that would collapse the page height)
+    if(host.replaceChildren) host.replaceChildren(frame);
+    else { while(host.firstChild) host.removeChild(host.firstChild); host.appendChild(frame); }
+
+    if((window.pageYOffset||0) !== sy) window.scrollTo(0, sy);   // restore if the swap nudged it
+  }
+
+  /* ---- render a built slide box to PNG and download it ---- */
+  function download(box, filename, o){
+    o = o || {}; var sc = o.scale || 2; var z = sizeOf(box);
+    return html2canvas(box, {scale:sc, backgroundColor:'#ffffff', logging:false,
+        width:z.w, height:z.h, windowWidth:z.w, windowHeight:z.h,
+        ignoreElements:function(n){ return n.classList && n.classList.contains('amr-qm'); }})
+      .then(function(cv){
+        if(box.parentNode) box.parentNode.removeChild(box);
+        var a = document.createElement('a');
+        a.href = cv.toDataURL('image/png');
+        a.download = (filename || 'amrize_slide').replace(/[^a-z0-9_\-]+/gi,'_').replace(/^_+|_+$/g,'') + '.png';
+        document.body.appendChild(a); a.click(); a.remove();
+      })
+      .catch(function(e){ if(box.parentNode) box.parentNode.removeChild(box); throw e; });
+  }
+
+  /* ---- show the slide full-window, without downloading anything ----
+     The SAME 1600x900 slide the PNG export captures, scaled up to fill the
+     window instead of being saved to a file — so it can be read, shown in a
+     meeting or screenshotted straight from the browser. Esc, the ×, or a
+     click on the dark area closes it; resizing the window re-fits it. */
+  function viewSlide(contentEl, o){
+    o = o || {};
+    var box = build(contentEl, o);          // measured off-screen at full size
+
+    var frame = el('div','amr-sv-frame');
+    box.style.position='static'; box.style.left='auto'; box.style.top='auto';
+    box.style.transformOrigin='top left';
+    frame.appendChild(box);
+
+    var lb = el('div','amr-sv');
+    lb.innerHTML = '<button class="amr-sv-close" title="Close">&times;</button>';
+    lb.appendChild(frame);
+    var hint = el('div','amr-sv-hint');
+    hint.textContent = 'Press Esc or click outside the slide to close';
+    lb.appendChild(hint);
+
+    /* as large as the window allows, keeping the 16:9 shape */
+    function fitToWindow(){
+      var z = sizeOf(box);
+      var s = Math.min((window.innerWidth - 32) / z.w, (window.innerHeight - 64) / z.h);
+      if(!(s > 0.1)) s = 0.1;
+      box.style.transform = 'scale('+s+')';
+      frame.style.width  = Math.round(z.w*s)+'px';
+      frame.style.height = Math.round(z.h*s)+'px';
+    }
+    function close(){
+      if(lb.parentNode) lb.parentNode.removeChild(lb);
+      document.body.style.overflow = pageScroll;      // let the page scroll again
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', fitToWindow);
+    }
+    function onKey(e){ if(e.key==='Escape' || e.keyCode===27) close(); }
+    lb.addEventListener('click', function(e){ if(!frame.contains(e.target)) close(); });
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('resize', fitToWindow);
+
+    var pageScroll = document.body.style.overflow;    // stop the page scrolling behind
+    document.body.style.overflow = 'hidden';
+    document.body.appendChild(lb);
+    fitToWindow();
+    return lb;
+  }
+
+  /* ---- convenience: build + download in one call ----
+     o adds {filename, scale, button:'idOfButtonToSpin'} to build()'s opts */
+  function exportSlide(contentEl, o){
+    o = o || {};
+    var btn = o.button ? document.getElementById(o.button) : null;
+    if(btn) btn.classList.add('busy');
+    var box = build(contentEl, o);
+    return download(box, o.filename, {scale:o.scale})
+      .then(function(){ if(btn) btn.classList.remove('busy'); },
+            function(){ if(btn) btn.classList.remove('busy'); });
+  }
+
+  /* ---- capture a content block for the Deck Builder ----
+     THE SAME FRAME THE PAGES PHOTOGRAPH, minus the header and the whitespace
+     bands: on a generated slide the title and the comment box are real Slides
+     text, and baking them into the picture is what the deck exists to stop
+     doing. Everything else — the frame, the fitters, the height clamp — is the
+     page's, which is the whole point. A deck slide should be the page's slide.
+
+     It used to be the opposite of build(): content in an unbounded div, fitted
+     for width only. That box had no height, so nothing could fit vertically;
+     the stack ran as tall as its content and the server then scaled the whole
+     picture down to get it into the image box. Everything shrank together, and
+     what did not survive the shrink was rows and columns.
+
+     contentEl : a DOM element (the same node a page hands previewInto)
+     o : { width    the frame's CSS width, default 1600 — the pages' slide width,
+                    so a table is laid out at the size the page lays it out at.
+           height   the frame's CSS height. Pass the SHAPE OF THE IMAGE BOX
+                    (width x slotH/slotW) and the picture fills its slot with no
+                    letterboxing, and the fitters get the real height to fit to.
+                    Defaults to 16:9.
+           capturePx target pixel width of the PNG. Quality. DECK_readTemplate
+                    returns one per image slot (4 px per point of slot width),
+                    so the deck asks for exactly what it needs.
+           maxPx    ceiling on BOTH dimensions of the PNG, 0/absent = none.
+                    Google caps an inserted picture at 2048 on its longest side,
+                    so anything bigger is not extra quality — it is a second
+                    resampling of already-rendered text, which is what made deck
+                    slides look softer than the same table screenshotted by
+                    hand. Clamping here makes html2canvas render the text at its
+                    final size instead.
+           fit(box) the page's own fitSlide, as build() takes.
+           bg       background colour, default white. }
+
+     Resolves { dataUrl, w, h } — the PNG's real pixel size, which is what
+     DECK_addSlide fits into the template's image box. */
+  function captureBare(contentEl, o){
+    o = o || {};
+    var cssW = o.width  || W;
+    var cssH = o.height || Math.round(cssW * H / W);
+    var capW = o.capturePx || cssW;
+
+    /* build() attaches it off-screen, runs the fit and applies the height clamp
+       — the same three steps, in the same order, as a PNG download. */
+    var box = build(contentEl, { bare:true, width:cssW, height:cssH, fit:o.fit });
+
+    /* Charts need a frame to settle after any resize the fit triggered, or
+       html2canvas photographs a blank canvas.
+
+       A HIDDEN TAB NEVER GIVES YOU THAT FRAME. requestAnimationFrame does not
+       fire at all in a background tab, so waiting on two of them waits forever
+       - which is exactly what stopped the Deck Builder on whatever slide it was
+       rendering when somebody clicked away. AmrTick.frames takes the frames
+       when there are frames and the clock when there are not, so the capture
+       finishes either way. Without AmrTick loaded this is the old behaviour. */
+    var settle = (window.AmrTick && AmrTick.frames)
+      ? AmrTick.frames
+      : function(fn){ requestAnimationFrame(function(){ requestAnimationFrame(fn); }); };
+    return new Promise(function(resolve, reject){
+      settle(function(){
+        var sc = capW / cssW;
+        /* Never hand the platform something it will resample. */
+        var mx = o.maxPx || 0;
+        if(mx > 0) sc = Math.min(sc, mx / cssW, mx / cssH);
+        html2canvas(box, { scale:sc, backgroundColor:(o.bg||'#ffffff'),
+            logging:false, width:cssW, height:cssH,
+            windowWidth:cssW, windowHeight:cssH,
+            ignoreElements:function(n){ return n.classList && n.classList.contains('amr-qm'); }})
+          .then(function(cv){
+            if(box.parentNode) box.parentNode.removeChild(box);
+            resolve({ dataUrl:cv.toDataURL('image/png'), w:cv.width, h:cv.height });
+          })
+          .catch(function(e){
+            if(box.parentNode) box.parentNode.removeChild(box);
+            reject(e);
+          });
+      });
+    });
+  }
+
+  return { mountControls:mountControls, margins:margins, build:build,
+           previewInto:previewInto, download:download, exportSlide:exportSlide,
+           viewSlide:viewSlide, captureBare:captureBare };
+})();
+</script>
+
+<script>
+/* ---- §E AmrFuelExec — the Fuel Recovery exec tables ------------------------
+   Was Deck_Fuel.html, and it is the reason chunk 3 goes first: this module is
+   already shared by AGG Fuel Recovery, RMX Fuel Recovery and the deck, and
+   tests/regress.js proves its output byte-identical to the page code it
+   replaced. Moved verbatim so that proof still means something. The adapter
+   registrations at the bottom no-op until AmrDeckSource exists (chunk 10).   */
+var AmrFuelExec = (function(){
+
+  /* ---- the only real difference between the two pages ---- */
+  var UNITS = {
+    /* AGG — tonnes */
+    agg: {
+      vol:'TONNES', per:'PER TONNE', perAll:'ALL TONNES', yoy:'YOY $/t',
+      barApplied:'ON APPLIED TONNES ONLY', barAll:'OVER ALL TONNES',
+      /* The AGG page hard-coded 2026/2025 in its headers. Reading cyYear when
+         the backend sends it keeps today's output identical and stops this
+         being a silent landmine the next time the year rolls. */
+      cy: function(d){ return (d && d.cyYear) || 2026; }
+    },
+    /* RMX — cubic metres */
+    rmx: {
+      vol:'VOLUME m³', per:'PER m³', perAll:'ALL m³', yoy:'YOY $/m³',
+      barApplied:'ON APPLIED m³ ONLY', barAll:'OVER ALL m³',
+      cy: function(d){ return (d && d.cyYear) || new Date().getFullYear(); }
+    }
+  };
+
+  /* ---- formatters (byte-identical to the ones the pages used) ---- */
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function fInt(n){ return Math.round(Number(n)||0).toLocaleString('en-US'); }
+  function fMoney(n){ var v=Math.round(Number(n)||0); return (v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US'); }
+  function fRate(n){ var v=Number(n)||0; return (v<0?'-$':'$')+Math.abs(v).toFixed(2); }
+  function fYoy(v){ var x=Number(v)||0; return (x>=0?'+$':'-$')+Math.abs(x).toFixed(2); }
+  function sgn(v){ var x=Number(v)||0; return x>0?'pos':(x<0?'neg':''); }
+  function cents(x){ return Math.round((Number(x)||0)*100)/100; }
+  var FMT = { i:fInt, m:fMoney, r:fRate };
+
+  /* Exec cell key. Same scheme both pages already used, so a page's saved
+     overrides keep pointing at the same cells after the extraction. */
+  function xk(p,b,mk){ return 'EXEC|'+p+'|'+b+'|'+mk+'|'; }
+
+  function ctx_(c){
+    c = c || {};
+    return { numOv:c.numOv||{}, txtOv:c.txtOv||{},
+             hidden:c.hidden||{}, derived:c.derived||{} };
+  }
+  function effN(ctx, key, base){
+    return (key in ctx.numOv) ? ctx.numOv[key] : (Number(base)||0);
+  }
+
+  /* ---- cell renderers ----
+     They still emit contenteditable + data-* even for the deck. The deck
+     strips the attribute in content() — exactly as the pages' own
+     buildContent() has always done — so there is ONE markup path and the
+     picture can never drift from what the page shows. */
+  function inCell(ctx, key, base, f){
+    var v = effN(ctx, key, base);
+    var cls = (f==='r') ? (sgn(v)?' '+sgn(v):'') : '';
+    return '<td contenteditable="true" class="fsc-cell fsc-in'+cls+'" data-k="'+esc(key)
+         + '" data-f="'+f+'" data-b="'+(Number(base)||0)+'">'+esc(FMT[f](v))+'</td>';
+  }
+  function lbCell(ctx, key, text){
+    var shown = (key in ctx.txtOv) ? ctx.txtOv[key] : text;
+    return '<td contenteditable="true" class="fsc-cell fsc-in lft" data-k="'+esc(key)+'" data-t="1">'+esc(shown)+'</td>';
+  }
+  function dCell(ctx, key){
+    var m = ctx.derived[key] || { txt:'', cls:'' };
+    return '<td class="fsc-calc'+(m.cls?' '+m.cls:'')+'" data-d="'+esc(key)+'">'+esc(m.txt)+'</td>';
+  }
+
+  /* ======================= compute =======================
+     Per unit = FSC / volume · YOY = CY $/unit - PY $/unit, both rounded to
+     the two cents actually shown so the column ties out by eye. Totals sum
+     the raw components and re-derive the ratios — they are NOT the sum of
+     the per-unit column, and they include hidden markets on purpose.     */
+  function computeExec(data, period, basis, ctx, derived){
+    ctx = ctx_(ctx);
+    derived = derived || ctx.derived;
+    var base = (data && data.exec && data.exec[period] && data.exec[period][basis]) || [];
+    var T = { t26:0, t25:0, f26:0, f25:0 };
+
+    base.forEach(function(r){
+      if(r.isTotal) return;
+      var P = xk(period, basis, r.market);
+      var t26 = effN(ctx, P+'t26', r.tonnes26), t25 = effN(ctx, P+'t25', r.tonnes25);
+      var f26 = effN(ctx, P+'f26', r.fsc26),    f25 = effN(ctx, P+'f25', r.fsc25);
+      var p26 = t26 ? f26/t26 : 0, p25 = t25 ? f25/t25 : 0;
+      var yoy = cents(p26) - cents(p25);
+      derived[P+'p26'] = { txt:fRate(p26), cls:sgn(p26) };
+      derived[P+'p25'] = { txt:fRate(p25), cls:sgn(p25) };
+      derived[P+'yoy'] = { txt:fYoy(yoy),  cls:sgn(yoy) };
+      T.t26+=t26; T.t25+=t25; T.f26+=f26; T.f25+=f25;
+    });
+
+    var G = xk(period, basis, '__total');
+    var gp26 = T.t26 ? T.f26/T.t26 : 0, gp25 = T.t25 ? T.f25/T.t25 : 0;
+    var gy = cents(gp26) - cents(gp25);
+    derived[G+'t26'] = { txt:fInt(T.t26) };   derived[G+'t25'] = { txt:fInt(T.t25) };
+    derived[G+'f26'] = { txt:fMoney(T.f26) }; derived[G+'f25'] = { txt:fMoney(T.f25) };
+    derived[G+'p26'] = { txt:fRate(gp26), cls:sgn(gp26) };
+    derived[G+'p25'] = { txt:fRate(gp25), cls:sgn(gp25) };
+    derived[G+'yoy'] = { txt:fYoy(gy),   cls:sgn(gy) };
+    return derived;
+  }
+
+  /* ======================= one exec table ======================= */
+  function execTable(data, period, basis, ctx, unitId){
+    ctx = ctx_(ctx);
+    var u = UNITS[unitId] || UNITS.agg;
+    var cy = u.cy(data), py = cy - 1;
+    var rows = (data && data.exec && data.exec[period] && data.exec[period][basis]) || [];
+    var applied = (basis === 'applied');
+
+    var head = '<thead><tr>'
+      +'<th rowspan="2" class="mid">Row Labels</th>'
+      +'<th class="grp" colspan="2">'+u.vol+' ('+(applied?'APPLIED':'ALL')+')</th>'
+      +'<th class="grp" colspan="2">FUEL RECOVERY (PROD)</th>'
+      +'<th class="grp" colspan="2">'+u.per+' ('+(applied?'APPLIED':u.perAll)+')</th>'
+      +'<th rowspan="2" class="mid">'+u.yoy+'</th></tr>'
+      +'<tr><th>'+cy+'</th><th>'+py+'</th><th>'+cy+'</th><th>'+py+'</th><th>'+cy+'</th><th>'+py+'</th></tr></thead>';
+
+    var body = '';
+    rows.forEach(function(r){
+      if(r.isTotal) return;                      // rebuilt from the components below
+      if(ctx.hidden[r.market]) return;
+      var P = xk(period, basis, r.market);
+      body += '<tr>'
+        + lbCell(ctx, P+'mkt', r.market)
+        + inCell(ctx, P+'t26', r.tonnes26, 'i')
+        + inCell(ctx, P+'t25', r.tonnes25, 'i')
+        + inCell(ctx, P+'f26', r.fsc26,    'm')
+        + inCell(ctx, P+'f25', r.fsc25,    'm')
+        + dCell(ctx, P+'p26') + dCell(ctx, P+'p25') + dCell(ctx, P+'yoy')
+        + '</tr>';
+    });
+
+    var G = xk(period, basis, '__total');
+    body += '<tr class="totrow"><td class="lft fsc-calc">Grand Total</td>'
+      + dCell(ctx, G+'t26') + dCell(ctx, G+'t25') + dCell(ctx, G+'f26') + dCell(ctx, G+'f25')
+      + dCell(ctx, G+'p26') + dCell(ctx, G+'p25') + dCell(ctx, G+'yoy')
+      + '</tr>';
+
+    var bar = '<div class="fsc-secbar">FUEL RECOVERY ('
+      +(applied ? u.barApplied : u.barAll)+')</div>';
+    return bar + '<table class="fsc-t exec">'+head+'<tbody>'+body+'</tbody></table>';
+  }
+
+  /* ======================= the exec stack =======================
+       period ''    -> MTD all/applied then YTD all/applied (the page's view)
+       period 'MTD' -> just the two MTD tables
+       period 'YTD' -> just the two YTD tables
+     One period at a time is what the deck wants: each Fuel Recovery slide
+     covers one period, and four tables on a slide are unreadable.        */
+  function execTables(data, period, ctx, unitId){
+    ctx = ctx_(ctx);
+    var u = UNITS[unitId] || UNITS.agg;
+    var cy = u.cy(data);
+    var lm = String((data && data.latestMonth) || '').toUpperCase();
+    var ytdLbl = (lm==='JAN') ? ('JAN '+cy) : ('JAN TO '+esc(lm)+' '+cy);
+    var want = (period==='MTD' || period==='YTD') ? period : '';
+
+    var out = '<div class="fsc-exec">';
+    if(!want || want==='MTD'){
+      out += '<div class="fsc-period">MONTH TO DATE — '+esc(lm)+' '+cy+'</div>'
+          +  execTable(data,'MTD','all',ctx,unitId)
+          +  execTable(data,'MTD','applied',ctx,unitId);
+    }
+    if(!want || want==='YTD'){
+      out += '<div class="fsc-period">YEAR TO DATE — '+ytdLbl+'</div>'
+          +  execTable(data,'YTD','all',ctx,unitId)
+          +  execTable(data,'YTD','applied',ctx,unitId);
+    }
+    return out + '</div>';
+  }
+
+  /* The block the deck photographs: the same tables, read-only. Derived cells
+     are computed here from the data alone — no page state, nothing typed
+     over. */
+  function content(data, period, unitId){
+    if(!data) return null;
+    var ctx = ctx_({});
+    ['MTD','YTD'].forEach(function(p){
+      computeExec(data, p, 'all', ctx, ctx.derived);
+      computeExec(data, p, 'applied', ctx, ctx.derived);
+    });
+    var wrap = document.createElement('div');
+    wrap.className = 'fsc-wrap';
+    wrap.innerHTML = execTables(data, period, ctx, unitId);
+    [].forEach.call(wrap.querySelectorAll('[contenteditable]'), function(el){
+      el.removeAttribute('contenteditable');
+    });
+    return wrap;
+  }
+
+  /* ---- fitting, on the 1600x900 slide frame (the pages' PNG export) ----
+     By LAYOUT (font-size) only, never by transform: AmrSlide clamps on
+     scrollHeight, which a transform does not change, so a transform here
+     would make the content scale twice. */
+  function fitSlide(box){
+    var center = box.querySelector('.slide-center');
+    var bodyR  = center ? center.parentElement : null;
+    var availW = 0, availH = 0;
+    if(bodyR){
+      availH = bodyR.clientHeight;
+      availW = bodyR.clientWidth
+             - (bodyR.firstElementChild ? bodyR.firstElementChild.offsetWidth : 0)
+             - (bodyR.lastElementChild  ? bodyR.lastElementChild.offsetWidth  : 0);
+    }
+    [].forEach.call(box.querySelectorAll('table.fsc-t:not(.exec)'), function(t){
+      var avail = t.parentElement ? t.parentElement.clientWidth : 0; if(!avail) return;
+      var sz=15, guard=0; t.style.fontSize=sz+'px';
+      while(t.scrollWidth>avail && sz>7 && guard<90){ sz-=0.5; t.style.fontSize=sz+'px'; guard++; }
+    });
+    var ex = box.querySelector('.fsc-exec');
+    if(ex && availW && availH){
+      if(ex.parentElement) ex.parentElement.style.width = availW+'px';
+      var fs=13, guard2=0; ex.style.fontSize=fs+'px';
+      while((ex.scrollHeight>availH || ex.scrollWidth>availW) && fs>6 && guard2<40){
+        fs-=0.25; ex.style.fontSize=fs+'px'; guard2++;
+      }
+    }
+  }
+
+  /* There is no fitBare any more. The deck used to have its own width-only
+     fitter, on the theory that "height is free" because the picture would be
+     scaled into the image box by ratio anyway. It was free in the wrong
+     direction: the stack ran as tall as it liked and then the whole picture was
+     shrunk to fit the box, so the type ended up SMALLER than if it had fitted a
+     height in the first place, and rows fell off the bottom. The deck now
+     photographs the same framed slide the page does, so fitSlide is the only
+     fitter — change it once, both are right. */
+  return { UNITS:UNITS, computeExec:computeExec, execTable:execTable,
+           execTables:execTables, content:content,
+           fitSlide:fitSlide };
+})();
+
+
+/* ===========================================================================
+ * Deck Builder adapters — registered ONLY on the Deck Builder page.
+ * ---------------------------------------------------------------------------
+ * The report pages include this file too, but they never create
+ * AmrDeckSource, so nothing below runs there and each page keeps working
+ * standalone. On the Deck Builder there is no page DATA to borrow, so each
+ * adapter fetches its own model once and both of its slides (MTD and YTD)
+ * reuse it — which is why prepare() is cheap on the second call.
+ * ========================================================================= */
+(function(){
+  if(!window.AmrDeckSource) return;
+
+  /* keyed by month: one deck is one month, but a session can build July and
+     then August without either serving the other */
+  var MODEL = { fsc:{}, rfsc:{} };
+
+  function monthOf(spec){
+    var m = Number(spec && spec.month) || 0;
+    return (m >= 1 && m <= 12) ? m : 0;          // 0 = let the backend decide
+  }
+
+  function srv(fn, args){
+    return new Promise(function(resolve, reject){
+      if(typeof google==='undefined' || !google.script || !google.script.run){
+        return reject(new Error('Fuel Recovery data needs the live web app.'));
+      }
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn]
+        .apply(null, args || []);
+    });
+  }
+
+  /* Both backends take the SAME month argument and resolve 0 to last calendar
+     month, so one loader serves them. That is what makes "select July" mean
+     July on the AGG and the RMX fuel slides alike. */
+  function loader(key, fn, label){
+    return function(spec){
+      var m = monthOf(spec);
+      if(MODEL[key][m]) return null;              // already loaded — nothing to wait for
+      return srv(fn, [{ month: m }]).then(function(d){
+        if(!d || !d.markets) throw new Error(label+' returned no data.');
+        MODEL[key][m] = d;
+      });
+    };
+  }
+
+  function contentFor(key, unitId, label){
+    return function(spec){
+      var d = MODEL[key][monthOf(spec)];
+      if(!d) throw new Error(label+' data is not loaded yet.');
+      var el = AmrFuelExec.content(d, spec && spec.period, unitId);
+      if(!el) throw new Error('Could not build '+label+' content.');
+      return el;
+    };
+  }
+
+  /* ↻ Update from source: drop the model for every month this session has
+     loaded, so the next Render asks the backend again. Both adapters share
+     MODEL, so each clears only its own half. */
+  function resetter(key){
+    return function(){ MODEL[key] = {}; };
+  }
+
+  AmrDeckSource.register('fsc', {
+    prepare: loader('fsc', 'getFscData', 'AGG Fuel Recovery'),
+    content: contentFor('fsc', 'agg', 'AGG Fuel Recovery'),
+    /* the page's own fitter, on the page's own frame */
+    fit: AmrFuelExec.fitSlide,
+    reset: resetter('fsc')
+  });
+
+  AmrDeckSource.register('rfsc', {
+    prepare: loader('rfsc', 'getRmxFuelData', 'RMX Fuel Recovery'),
+    content: contentFor('rfsc', 'rmx', 'RMX Fuel Recovery'),
+    /* the page's own fitter, on the page's own frame */
+    fit: AmrFuelExec.fitSlide,
+    reset: resetter('rfsc')
+  });
+})();
 </script>
 
 
@@ -1285,6 +2508,855 @@ AMR.page('landing', {
 });
 </script>
 
+
+<!-- ===================== §P fuelsurcharge ===================== -->
+<template id="tpl-fuelsurcharge">
+  <header class="bar">
+    <div class="brand">
+      <span class="mark">AMRIZE</span>
+      <span>
+        <span class="title">Fuel Recovery</span>
+        <span class="sub">Executive view &middot; editable &rarr; slide PNG</span>
+      </span>
+    </div>
+    <button class="ghost" data-act="home" title="Back to the suite home">&#8962; Home</button>
+    <button class="ghost" data-act="help" title="How to use this page">? Help</button>
+    <button class="ghost" data-act="settings" title="Change the Google Sheet this app reads from">&#9881; Data sheet</button>
+    <div class="spacer"></div>
+    <button class="ghost" id="syncBtn" title="Re-read the Google Sheet and rebuild this page">&#8635; Update from source</button>
+    <button class="ghost primary" id="exportBtn">Download slide PNG</button>
+    <button class="ghost" id="viewBtn" title="Show the slide full screen — no download needed">Expand slide</button>
+  </header>
+
+  <div class="shell">
+    <aside class="rail">
+
+      <div class="panel">
+        <p class="eyebrow">View</p>
+        <div class="seg full" id="viewSeg">
+          <button data-v="EXEC" aria-pressed="true">Exec &middot; Both</button>
+          <button data-v="EXEC_MTD">Exec &middot; MTD</button>
+          <button data-v="EXEC_YTD">Exec &middot; YTD</button>
+          <button data-v="MTD">Summary &middot; MTD</button>
+          <button data-v="YTD">Summary &middot; YTD</button>
+          <button data-v="BYMONTH">By Month</button>
+        </div>
+
+        <div class="field" style="margin-top:12px">
+          <label class="lbl" for="fscMonthSel">Report month</label>
+          <select id="fscMonthSel"></select>
+          <p class="hint" style="margin:6px 0 0">MTD is this month on its own; YTD is January
+            through it. Defaults to <b>last calendar month</b> &mdash; the running month is only
+            part-billed.</p>
+        </div>
+
+        <div class="field" id="bymonthField" style="margin-top:12px; display:none">
+          <label class="lbl" for="bmMarket">Market (by month)</label>
+          <select id="bmMarket"></select>
+        </div>
+
+        <div id="marketsField" style="margin-top:12px">
+          <label class="lbl">Show markets</label>
+          <div class="mkt-list" id="mktList"><span class="hint">Data loads first, then you can pick markets.</span></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <p class="eyebrow">Slide titles</p>
+        <div class="field"><label class="lbl" for="titleIn">Title</label><input type="text" id="titleIn" placeholder="Fuel Recovery"></div>
+        <div class="field"><label class="lbl" for="subIn">Subtitle</label><input type="text" id="subIn" value="Per applied tonne &middot; $CAD"></div>
+      </div>
+
+      <div class="panel">
+        <p class="eyebrow">Blank space (for comments)</p>
+        <div id="fscWs"></div>
+        <p class="hint">Reserves empty bands around the table so reviewers can add commentary on the slide.</p>
+      </div>
+
+      <div class="panel">
+        <p class="eyebrow">Logo</p>
+        <button class="lk full" id="logoBtn">Upload logo</button>
+        <input type="file" id="logoFile" accept="image/*" style="display:none">
+        <button class="lk full" id="logoClear" style="margin-top:8px">Clear logo</button>
+        <p class="logoName" id="logoName">The Amrize logo loads automatically.</p>
+      </div>
+
+      <div class="panel">
+        <div class="btnrow">
+          <button class="ghost primary" id="reloadBtn" style="flex:1">Reload from sheet</button>
+          <button class="lk" id="clearEditsBtn" title="Discard all manual cell edits">Clear edits</button>
+        </div>
+        <div class="dzstat" id="loadStat" style="margin-top:10px">Loading data from the Google Sheet&hellip;</div>
+        <p class="hint" style="margin-bottom:0">Reads the <b>Data</b> tab
+          <button type="button" class="amr-qm" data-amr-hint="fsc_data" title="Source layout for the Data tab">?</button>.
+          The <b>raw numbers</b> (tonnes / volumes and FSC&nbsp;$) are editable &mdash; click a cell and type.
+          Per-tonne, %, YOY and the total rows <b>recalculate automatically</b>.</p>
+      </div>
+
+    </aside>
+
+    <main class="main">
+      <div class="section-head">
+        <h2>Tables</h2>
+        <span class="meta">type over any raw number &middot; calculated columns &amp; totals update by themselves</span>
+      </div>
+      <div id="tablesHost"><div class="card"><div class="empty">Loading data from the Google Sheet&hellip;</div></div></div>
+
+      <div class="section-head" style="margin-top:18px">
+        <h2>Slide PNG preview</h2>
+        <span class="meta">16:9 &middot; final export &middot; adjust margins on the left</span>
+      </div>
+      <div class="previewCard"><div class="previewHost" id="previewHost"><div class="empty">Loading data from the Google Sheet&hellip;</div></div></div>
+    </main>
+  </div>
+
+  <!-- The guide's page-specific panel. It is markup, so it lives in the page
+       template where merge.js can see its ids; AmrQlikGuide moves the node into
+       the aside on mount. -->
+  <div id="fscGuideExtra">
+    <p class="eyebrow" style="margin:0 0 8px">Replace raw data <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)">&middot; using a downloaded CPI export</span></p>
+    <div class="field"><label class="lbl" for="upComb">Combined CPI export (.xlsx)</label>
+      <input type="file" id="upComb" accept=".xlsx,.xls,.xlsm" style="width:100%;font:500 12px Inter"></div>
+    <div class="field"><label class="lbl" for="upOther">Other Revenue export (.xlsx)</label>
+      <input type="file" id="upOther" accept=".xlsx,.xls,.xlsm" style="width:100%;font:500 12px Inter"></div>
+    <button class="lk full" id="upGo">Use uploaded data</button>
+    <div id="upStatus" style="display:none;margin-top:8px;font:600 12px Inter;color:var(--blue-100)">
+      &#10003; Using uploaded data<br><button class="lk full" id="upReset" style="margin-top:6px">Back to sheet data</button>
+    </div>
+    <p class="hint">Still both exports. <b>New Fuel Surcharge</b> is not a raw column &mdash; the sheet builds it with an
+      ARRAYFORMULA that takes each LOOKUP KEY's Other Revenue total and spreads it across that key's rows in
+      proportion to volume, falling back to the Combined file's own Fuel Surcharge column when the key is
+      absent. A raw QlikView export has no formula in it, so the second file is what makes the surcharge real.
+      That arithmetic is reproduced here exactly. Plants are mapped to markets from the REGION LOOKUP tab of the
+      connected sheet. Session only; nothing is written back.</p>
+  </div>
+</template>
+
+<script>
+/* ---- §P fuelsurcharge — registration ---------------------------------------
+   Ported from Page_FuelSurcharge.html. Everything that was top-level there —
+   DATA, NUM_OV, TXT_OV, DERIVED, STATE, esc, fInt/fMoney/fRate/fPct/fYoy, the
+   compute layer, the table builders, loadData, the UI wiring — is a local of
+   this IIFE now. NOTHING IS RENAMED: the point of the registry is that a page's
+   own names keep working, so `esc` here and `esc` on any other page can never
+   collide even though both still read `esc`.
+
+   What actually changed:
+     · the header's inline on*= handlers became data-act delegation
+     · the seven-times-copied QlikView guide became AmrQlikGuide.mount()
+     · #previewHost lost its id-style rule (§A3 .previewHost carries it now)
+     · the Saskatchewan notice's inline hex became the §A3 .notice component
+     · every entry point logs through AMR.log (PLAN.md §7)
+
+   The exec tables are NOT here and must not come back: AmrFuelExec (§E) owns
+   the compute and the markup for them, shared with RMX Fuel Recovery and the
+   deck, and tests/regress.js is the gate that proves the three agree.        */
+AMR.page('fuelsurcharge', {
+  title: 'Amrize · Fuel Recovery',
+  libs: ['html2canvas', 'xlsx'],
+  help:
+    '<h3>What this page does</h3>' +
+    '<p>Builds the executive Fuel Recovery vs Surcharge slide as a PNG. It reads the raw <b>Data</b> tab and computes the ' +
+    '<b>Exec Summary</b> (4 tables: MTD/YTD on All-Tonnes and Applied-Tonnes bases), the Summary (MTD &amp; YTD) ' +
+    'and a market’s month-by-month FSC/t. The <b>Tables</b> section shows the current view full-size.</p>' +
+    '<h3>Editing the numbers</h3>' +
+    '<p>The <b>raw inputs are editable</b> — tonnes / volumes and Fuel Recovery dollars (they highlight when you ' +
+    'hover). Type over one (e.g. a market that just started charging) and everything calculated from it — ' +
+    '<b>Per Tonne, %, YOY and the Grand Total / TOTAL rows</b> — recalculates instantly, in the table and on the ' +
+    'slide preview. Calculated cells can’t be typed over, so the slide always stays internally consistent. ' +
+    'Leaving a cell blank restores the sheet’s value; <i>Clear edits</i> reverts everything.</p>' +
+    '<h3>How to use it</h3>' +
+    '<p>1. Set the data sheet (⚙ <b>Data sheet</b> at the top) — it needs a <b>Data</b> tab. ' +
+    '2. Pick a <b>View</b>. 3. Tick which markets to show. ' +
+    '4. Type over any raw number in the Tables section if you need to. ' +
+    '5. Adjust the blank comment bands (they only affect the slide). 6. <b>Download slide PNG</b>, or <b>Expand slide</b> to show it full screen without downloading anything.</p>' +
+    '<h3>How the numbers are computed</h3>' +
+    '<p><b>Exec Summary</b> replicates the Excel pivots: <b>Per Tonne = Fuel Recovery ÷ Tonnes</b> and ' +
+    '<b>YOY $/t = 2026 Per Tonne − 2025 Per Tonne</b>. “Over All Tonnes” uses every row; ' +
+    '“On Applied Tonnes Only” uses rows flagged <b>FSC Flag = Yes</b>. MTD is the latest month; ' +
+    'YTD is Jan through the latest month. The Grand Total sums the components, then re-derives the ratios ' +
+    '(markets with no 2025 charge simply contribute $0)</p>' +
+    '<p><b>Summary views:</b> <b>FSC/T = Total FSC ÷ Applied Volume</b>; the % columns only count the months a ' +
+    'market actually has applied tonnes; YOY compares 2026 vs the same months in 2025 (a market with no prior-year charge compares against $0.00).</p>',
+
+  boot: function(root){
+
+  /* ======================= STATE ======================= */
+  var DATA = null;                    // model from getFscData()
+  var NUM_OV = {};                    // cellKey -> user-typed NUMBER (raw inputs only)
+  var TXT_OV = {};                    // cellKey -> user-typed TEXT   (labels only)
+  var DERIVED = {};                   // cellKey -> {txt, cls} for every calculated cell
+  /* month: 0 = last closed month (the backend decides), 1-12 pins it. It rides
+     in every read, so the whole payload - MTD, YTD and the by-month table - is
+     for the month the picker names. */
+  var STATE = { view:'EXEC', month:0, byMonthMarket:'', hidden:{},
+                title:'', titleDirty:false, sub:'Per applied tonne · $CAD', logo:'', logoSVG:'' };
+
+  /* ======================= helpers ======================= */
+  /* NOT AMR.esc: this one also escapes the double quote, and every cell key
+     is written into a data-k="…" attribute. Kept as the page had it. */
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  function fInt(n){ return Math.round(Number(n)||0).toLocaleString('en-US'); }
+  function fMoney(n){ var v=Math.round(Number(n)||0); return (v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US'); }
+  function fRate(n){ var v=Number(n)||0; return (v<0?'-$':'$')+Math.abs(v).toFixed(2); }
+  function fPct(n){ return Math.round((Number(n)||0)*100)+'%'; }
+  function fYoy(v){ var x=Number(v)||0; return (x>=0?'+$':'-$')+Math.abs(x).toFixed(2); }
+  function sgn(v){ var x=Number(v)||0; return x>0?'pos':(x<0?'neg':''); }
+  var FMT = { i:fInt, m:fMoney, r:fRate };   // formatter ids stored on input cells
+
+  /* "2,150" · "$1,287,666" · "(300)" · "12.5" → number; anything else → NaN */
+  function parseNum(s){
+    s = String(s==null?'':s).replace(/[$,%\s\u00A0]/g,'').replace(/^\((.*)\)$/,'-$1');
+    if(s==='' || s==='-' || s==='+') return NaN;
+    var n = parseFloat(s);
+    return isFinite(n) ? n : NaN;
+  }
+  /* effective value of an input cell: the user's number if they typed one, else the sheet's */
+  function effN(key, base){ return (key in NUM_OV) ? NUM_OV[key] : (Number(base)||0); }
+
+  /* Show a problem in plain English, in both the status line and the Tables area. */
+  function showProblem(msg){
+    AMR.log('error', 'FSC.page', msg);
+    var st=document.getElementById('loadStat');
+    if(st){ st.className='dzstat err'; st.textContent=msg; }
+    var host=document.getElementById('tablesHost');
+    if(host) host.innerHTML='<div class="card"><div class="empty">'+esc(msg)+'</div></div>';
+  }
+
+  /* ---------- cell renderers ---------- */
+  /* EDITABLE raw number. f = 'i' (integer) | 'm' (money) | 'r' (rate, sign-coloured) */
+  function inCell(key, base, f){
+    var v = effN(key, base);
+    var cls = (f==='r') ? (sgn(v)?' '+sgn(v):'') : '';
+    return '<td contenteditable="true" class="fsc-cell fsc-in'+cls+'" data-k="'+esc(key)
+         + '" data-f="'+f+'" data-b="'+(Number(base)||0)+'">'+esc(FMT[f](v))+'</td>';
+  }
+  /* EDITABLE label (text only — doesn't affect the math) */
+  function lbCell(key, text){
+    var shown = (key in TXT_OV) ? TXT_OV[key] : text;
+    return '<td contenteditable="true" class="fsc-cell fsc-in lft" data-k="'+esc(key)+'" data-t="1">'+esc(shown)+'</td>';
+  }
+  /* CALCULATED cell — value comes from the DERIVED map, updated on every edit */
+  function dCell(key){
+    var m = DERIVED[key] || { txt:'', cls:'' };
+    return '<td class="fsc-calc'+(m.cls?' '+m.cls:'')+'" data-d="'+esc(key)+'">'+esc(m.txt)+'</td>';
+  }
+
+  /* ======================= CALCULATION LAYER =======================
+     Recomputes every derived cell from (sheet value ⊕ user override).
+     Same math as the backend / Excel:
+       Per Tonne = FSC ÷ Tonnes · YOY = 2026 $/t − 2025 $/t
+       Totals sum the raw components, then re-derive the ratios.        */
+  function sk(p,mk){  return 'SUM|'+p+'|'+mk+'|'; }
+  function bk(mk,mo){ return 'BM|'+mk+'|'+mo+'|'; }
+
+  /* The exec compute + markup live in AmrFuelExec (§E), shared with the RMX
+     Fuel page and the Deck Builder. This page keeps the function names, the
+     signatures and all of its own state; only the body moved.
+     fscCtx() hands the module this page's live state — the user's typed
+     overrides, which markets are unticked, and the DERIVED map to fill. */
+  function fscCtx(){
+    return { numOv:NUM_OV, txtOv:TXT_OV, hidden:STATE.hidden, derived:DERIVED };
+  }
+  function computeExec(period, basis){
+    AmrFuelExec.computeExec(DATA, period, basis, fscCtx(), DERIVED);
+  }
+
+  function computeSummary(period){
+    var base = (DATA.summary && DATA.summary[period]) || [];
+    var T = { tvol:0, tfsc:0, avol:0, ans:0, wv:0, wn:0, av25:0, f25c:0 };
+    base.forEach(function(r){
+      if(r.isTotal) return;
+      var P = sk(period, r.market);
+      // raw components the % / total maths need. Newer backends send them;
+      // older ones fall back to re-deriving what they can from the ratios.
+      var wV   = (r.wVol   != null) ? r.wVol   : (r.pctVolApplied ? r.appliedVol/r.pctVolApplied : 0);
+      var wN   = (r.wNS    != null) ? r.wNS    : (r.pctNSApplied  ? r.appliedNS /r.pctNSApplied  : 0);
+      var av25 = (r.av25   != null) ? r.av25   : 0;
+      var f25c = (r.fsc25c != null) ? r.fsc25c : (Number(r.fscT2025)||0) * av25;
+
+      var tvol = effN(P+'tvol', r.totalVol),   tfsc = effN(P+'tfsc', r.totalFSC);
+      var avol = effN(P+'avol', r.appliedVol), ans  = effN(P+'ans',  r.appliedNS);
+      var f25  = effN(P+'f25',  r.fscT2025);   // 2025 rate is an input (its parts aren't shown)
+      var pvol = wV ? avol/wV : 0, pns = wN ? ans/wN : 0;
+      var f26  = avol ? tfsc/avol : 0;
+      DERIVED[P+'pvol'] = { txt:fPct(pvol) };
+      DERIVED[P+'pns']  = { txt:fPct(pns) };
+      DERIVED[P+'f26']  = { txt:fRate(f26),     cls:sgn(f26) };
+      DERIVED[P+'yoy']  = { txt:fYoy(f26-f25),  cls:sgn(f26-f25) };
+
+      T.tvol+=tvol; T.tfsc+=tfsc; T.avol+=avol; T.ans+=ans; T.wv+=wV; T.wn+=wN;
+      T.av25+=av25;
+      // if the user overrode a market's 2025 rate, its Total contribution becomes rate × 2025 applied vol
+      T.f25c += (P+'f25' in NUM_OV) ? f25*av25 : f25c;
+    });
+    var G = sk(period, '__total');
+    var tf26 = T.avol ? T.tfsc/T.avol : 0;
+    var tf25 = T.av25 ? T.f25c/T.av25 : 0;
+    DERIVED[G+'tvol'] = { txt:fInt(T.tvol) };   DERIVED[G+'tfsc'] = { txt:fMoney(T.tfsc) };
+    DERIVED[G+'avol'] = { txt:fInt(T.avol) };   DERIVED[G+'ans']  = { txt:fMoney(T.ans) };
+    DERIVED[G+'pvol'] = { txt:fPct(T.wv ? T.avol/T.wv : 0) };
+    DERIVED[G+'pns']  = { txt:fPct(T.wn ? T.ans /T.wn : 0) };
+    DERIVED[G+'f26']  = { txt:fRate(tf26),      cls:sgn(tf26) };
+    DERIVED[G+'f25']  = { txt:fRate(tf25),      cls:sgn(tf25) };
+    DERIVED[G+'yoy']  = { txt:fYoy(tf26-tf25),  cls:sgn(tf26-tf25) };
+  }
+
+  function computeByMonth(mk){
+    var bm = DATA.byMonth && DATA.byMonth[mk]; if(!bm) return;
+    var T = { f25:0, v25:0, f26:0, v26:0 };
+    bm.rows.forEach(function(r){
+      var P = bk(mk, r.month);
+      var f25 = effN(P+'d25', r.fsc25), v25 = effN(P+'v25', r.vol25);
+      var f26 = effN(P+'d26', r.fsc26), v26 = effN(P+'v26', r.vol26);
+      var t25 = v25 ? f25/v25 : 0, t26 = v26 ? f26/v26 : 0;
+      DERIVED[P+'t25'] = { txt:fRate(t25), cls:sgn(t25) };
+      DERIVED[P+'t26'] = { txt:fRate(t26), cls:sgn(t26) };
+      DERIVED[P+'yoy'] = { txt:fYoy(t26-t25), cls:sgn(t26-t25) };
+      T.f25+=f25; T.v25+=v25; T.f26+=f26; T.v26+=v26;
+    });
+    var G = bk(mk, '__avg');
+    var a25 = T.v25 ? T.f25/T.v25 : 0, a26 = T.v26 ? T.f26/T.v26 : 0;
+    DERIVED[G+'t25'] = { txt:fRate(a25), cls:sgn(a25) };
+    DERIVED[G+'d25'] = { txt:fMoney(T.f25) };  DERIVED[G+'v25'] = { txt:fInt(T.v25) };
+    DERIVED[G+'t26'] = { txt:fRate(a26), cls:sgn(a26) };
+    DERIVED[G+'d26'] = { txt:fMoney(T.f26) };  DERIVED[G+'v26'] = { txt:fInt(T.v26) };
+    DERIVED[G+'yoy'] = { txt:fYoy(a26-a25), cls:sgn(a26-a25) };
+  }
+  /* one pass computes everything, for every view — the datasets are tiny */
+  function computeAll(){
+    DERIVED = {};
+    if(!DATA) return;
+    ['MTD','YTD'].forEach(function(p){
+      computeExec(p,'all'); computeExec(p,'applied'); computeSummary(p);
+    });
+    (DATA.markets||[]).forEach(computeByMonth);
+  }
+
+  /* ======================= table builders ======================= */
+  function buildSummaryTable(period){
+    var rows = (DATA.summary && DATA.summary[period]) || [];
+    var head = '<thead><tr>'
+      +'<th>Market</th><th>Total Vol (t)</th><th>Total FSC ($)</th><th>Applied Vol (t)</th>'
+      +'<th>% Vol</th><th>Applied Net Sales ($)</th><th>% NS</th>'
+      +'<th>FSC/T 2026</th><th>FSC/T 2025</th><th>YOY $/t</th></tr></thead>';
+    var body = '';
+    rows.forEach(function(r){
+      if(r.isTotal) return;                       // TOTAL is rebuilt from the components below
+      if(STATE.hidden[r.market]) return;
+      var P = sk(period, r.market);
+      body += '<tr>'
+        + lbCell(P+'mkt', r.market)
+        + inCell(P+'tvol', r.totalVol,   'i')
+        + inCell(P+'tfsc', r.totalFSC,   'm')
+        + inCell(P+'avol', r.appliedVol, 'i')
+        + dCell(P+'pvol')
+        + inCell(P+'ans',  r.appliedNS,  'm')
+        + dCell(P+'pns')
+        + dCell(P+'f26')
+        + inCell(P+'f25',  r.fscT2025,   'r')
+        + dCell(P+'yoy')
+        + '</tr>';
+    });
+    var G = sk(period, '__total');
+    body += '<tr class="totrow"><td class="lft fsc-calc">TOTAL</td>'
+      + dCell(G+'tvol') + dCell(G+'tfsc') + dCell(G+'avol') + dCell(G+'pvol')
+      + dCell(G+'ans')  + dCell(G+'pns')  + dCell(G+'f26')  + dCell(G+'f25') + dCell(G+'yoy')
+      + '</tr>';
+    return '<table class="fsc-t">'+head+'<tbody>'+body+'</tbody></table>';
+  }
+
+  function buildByMonthTable(mk){
+    var bm = DATA.byMonth && DATA.byMonth[mk];
+    if(!bm) return '<div class="empty">No data for '+esc(mk)+'.</div>';
+    var head = '<thead>'
+      +'<tr><th rowspan="2">Month</th><th colspan="3">2025</th><th colspan="3">2026</th><th rowspan="2">YOY</th></tr>'
+      +'<tr><th>FSC/T</th><th>FSC $</th><th>Volume</th><th>FSC/T</th><th>FSC $</th><th>Volume</th></tr></thead>';
+    var body = '';
+    bm.rows.forEach(function(r){
+      var P = bk(mk, r.month);
+      body += '<tr>'
+        + lbCell(P+'m', r.month)
+        + dCell(P+'t25') + inCell(P+'d25', r.fsc25, 'm') + inCell(P+'v25', r.vol25, 'i')
+        + dCell(P+'t26') + inCell(P+'d26', r.fsc26, 'm') + inCell(P+'v26', r.vol26, 'i')
+        + dCell(P+'yoy')
+        + '</tr>';
+    });
+    var G = bk(mk, '__avg');
+    body += '<tr class="totrow"><td class="lft fsc-calc">YTD Avg</td>'
+      + dCell(G+'t25') + dCell(G+'d25') + dCell(G+'v25')
+      + dCell(G+'t26') + dCell(G+'d26') + dCell(G+'v26') + dCell(G+'yoy')
+      + '</tr>';
+    return '<table class="fsc-t">'+head+'<tbody>'+body+'</tbody></table>';
+  }
+
+  /* Executive view: one of the four Excel-replica tables. Both delegate to
+     AmrFuelExec — the page and the deck render the exec tables from one copy
+     of the code, so they can never drift apart. */
+  function buildExecTables(period){
+    return AmrFuelExec.execTables(DATA, period, fscCtx(), 'agg');
+  }
+
+  /* Which exec period a view means. '' for the non-exec views. */
+  function execPeriodOf(view){
+    if(view==='EXEC_MTD') return 'MTD';
+    if(view==='EXEC_YTD') return 'YTD';
+    return '';
+  }
+  function isExecView(view){ return view==='EXEC' || view==='EXEC_MTD' || view==='EXEC_YTD'; }
+
+  /* the HTML for the current view (shared by the Tables section + the slide) */
+  function currentViewHTML(){
+    if(!DATA) return '<div class="empty">Loading…</div>';
+    computeAll();
+    if(STATE.view==='BYMONTH') return buildByMonthTable(STATE.byMonthMarket);
+    if(isExecView(STATE.view))  return buildExecTables(execPeriodOf(STATE.view));
+    return buildSummaryTable(STATE.view);
+  }
+
+  /* the content that goes on the slide — same tables, but read-only so the
+     preview / PNG never shows edit highlights */
+  function buildContent(){
+    var wrap = document.createElement('div'); wrap.className='fsc-wrap';
+    wrap.innerHTML = currentViewHTML();
+    wrap.querySelectorAll('[contenteditable]').forEach(function(el){ el.removeAttribute('contenteditable'); });
+    return wrap;
+  }
+
+  function fscFit(box){ return AmrFuelExec.fitSlide(box); }
+
+  function slideOpts(){
+    return { title:STATE.title, subtitle:STATE.sub, logo:STATE.logo, logoSVG:STATE.logoSVG,
+             margins:AmrSlide.margins(), fit:fscFit };
+  }
+
+  /* ======================= rendering ======================= */
+  /* Saskatchewan's recovery comes from the per-customer mid-year increase
+     sheet, not from a fuel surcharge. Anything in that sheet that matched no
+     customer in the data is worth seeing rather than silently dropping, since
+     its recovery is missing from these numbers. */
+  function saskNoticeHtml(sk){
+    if(!sk || !sk.configured) return '';
+    var parts=[];
+    if(sk.error) parts.push(esc(sk.error));
+    if(sk.unmatched && sk.unmatched.length){
+      parts.push('<b>'+sk.unmatched.length+'</b> customer'+(sk.unmatched.length>1?'s':'')
+        +' in the increase sheet matched nothing in the data, so their recovery is not counted: '
+        +sk.unmatched.map(esc).join(' · ')+'.');
+    }
+    if(sk.duplicates && sk.duplicates.length){
+      parts.push('Listed more than once (the first rate was used): '+sk.duplicates.map(esc).join(' · ')+'.');
+    }
+    if(!parts.length) return '';
+    return '<div class="notice bad"><b class="notice-ttl">Saskatchewan increase</b><br>'+parts.join(' ')+'</div>';
+  }
+
+  function renderTables(){
+    var host = document.getElementById('tablesHost'); if(!host) return;
+    if(!DATA) return;
+    host.innerHTML = saskNoticeHtml(DATA.sask)
+      + '<div class="card" style="padding:14px">'+currentViewHTML()+'</div>';
+  }
+
+  function renderPreview(){
+    if(!DATA) return;
+    AmrSlide.previewInto(document.getElementById('previewHost'), buildContent(), slideOpts());
+  }
+
+  /* Edits re-render only the preview (debounced) so the caret in the tables
+     section is never disturbed. */
+  var pvTimer = null;
+  function schedulePreview(){ clearTimeout(pvTimer); pvTimer = setTimeout(renderPreview, 250); }
+
+  function renderAll(){ renderTables(); renderPreview(); }
+
+  /* After an edit: recompute and rewrite ONLY the calculated cells in place.
+     The cell being typed in is never touched, so the caret stays put. */
+  function patchDerived(){
+    computeAll();
+    var host = document.getElementById('tablesHost'); if(!host) return;
+    host.querySelectorAll('[data-d]').forEach(function(td){
+      var m = DERIVED[td.getAttribute('data-d')]; if(!m) return;
+      td.textContent = m.txt;
+      td.classList.remove('pos','neg');
+      if(m.cls) td.classList.add(m.cls);
+    });
+  }
+
+  function exportPNG(){
+    var o = slideOpts(); o.button='exportBtn';
+    o.filename = 'amrize_fsc_'+STATE.view+(STATE.view==='BYMONTH'?'_'+STATE.byMonthMarket:'');
+    AMR.log('info', 'FSC.exportPNG', 'capturing', { view: STATE.view });
+    AmrSlide.exportSlide(buildContent(), o);
+  }
+
+  /* Same slide, shown full screen instead of downloaded. */
+  function viewFullScreen(){ AmrSlide.viewSlide(buildContent(), slideOpts()); }
+
+  /* ======================= data loading ======================= */
+  function loadData(){
+    var st  = document.getElementById('loadStat');
+    var btn = document.getElementById('reloadBtn');
+
+    if(!AMR.live){
+      showProblem('This page can’t reach the server. Please open it from the app link '
+        +'(the address ending in /exec?page=fuelsurcharge) and refresh.');
+      return;
+    }
+
+    /* Any explicit (re)load re-derives the presets from the new data, so the title
+       picks up the new latest month without needing a browser refresh. */
+    STATE.titleDirty = false;
+    if(st){ st.className='dzstat'; st.textContent='Loading data from the Google Sheet…'; }
+    if(btn) btn.disabled = true;
+    /* The header's ↻ Update from source used to give no sign at all that it had
+       done anything — no spinner, no overlay, just a status line buried in the
+       left rail. It now spins and drives the same screen as every other page. */
+    var sync = document.getElementById('syncBtn');
+    if(sync) sync.classList.add('busy');
+    /* ONE screen for the whole opening: AmrBoot holds it until every step it was
+       told to wait for has landed. After boot this is an ordinary AmrProgress job,
+       and AmrProgress waits out a grace period before painting — so the button
+       re-reading a sheet in under half a second shows nothing at all. */
+    if(!AmrBoot.finished()) AmrBoot.need('data');
+    else AmrProgress.set('sheet', { text:'Pulling from Google Sheets…', order:5 });
+    function loadDone(ok){
+      if(sync) sync.classList.remove('busy');
+      if(!AmrBoot.finished()){
+        if(ok) AmrBoot.done('data'); else AmrBoot.fail('Could not read the sheet');
+        return;
+      }
+      if(ok) AmrProgress.clear('sheet');            // no tick: a flash is the flicker
+      else   AmrProgress.fail('sheet', 'Could not read the sheet');
+    }
+
+    var t0 = Date.now();
+    AMR.log('info', 'FSC.getFscData', 'reading', { month: STATE.month });
+    google.script.run
+      .withSuccessHandler(function(data){
+        if(btn) btn.disabled = false;
+        if(!data || !data.markets){
+          loadDone(false);
+          showProblem('The server replied but sent no data. Click Reload from sheet to try again.');
+          return;
+        }
+        loadDone(true);
+        DATA = data;
+        AMR.log('info', 'FSC.getFscData', 'ok', { ms: Date.now() - t0,
+                markets: DATA.markets.length, latest: DATA.latestMonth || '?' });
+        buildMonthPicker();
+        buildMarketControls();
+        autoTitle();
+        if(st){ st.className='dzstat ok';
+          st.textContent='✓ Loaded · '+DATA.markets.length+' markets · through '+(DATA.latestMonth||'?')+' 2026'; }
+        renderAll();
+      })
+      .withFailureHandler(function(err){
+        if(btn) btn.disabled = false;
+        loadDone(false);
+        AMR.log('error', 'FSC.getFscData', 'failed', { ms: Date.now() - t0,
+                month: STATE.month, error: String(err && err.message || err) });
+        var msg = (err && err.message) ? err.message : 'Something went wrong loading the data.';
+        showProblem(msg + ' — If the sheet looks right, try Reload from sheet. '
+          + 'To point at a different sheet, use ⚙ Data sheet at the top.');
+      })
+      .getFscData({ month: STATE.month });
+  }
+
+  /* Fill the Report-month picker from the months the sheet actually holds.
+     Only current-year months with volume are offered - the export carries every
+     month of the year, and the ones past the reporting point hold last year's
+     figures against nothing, so picking one would only ever read -100%. The
+     first option is last calendar month and moves on its own as months turn.
+     Same picker, same wording, as the RMX Fuel Recovery page. */
+  function buildMonthPicker(){
+    var sel = document.getElementById('fscMonthSel'); if (!sel) return;
+    var names = (DATA && DATA.monthNames) || [];
+    var list  = (DATA && DATA.months) || [];
+    var def   = (DATA && DATA.defaultMonth) || 0;
+
+    var defTxt = (def && names[def-1]) ? ' (' + names[def-1] + ')' : '';
+    var html = ['<option value="0"' + (STATE.month ? '' : ' selected') + '>Last closed month'
+                + defTxt + '</option>'];
+    list.forEach(function(m){
+      var nm = names[m-1] || ('Month ' + m);
+      html.push('<option value="' + m + '"' + (STATE.month === m ? ' selected' : '') + '>'
+                + nm + '</option>');
+    });
+    sel.innerHTML = html.join('');
+
+    if (!sel.getAttribute('data-wired')){
+      sel.setAttribute('data-wired', '1');
+      sel.addEventListener('change', function(){
+        STATE.month = parseInt(this.value, 10) || 0;
+        /* Typed-in edits belong to the month they were made on - carrying a
+           July override onto May's numbers would be silently wrong. */
+        NUM_OV = {}; TXT_OV = {}; DERIVED = {};
+        loadData();
+      });
+    }
+  }
+
+  /* ======================= UI wiring ======================= */
+  function buildMarketControls(){
+    var markets = (DATA && DATA.markets) || [];
+
+    var list=document.getElementById('mktList');
+    list.innerHTML = markets.map(function(m){
+      return '<label class="mkt-row"><input type="checkbox" data-mkt="'+esc(m)+'"'+(STATE.hidden[m]?'':' checked')+'>'+esc(m)+'</label>';
+    }).join('') || '<span class="hint">No markets found in the Data tab.</span>';
+    list.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+      cb.addEventListener('change', function(){ STATE.hidden[this.dataset.mkt] = !this.checked; renderAll(); });
+    });
+
+    var sel=document.getElementById('bmMarket');
+    sel.innerHTML = markets.map(function(m){ return '<option value="'+esc(m)+'">'+esc(m)+'</option>'; }).join('');
+    if(!STATE.byMonthMarket || markets.indexOf(STATE.byMonthMarket)<0){
+      STATE.byMonthMarket = (markets.indexOf('Manitoba')>=0) ? 'Manitoba' : (markets[0]||'');
+    }
+    sel.value = STATE.byMonthMarket;
+  }
+
+  function autoTitle(){
+    /* The preset follows the latest month present in the sheet (DATA.latestMonth,
+       the newest 2026 month with volume). Once the user types their own title we
+       stop overwriting it — clearing the box brings the automatic one back. */
+    if(STATE.titleDirty) return;
+    var lm = DATA ? DATA.latestMonth : '';
+    if(STATE.view==='EXEC')         STATE.title = lm+' 2026 — Fuel Recovery Analysis';
+    else if(STATE.view==='EXEC_MTD') STATE.title = 'AGG - Fuel Recovery MTD ('+lm+' 2026)';
+    else if(STATE.view==='EXEC_YTD') STATE.title = 'AGG - Fuel Recovery YTD (through '+lm+' 2026)';
+    else if(STATE.view==='MTD') STATE.title = 'Fuel Recovery — MTD ('+lm+' 2026)';
+    else if(STATE.view==='YTD') STATE.title = 'Fuel Recovery — YTD (through '+lm+' 2026)';
+    else                        STATE.title = STATE.byMonthMarket+' — Fuel Recovery by Month (2025 vs 2026)';
+    var ti=document.getElementById('titleIn'); if(ti) ti.value=STATE.title;
+  }
+
+  function applyView(v){
+    STATE.view = v;
+    [].forEach.call(root.querySelectorAll('#viewSeg button'), function(b){
+      b.setAttribute('aria-pressed', b.dataset.v===v);
+    });
+    document.getElementById('bymonthField').style.display = (v==='BYMONTH') ? '' : 'none';
+    document.getElementById('marketsField').style.display = (v==='BYMONTH') ? 'none' : '';
+    autoTitle();
+    renderAll();
+  }
+
+  function fetchAmrizeLogo(){
+    if(!AMR.live) return;
+    google.script.run.withSuccessHandler(function(uri){
+      if(STATE.logo || STATE.logoSVG) return;
+      if(uri){ STATE.logo=uri; document.getElementById('logoName').textContent='Amrize logo loaded.'; renderPreview(); }
+    }).withFailureHandler(function(){}).getLogo();
+  }
+
+  /* ---------- run on uploaded QlikView files (session only) ---------- */
+  var MON3=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function sane(rows){                 // google.script.run can't carry Date objects
+    for (var r=0;r<rows.length;r++) for (var c=0;c<rows[r].length;c++){
+      var v=rows[r][c];
+      if (v instanceof Date) rows[r][c]=MON3[v.getMonth()]+'-'+String(v.getFullYear()).slice(2);
+    }
+    return rows;
+  }
+  function readWb(file){
+    return new Promise(function(res, rej){
+      var rd=new FileReader();
+      rd.onload=function(e){ try{
+        var wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
+        res(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:''}));
+      }catch(err){ rej(err); } };
+      rd.onerror=function(){ rej(new Error('Could not read '+file.name)); };
+      rd.readAsArrayBuffer(file);
+    });
+  }
+  function stat(msg, cls){
+    var st=document.getElementById('loadStat');
+    if(st){ st.className='dzstat'+(cls?' '+cls:''); st.textContent=msg; }
+  }
+  function upOff(){
+    document.getElementById('upStatus').style.display='none';
+    document.getElementById('upGo').style.display='';
+    ['upComb','upOther'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+  }
+  function runUpload(){
+    var go = document.getElementById('upGo');
+    var fC=document.getElementById('upComb').files[0],
+        fO=document.getElementById('upOther').files[0];
+    if(!fC||!fO){ stat('Both exports are needed (Combined CPI and Other Revenue).','err'); return; }
+    if(!AMR.live){ stat('Uploads only work in the live web app.','err'); return; }
+    go.disabled=true; stat('Reading Excel files…');
+    var t0 = Date.now();
+    Promise.all([readWb(fC),readWb(fO)]).then(function(v){
+      stat('Computing…');
+      AMR.log('info', 'FSC.getFscDataFromUpload', 'sending', { month: STATE.month,
+              combinedRows: v[0].length, otherRows: v[1].length });
+      google.script.run.withSuccessHandler(function(data){
+        go.disabled=false;
+        if(!data || !data.markets){ stat('The server replied but sent no data.','err'); return; }
+        DATA=data;
+        AMR.log('info', 'FSC.getFscDataFromUpload', 'ok', { ms: Date.now() - t0,
+                markets: data.markets.length });
+        buildMarketControls(); autoTitle(); renderAll();
+        stat('✓ Using the uploaded files · '+data.markets.length+' markets · through '+(data.latestMonth||'?'),'ok');
+        document.getElementById('upStatus').style.display='block'; go.style.display='none';
+      }).withFailureHandler(function(e){
+        go.disabled=false;
+        AMR.log('error', 'FSC.getFscDataFromUpload', 'failed', { ms: Date.now() - t0, error: String(e) });
+        stat((e&&e.message)||String(e),'err');
+      }).getFscDataFromUpload({ combined:sane(v[0]), other:sane(v[1]), month:STATE.month });
+    }).catch(function(e){
+      go.disabled=false;
+      AMR.log('error', 'FSC.readWb', 'could not read the workbook', { error: String(e) });
+      stat('Could not read the Excel file: '+(e&&e.message||e),'err');
+    });
+  }
+
+  /* ======================= start ======================= */
+  /* Everything below is setup. If any single piece fails, we still load the
+     data — a broken slider should never leave the page stuck on "Loading…" */
+  try {
+    AmrHint.register('fsc_data',
+      '<h3>Source tab — <code>Data</code></h3>'
+      +'<p>One row per market / customer / material / month. The report is computed from this tab; '
+      +'header names matter, column order can vary.</p>'
+      +'<div class="amr-scroll"><table><tr>'
+      +'<th>Market</th><th>Sold To</th><th>Plant</th><th>CustParent (SAP)</th><th>Material Type</th><th>Material</th>'
+      +'<th>Year</th><th>Month</th><th>Total Volume</th><th>Total Actual Net Sales</th><th>Fuel Surcharge</th><th>FSC Flag</th></tr>'
+      +'<tr><td>Manitoba</td><td>ACME - 123</td><td>P100</td><td>ACME</td><td>ZAGR</td><td>9061 - …</td>'
+      +'<td>2026</td><td>May</td><td>20,144</td><td>1,287,666</td><td>11,448</td><td>Yes</td></tr></table></div>'
+      +'<p><b>FSC Flag = Yes</b> marks "applied" tonnes. Applied Volume, FSC/T and the % columns all use the '
+      +'flagged rows; markets with no flagged rows show 0 (type over the tonnes / FSC $ cells if a charge has started '
+      +'— the per-tonne, YOY and total rows recalculate on their own).</p>');
+
+    /* The header's Home / Help / Data sheet buttons were inline on*= handlers;
+       one delegated listener on the mounted page replaces all three. */
+    root.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!b) return;
+      switch (b.getAttribute('data-act')){
+        case 'home':     AMR.nav.home();      break;
+        case 'help':     AMR.openHelp();      break;
+        case 'settings': AMR.openSettings();  break;
+      }
+    });
+
+    document.getElementById('viewSeg').addEventListener('click', function(e){
+      var b=e.target.closest('button'); if(!b) return; applyView(b.dataset.v);
+    });
+    document.getElementById('bmMarket').addEventListener('change', function(){
+      STATE.byMonthMarket=this.value; autoTitle(); renderAll();
+    });
+
+    document.getElementById('titleIn').addEventListener('input', function(){
+      STATE.title=this.value;
+      STATE.titleDirty = (this.value.trim()!=='');   // empty box → back to the automatic title
+      if(!STATE.titleDirty) autoTitle();
+      schedulePreview();
+    });
+    document.getElementById('subIn').addEventListener('input',  function(){ STATE.sub=this.value;  schedulePreview(); });
+    STATE.sub=document.getElementById('subIn').value;
+
+    // comment-band sliders (shared engine) — bands only affect the slide
+    AmrSlide.mountControls('fscWs', { left:140, right:140, top:40, bottom:40, maxLR:650, maxTB:320,
+      onChange:function(){ renderPreview(); } });
+
+    // capture edits from the Tables section:
+    //  · label cells  → text override only
+    //  · number cells → parse the number, recompute every calculated cell in place
+    document.getElementById('tablesHost').addEventListener('input', function(e){
+      var td = e.target.closest && e.target.closest('.fsc-in'); if(!td) return;
+      var k = td.getAttribute('data-k');
+      if(td.hasAttribute('data-t')){ TXT_OV[k] = td.textContent; schedulePreview(); return; }
+      var n = parseNum(td.textContent);
+      if(isFinite(n)) NUM_OV[k] = n;
+      else delete NUM_OV[k];            // emptied / not a number → back to the sheet's value
+      patchDerived();
+      schedulePreview();
+    });
+
+    // when the user clicks away from a number cell, tidy it back into the
+    // standard format (and restore the sheet's value if they left it blank)
+    document.getElementById('tablesHost').addEventListener('focusout', function(e){
+      var td = e.target.closest && e.target.closest('.fsc-in');
+      if(!td || td.hasAttribute('data-t')) return;
+      var k = td.getAttribute('data-k'), f = td.getAttribute('data-f');
+      var v = effN(k, parseFloat(td.getAttribute('data-b'))||0);
+      td.textContent = FMT[f] ? FMT[f](v) : String(v);
+      td.classList.remove('pos','neg');
+      if(f==='r' && sgn(v)) td.classList.add(sgn(v));
+    });
+
+    document.getElementById('clearEditsBtn').addEventListener('click', function(){
+      if(!Object.keys(NUM_OV).length && !Object.keys(TXT_OV).length) return;
+      NUM_OV={}; TXT_OV={}; renderAll();
+    });
+
+    // logo upload / clear
+    var lf=document.getElementById('logoFile');
+    document.getElementById('logoBtn').addEventListener('click', function(){ lf.click(); });
+    lf.addEventListener('change', function(){
+      var f=this.files&&this.files[0]; if(!f) return;
+      var rd=new FileReader();
+      rd.onload=function(){ STATE.logo=rd.result; STATE.logoSVG='';
+        document.getElementById('logoName').textContent=f.name; renderPreview(); };
+      rd.readAsDataURL(f);
+    });
+    document.getElementById('logoClear').addEventListener('click', function(){
+      STATE.logo=''; STATE.logoSVG=''; lf.value='';
+      document.getElementById('logoName').textContent='No logo — top-right corner stays blank.'; renderPreview();
+    });
+    fetchAmrizeLogo();
+
+    document.getElementById('exportBtn').addEventListener('click', exportPNG);
+    document.getElementById('viewBtn').addEventListener('click', viewFullScreen);
+
+    /* Reload from sheet also leaves upload mode. */
+    document.getElementById('reloadBtn').addEventListener('click', function(){ upOff(); loadData(); });
+
+    /* Header ↻ Update from source: same as the rail's Reload from sheet —
+       drop out of upload mode and re-read the Google Sheet. */
+    document.getElementById('syncBtn').addEventListener('click', function(){
+      upOff();
+      /* Ask first: an untouched sheet means there is nothing to re-read. */
+      AmrFresh.ifChanged(function(changed){ if(changed) loadData(); });
+    });
+
+    document.getElementById('upGo').addEventListener('click', runUpload);
+    document.getElementById('upReset').addEventListener('click', function(){ upOff(); loadData(); });
+
+    /* The ⚙ Data sheet modal calls this after it is pointed somewhere new.
+       Without it the page kept showing the old sheet's numbers until a manual
+       reload (PV, RMX and Segment implement the same hook). */
+    window.amrReloadData = function(){ try{ upOff(); }catch(e){} loadData(); };
+
+    window.addEventListener('resize', function(){ schedulePreview(); });
+
+    /* The QlikView guide — one component now, where there were seven copies.
+       The upload panel is this page's own markup, so it rides in from the
+       template rather than being built by the guide. */
+    AmrQlikGuide.mount({
+      title: 'Download from QlikView',
+      fabLabel: '&#128229; QlikView Guide',
+      extra: document.getElementById('fscGuideExtra'),
+      steps: [
+        { text: 'Step 1 — Select the displayed fields and selections in QlikView and export to Excel (Combined CPI export: Plant, Year, Month, "#### Volume", CY/PY Rev exWorks, New Fuel Surcharge).',
+          img: 'https://drive.google.com/file/d/14XZB09ERtQ9YWOHY-egjjlQjcRoNQN4u/view' },
+        { text: 'Step 2 — Export the Other Revenue view as well (LOOKUP KEY, Sold To, Plant, Year, Month, Other Revenue). This is what the surcharge is actually built from: its total per LOOKUP KEY is spread across that key’s Combined rows by volume. Without it the surcharge falls back to the Combined file’s own partial column.',
+          img: 'https://drive.google.com/file/d/1wCtUKnUlKwQsdJYDpBvWYyLOLoDqYOBw/view' }
+      ]
+    });
+  } catch (err) {
+    AMR.log('error', 'FSC.boot', 'setup threw', { error: String(err) });
+    showProblem('Part of the page didn’t start correctly ('+err.message+'). '
+      +'The data will still try to load — refresh the page if anything looks off.');
+  }
+
+  loadData();
+  }
+});
+</script>
 
 <!-- ===================== §P inventoryreport ===================== -->
 <template id="tpl-inventoryreport">
