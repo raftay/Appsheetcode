@@ -581,11 +581,17 @@ not prove it** — read the next box before deleting anything.
 - **Six of the seven QlikView guide copies** *(chunk 2)*. ~720 lines.
 - **The six debug functions** *(chunk 12)* — see [§7](#7-logging-and-the-debug-functions-it-replaces).
 
-### The QlikView sync: what is actually removable
+### The QlikView sync is trigger-only, and stays that way
 
-There is **no ⇣ Pull from QlikView button** in the client and there never was one — older
-docs described an `AmrQlik` object that does not exist. So there is nothing to remove on the
-page side. On the server side, of `QlikSync.gs`'s four entry points:
+**Decision, not an accident: the sync runs on its time-driven trigger and has no UI. Do not
+build one during the merge.** There is no ⇣ Pull from QlikView button and there never was —
+older docs described an `AmrQlik` object that does not exist. A page that could trigger a
+sync is a feature request, not a gap the merge is meant to close, and it would put a
+minutes-long Drive job behind a button any user could press twice.
+
+So there is nothing to remove on the page side, and nothing to add. On the server side, of
+`QlikSync.gs`'s four entry points — all of them reached from the trigger or the editor, never
+from a page:
 
 | | |
 |---|---|

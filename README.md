@@ -269,8 +269,9 @@ same stamp instead of their old `pv_cache_gen` / `cache_gen` counters.
 
 ### Syncing: one trigger, and nothing else
 
-There is no ⇣ pull button. Set **one** time-driven trigger on `qlikSyncCheck`, at whatever
-interval suits — 15 minutes costs three Drive lookups when nothing has changed.
+**The sync is trigger-only by design and has no UI.** There is no pull button, and one is not
+wanted — a sync is a minutes-long Drive job, not something to put behind a control a user can
+press twice. Set **one** time-driven trigger on `qlikSyncCheck`, at whatever interval suits — 15 minutes costs three Drive lookups when nothing has changed.
 
 The three exports are named by **file id** in `APP_CONFIG.QLIK_SYNC`, one per page:
 
