@@ -36,6 +36,7 @@
 ## Contents
 
 1. [The goal, and why](#1-the-goal-and-why)
+1a. [Chunk 1 results — the three audits](#1a-chunk-1-results--the-three-audits)
 2. [The thing that would have broken it](#2-the-thing-that-would-have-broken-it)
 3. [How the pages live inside one HTML file](#3-how-the-pages-live-inside-one-html-file)
 4. [The shape of `app.html`](#4-the-shape-of-apphtml)
@@ -78,6 +79,57 @@ Secondary goals, explicitly in scope:
   navigate a 20,000-line file.
 - **A permissions self-check** — a function that proves every OAuth scope the app needs has
   been granted, and names the one that has not ([§6](#6-the-permissions-self-check)).
+
+---
+
+## 1a. Chunk 1 results — the three audits
+
+Run 2026-08-17 with a scope-aware analyser (comments and string/template literals blanked
+before counting braces, so a `{` inside a string cannot fake a nesting level). **127 top-level
+functions across the 16 `.gs` files.**
+
+### Audit 1 — top-level collisions: **none**
+
+Zero. Not one name is declared twice at genuine top level across all sixteen files. The 21
+"collisions" a plain grep reports are all IIFE-internal — `PV`'s `getReport` and `RMX`'s
+`getReport` are private to their own namespaces and never shared a scope.
+
+**What this means for chunk 12:** the `.gs` merge really is ordered concatenation. No renaming,
+no reconciliation, no shadowing to unpick. The `APP_CONFIG`-first rule still applies as
+cheap insurance, but nothing currently depends on it.
+
+### Audit 2 — top-level functions with no reference anywhere: **7 of 127**
+
+Each one run through [§11](#11-legacy-hit-list)'s proof rule rather than deleted on the count:
+
+| Function | Verdict |
+|---|---|
+| `doGet` (`Code.gs:39`) | **Keep** — Apps Script itself is the caller |
+| `clearRetiredOverrides` (`Config.gs:545`) | **Keep** — its own comment says "run from the Apps Script editor", and it is idempotent. Editor tool, not dead code |
+| `DECK_status` (`Deck_Backend.gs:700`) | **Keep for now** — one of the six documented `DECK_*` wrappers. The deck has never been run end to end, so a real build in chunk 10 is what proves whether the Publish stage needs it. Do not delete before that |
+| `DECK_smokeTest` (`Deck_Backend.gs:718`) | **Delete** in chunk 12 — already on the debug list |
+| `CUBE_historyStatus` (`Ov_Backend.gs:1430`) | **Candidate** — history-cube status readout, no caller, no comment claiming editor use. Decide in chunk 12 with the diagnostics |
+| `getSaskRatesStatus` (`Sask_Backend.gs:241`) | **Candidate, and a finding.** Its comment says it exists "so the Settings screen can check the sheet without loading a whole page" — but no `.html` calls it. Either the Settings screen lost that feature or it was never wired. Decide whether to wire it or drop it; do not silently delete a documented integration |
+| `syncSlideData` (`Code.gs:408`) | **Candidate** — part of the `SB` reader path already flagged for audit |
+
+Note what did *not* appear: `qlikSyncCheck`, `qlikMarkCurrent`, `qlikStamps` and `qlikSyncNow`
+all reference each other inside `QlikSync.gs`, so they never looked callerless. The proof rule
+would have caught them anyway.
+
+### Audit 3 — `#id` selectors carrying style: **132 rules, in two pages**
+
+| Rules | File |
+|---|---|
+| 70 | `Page_Rmx.html` |
+| 54 | `Page_PriceVolume.html` |
+| 6 | `Page_Segment.html` |
+| 1 each | `Page_FuelSurcharge.html`, `Page_RmxFuel.html` |
+
+**This is much better news than [§3](#3-how-the-pages-live-inside-one-html-file) assumed.**
+The id-styling problem is not spread across the suite — it is two pages, and the other twelve
+files carry eight rules between them. So the id→class conversion is essentially the whole of
+chunks 5 and 6 and almost nothing anywhere else, and chunks 2–4 can establish the component
+layer without fighting it.
 
 ---
 
@@ -459,7 +511,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | # | Chunk | What lands | Review by | |
 |---|---|---|---|---|
 | 0 | **Plan** | This file. No code. | reading it | ✅ |
-| 1 | **The audits** | No app code at all. Three lists written into this file: the scope-aware `.gs` collision list; every top-level `.gs` function with no caller, checked against [§11](#11-legacy-hit-list)'s proof rule; and the `#id`-carrying-style inventory per page, which sizes the CSS work. | the lists themselves | ☐ |
+| 1 | **The audits** | No app code. Results in [§1a](#1a-chunk-1-results--the-three-audits): **zero** top-level `.gs` collisions, 7 of 127 functions callerless (5 keep, 2 candidates + 1 finding), and 132 id-style rules concentrated in just two pages. | the lists themselves | ✅ |
 | 2 | **Skeleton + first two pages** | `app.html` with §A1 tokens, §A2 base, §D runtime, the page registry, `AmrLib`, `AMR.log`, and `AmrQlikGuide` deduped. Landing + Inventory Report ported — the two pages with no CDN libraries and no report data. One line added to `Code.gs` for the `?page=app` route. | `?page=app` matches `?page=` and `?page=inventoryreport` | ☐ |
 
 ### The pages
