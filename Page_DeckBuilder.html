@@ -69,13 +69,15 @@
 @media (max-width:1180px){ .db-row{grid-template-columns:30px 34px minmax(0,1fr) 132px 96px 176px}
   .db-row .db-layout{display:none} }
 @media (max-width:980px){ .db-row{grid-template-columns:30px 34px minmax(0,1fr) 96px}
-  .db-row .db-layout, .db-row .db-kpi, .db-row .db-kpi-none, .db-row .db-thumb{display:none} }
+  .db-row .db-layout, .db-row .db-kpi-wrap, .db-row .db-kpi-none, .db-row .db-thumb{display:none} }
 
 /* the per-row Region picker, on slides that carry a KPI strip */
 .db-kpi{width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:7px;
   background:#F4F7FC; padding:5px 7px; font:600 11px Inter; color:var(--ink); cursor:pointer}
 .db-kpi:hover{border-color:var(--blue-40)}
 .db-kpi-none{font:500 10.5px Inter; color:var(--muted); font-style:italic}
+.db-kpi-wrap{display:flex; flex-direction:column; gap:3px; min-width:0}
+.db-kpi-cap{font:700 8.5px Archivo; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
 .db-row.off{opacity:.45}
 .db-num{font:600 11px Inter; color:var(--muted); text-align:right}
 .db-ttl{font:600 12.5px Inter; color:var(--ink); overflow:hidden; text-overflow:ellipsis;
@@ -594,13 +596,24 @@ function dbRenderAll(){
   dbSourceCheck().then(dbRenderPass);
 }
 
+/* THE QUEUE IS LIVE WHILE IT RUNS.
+   It used to be a plain local array: whatever was outstanding when Render was
+   pressed, and nothing could be added to it afterwards. That is what made
+   changing a slide's Region mid-render a dead end - the slide was dropped back
+   to "pending" and then quietly never rebuilt, so the only way out was to wait
+   for the whole pass and press Render again. Keeping the queue and its cursor
+   on the page means dbPickKpi can push a row back on and have it rebuilt in
+   this pass, whether it has been photographed already or not. */
+var RQ = null;                       // { list:[rows], i:cursor } while rendering
+
 function dbRenderPass(){
   var todo = ROWS.filter(function(r){ return r.on && !r.png; });
   if(!todo.length){ prog('Nothing to render'); setBusy(false); updateStages(); return; }
 
-  var i = 0;
+  RQ = { list: todo, i: 0 };
   function next(){
-    if(i >= todo.length){
+    if(RQ.i >= RQ.list.length){
+      RQ = null;
       var ok = countReady(), failed = ROWS.filter(function(r){ return r.status==='error'; }).length;
       prog(ok + ' of ' + countOn() + ' slides ready' + (failed ? ' · ' + failed + ' failed' : ''));
       if(failed) banner('warn', failed+' slide'+(failed===1?'':'s')+' could not be rendered. '+
@@ -608,8 +621,11 @@ function dbRenderPass(){
       setBusy(false); updateStages();
       return;
     }
-    var row = todo[i++];
-    prog('Rendering ' + i + ' of ' + todo.length + ' · ' + row.spec.title);
+    var row = RQ.list[RQ.i++];
+    /* a row can be dropped from the queue after it was added - unticked, or its
+       picture rebuilt by something else */
+    if(!row.on || row.png){ dbSoon(next); return; }
+    prog('Rendering ' + RQ.i + ' of ' + RQ.list.length + ' · ' + row.spec.title);
     row.status = 'working'; row.err = ''; drawRow(row);
 
     renderOne(row)
@@ -620,10 +636,18 @@ function dbRenderPass(){
       })
       .then(function(){
         drawRow(row);
-        setTimeout(next, 0);        // yield, so the page stays alive
+        dbSoon(next);               // yield, so the page stays alive
       });
   }
   next();
+}
+/* Yield to the page between slides. AmrTick runs its timer in a worker, which a
+   background tab does not throttle - a plain setTimeout here is clamped to one
+   a second while the tab is hidden, and to one a MINUTE after five minutes of
+   it. Rendering with the tab in the background is the normal way to use this
+   page: nobody watches forty slides go by. */
+function dbSoon(fn){
+  if(window.AmrTick) AmrTick(0, fn); else setTimeout(fn, 0);
 }
 
 /* One slide: ask its source for the content block, photograph it at the size
@@ -648,6 +672,9 @@ function renderOne(row){
   /* ONE month for the whole deck. Every adapter keys its cache on it and passes
      it to its backend, so MTD and YTD on every slide are the same month. */
   row.spec.month = DECK_MONTH || dbPrevMonth();
+  /* what the KPI strip on this picture is about to read - so changing the
+     Region later can tell which pictures went stale and which did not */
+  row.kpiUsed = dbKpiNow(row);
 
   return AmrDeckSource.build(row.spec).then(function(el){
     return AmrSlide.captureBare(el, {
@@ -789,15 +816,37 @@ function kpiPickerHtml(r, i){
   }
   var cur = '';
   try { cur = p.current(r.spec) || ''; } catch(e){}
-  return '<select class="db-kpi" title="Which region sheet the KPI cards read" '+
+  return '<div class="db-kpi-wrap"><span class="db-kpi-cap">Region</span>'+
+    '<select class="db-kpi" title="Which region sheet the KPI cards read. '+
+      'Set it before Render, or during one - a slide not yet reached picks it up on its turn." '+
     'onchange="dbPickKpi('+i+',this.value)">'+
     sheets.map(function(s){
       return '<option value="'+esc(s)+'"'+(s===cur?' selected':'')+'>'+esc(s)+'</option>';
-    }).join('')+'</select>';
+    }).join('')+'</select></div>';
 }
 
-/* Remember it where the report page looks, pin it on the row, and drop any
-   picture already rendered — the KPI numbers on it are now the wrong ones. */
+/* Which region sheet a row's picture was actually taken with. Stamped at
+   render time, so "is this picture stale?" is a comparison and not a guess. */
+function dbKpiNow(r){
+  var src = window.AmrDeckSource ? AmrDeckSource.get(r.spec.source) : null;
+  var p = src && src.kpiPicker;
+  if(!p || !p.current) return null;
+  try { return p.current(r.spec) || null; } catch(e){ return null; }
+}
+
+/* CHOOSING A REGION IS NOT A RE-RENDER.
+   The whole point of the dropdown being here is to get the region right BEFORE
+   the slide is photographed. So:
+     • a slide this pass has not reached yet needs nothing at all - it will be
+       built with the new region when its turn comes, and the line below says
+       when that is;
+     • a slide already photographed has its picture dropped and is put BACK ON
+       THE LIVE QUEUE, so it is rebuilt at the end of this pass instead of being
+       left "pending" for somebody to notice.
+   The choice is remembered per MARKET, where the report page reads it, so it
+   lands on every other row for the same market too - and those rows' pictures
+   are just as stale. Each is checked against what it was rendered with rather
+   than assumed. */
 function dbPickKpi(i, sheet){
   var r = ROWS[i];
   var src = window.AmrDeckSource ? AmrDeckSource.get(r.spec.source) : null;
@@ -805,10 +854,28 @@ function dbPickKpi(i, sheet){
     try { src.kpiPicker.choose(r.spec, sheet); } catch(e){}
   }
   r.spec.kpiSheet = sheet;
-  if(r.png){ r.png = null; r.w = r.h = 0; r.status = 'pending'; }
-  drawRow(r);
-  prog('Region set to ' + sheet + ' · re-render that slide to pick it up');
-  setBusy(false);
+
+  var requeued = 0, ahead = 0;
+  ROWS.forEach(function(row){
+    if(!row.on) return;
+    if(!row.png){
+      /* not photographed yet: nothing to undo. It is only "ahead" if a pass is
+         actually running and has not passed it. */
+      if(RQ && RQ.list.indexOf(row) >= RQ.i && dbKpiNow(row) !== row.kpiUsed) ahead++;
+      return;
+    }
+    if(dbKpiNow(row) === row.kpiUsed) return;      // its picture is still right
+    row.png = null; row.w = row.h = 0; row.status = 'pending'; row.err = '';
+    requeued++;
+    if(RQ && RQ.list.indexOf(row) < RQ.i) RQ.list.push(row);
+  });
+
+  redraw();
+  prog(requeued
+      ? ('Region set to ' + sheet + ' · ' + requeued + ' slide' + (requeued===1?'':'s') +
+         ' rebuilding' + (RQ ? ' in this run' : ' — press Render'))
+      : ('Region set to ' + sheet + (ahead ? ' · will be used when those slides render' : '')));
+  setBusy(BUSY);                 // recompute the buttons; do not end a render
 }
 
 function rowHtml(r, i){
@@ -965,6 +1032,15 @@ document.addEventListener('DOMContentLoaded', function(){
     'everything else is on the main one. Each row is only offered the regions from ITS workbook. '+
     'A row whose workbook has not been uploaded says <i>no workbook</i> instead — upload it on '+
     'the Price &amp; Volume page and the dropdown appears there on its own.</p>'+
+    '<p>Set it <b>before you press Render</b> and that slide is photographed with it first time. '+
+    'You can also change it <b>while a render is running</b>: a slide the render has not reached '+
+    'yet simply picks it up when its turn comes, and one already photographed is put back in the '+
+    'queue and rebuilt before the run ends — you do not have to press Render again. The choice is '+
+    'remembered per market, in the same place the Price &amp; Volume page reads it, so it also '+
+    'corrects every other slide for that market.</p>'+
+    '<h3>Rendering with the tab in the background</h3><p>Fine, and normal — nobody watches forty '+
+    'slides go by. The render keeps going when this tab is not the one you are looking at. It may '+
+    'run slower there, because browsers deliberately slow hidden tabs down; it will not stop.</p>'+
     '<h3>Changing the layout</h3><p>Move or resize a box in the template deck, then press '+
     '<b>&#8635; Reload template</b>. The previews and the generated slides both follow — the '+
     '{{IMAGE}} box is a guide, not a frame, so the picture is always fitted inside it and can '+

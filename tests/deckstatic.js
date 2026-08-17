@@ -270,6 +270,45 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
   check('deck builder · Plan warms the Region dropdowns',
     /function dbPlan[\s\S]{0,3000}?dbWarmPickers\s*\(/.test(src),
     'dbPlan does not call dbWarmPickers — pickers stay blank until a render');
+
+  /* A HIDDEN TAB IS THE NORMAL WAY TO RUN THIS PAGE. Nobody watches forty
+     slides go by, so the render has to survive the tab going to the
+     background — and two browser behaviours between them used to stop it:
+     requestAnimationFrame does not fire at all in a hidden tab, and a
+     main-thread setTimeout is clamped to once a second and then once a
+     minute. Both are covered by AmrTick (worker-backed), and both regress
+     invisibly: the page simply sits there. */
+  check('deck builder · the render loop is paced by a worker timer',
+    /function dbSoon[\s\S]{0,200}?AmrTick\s*\(/.test(src) &&
+    /dbSoon\s*\(\s*next\s*\)/.test(src),
+    'the slide loop yields with a bare setTimeout — a hidden tab throttles it to '
+    + 'one slide a second, then one a minute');
+
+  check('slide export · the capture does not wait on a frame that never comes',
+    /AmrTick\s*&&\s*AmrTick\.frames/.test(read('SlideExport.html')),
+    'captureBare still waits on requestAnimationFrame alone — in a background tab '
+    + 'that callback never fires and the render stops on that slide, forever');
+
+  check('shell · AmrTick runs its timer in a worker',
+    /window\.AmrTick\s*=/.test(read('Shell.html')) &&
+    /new\s+Worker\s*\(/.test(read('Shell.html')),
+    'AmrTick is missing or is a plain setTimeout wrapper, which is what it exists '
+    + 'to avoid');
+
+  /* Choosing a Region mid-render must not end the render or lose the slide. */
+  const pick = src.slice(src.indexOf('function dbPickKpi'),
+                         src.indexOf('function dbPickKpi') + 2200);
+  check('deck builder · choosing a Region does not end a running render',
+    !/setBusy\s*\(\s*false\s*\)/.test(pick),
+    'dbPickKpi calls setBusy(false) — pressed mid-render it re-enables Render and '
+    + 'Publish over a pass that is still going');
+  check('deck builder · and puts an already-photographed slide back in the queue',
+    /RQ\.list\.push\s*\(\s*row\s*\)/.test(pick),
+    'a slide dropped by a Region change is left "pending" and never rebuilt');
+  check('deck builder · a slide records which Region it was photographed with',
+    /row\.kpiUsed\s*=\s*dbKpiNow\s*\(/.test(src),
+    'nothing records the region a picture used, so a later change cannot tell '
+    + 'which pictures went stale');
 }
 
 /* ---- the source contract ------------------------------------------------- *
