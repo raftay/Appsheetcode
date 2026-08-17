@@ -44,7 +44,7 @@
 7. [Logging, and the debug functions it replaces](#7-logging-and-the-debug-functions-it-replaces)
 8. [The chunks](#8-the-chunks)
 9. [What this costs](#9-what-this-costs)
-10. [Deliberately not in this merge](#10-deliberately-not-in-this-merge)
+10. [Three things this merge does not touch](#10-three-things-this-merge-does-not-touch)
 11. [Legacy hit-list](#11-legacy-hit-list)
 12. [Rules for whoever does the work](#12-rules-for-whoever-does-the-work)
 13. [What this plan measured](#13-what-this-plan-measured)
@@ -217,7 +217,7 @@ adding a lot, the promotion test above is not being applied.
 
 Today a page switch is a full page load at `?page=rmx`. That stays true: `doGet` reads
 `?page=`, `app.html` mounts that one page, done. **We are not building a single-page app.**
-Client-side page switching is a real follow-up ([§10](#10-deliberately-not-in-this-merge)) but
+Client-side page switching is a real follow-up ([§10](#10-three-things-this-merge-does-not-touch)) but
 not part of this merge — doing both at once would make any regression ambiguous between "the
 merge broke it" and "the new router broke it".
 
@@ -448,23 +448,48 @@ Deck Builder's ✓ *Check template* button runs, stays.
 
 ## 8. The chunks
 
-Each chunk is one reviewable commit on `merging-files`, ends with the app in a working state,
-and can be stopped at. Chunks 2–6 are independent of each other: if one turns out to be a
-swamp, the others still land.
+Fifteen commits on `merging-files`. Each one ends with the app in a working state and can be
+stopped at. **Take the first unticked chunk.** If a chunk carries a note saying someone is
+mid-way through it, take the next one instead.
+
+Chunks 3–9 are independent of each other — a swamp in one does not block the rest.
+
+### Foundations
 
 | # | Chunk | What lands | Review by | |
 |---|---|---|---|---|
 | 0 | **Plan** | This file. No code. | reading it | ✅ |
-| 1 | **Foundations + audit** | `app.html` skeleton: §A–§E, the page registry, `AmrLib`, `AMR.log` ([§7](#7-logging-and-the-debug-functions-it-replaces)), the deduped `AmrQlikGuide`. Landing + Inventory Report ported. One line added to `Code.gs` for the `?page=app` route. Plus the scope-aware `.gs` collision list, written into this file. | `?page=app` shows the landing page and the Inventory Report, identical to `?page=` and `?page=inventoryreport` | ☐ |
-| 2 | **Fuel pair** | `Page_FuelSurcharge` + `Page_RmxFuel` + `Deck_Fuel`. Deliberately first: `tests/regress.js` already proves these two byte-identical, so the porting method gets validated where there is a real gate on it. | `tests/regress.js` green + both pages side by side | ☐ |
-| 3 | **AGG Price & Volume** | `Page_PriceVolume` + `Deck_PV` + `SlideExport` + `KpiShared` + `Cube`. The heaviest shared-module load, and the only page needing all three libraries. | `tests/pvcheck.js`, `tests/pvlookup.js`, `tests/slidefit.js` + the page | ☐ |
-| 4 | **RMX pair** | `Page_Rmx` + `Page_Segment` + `Deck_RMX` + `Deck_SEG`. Drop `Page_Rmx`'s dead `include('Deck_RMX')` here — see [§11](#11-legacy-hit-list). | `tests/rmxcost.js`, `tests/segboot.js` + both pages | ☐ |
-| 5 | **Overview** | `Page_Overview` alone — 6,022 lines, a quarter of all the client code, and 26 of the 65 CSS scoping hazards. Nothing else in this chunk. | `tests/ovperiod.js`, `tests/freshness.js` + the page | ☐ |
-| 6 | **Deck Builder + TP01** | `Page_DeckBuilder` + `Deck_Sources` + `Deck_Styles`, and `Page_TP01`. One deployment serves everything now (`executeAs: USER_DEPLOYING` in the committed `appsscript.json`), so there is no second deployment to re-point. | `tests/deckpath.js`, `tests/deckstatic.js`, `tests/bgrender.js` + a real deck build | ☐ |
-| 7 | **`app.gs`** | All 16 `.gs` merged, sectioned and commented. `APP_log()` and `APP_verifyPermissions()`. `appsscript.json` with explicit `oauthScopes`. Old `.gs` deleted **in this same commit** — they cannot coexist ([§2](#2-the-thing-that-would-have-broken-it)). | `tests/configcheck.js`, `tests/qliksync.js`, `node --check`, then `APP_verifyPermissions()` in the editor | ☐ |
-| 8 | **Cutover + sweep** | `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; legacy hit-list executed; the six debug functions deleted ([§7](#7-logging-and-the-debug-functions-it-replaces)); `README.md` rewritten around two files. | the whole suite, every route | ☐ |
+| 1 | **The audits** | No app code at all. Three lists written into this file: the scope-aware `.gs` collision list; every top-level `.gs` function with no caller, checked against [§11](#11-legacy-hit-list)'s proof rule; and the `#id`-carrying-style inventory per page, which sizes the CSS work. | the lists themselves | ☐ |
+| 2 | **Skeleton + first two pages** | `app.html` with §A1 tokens, §A2 base, §D runtime, the page registry, `AmrLib`, `AMR.log`, and `AmrQlikGuide` deduped. Landing + Inventory Report ported — the two pages with no CDN libraries and no report data. One line added to `Code.gs` for the `?page=app` route. | `?page=app` matches `?page=` and `?page=inventoryreport` | ☐ |
 
----
+### The pages
+
+| # | Chunk | What lands | Review by | |
+|---|---|---|---|---|
+| 3 | **AGG Fuel Recovery** | `Page_FuelSurcharge` + `Deck_Fuel`. First real port, chosen because `tests/regress.js` already proves this page byte-identical — the method gets validated where there is a gate on it. | `tests/regress.js` + the page | ☐ |
+| 4 | **RMX Fuel Recovery** | `Page_RmxFuel`, reusing the `AmrFuelExec` and components chunk 3 promoted. Should be visibly smaller than chunk 3; if it is not, the promotion test is not being applied. | `tests/regress.js` + the page | ☐ |
+| 5 | **AGG Price & Volume** | `Page_PriceVolume` + `Deck_PV` + `SlideExport` + `KpiShared` + `Cube`. The heaviest module load and the only page needing all three libraries. | `tests/pvcheck.js`, `tests/pvlookup.js`, `tests/slidefit.js` | ☐ |
+| 6 | **Ready-Mix** | `Page_Rmx` + `Deck_RMX`. Drop the dead `include('Deck_RMX')` here. | `tests/rmxcost.js` + the page | ☐ |
+| 7 | **Product Segment** | `Page_Segment` + `Deck_SEG`. | `tests/segboot.js`, `tests/deckstatic.js` | ☐ |
+| 8 | **Overview, part 1 — shell and cube** | `Page_Overview`'s markup, its CSS (26 of the 65 `:root`/`body` hazards live here), the period model (`STATE`, `PICK_SERVER`, `windowPeriod`) and the `AmrCube` wiring. No panel painters yet. | `tests/ovperiod.js` + the page's four period buttons | ☐ |
+| 9 | **Overview, part 2 — the panels** | The painters, the fifteen chart registries, `hidePanel` / `resetPanels` / `pcatFits`. Split from chunk 8 because 6,022 lines is a quarter of all client code and reviewing it in one commit is not reviewing it. | `tests/freshness.js` + every panel, all four periods | ☐ |
+| 10 | **Deck Builder** | `Page_DeckBuilder` + `Deck_Sources` + `Deck_Styles`. | `tests/deckpath.js`, `tests/bgrender.js` + a real deck build | ☐ |
+| 11 | **TP01** | `Page_TP01`. Mail sends as the deploying account. | a real send to a test recipient | ☐ |
+
+### The server, and the cutover
+
+| # | Chunk | What lands | Review by | |
+|---|---|---|---|---|
+| 12 | **`app.gs`** | All 16 `.gs` merged in the [§5](#5-the-shape-of-appgs) order, sectioned and commented. `APP_log()`, `APP_verifyPermissions()`, `oauthScopes` added to `appsscript.json`. The six debug functions deleted and `qlikStamps` decided. Old `.gs` deleted **in this same commit** — they cannot coexist ([§2](#2-the-thing-that-would-have-broken-it)). | `tests/configcheck.js`, `tests/qliksync.js`, `node --check`, then `APP_verifyPermissions()` in the editor | ☐ |
+| 13 | **Cutover** | `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; `README.md` and `CLAUDE.md` rewritten around two files. | the whole suite, every route | ☐ |
+
+### After the merge is proven — see [§10](#10-three-things-this-merge-does-not-touch)
+
+| # | Chunk | What lands | | |
+|---|---|---|---|---|
+| 14 | **Page switching without reload** | The nav mounts a page instead of reloading. Removes the whole per-load cost in [§9](#9-what-this-costs). | ☐ |
+| 15 | **The three drifted helpers** | Diff `toNum_` / `norm_` / `gk_` across the three namespaces, write down what each difference *does*, then unify only what is provably equivalent. | ☐ |
+| 16 | **Collapse `Deck_Styles`** | Fold the `.slide-bare` mirror into the component layer, proven against real captures. | ☐ |
 
 ## 9. What this costs
 
@@ -478,39 +503,98 @@ Stated up front so nobody is surprised later:
   whole file. HtmlService gzips, so expect roughly 200 KB on the wire against ~25 KB now. The
   extra is markup the browser parses into inert fragments and CSS it discards on a `data-page`
   mismatch — not extra JS to run, since each page's code is one registration IIFE that only
-  executes its body on mount. [§10](#10-deliberately-not-in-this-merge) removes this cost
+  executes its body on mount. [§10](#10-three-things-this-merge-does-not-touch) removes this cost
   entirely if it ever stops being acceptable.
 - **Two pages get faster.** Landing and the Inventory Report load no CDN libraries at all once
   `AmrLib` is lazy.
 
 ---
 
-## 10. Deliberately not in this merge
+## 10. Three things this merge does not touch
 
-- **Client-side page switching.** Once every page is in one file, switching without a reload
-  is nearly free and would make the suite feel much faster. Separate change: it alters
-  navigation behaviour, and doing it here would make any regression ambiguous.
-- **Unifying the duplicated private helpers** (`toNum_`, `norm_`, `gk_`) across namespaces.
-  They have drifted; unifying them changes behaviour. Separate change, with its own evidence.
-- **Collapsing `Deck_Styles` into the page blocks.** The mirror exists because the deck
-  includes the slide *builders* without the *pages*. Once everything is one file that reason
-  weakens — but the rules are `.slide-bare`-scoped and correct today, so they come across
-  as-is in chunk 6 and any dedup is proven separately, against real captures.
+Each of these is a change worth making. None of them belongs *inside* the merge, and the
+reason is the same every time: **if two changes land together and something breaks, you
+cannot tell which one broke it.** The merge moves 37 files into 2 — that is already the
+largest change this codebase has had. Anything that also changes *behaviour* waits until the
+merge is proven, so a regression has one possible cause instead of two.
+
+**1. Switching pages without reloading.** Today, clicking Ready-Mix in the nav loads a fresh
+page from the server. Once everything is in one file, the browser already *has* Ready-Mix —
+it could just show it, instantly. That is a genuine improvement and it is nearly free once
+the merge is done. But it changes how navigation works, and if a page then misbehaves, "the
+merge broke it" and "the new navigation broke it" look identical. So: merge first, keeping
+navigation exactly as it is, then do this as its own change. Chunk 14.
+
+**2. The three copies of `toNum_` / `norm_` / `gk_`.** Three namespaces each define their own
+private version of these small helpers. They started identical and **have since drifted** —
+so "tidying" them into one shared copy silently changes what at least two of them return, and
+those helpers sit under every number the business reconciles against Qlik. This is the one
+piece of duplication in the codebase that is safer left alone until someone diffs the three
+implementations and proves what the differences actually do. Chunk 15 does exactly that.
+
+**3. `Deck_Styles` duplicating page CSS.** The deck photographs slide content built by the
+shared modules, but *without* the pages those modules normally live on — so it carries its own
+mirror of the CSS those slides need, scoped under `.slide-bare`. It looks like pure
+duplication. It is not, today: the pages and the deck are separate documents. After the merge
+they are one document, and the mirror probably *can* collapse into the component layer — but
+"probably" is not good enough for the deck's output, which is a picture nobody can restyle
+after the fact. It comes across as-is, and any dedup is proven against real captures. Chunk 16.
 
 ---
 
 ## 11. Legacy hit-list
 
-**Confirmed — remove when its chunk lands:**
+Everything unused comes out. But **"unused" has to be proved, and in Apps Script a grep does
+not prove it** — read the next box before deleting anything.
 
-- **`Page_Rmx.html`'s `include('Deck_RMX')`** *(chunk 4)*. The page calls nothing in
+> ### What counts as proof, and the trap that nearly cost the data pipeline
+>
+> Grep **is** reliable for one thing: every client→server call in this codebase uses a
+> literal function name (`google.script.run.someFunction(…)`). There is no dynamic dispatch
+> anywhere — `google.script.run[name]` appears zero times — so if no `.html` names a server
+> function, no page calls it.
+>
+> **But a function with no caller in the repo can still be load-bearing**, because three
+> kinds of caller live outside it:
+>
+> 1. **Time-driven triggers**, configured by hand in the Apps Script UI. Nothing in the repo
+>    references them — there is not one `ScriptApp.newTrigger` in the codebase.
+> 2. **Editor-run tools**, invoked by a human picking the function from the Run menu.
+> 3. **`doGet`**, called by Apps Script itself.
+>
+> This is not hypothetical. An earlier draft of this file described `QlikSync.gs`'s four
+> entry points as having "no client caller", which is true and badly misleading:
+> **`qlikSyncCheck` is the time-driven trigger that runs the entire QlikView → Sheets data
+> pipeline.** Deleting it because grep found no callers would have silently stopped every
+> page's data from ever updating again, and nothing would have errored.
+>
+> So: **before deleting a top-level function, check the trigger list in the Apps Script UI
+> and check whether its own comment says it is run from the editor.** Both are outside the
+> repo. Only then does zero callers mean dead.
+
+### Confirmed dead — remove when its chunk lands
+
+- **`Page_Rmx.html`'s `include('Deck_RMX')`** *(chunk 6)*. The page calls nothing in
   `AmrRmxSlide`, and `Deck_RMX`'s only load-time side effect is registering the `rmx` adapter,
   which early-returns without `AmrDeckSource` — a file `Page_Rmx` does not include. 603 lines
-  shipped on every Ready-Mix page load to do nothing. The module itself stays; the Deck
-  Builder needs it.
-- **The seven copies of the QlikView guide** *(chunk 1)*. ~720 lines.
+  shipped on every Ready-Mix page load to do nothing. The module stays; the Deck Builder needs it.
+- **Six of the seven QlikView guide copies** *(chunk 2)*. ~720 lines.
+- **The six debug functions** *(chunk 12)* — see [§7](#7-logging-and-the-debug-functions-it-replaces).
 
-**To audit before chunk 1 ends — audit, do not assume:**
+### The QlikView sync: what is actually removable
+
+There is **no ⇣ Pull from QlikView button** in the client and there never was one — older
+docs described an `AmrQlik` object that does not exist. So there is nothing to remove on the
+page side. On the server side, of `QlikSync.gs`'s four entry points:
+
+| | |
+|---|---|
+| `qlikSyncCheck` | **Keep. Load-bearing.** The time-driven trigger target; the whole data pipeline runs through it |
+| `qlikMarkCurrent` | **Keep.** Run once from the editor after the trigger is set up, so the first firing has stamps to compare. Needed again any time the trigger is rebuilt |
+| `qlikSyncNow(scope)` | **Keep.** The only manual recovery path when the trigger misfires or a sync has to be forced |
+| `qlikStamps` | **Candidate** — a read-only "what will the next check do" diagnostic. Deleting it costs the ability to answer that question without adding a log line. Decide in chunk 12 alongside the other diagnostics, not before |
+
+### To audit before chunk 2 ends — audit, do not assume
 
 - The `SB` reader / `getSlideData` / `syncSlideData` in `Code.gs`. The Segment page no longer
   reads those tabs; confirm the Overview still does before touching them.
@@ -519,14 +603,10 @@ Stated up front so nobody is surprised later:
 - The `RMX_Backend.gs` "legacy names" wrappers — `getMarkets`, `getKeys`, `getExtras`,
   `syncData`, `uploadRmxData`. Find each caller.
 - The dead nav hook in `Shell.html`, which says in a comment that it is dead.
-- The `EXECUTIVE OVERVIEW — canonical market list + PV/RMX name mapping` block in
-  `Config.gs`, whose own banner comment starts `NOT USED`. Confirm nothing reads it.
-
-**Not a deletion, a warning:** there is no `AmrQlik` and no ⇣ *Pull from QlikView* button
-anywhere in the client, though older docs described both. `QlikSync.gs` is reached by
-scheduled trigger only, and its four entry points (`qlikSyncCheck`, `qlikMarkCurrent`,
-`qlikStamps`, `qlikSyncNow`) have no client caller. Do not "restore" it during the merge — if
-a Pull button is wanted, that is a feature, not a repair.
+- The `EXECUTIVE OVERVIEW — canonical market list + PV/RMX name mapping` block in `Config.gs`,
+  whose own banner comment starts `NOT USED`.
+- Every `.gs` top-level function with no caller anywhere, listed once in chunk 1's audit and
+  then worked through against the box above rather than deleted in a sweep.
 
 ---
 
