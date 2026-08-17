@@ -513,11 +513,19 @@ function loadData(){
      other page. */
   var sync = document.getElementById('syncBtn');
   if(sync) sync.classList.add('busy');
-  if(window.AmrProgress) AmrProgress.set('sheet', { text:'Reading the Google Sheet…', order:5 });
+  /* ONE screen for the whole opening: AmrBoot holds it until every step it was
+     told to wait for has landed. After boot this is an ordinary AmrProgress job,
+     and AmrProgress waits out a grace period before painting - so the ï»¿ button
+     re-reading a sheet in under half a second shows nothing at all. */  if(window.AmrBoot && !AmrBoot.finished()) AmrBoot.need('data');
+  else if(window.AmrProgress) AmrProgress.set('sheet', { text:'Pulling from Google Sheets…', order:5 });
   function loadDone(ok){
     if(sync) sync.classList.remove('busy');
+    if(window.AmrBoot && !AmrBoot.finished()){
+      if(ok) AmrBoot.done('data'); else AmrBoot.fail('Could not read the sheet');
+      return;
+    }
     if(!window.AmrProgress) return;
-    if(ok) AmrProgress.done('sheet', 'Read from the sheet');
+    if(ok) AmrProgress.clear('sheet');            // no tick: a flash is the flicker
     else   AmrProgress.fail('sheet', 'Could not read the sheet');
   }
 

@@ -193,6 +193,31 @@ for (const page of ['Page_Rmx.html', 'Page_Segment.html']) {
   check(page + ' \u00b7 no "done" tick between screens', !/AmrProgress\.done\(/.test(src),
     'a tick that flashes for 1.2s and is replaced by the next job is the flicker');
 }
+
+/* ---- ONE SCREEN, ACROSS EVERY PAGE --------------------------------------
+ * The rule is the shell's, not each page's: AmrBoot holds ONE screen until every
+ * step a page named has landed, and AmrProgress waits out a grace period so
+ * anything quick paints nothing at all. A page that opens without naming its
+ * boot steps goes back to taking its screen down when the FIRST thing finishes,
+ * which is how people ended up reading half-filled pages.
+ *
+ * `done()` is banned outright. It flashes a tick for 1.2s and is then replaced
+ * by whatever goes up next, which is the flicker itself.
+ */
+for (const page of ['Page_Overview.html', 'Page_PriceVolume.html', 'Page_Segment.html',
+                    'Page_Rmx.html', 'Page_FuelSurcharge.html', 'Page_RmxFuel.html']) {
+  const src = read(page);
+  check(page + ' \u00b7 names its boot steps', /AmrBoot\.need\(/.test(src),
+    'without AmrBoot the opening screen comes down when the first call returns');
+  check(page + ' \u00b7 answers them', /AmrBoot\.(done|fail)\(/.test(src),
+    'a step that never reports is a loading screen that never lifts');
+  check(page + ' \u00b7 no "done" tick anywhere', !/AmrProgress\.done\(/.test(src),
+    'a tick that flashes and is replaced by the next job is the flicker');
+}
+check('Shell.html \u00b7 AmrBoot exists', /window\.AmrBoot\s*=/.test(read('Shell.html')));
+check('Shell.html \u00b7 AmrProgress has a grace period',
+  /GRACE/.test(read('Shell.html')),
+  'without it every sub-second fetch flashes a screen');
 check('Page_Rmx.html \u00b7 no longer boots through RMX_getMarkets',
   !/\.RMX_getMarkets\(/.test(read('Page_Rmx.html')),
   'that call opens with loadDataCached_() too, so it was an 18-second call to fill a dropdown');

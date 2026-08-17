@@ -820,10 +820,16 @@ window.HELP_HTML = `
   /* The overlay is gone. These keep their old names so every call site reads
      the same, but they now drive the bottom-left pill instead of freezing the
      page — you can carry on reading and clicking while the numbers arrive. */
+  /* During BOOT the screen is AmrBoot's - ONE screen, up until every step this
+     page named has landed. After boot these are ordinary AmrProgress jobs, and
+     AmrProgress waits out a grace period before painting, so anything quick
+     shows nothing at all. */
   function showLoader(m){
-    if(window.AmrProgress) AmrProgress.set('page', { text:m||'Loading…', order:10 });
+    if(window.AmrBoot && !AmrBoot.finished()) return;    // the boot screen owns it
+    if(window.AmrProgress) AmrProgress.set('page', { text:m||'Pulling from Google Sheets…', order:10 });
   }
   function hideLoader(){
+    if(window.AmrBoot) AmrBoot.done('data');
     if(window.AmrProgress) AmrProgress.clear('page');
   }
   function banner(msg){ var b=$('banner'); if(!msg){b.classList.remove('show');b.textContent='';return;} b.textContent=msg; b.classList.add('show'); }
@@ -3813,16 +3819,26 @@ window.HELP_HTML = `
     if(!window.AmrProgress) return;
     var s=histState();
     if(s.hide){
-      /* a tick, once, when the months are actually all in — then no chrome at
-         all for a solved problem */
-      if(s.cls==='done' && !PILL_DONE && AmrProgress.has('cube')){
-        PILL_DONE=true; AmrProgress.done('cube','Months loaded');
-      } else if(s.cls!=='done' || PILL_DONE){
-        AmrProgress.clear('cube');
-      }
+      /* Nothing left to say. No tick either: a tick that flashes for a second and
+         is replaced by the next job is the flicker this is meant to remove. */
+      PILL_DONE = true;
+      if(window.AmrBoot) AmrBoot.done('month history');
+      AmrProgress.clear('cube');
       return;
     }
     if(s.cls!=='done') PILL_DONE=false;   // a reload starts the cycle again
+    if(s.cls === 'bad'){
+      /* the server path still works, so this is not a failure - but the boot step
+         has to be answered either way, or the screen never lifts */
+      if(window.AmrBoot) AmrBoot.done('month history');
+    }
+    /* During boot this rides the ONE screen as a percentage rather than becoming
+       a screen of its own. */
+    if(window.AmrBoot && !AmrBoot.finished() && s.cls !== 'bad'){
+      AmrProgress.set('boot', { pct:(s.pct!=null?s.pct:null), order:0, now:true,
+                                note:s.short || 'Month history' });
+      return;
+    }
     AmrProgress.set('cube', { text:s.short||'Month history', pct:(s.pct!=null?s.pct:null),
                               cls:s.cls||'', order:30 });
   }
@@ -5053,7 +5069,9 @@ window.HELP_HTML = `
         .withSuccessHandler(function(){
           afterLookupWrite(function(){
             stop();
-            if(window.AmrProgress) AmrProgress.done('sync','Everything re-read');
+            /* no tick: it flashes for a second and is replaced by the next
+               job going up, which is the flicker */
+            if(window.AmrProgress) AmrProgress.clear('sync');
           });
         })
         .withFailureHandler(function(e){
@@ -5550,10 +5568,13 @@ window.HELP_HTML = `
      Nothing blocks: load() runs regardless of what the cube is doing, and the
      panels fill in as their data arrives. */
   function boot(){
+    /* ONE screen for the whole opening. Both steps are named up front and the
+       screen comes down when the LAST of them lands - not when the first does,
+       which is what used to leave people reading a half-filled page. */
+    if(window.AmrBoot){ AmrBoot.need('data'); AmrBoot.need('month history'); }
     loadWorkbooks();   // SAP/USGAAP cards (shared KPI numbers, independent of the sheet data)
     wirePill(); renderPill(); wireCube();
     if(!IS_LIVE || !window.AmrCache){ load(); return; }
-    if(window.AmrProgress) AmrProgress.set('page', { text:'Reading the data sheet\u2026', order:10 });
     function done(gens){
       gens = gens || {};
       var combo=(gens.pricevolume&&gens.rmx&&gens.segment)

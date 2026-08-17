@@ -46,8 +46,12 @@ const REGION = [
 ];
 
 /* ---- the smallest SpreadsheetApp that FSC_Backend actually uses ---------- */
+let SHEET_READS = 0;                    // every getDataRange().getValues() of the raw tab
 function fakeSheet(name, values) {
-  return { getName: () => name, getDataRange: () => ({ getValues: () => values }) };
+  return { getName: () => name, getDataRange: () => ({ getValues: () => {
+    if (/cpi/i.test(name)) SHEET_READS++;
+    return values;
+  } }) };
 }
 function fakeSS(cpi) {
   const sheets = [fakeSheet('Combined Data CPI Raw', cpi), fakeSheet('REGION LOOKUP', REGION)];
@@ -60,6 +64,16 @@ function load(cpi) {
     APP_openSpreadsheet_: () => fakeSS(cpi),
     PV: { saskMonthly: () => null },      // no Saskatchewan rates sheet configured
   };
+  /* The chunked cache helpers live in Code.gs, which this harness does not load.
+     Stubbing them here is not decoration: getFscData caches its READ and its
+     RESULT now, and a harness that leaves them undefined would only ever measure
+     the cold path. __cache is inspected below to prove the second call does not
+     go back to the sheet. */
+  ctx.__cache = {};
+  ctx.APP_getGen_  = function(){ return 'g1'; };
+  ctx.APP_cacheGet_ = function(k){ return Object.prototype.hasOwnProperty.call(ctx.__cache, k)
+    ? JSON.parse(ctx.__cache[k]) : null; };
+  ctx.APP_cachePut_ = function(k, v){ ctx.__cache[k] = JSON.stringify(v); };
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(SRC, 'utf8'), ctx, { filename: 'FSC_Backend.gs' });
   return ctx;
@@ -155,6 +169,40 @@ function check(label, got, want) {
   const early = load([BAND, HEADER, row(prev === 1 ? 12 : prev - 1, 70, 210)]).getFscData();
   check('report month · falls back when last month is not in the export yet',
     early.month, prev === 1 ? 12 : prev - 1);
+}
+
+/* ---- the read is cached ---------------------------------------------------
+ * readData_() did a full getDataRange().getValues() of the raw tab on EVERY
+ * call and getFscData had no result cache either, so this page re-read tens of
+ * thousands of rows out of Sheets on every open, every '↻ Update from source',
+ * and once more for each of the deck's two fuel slides. Nothing else in the
+ * suite does that — PV.getReport, RMX and the Overview all answer from a cached
+ * result and only touch the sheet on a miss.
+ *
+ * Both layers are cached now. This is what proves it, and what would catch a
+ * cache key that varies when it should not: the same question twice must read
+ * the sheet ONCE.
+ */
+{
+  const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const cur = new Date().getMonth() + 1;
+  const prev = cur - 1 || 12;
+  const row = (mo, vol, fsc) => ['K' + mo, 'P1', 2026, MON[mo - 1], vol, 0, vol * 10, 0, fsc, 0];
+  const grid = [BAND, HEADER, row(prev, 100, 300), row(cur, 40, 80)];
+
+  const api = load(grid);
+  SHEET_READS = 0;
+  const first = api.getFscData({});
+  const readsAfterFirst = SHEET_READS;
+  const second = api.getFscData({});
+  check('the read is cached · one sheet read for the first call', readsAfterFirst, 1);
+  check('the read is cached · and none for the second', SHEET_READS, readsAfterFirst);
+  check('the read is cached · with the same answer',
+    JSON.stringify(second) === JSON.stringify(first), true);
+  /* a different question is a different entry, not a stale hit */
+  const other = api.getFscData({ month: cur });
+  check('the read is cached · a different month is its own entry',
+    other.month === cur, true);
 }
 
 console.log(failed ? '\n' + failed + ' check(s) FAILED' : '\nall checks passed');

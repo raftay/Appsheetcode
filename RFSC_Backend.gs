@@ -818,14 +818,59 @@ var RFSC = (function () {
      floating-point tails that were a third of the payload */
   function r2_(n){ return Math.round(n * 100) / 100; }
 
+
+  /* ---------- THE READ IS CACHED, LIKE EVERY OTHER BACKEND'S ----------
+     readData_() did a full getDataRange().getValues() of the raw tab on EVERY
+     call, and the entry point below had no result cache either. So this page
+     re-read tens of thousands of rows out of Sheets on every open, every '↻
+     Update from source', and once more for each of the deck's fuel slides.
+     Nothing else in the suite does that: PV.getReport, RMX and the Overview all
+     answer from a cached result first and only touch the sheet on a miss.
+
+     Both layers are cached now, and both keys carry APP_getGen_ - the source
+     workbook's modified time plus the code build stamp - so a sync or a code
+     change strands them by itself and there is nothing to invalidate by hand.
+     UPLOADS ARE NEVER CACHED: that is one user's session.
+  ------------------------------------------------------------------- */
+  function gkFsc_(key){
+    var gen = '0';
+    try { gen = APP_getGen_('rmx') || '0'; } catch (e) {}
+    return 'rfsc|g' + gen + '|' + key;
+  }
+  /* The chunked cache helpers live in Code.gs. Every .gs file shares one global
+     scope, so at request time they are there - but a missing helper must never be
+     what takes this page down, so both are reached through a guard and a failure
+     just means "not cached". */
+  function cGet_(k){
+    try { return (typeof APP_cacheGet_ === 'function') ? APP_cacheGet_(k) : null; }
+    catch (e){ return null; }
+  }
+  function cPut_(k, v){
+    try { if (typeof APP_cachePut_ === 'function') APP_cachePut_(k, v); } catch (e){}
+  }  function cachedRead_(filter){
+    var ck = gkFsc_('data|' + JSON.stringify(filter || null));
+    var hit = cGet_(ck);
+    if (hit) return hit;
+    var D = readData_(filter);
+    cPut_(ck, D);
+    return D;
+  }
+
   return {
     getRmxFuel: function(opts){
-      return output_(readData_(opts && opts.filter ? opts.filter : opts), opts && opts.month);
+      var filter = (opts && opts.filter) ? opts.filter : opts;
+      var ck = gkFsc_('out|' + JSON.stringify(filter || null) + '|m' + ((opts && opts.month) || 0));
+      var hit = cGet_(ck); if (hit) return hit;
+      var out = output_(cachedRead_(filter), opts && opts.month);
+      cPut_(ck, out);
+      return out;
     },
     /* Unaggregated facts for the Overview. Takes the same optional filter, but
        the Overview will usually pull them unfiltered once and slice on the
        client, the way the RMX cross-filter already does. */
-    getFacts:   function(opts){ return facts_(readData_(opts && opts.filter ? opts.filter : opts)); },
+    getFacts:   function(opts){
+      return facts_(cachedRead_(opts && opts.filter ? opts.filter : opts));
+    },
     getRmxFuelUpload: function(p){
       var grid = p && (p.main || p.grid);
       if (!grid) throw new Error('Upload the Ready-Mix PPI export.');

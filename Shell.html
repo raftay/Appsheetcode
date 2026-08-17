@@ -486,6 +486,43 @@ window.AmrCache = (function(){
 window.AmrProgress = (function(){
   var jobs = {}, seq = 0, detail = null, details = {}, host = null, mounted = false;
 
+  /* ---- THE GRACE PERIOD -------------------------------------------------
+     A screen that appears and disappears inside half a second is worse than no
+     screen: it reads as the page stuttering. Most work is now fast enough to be
+     in that bracket, so a job is REGISTERED immediately (lead() and the job list
+     see it at once) but nothing is PAINTED until it has been outstanding for
+     GRACE ms. Work that finishes first never shows anything at all.
+
+     Two exceptions paint at once, because they are not stutters:
+       o:{ now:true }  the page-boot screen (AmrBoot) - the page is empty behind
+                       it, so waiting would just show a blank
+       cls:'bad'       a failure, which must never be swallowed by the timer
+     ------------------------------------------------------------------- */
+  var GRACE = 400, timer = null, armed = false;
+
+  function anyNow(){
+    for (var k in jobs) if (jobs[k].now || jobs[k].cls === 'bad') return true;
+    return false;
+  }
+  function schedule(){
+    /* nothing outstanding: repaint at once so the overlay comes DOWN. Leaving
+       this to the timer meant a cleared job never hid its own screen. */
+    var live = false; for (var k0 in jobs) live = true;
+    if (!live){ disarm(); render(); return; }
+    if (armed || anyNow()){ render(); return; }
+    if (timer) return;
+    timer = setTimeout(function(){
+      timer = null;
+      var live = false;
+      for (var k in jobs) if (jobs[k].cls !== 'done') live = true;
+      if (live){ armed = true; render(); }
+    }, GRACE);
+  }
+  function disarm(){
+    if (timer){ clearTimeout(timer); timer = null; }
+    armed = false;
+  }
+
   function esc(s){
     return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
       return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
@@ -531,7 +568,12 @@ window.AmrProgress = (function(){
     mount();
     if (!host) return;
     var j = lead();
-    if (!j){ host.classList.remove('show'); return; }
+    if (!j){ disarm(); host.classList.remove('show'); return; }
+    /* Registered but not yet worth showing - see the grace period above. It has
+       to HIDE, not just decline to repaint: the overlay may still be up from a
+       job that has since been cleared, and returning early there left the old
+       screen sitting over a finished page with the old job's wording on it. */
+    if (!armed && !anyNow()){ host.classList.remove('show'); return; }
 
     var body = host.querySelector('.amr-load-body');
     var h = '';
@@ -570,10 +612,14 @@ window.AmrProgress = (function(){
                     cls:  o.cls  || '',
                     note: o.note || '',
                     order: o.order != null ? o.order : (prev ? prev.order : 50),
+                    now:  o.now != null ? o.now : (prev ? prev.now : false),
                     seq:  prev ? prev.seq : (++seq) };
-      render();
+      schedule();
     },
-    clear: function(key){ delete jobs[key]; delete details[key]; render(); },
+    clear: function(key){
+      delete jobs[key]; delete details[key];
+      schedule();          // hides at once when that was the last one
+    },
     done: function(key, text, ms){
       if (!jobs[key] && !text) return;
       api.set(key, { text: text || (jobs[key] && jobs[key].text) || 'Done', cls: 'done', pct: null });
@@ -581,7 +627,12 @@ window.AmrProgress = (function(){
         if (jobs[key] && jobs[key].cls === 'done') api.clear(key);
       }, ms == null ? 1200 : ms);
     },
-    fail: function(key, text){ api.set(key, { text: text || 'Something went wrong', cls: 'bad', pct: null, order: 0 }); },
+    fail: function(key, text){
+      armed = true;                        // a failure is never delayed
+      api.set(key, { text: text || 'Something went wrong', cls: 'bad', pct: null, order: 0 });
+    },
+    /* for the harnesses: how long a job waits before it is painted */
+    grace: function(ms){ if (ms != null) GRACE = ms; return GRACE; },
     has:  function(key){ return !!jobs[key]; },
     /* One job's body — detail('key', {…}) — or, with a single argument, this
        page's fallback for jobs that have none. */
@@ -591,6 +642,111 @@ window.AmrProgress = (function(){
       render();
     },
     repaint: render
+  };
+  return api;
+})();
+</script>
+
+<script>
+/* ==================================================================
+ * AmrBoot - ONE loading screen, up until EVERYTHING is ready.
+ * ------------------------------------------------------------------
+ * The problem it exists to remove: a page's opening was several
+ * independent AmrProgress jobs, each raised and cleared by whichever
+ * callback happened to own it. AmrProgress shows the lowest-order job
+ * and lists the rest, so that read as a run of half-second screens
+ * appearing and disappearing while the page assembled itself - and
+ * done() put a 1.2s tick between them for good measure. Worse, the
+ * screen came down when the FIRST thing finished, so people were
+ * looking at a page that was still filling in.
+ *
+ * AmrBoot is a refcount over ONE job. A page names the things that
+ * have to be true before it is worth looking at:
+ *
+ *     AmrBoot.need('data');            // at DOMContentLoaded
+ *     AmrBoot.need('cube');
+ *     ...
+ *     AmrBoot.done('data');            // as each one lands
+ *     AmrBoot.done('cube');            // -> the screen comes down here
+ *
+ * The screen goes up on the first need(), paints IMMEDIATELY (the page
+ * behind it is empty, so a grace period would just show a blank), and
+ * comes down exactly once - when the last outstanding step is done.
+ * After that boot is over: AmrBoot.need() is ignored, so a later fetch
+ * can never re-raise the opening screen. Ordinary in-page work uses
+ * AmrProgress, which now waits out its grace period and so shows
+ * nothing at all for anything quick.
+ *
+ * done() is idempotent and unknown keys are harmless, which matters
+ * because a page has failure paths and early returns; calling it twice
+ * must not take the screen down while something else is still running.
+ *
+ * THE WATCHDOG. The failure mode of a refcount is a step that never
+ * reports, and the symptom is the worst one available: a loading screen
+ * over a finished page, forever. So after WATCHDOG ms the screen names
+ * what it is still waiting for and offers a reload, rather than sitting
+ * there saying nothing. That message is a bug report - if you ever see
+ * it, some path forgot its done().
+ * ================================================================== */
+window.AmrBoot = (function(){
+  var WATCHDOG = 150000;
+  var pending = {}, count = 0, over = false, started = false, wd = null;
+  var TEXT = 'Pulling from Google Sheets\u2026';
+
+  function names(){
+    var out = []; for (var k in pending) out.push(k); return out;
+  }
+  function paint(){
+    if (!window.AmrProgress) return;
+    var n = names();
+    AmrProgress.set('boot', { text: TEXT, order: 0, now: true,
+      note: n.length ? ('Waiting for ' + n.join(', ')) : '' });
+  }
+  function finish(){
+    over = true;
+    if (wd){ clearTimeout(wd); wd = null; }
+    if (window.AmrProgress) AmrProgress.clear('boot');
+  }
+
+  var api = {
+    /* What the page needs before it is worth looking at. */
+    need: function(step){
+      if (over) return api;                 // boot is finished; never re-raise it
+      if (!step) step = 'data';
+      if (!pending[step]){ pending[step] = 1; count++; }
+      if (!started){
+        started = true;
+        wd = setTimeout(function(){
+          if (over || !window.AmrProgress) return;
+          AmrProgress.fail('boot', 'Still waiting for ' + names().join(', '));
+          AmrProgress.set('boot', { cls:'bad', order:0, now:true,
+            note:'Something did not report back. Reload the page - and tell whoever '
+               + 'maintains this, because a step is missing its AmrBoot.done().' });
+        }, WATCHDOG);
+      }
+      paint();
+      return api;
+    },
+    /* One step landed. The screen comes down when the last one does. */
+    done: function(step){
+      if (over) return api;
+      if (!step) step = 'data';
+      if (pending[step]){ delete pending[step]; count--; }
+      if (count <= 0) finish(); else paint();
+      return api;
+    },
+    /* Nothing more is coming - used by a page that gives up on a step. */
+    fail: function(msg){
+      if (over) return api;
+      over = true;
+      if (wd){ clearTimeout(wd); wd = null; }
+      if (window.AmrProgress) AmrProgress.fail('boot', msg || 'Could not load this page');
+      return api;
+    },
+    /* Page-specific wording, set before the first need(). */
+    text: function(t){ if (t) TEXT = t; return TEXT; },
+    waiting: function(){ return names(); },
+    finished: function(){ return over; }
   };
   return api;
 })();

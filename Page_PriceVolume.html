@@ -567,17 +567,34 @@ function wirePvCube(tries){
   if(!window.AmrCube){ if(tries < 40) setTimeout(function(){ wirePvCube(tries+1); }, 150); return; }
   if(wirePvCube.done) return;
   wirePvCube.done = true;
+  /* The month history is part of "ready": its charts are on the page, so letting
+     it finish after the boot screen came down is exactly the second screen this
+     is meant to remove. It is named as a boot step HERE rather than at
+     DOMContentLoaded - above this line AmrCube may not exist yet, and a step
+     that never reports is a loading screen that never lifts. */
+  if(window.AmrBoot) AmrBoot.need('month history');
   if(window.AmrProgress) AmrProgress.set('cube', { text:'Preparing months…', order:30 });
   AmrCube.on(function(ev, payload){
     if(ev === 'error'){
-      if(window.AmrProgress) AmrProgress.clear('cube');   // the server path still works
+      /* the server path still works, so this is not a failure - but the step has
+         to be answered either way */
+      if(window.AmrBoot) AmrBoot.done('month history');
+      if(window.AmrProgress) AmrProgress.clear('cube');
       return;
     }
     var p = (AmrCube.progress && AmrCube.progress()) || { pct:0, done:0, total:0 };
     if(ev === 'ready'){
-      if(window.AmrProgress) AmrProgress.done('cube', 'Every market ready');
+      if(window.AmrBoot) AmrBoot.done('month history');
+      if(window.AmrProgress) AmrProgress.clear('cube');   // no tick: a flash is the flicker
     } else if(p.total && p.done < p.total){
-      if(window.AmrProgress) AmrProgress.set('cube', { text:'Loading months…', pct:p.pct, order:30 });
+      /* during boot this rides the one screen as a percentage rather than
+         becoming a screen of its own */
+      if(window.AmrBoot && !AmrBoot.finished()){
+        if(window.AmrProgress) AmrProgress.set('boot', { pct:p.pct, order:0, now:true,
+          note:'Month history ' + p.done + ' of ' + p.total });
+      } else if(window.AmrProgress){
+        AmrProgress.set('cube', { text:'Loading months…', pct:p.pct, order:30 });
+      }
     }
     /* Re-render the markets view from the cube the moment it can answer.
        Debounced: blocks land a second or so apart and redrawing every chart
@@ -1015,7 +1032,9 @@ function syncData(){
     .withSuccessHandler(function(res){
       /* the sheet moved, so every cube block on this device is stale too */
       try{ if(window.AmrCube && AmrCube.reload) AmrCube.reload(); }catch(e){}
-      if(window.AmrProgress) AmrProgress.done('sync', 'Re-read from the sheet');
+      /* no tick: it flashes for a second and is replaced by the next job
+         going up, which is the flicker */
+      if(window.AmrProgress) AmrProgress.clear('sync');
       /* ONE authority for the device-cache token. boot() asks the server for the
          version this page compares on open; checking a differently-shaped token
          here as well made the two disagree and wiped the cache on every other
@@ -2164,10 +2183,16 @@ function showBanner(msg){ var b=document.getElementById('banner'); document.getE
 /* Same names, same call sites — but the page is no longer frozen while they
    are up. Everything on this page is either already on screen or arriving, and
    the pill says which. */
+/* During BOOT the screen is AmrBoot's - one screen, up until every step the page
+   named has landed. After boot these are ordinary AmrProgress jobs, and
+   AmrProgress waits out a grace period before painting, so anything quick shows
+   nothing at all. */
 function showLoader(msg){
-  if(window.AmrProgress) AmrProgress.set('page', { text:msg||'Loading…', order:10 });
+  if(window.AmrBoot && !AmrBoot.finished()) return;      // the boot screen owns it
+  if(window.AmrProgress) AmrProgress.set('page', { text:msg||'Pulling from Google Sheets…', order:10 });
 }
 function hideLoader(){
+  if(window.AmrBoot) AmrBoot.done('data');
   if(window.AmrProgress) AmrProgress.clear('page');
 }
 </script>

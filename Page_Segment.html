@@ -570,6 +570,7 @@ function renderSegKpis(){
 /* apply the shared values and report what was found for each market */
 function segKpiApplyValues(values, note){
   SEGKPI.vals = values || null;
+  if(window.AmrBoot) AmrBoot.done('KPI figures');   // one of the two boot steps
   var st=document.getElementById('segKpiStat');
   if(st){
     var got=MARKETS.filter(function(m){ return !!segKpiExtract(m); });
@@ -815,10 +816,16 @@ function ckey_(){ return ckeyFor_(STATE.market, STATE.period, STATE.month); }
 var LOAD_JOB = 'data';
 var LOAD_TEXT = 'Pulling from Google Sheets\u2026';
 
+/* During BOOT the screen is AmrBoot's - one screen, up until everything the
+   page needs has landed. After boot these are ordinary AmrProgress jobs, and
+   AmrProgress now waits out a grace period before painting, so a market switch
+   that takes under half a second shows nothing at all. */
 function showLoading(note){
+  if(window.AmrBoot && !AmrBoot.finished()) return;      // the boot screen owns it
   if(window.AmrProgress) AmrProgress.set(LOAD_JOB, { text:LOAD_TEXT, order:0, note:note||'' });
 }
 function hideLoading(){
+  if(window.AmrBoot) AmrBoot.done('data');
   if(window.AmrProgress) AmrProgress.clear(LOAD_JOB);
 }
 
@@ -835,6 +842,30 @@ function bootLoad(){
     .withSuccessHandler(function(res){
       if(window.AmrCache && res && res.generation != null) AmrCache.check(cacheToken_(res));
       if(res && res.markets && res.markets.length) MARKETS = res.markets.slice();
+
+      /* EVERY MARKET, IN THE BROWSER, FROM THIS ONE REPLY.
+         Warming the server cache still left a round trip per market - pick a
+         market and wait on a call. Aggregates does not do that: its opening call
+         carries every market, so switching is instant. prepare hands back the
+         same finished payloads it just cached, so seed them all and every later
+         switch is a memory hit with no server call at all. */
+      var pl = (res && res.payloads) || {};
+      /* Both the resolved month and whatever the picker is on: prepare answers
+         for a resolved month, and before the first reply STATE.month is still 0,
+         so seeding only one of them leaves the payloads under a name nothing
+         looks up. */
+      var mos = [(res && res.month) || 0];
+      if(mos.indexOf(STATE.month) === -1) mos.push(STATE.month);
+      Object.keys(pl).forEach(function(k){
+        var bits = k.split('|');                       // '<kind>|<market>|<period>'
+        if(bits[0] !== 'slide') return;
+        mos.forEach(function(mo){ CACHE[ckeyFor_(bits[1], bits[2], mo)] = pl[k]; });
+        var ck = ckeyFor_(bits[1], bits[2], (res.month || STATE.month));
+        /* AmrCache is localStorage and caps near 900 KB per entry, so these go
+           in one market at a time exactly as a single fetch would write them. */
+        if(!STATE.upload && window.AmrCache) AmrCache.set('slide:'+ck, pl[k]);
+      });
+
       if(!res || !res.payload){
         /* prepare answered but carried no payload for this market: fall through
            to the ordinary per-market read rather than leave the page empty */
@@ -843,12 +874,11 @@ function bootLoad(){
       }
       var d = res.payload;
       CACHE[ckeyFor_(STATE.market, STATE.period, STATE.month)] = d;
-      if(!STATE.upload && window.AmrCache)
-        AmrCache.set('slide:'+ckeyFor_(STATE.market, STATE.period, STATE.month), d);
       applyData(d, 'Loaded');
     })
     .withFailureHandler(function(err){
-      if(window.AmrProgress) AmrProgress.fail(LOAD_JOB, 'Could not read the Ready-Mix workbook');
+      if(window.AmrBoot) AmrBoot.fail('Could not read the Ready-Mix workbook');
+      else if(window.AmrProgress) AmrProgress.fail(LOAD_JOB, 'Could not read the Ready-Mix workbook');
       setStat(st, false, (err && err.message) ? err.message : 'Could not read the Ready-Mix workbook.');
     })
     .RMX_prepare({ want:'slide', market:STATE.market, period:STATE.period,
@@ -1112,6 +1142,10 @@ document.addEventListener('DOMContentLoaded', function(){
   document.getElementById('viewBtn').addEventListener('click', viewFullScreen);
   window.addEventListener('resize', scheduleRender);
 
+  /* ONE screen for the whole opening, and it comes down in applyData - not when
+     the first thing finishes. The KPI workbook is named too, so the tables never
+     appear before the strip above them. */
+  if(window.AmrBoot){ AmrBoot.need('data'); AmrBoot.need('KPI figures'); }
   renderPreview();
   bootLoad();        // ONE call: this market's tables + every other market warmed
 });

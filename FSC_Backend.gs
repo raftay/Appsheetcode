@@ -622,10 +622,53 @@ var FSC = (function () {
     };
   }
 
+
+  /* ---------- THE READ IS CACHED, LIKE EVERY OTHER BACKEND'S ----------
+     readData_() did a full getDataRange().getValues() of the raw tab on EVERY
+     call, and the entry point below had no result cache either. So this page
+     re-read tens of thousands of rows out of Sheets on every open, every '↻
+     Update from source', and once more for each of the deck's fuel slides.
+     Nothing else in the suite does that: PV.getReport, RMX and the Overview all
+     answer from a cached result first and only touch the sheet on a miss.
+
+     Both layers are cached now, and both keys carry APP_getGen_ - the source
+     workbook's modified time plus the code build stamp - so a sync or a code
+     change strands them by itself and there is nothing to invalidate by hand.
+     UPLOADS ARE NEVER CACHED: that is one user's session.
+  ------------------------------------------------------------------- */
+  function gkFsc_(key){
+    var gen = '0';
+    try { gen = APP_getGen_('pricevolume') || '0'; } catch (e) {}
+    return 'fsc|g' + gen + '|' + key;
+  }
+  /* The chunked cache helpers live in Code.gs. Every .gs file shares one global
+     scope, so at request time they are there - but a missing helper must never be
+     what takes this page down, so both are reached through a guard and a failure
+     just means "not cached". */
+  function cGet_(k){
+    try { return (typeof APP_cacheGet_ === 'function') ? APP_cacheGet_(k) : null; }
+    catch (e){ return null; }
+  }
+  function cPut_(k, v){
+    try { if (typeof APP_cachePut_ === 'function') APP_cachePut_(k, v); } catch (e){}
+  }  function cachedRead_(){
+    var ck = gkFsc_('data');
+    var hit = cGet_(ck);
+    if (hit) return hit;
+    var D = readData_();
+    cPut_(ck, D);
+    return D;
+  }
+
   /* ---------- the two calls the page makes ---------- */
   function getFscData(opts){
     opts = opts || {};
-    return output_(readData_(), opts.window || (opts.from ? opts : null), opts.month);
+    var win = opts.window || (opts.from ? opts : null);
+    var ck = gkFsc_('out|' + JSON.stringify(win || null) + '|m' + (opts.month || 0));
+    var hit = cGet_(ck); if (hit) return hit;
+    var out = output_(cachedRead_(), win, opts.month);
+    cPut_(ck, out);
+    return out;
   }
   /* The page may still send { combined, other } from the old two-file uploader;
      only the combined grid is used now, and a lone grid is accepted too. */
