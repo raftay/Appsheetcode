@@ -37,8 +37,12 @@ The Apps Script project is **37 files** — 16 `.gs` and 21 `.html`. Every chang
 the right file in the editor, and moving the project in or out of the script editor means
 copying 37 files one at a time. The goal is:
 
-> **one `app.html` and one `app.gs`.** Nothing else in the script project except
-> `appsscript.json` and the deck template `.pptx`.
+> **one `app.html` and one `app.gs`,** plus `appsscript.json`. Nothing else.
+
+An Apps Script project holds only `.gs`, `.html` and `appsscript.json` — so `appsscript.json`
+is the one unavoidable third file, and it is generated, not hand-maintained. The deck template
+is a **Google Slides file in Drive**, addressed by `DECK_CONFIG.TEMPLATE_ID`; it was never a
+project file.
 
 Two files means two copy-pastes to move the whole application. That is the point, and it is
 worth some cost elsewhere ([§9](#9-what-this-costs)).

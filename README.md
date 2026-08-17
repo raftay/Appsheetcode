@@ -761,8 +761,7 @@ so nobody has to guess.
 | `AmrDeckSource` registry (`Deck_Sources.html`) | ✅ built — the two guarded adapters now have something to register into |
 | `AmrSlide.captureBare` | ✅ built in `SlideExport.html` |
 | Recipe (`Deck_Recipe.gs`) | ✅ built — 43 rows, transcribed from the July 2026 pack |
-| `Amrize_Deck_Template.pptx` + sample-deck PDF | ✅ committed to the repo |
-| **`DECK_CONFIG.TEMPLATE_ID` / `FOLDER_ID`** | ❌ **still `PUT_..._HERE` placeholders — set these before anything runs** |
+| `DECK_CONFIG.TEMPLATE_ID` / `FOLDER_ID` | ✅ both set in `Deck_Backend.gs` |
 | `pv` / `cust` adapters (`Deck_PV.html`) | ✅ live — 19 more rows build |
 | `seg` / `rmx` adapters | ✅ live — all 43 rows now build |
 
@@ -925,28 +924,26 @@ it later became the heading over a table. So the cube path titled its cards `sub
 the identical card built through the server path said `Submarket`. It returns the label as
 written now; the one sentence context lower-cases at the call site.
 
-### What the committed template actually contains
+### The template
 
-Validated offline with python-pptx against the same two contracts the builder relies on:
+**The live Google Slides file is the only authority** — `DECK_CONFIG.TEMPLATE_ID` in
+`Deck_Backend.gs`. It is not a `.pptx`: `readTemplate` fails loudly on an unconverted upload.
+Run `DECK_validateTemplate()` after any edit to it.
 
-- **720 × 405 pt** — exactly Google Slides 16:9. ✅
-- **Five tagged layouts**: `L_COVER`, `L_COMMENT_IMAGE`, `L_FULL_IMAGE`, `L_SECTION`,
-  `L_README`. Every token sits in exactly one top-level shape, so nothing is nested in a
-  group where `SlidesApp.getShapes()` could not reach it. ✅
-- **`L_FULL_STACK` and `L_COMMENT_STACK` are NOT in the template** (the plan assumed seven
-  layouts; five shipped). The recipe therefore routes the five Top-10 Customer slides to
-  `L_FULL_IMAGE` as one image containing both tables — which is what the Price & Volume PNG
-  export already produces. Every layout the recipe asks for exists. ✅
-- One cosmetic nit: in `L_COMMENT_IMAGE` the `{{IMAGE}}` box starts 0.8 pt above the bottom
-  of `{{TITLE}}`. Pictures are fitted and centred inside the box, so a normal wide table
-  never reaches that edge — but nudging the image box down a point in the template removes
-  the overlap entirely.
+The contract it must satisfy, which `DECK_validateTemplate` enforces:
 
-Slot geometry, for reference:
+- **720 × 405 pt** — exactly Google Slides 16:9.
+- **Tagged layouts**, each carrying `role: 'cover' | 'report'`. The recipe's picker is built
+  from the `report` ones, and `readTemplate` fails if a template has a cover but no report
+  layouts.
+- **Every token in exactly one top-level shape** — a token nested inside a group is
+  unreachable to `SlidesApp.getShapes()`.
+- **No unfilled tokens ship as text.** `addSlide` blanks every token the recipe did not fill;
+  `{{PAGE}}` is the exception, stamped by `finish()` once the slide order is final.
 
-The **live** template (`DECK_CONFIG.TEMPLATE_ID`) carries four content layouts. The `.pptx`
-committed here is the older five-layout starter and is now **out of date** — treat the Slides
-file as the authority and run `DECK_validateTemplate()` after any edit.
+A starter `.pptx` and a sample-deck PDF used to be committed here as reference copies. They
+were never part of the Apps Script project — it holds only `.gs`, `.html` and
+`appsscript.json` — and they were deleted once the live Slides file moved past them.
 
 | Layout | Used by | Why |
 |---|---|---|
@@ -1114,4 +1111,5 @@ before assuming it is finished.**
 | | TP01, the Inventory Report and the Landing page have no boot screen wired — they read no report data, so there may be nothing to do. Check before adding one | ☐ |
 | 2026-08-17 | **Planned the merge to one `app.html` + one `app.gs`** — see [`PLAN.md`](PLAN.md). Eight chunks on the `merging-files` branch, ordered around the fact that `app.gs` cannot coexist with the files it replaces | ✅ plan only, no code |
 | 2026-08-17 | Audited this file against the code and cut ~560 lines of superseded process history from it. Stale line counts removed, `AmrQlik` and the Pull-from-QlikView button struck (neither exists), `Deck_RMX`'s role corrected | ✅ done |
+| 2026-08-17 | The reference `.pptx` and sample PDF were deleted from the repo. Nothing reads them — the deck template is a Google Slides file addressed by `DECK_CONFIG.TEMPLATE_ID`, and an Apps Script project cannot hold a `.pptx` anyway. Corrected §8, which described the deleted file's contents and claimed the deck IDs were still `PUT_..._HERE` placeholders when both have been set for months | ✅ done |
 | 2026-08-17 | **Verified §5, §6 and §7 against the code.** Four errors fixed: §5 described QlikSync as scanning two Drive folders and identifying exports by content, when it addresses three files by id and never touches a folder — contradicting its own table three paragraphs down; §6 documented an `APP_GEN_PROPS` counter map that does not exist and a stale `APP_CODE_BUILD` literal, both left over from the model §5 already says was replaced by the Drive modified-time; §7 named four chart registries of which one (`CH.mkt`) does not exist, and described the two RMX coverage keys as four. **The rest of §7 verified clean** — roughly forty identifiers and rules checked, including the whole Overview period model, the panel-emptiness rule and every rendering trap | ✅ done |
