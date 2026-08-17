@@ -96,6 +96,65 @@ running month it published that one while the other three backends published las
 The cases assert the default lands on last month, that an explicit month pins it, and that
 it falls back to the newest month present when last month is not exported yet.
 
+## `rmxcost.js` — why Ready-Mix was slow, and that the fix moves no number
+
+```bash
+node tests/rmxcost.js            # no dependencies
+N=80000 node tests/rmxcost.js    # a bigger sheet
+```
+
+The execution log showed `RMX_getSlideTables` and `RMX_getKeys` at a flat **15–24 s per
+call**, for every market, every time, while Aggregates answered the same shape of question
+in 2–6 s. The obvious suspect was the grouping. It was not — this harness times the grouping
+at **0.3 s for all twelve selections**.
+
+What cost the time is that every one of those calls opened with `loadDataCached_()`, and the
+cached bundle is **14 MB — 160 CacheService chunks** — pulled back in full to produce a
+**72 KB** answer. That ratio is the whole bug, and it is exactly what the Aggregates side
+never does: `PV.getReport` returns its cached report *before* it touches the pivot.
+
+It reports chunk counts rather than pretending to know seconds: sizes and chunk counts are
+arithmetic, the grouping is pure JavaScript, and CacheService itself is the one part a Node
+harness cannot time.
+
+Pins, in order:
+
+1. **the bundle dwarfs every answer taken off it**, so a per-request bundle read can never
+   be cheap;
+2. **the grouping was never the cost** — under a second for all twelve;
+3. **`prepareAll` writes where the readers read.** This is the failure that would otherwise
+   ship silently: a warm pass that fills keys nobody looks in, where every check passes,
+   the log looks healthy and every request still recomputes. The harness counts the cache
+   keys a read touches — 2, against the bundle's 160 — so a key that drifts fails here
+   rather than in production. `selKey_()` exists for the same reason: one definition, used
+   by both sides.
+4. **it moves no figure.** Every payload `prepareAll` caches is compared byte-for-byte with
+   what the individual call computes, for every market × period, keys and slide alike.
+5. **an upload session stays private.** "Run on my own QlikView files" must never write to
+   a cache everybody reads.
+
+## `segboot.js` — the Ready-Mix pages' boot, in a real browser
+
+```bash
+npm install playwright
+node tests/segboot.js                  # checks
+node tests/segboot.js /tmp/shots       # …and a screenshot per page
+CHROMIUM_PATH=/path/to/chrome node tests/segboot.js
+```
+
+`RMX_prepare` replaced a boot sequence, and a boot sequence is the thing unit checks cannot
+see. The failure modes are all wiring: *the page fetches the market `prepare` already handed
+it*, *the loading screen never comes down*, *switching market goes back to the server
+anyway*, *two progress jobs stack up and read as a flicker*.
+
+So it boots the **real page files** — includes resolved the way `include()` resolves them —
+with `google.script.run` stubbed, then counts the calls and reads the progress overlay.
+Per page it fails on: more or fewer than one `RMX_prepare`, any surviving `RMX_getMarkets`,
+any re-fetch of the opening market, an overlay still up after the tables rendered, a second
+progress job stacked underneath, or a market switch costing more than a couple of calls.
+
+It is a wiring test, not a data test — the payloads are synthetic.
+
 ## `deckstatic.js` — the CSS the deck can actually see, and the recipe
 
 No browser, no Google, no dependencies. Run it after touching a deck module, a report

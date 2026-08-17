@@ -45,7 +45,9 @@ var CONFIG = {
   APPLIED_BASE_PY: null,   // null => total PY concrete m3 across all markets (≈947,519).
   MAX_DIMS: 24,            // effectively unlimited (only 4 breakdowns exist); grouping happens client-side
   CACHE_TTL: 21600,        // 6 hours
-  CACHE_VER: 'v17',  // bumped: getKeys / getExtras / getSlideTables now cache their own
+  CACHE_VER: 'v18',  // bumped: RMX_prepare warms every selection off ONE bundle read,
+                     // and the per-selection key is built in one place (selKey_).
+                     // v17: getKeys / getExtras / getSlideTables cache their own
                      // FINISHED payload per market+period+month (selCached_), the way
                      // PV.getReport and getCrossReport already do. New key shape.
                      // v16: the bundle now carries latestMonth (the REPORT month) and
@@ -201,6 +203,15 @@ function cacheGet_(key){
  * generation out, and the payloads computed from it must not be handed to
  * anybody else. Same rule as PV.getReport.
  */
+/* THE KEY, IN ONE PLACE. prepareAll() writes these entries and getKeys /
+   getExtras / getSlideTables read them, so the two must agree exactly. Two
+   copies of a cache key is how you ship a warm pass that writes where nothing
+   reads: everything looks like it worked and every request still recomputes. */
+function selKey_(kind, period, month, market){
+  return [kind, (period === 'MTD') ? 'MTD' : 'YTD',
+          'm' + (Number(month) || 0), market || 'auto'];
+}
+
 function selCached_(parts, opts, build){
   var ck = opts.upload ? null : cacheKey_(parts);
   if (ck && !opts.force){ var hit = cacheGet_(ck); if (hit) return hit; }
@@ -951,16 +962,159 @@ function getMarkets(){
   return out;
 }
 
+/* =================== prepareAll - THE ONE PULL ===================
+ * ONE CALL READS THE SHEET DATA. EVERYTHING ELSE READS A FINISHED ANSWER.
+ *
+ * The measurement that produced this (tests/rmxcost.js):
+ *
+ *   the cached data bundle .................  14 MB  -> 160 cache chunks
+ *   a finished getKeys payload, one market ..  72 KB  ->   1 cache chunk
+ *   ...Central Canada .......................  367 KB ->   5 cache chunks
+ *   grouping the rows for all 12 selections .  0.3 s  in total
+ *
+ * Every getKeys / getExtras / getSlideTables / getMarkets call used to open with
+ * loadDataCached_(), which pulls all 160 chunks back out of CacheService before
+ * it can group a single row. So a request that produces 72 KB moved 14 MB to do
+ * it, and did it again for the next market, and again for the other period. The
+ * grouping was never the cost - 0.3 s for all twelve - and that is why the
+ * execution log showed a flat 15-24 s per call whatever was being asked for.
+ *
+ * It is also exactly why the Aggregates side feels instant next to this one:
+ * PV.getReport returns its cached report BEFORE it touches the pivot. Nothing
+ * about Ready-Mix is heavier - it just had no equivalent of that.
+ *
+ * So: read the bundle ONCE, compute every selection off it, and put each
+ * finished payload in the cache under the key its own reader looks in. After
+ * this the page's own calls are 1-5 chunk reads, and switching market costs
+ * about a second instead of twenty.
+ *
+ * IT CHANGES NO ARITHMETIC. keyRows_, ppiMaps_, plantRows_, slideSegment_ and
+ * extrasPayload_ are called with exactly the arguments getKeys / getSlideTables
+ * pass them today - same rows, same market sentinel, same month. The only
+ * difference is how many times the bundle is fetched to feed them.
+ *
+ * `want` is which page is asking, because warming what nobody will read is just
+ * a slower call:
+ *   'keys'  RMX - Price & Volume        (12 payloads)
+ *   'slide' Commercial Product Segment  (12 payloads)
+ *   'all'   both, plus Extras           (36) - for a scheduled warm
+ *
+ * It also RETURNS the payload for `market`, so the page that asked can render
+ * from this one response without a second round trip.
+ *
+ * UPLOADS SKIP ALL OF IT. "Run on my own QlikView files" is one user's session
+ * and its figures must never land in a cache everybody reads (see selCached_).
+ */
+function prepareAll(opts){
+  opts = opts || {};
+  var t0 = new Date().getTime();
+  var want = (opts.want === 'keys' || opts.want === 'slide' || opts.want === 'all')
+    ? opts.want : 'all';
+
+  var bundle = opts.upload ? loadUploaded_(opts.upload)
+                           : loadDataCached_(!!opts.force);   // the one big read
+  var month   = monthSel_(bundle, opts.month);                // 1-12
+  var markets = bundle.markets || [];
+  var list    = [ALL_MARKETS].concat(markets);
+  var asked   = opts.market || ALL_MARKETS;
+  var payload = null, warmed = 0;
+
+  /* Every reply carries these, exactly as the individual calls do, so a page
+     can fill its pickers from this one answer. */
+  function stamp(o){
+    o.month = month;
+    o.latestMonth = bundleMonth_(bundle);
+    o.months = bundleMonths_(bundle);
+    o.build = BUILD;
+    o.generation = generation_();
+    return o;
+  }
+
+  /* Write one finished payload where its own reader will look for it. An upload
+     session gets the answer but never the shared cache entry. */
+  function keep(kind, period, market, out){
+    if (!opts.upload) cachePut_(cacheKey_(selKey_(kind, period, month, market)), out);
+    warmed++;
+    return out;
+  }
+
+  ['MTD','YTD'].forEach(function(period){
+    var m = monthFor_(bundle, period, month);
+    /* the month filter, once per period rather than once per market per table */
+    var scoped = scopeMonth_(bundle.main, m);
+    /* what getKeys would resolve an empty market to, so the 'auto' entry the
+       first RMX load asks for is warmed too */
+    var auto = pickMarket_(scoped);
+
+    list.forEach(function(mk){
+      if (want === 'keys' || want === 'all'){
+        var k = keep('keys', period, mk, stamp({
+          ok:true, market:mk, period:period,
+          keys:   keyRows_(bundle.main, mk, m),
+          ppi:    ppiMaps_(bundle.main, mk, m),
+          plants: plantRows_(bundle.main, mk, m),
+          breakdowns: CONFIG.BREAKDOWNS
+        }));
+        if (mk === auto) keep('keys', period, '', k);      // the '' -> 'auto' alias
+        if (opts.want === 'keys' && mk === asked && period === (opts.period || 'MTD')) payload = k;
+      }
+
+      if (want === 'slide' || want === 'all'){
+        var s = keep('slide', period, mk, stamp({
+          ok:true, market:mk, period:period,
+          markets: markets, allMarkets: ALL_MARKETS,
+          segment: slideSegment_(bundle, mk, m),
+          extras:  extrasPayload_(bundle, scoped, mk, m),
+          rowCount: scoped.length
+        }));
+        if (opts.want === 'slide' && mk === asked && period === (opts.period || 'MTD')) payload = s;
+      }
+
+      if (want === 'all'){
+        var e = extrasPayload_(bundle, scoped, mk, m);
+        e.ok = true; e.market = mk; e.period = period; e.month = month;
+        keep('extras', period, mk, e);
+        if (mk === auto) keep('extras', period, '', e);
+      }
+    });
+  });
+
+  /* One field of the bundle we already have open. The Mapping check panel is on
+     every RMX page load, and this is what stops it costing a second 14 MB read. */
+  if (!opts.upload){
+    cachePut_(cacheKey_(['unmapped']), unmappedOf_(bundle));
+    warmed++;
+  }
+
+  return { ok:true, warmed:warmed, want:want,
+           markets:markets, allMarkets:ALL_MARKETS,
+           breakdowns:CONFIG.BREAKDOWNS,
+           month:month, latestMonth:bundleMonth_(bundle),
+           months:bundleMonths_(bundle),
+           build:BUILD, generation:generation_(),
+           ms: new Date().getTime() - t0,
+           payload: payload };
+}
+
 /* Every value the lookups couldn't match, across ALL markets and ALL months
  * (deliberately never filtered by the page's market/period selection — this
  * is about fixing the lookup tabs, not reading a period). */
-function getUnmapped(opts){
-  opts = opts || {};
-  var bundle = opts.upload ? loadUploaded_(opts.upload) : loadDataCached_(!!opts.force);
-  var u = bundle.unmapped || { product:[], extras:[], flag:[] };
+/* Cached like everything else. It is one field of the bundle - so answering it
+   used to mean pulling all 160 chunks of that bundle back to hand over a list
+   the pages show in a side panel, on EVERY page load. prepareAll fills this
+   entry while it already has the bundle open, which makes it free. */
+function unmappedOf_(bundle){
+  var u = (bundle && bundle.unmapped) || { product:[], extras:[], flag:[] };
   return { ok:true, product:u.product, extras:u.extras, flag:u.flag,
            total: u.product.length + u.extras.length + u.flag.length,
            generation: generation_() };
+}
+function getUnmapped(opts){
+  opts = opts || {};
+  return selCached_(['unmapped'], opts, function(){
+    return unmappedOf_(opts.upload ? loadUploaded_(opts.upload)
+                                   : loadDataCached_(!!opts.force));
+  });
 }
 
 function pickMarket_(main){
@@ -977,8 +1131,8 @@ function pickMarket_(main){
 function getKeys(opts){
   opts = opts || {};
   var period = (opts.period==='MTD') ? 'MTD' : 'YTD';
-  return selCached_(['keys', period, 'm' + (Number(opts.month) || 0),
-                     opts.market || 'auto'], opts, function(){
+  return selCached_(selKey_('keys', period, opts.month, opts.market),
+                    opts, function(){
     var bundle = opts.upload ? loadUploaded_(opts.upload) : loadDataCached_(!!opts.force);
     var month = monthFor_(bundle, period, opts.month);
     var market = opts.market || pickMarket_(scopeMonth_(bundle.main, month));
@@ -1039,8 +1193,8 @@ function getReport(opts){
 function getExtras(opts){
   opts = opts || {};
   var period = (opts.period==='MTD') ? 'MTD' : 'YTD';
-  return selCached_(['extras', period, 'm' + (Number(opts.month) || 0),
-                     opts.market || 'auto'], opts, function(){
+  return selCached_(selKey_('extras', period, opts.month, opts.market),
+                    opts, function(){
     var bundle = opts.upload ? loadUploaded_(opts.upload) : loadDataCached_(!!opts.force);
     var month = monthFor_(bundle, period, opts.month);
     var main = scopeMonth_(bundle.main, month);
@@ -1224,8 +1378,8 @@ function slideSegment_(bundle, market, month){
 function getSlideTables(opts){
   opts = opts || {};
   var period = (opts.period==='MTD') ? 'MTD' : 'YTD';
-  return selCached_(['slide', period, 'm' + (Number(opts.month) || 0),
-                     opts.market || ALL_MARKETS], opts, function(){
+  return selCached_(selKey_('slide', period, opts.month, opts.market || ALL_MARKETS),
+                    opts, function(){
     var bundle = opts.upload ? loadUploaded_(opts.upload) : loadDataCached_(!!opts.force);
     var month  = monthFor_(bundle, period, opts.month);
     var main   = scopeMonth_(bundle.main, month);
@@ -1631,6 +1785,7 @@ function debugUnclassified(market){
   // Surface what the front end / Code.gs need.
   return {
     getMarkets:     getMarkets,
+    prepareAll:     prepareAll,   // the one pull - see the block comment above
     getKeys:        getKeys,
     getExtras:      getExtras,
     getSlideTables: getSlideTables,  // Commercial Product Segment slide (one call)
@@ -1764,6 +1919,7 @@ function RMX_whoWins(){
  * through the ambient `RMX`.
  * ======================================================================== */
 function RMX_getMarkets(opts)     { return RMX_NS.getMarkets(opts); }
+function RMX_prepare(opts)        { return RMX_NS.prepareAll(opts); }
 function RMX_getKeys(opts)        { return RMX_NS.getKeys(opts); }
 function RMX_getExtras(opts)      { return RMX_NS.getExtras(opts); }
 function RMX_getSlideTables(opts) { return RMX_NS.getSlideTables(opts); }

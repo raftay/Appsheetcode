@@ -105,7 +105,7 @@ namespace objects are captured at evaluation time.
 | `Config.gs` | 510 | `APP_CONFIG` — every sheet ID, tab name, market list, cube constants — plus the Settings API |
 | `PV_Backend.gs` | 1393 | AGG Price & Volume aggregation |
 | `PV_Lookup.gs` | 334 | REGION LOOKUP mapping-check for Price & Volume |
-| `RMX_Backend.gs` | 1735 | Ready-Mix PPI/ASP engine; also serves the Segment page via `RMX_getSlideTables` |
+| `RMX_Backend.gs` | 1901 | Ready-Mix PPI/ASP engine; also serves the Segment page via `RMX_getSlideTables`. **`RMX_prepare` is the one pull** — see [§6](#6-caching-model) |
 | `RMX_Suggest.gs` | 575 | Lookup-miss suggestions (PRODUCT MASTER / CUSTOM FLAG / EXTRAS), three independent models |
 | `Ov_Backend.gs` | 1453 | Executive Overview aggregator + the closed-year history cube |
 | `FSC_Backend.gs` | 581 | AGG fuel recovery |
@@ -366,6 +366,34 @@ Two separate things move that token:
 needs three, and Apps Script runs one user's calls end to end, so three separate calls cost
 most of a second of dead time before the page starts loading.
 
+**The bundle is 14 MB — 160 cache chunks. Never read it to answer one question.**
+This is the single most expensive mistake in the suite's history, and it hid for a long time
+because nothing about it looks wrong. `loadDataCached_()` caches the whole Ready-Mix dataset
+as one object, which is right: it is what stops forty thousand rows being pulled out of
+Sheets again. But `getKeys`, `getExtras`, `getSlideTables`, `getUnmapped` and `getMarkets`
+all *opened* with it, so a request that produces a **72 KB** answer moved **14 MB** through
+`CacheService` to do it — and did it again for the next market, and again for the other
+period. The execution log showed a flat 15–24 s per call whatever was being asked for, which
+is the tell: the cost did not vary with the question because it was not the question.
+
+The grouping was never the cost. `tests/rmxcost.js` times it at **0.3 s for all twelve
+market × period selections**. And it is precisely why Aggregates has always felt instant next
+to Ready-Mix: `PV.getReport` returns its cached report *before* it touches the pivot.
+
+**`RMX_prepare` is the one pull.** One execution, one bundle read, every selection computed
+and cached under the key its own reader looks in — then every page call is a 1–5 chunk read.
+It changes no arithmetic: the compute functions are called with exactly the arguments the
+individual entry points pass them, and the harness compares every warmed payload
+byte-for-byte against the single-call result. Two rules came out of it:
+
+- **`selKey_()` is the only place a per-selection cache key is built.** Two copies of a cache
+  key is how you ship a warm pass that writes where nothing reads: every check passes, the
+  log looks healthy, and every request still recomputes.
+- **A client-side warm loop is not the answer to a slow call.** Both pages used to fetch
+  every market × period in the background. That is twelve of the expensive read, serially —
+  and because Apps Script runs one user's `google.script.run` calls end to end, they queue in
+  front of whatever the user does next. Warm on the server, in one execution, or not at all.
+
 **Cache the ANSWER, not just the ingredients.** Every Ready-Mix page computes from
 `loadDataCached_()` — the whole dataset as one cached object. Caching that is right: it is
 what stops forty thousand rows being pulled out of Sheets again. But for a long time it was
@@ -520,6 +548,18 @@ cannot be re-sliced — whatever month the export was run for, both tabs are for
   down both sides". That is exactly what the Product Segment slides looked like in the July
   deck: the strip was fitted at its 10px base and then scaled to four effective pixels.
   `tests/slidefit.js` fails on any content that still overflows its frame.
+- **One loading screen means one `AmrProgress` key.** It shows the lowest-order job and
+  lists the rest underneath, so several keys raised and cleared at their own moments is what
+  reads as a flicker of half-second screens — and `done()` adds a 1.2 s tick before the next
+  job goes up. Both Ready-Mix pages raise a single `LOAD_JOB` with one wording, pass the
+  varying part as the job's `note`, and clear it in exactly one place: where the tables
+  actually reach the page.
+- **There is no region to choose on an RMX slide.** `AmrKpi.rmx()` finds a market's block in
+  the workbook's `RMX Summary` tab **by name** and reads no sheet index at all; only the
+  Price & Volume cards read a per-region plant statement. The `seg` adapter used to declare a
+  `kpiPicker` built from the AGG region list anyway — `AmrSegSlide` ignored every field of it,
+  so it changed nothing and put *"AGG GTA"* on ten Ready-Mix rows in the Deck Builder. A
+  control that cannot affect its output does not belong on the page.
 - **Every size in a KPI card is `em`, so the row's font-size IS the card's size.** A strip
   dropped into a bare flex row with no font-size inherits the 16px body font, and the cards
   clip their own text (`overflow:hidden`) rather than spilling. `AmrKpi.stripHtml` /
@@ -1141,7 +1181,11 @@ before assuming it is finished.**
 | 2026-08-14 | Product Segment slide — the same treatment: fit to the frame instead of letting `build()` scale the stack, so the KPI strip is readable on a deck slide | ✅ done |
 | 2026-08-14 | The on-page KPI strip (Price & Volume + Segment) and *Download KPI PNG* — sized by `AmrKpi`, one clean row, nothing clipped | ✅ done |
 | 2026-08-14 | Ready-Mix speed — `getKeys` / `getExtras` / `getSlideTables` cache their finished payload per market+period+month, the way `PV.getReport` always has | ✅ done |
-| 2026-08-14 | The Segment page warms every market in the background; Ready-Mix shows its loading screen before the call that is slow, not after | ✅ done |
+| 2026-08-14 | The Segment page warms every market in the background; Ready-Mix shows its loading screen before the call that is slow, not after | ✅ done — **superseded 08-17**, see below |
+| 2026-08-17 | **Found the real cost**: every RMX call re-read the 14 MB bundle (160 cache chunks) to produce a 72 KB answer. `RMX_prepare` does it once; `tests/rmxcost.js` is the evidence and the gate | ✅ done |
+| 2026-08-17 | Both Ready-Mix pages open on ONE call, with ONE loading screen, and no client-side warm loop; `RMX_getMarkets` and the boot-time Mapping check are off the critical path (`tests/segboot.js`) | ✅ done |
+| 2026-08-17 | The RMX Segment deck rows lose their KPI Region dropdown — `AmrKpi.rmx` resolves by market name and reads no region sheet, so the control did nothing | ✅ done |
+| | **The rest of the suite still has one `get*` per page per sheet.** PV, FSC, RFSC, Overview and TP01 were not touched. Worth auditing each for the same "read the ingredients to answer one question" shape before unifying anything | ☐ |
 
 ### What has and has not been run
 

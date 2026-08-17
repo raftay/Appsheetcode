@@ -635,14 +635,9 @@ var AmrSegSlide = (function(){
   }
   function key(spec){ return (spec.market||'') + '|' + (spec.period||'MTD') + '|m' + monthOf(spec); }
 
-  /* Which EBITDA workbook this market's KPI strip reads — 'mbsk' for Manitoba
-     and Saskatchewan, 'main' for the rest. The recipe spells these markets in
-     caps ('SASKATCHEWAN'); AmrKpi.bookFor normalises, so both spellings land
-     on the same book. */
-  function bookOf(spec){
-    return (window.AmrKpi && AmrKpi.bookFor)
-      ? AmrKpi.bookFor(spec && spec.market) : 'main';
-  }
+  /* No bookOf() here any more. AmrKpi.rmx already tries the market's own
+     workbook first and the other as a fallback, so which book a market sits in
+     is its business, not this adapter's. */
 
   function loadKpi(){
     if(KPIVALS.loaded) return Promise.resolve(KPIVALS.vals);
@@ -666,6 +661,17 @@ var AmrSegSlide = (function(){
     });
   }
 
+  /* THERE IS NO REGION TO CHOOSE ON AN RMX SLIDE.
+     The KPI cards here come from AmrKpi.rmx(vals, market, period), which finds
+     the market's own block in the workbook's "RMX Summary" tab BY NAME and
+     reads nothing else — no region sheet, no index, no picker. The Price &
+     Volume cards are the ones that read a per-region plant statement.
+
+     This used to hand the module AmrPvSlide.kpiFor(...), the AGG side's region
+     slice, and declare a kpiPicker built from the AGG region list. AmrSegSlide
+     ignores every field of it, so the dropdown changed nothing at all — it just
+     sat on ten RMX rows in the Deck Builder offering "AGG GTA", which is not
+     even the same product line. All it needed was to not be there. */
   function ctxFor(spec){
     return {
       data: CACHE[key(spec)] || null,
@@ -677,10 +683,7 @@ var AmrSegSlide = (function(){
          page ticks for its own export. `detail` stays off: it is the EXTRAS
          LOOKUP working view, too wide to read at slide size. */
       exportSel: { 'seg:segment': true, 'seg:byType': true, 'seg:detail': false },
-      kpi: (window.AmrPvSlide && AmrPvSlide.kpiFor)
-        ? AmrPvSlide.kpiFor(KPIVALS.vals, 'RMX_MARKET', spec.market || '',
-            spec.kpiSheet, bookOf(spec))
-        : { vals:KPIVALS.vals, sheet:'', index:{}, sheets:[], map:{} }
+      kpi: { vals: KPIVALS.vals }
     };
   }
 
@@ -696,24 +699,9 @@ var AmrSegSlide = (function(){
       return el;
     },
     fit: function(box, spec){ return AmrSegSlide.fitSlide(box, ctxFor(spec)); },
-    /* Same per-device region map as the Price & Volume slides, under its own
-       key prefix so an RMX market and an AGG market of the same name do not
-       fight over one setting. */
-    kpiPicker: (window.AmrPvSlide && AmrPvSlide.kpiSheets) ? {
-      sheets: function(spec){ return AmrPvSlide.kpiSheets(KPIVALS.vals, bookOf(spec)); },
-      current: function(spec){
-        return AmrPvSlide.kpiFor(KPIVALS.vals, 'RMX_MARKET', spec.market||'',
-          spec.kpiSheet, bookOf(spec)).sheet;
-      },
-      choose: function(spec, sheet){
-        AmrPvSlide.kpiRemember('RMX_MARKET', spec.market||'', sheet);
-      },
-      book: bookOf,
-      hasBook: function(spec){
-        return !(window.AmrKpi && AmrKpi.hasBook)
-            || AmrKpi.hasBook(KPIVALS.vals, bookOf(spec));
-      }
-    } : null,
+    /* NO kpiPicker - see ctxFor above. An RMX market resolves its own KPI block
+       by name; there is no region sheet to pick, so a dropdown here could only
+       ever be decoration that shows an AGG region on a Ready-Mix slide. */
     /* ↻ Update from source: forget the tables and the KPI slice. */
     reset: function(){
       CACHE = {};
