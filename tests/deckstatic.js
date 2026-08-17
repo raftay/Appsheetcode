@@ -309,6 +309,41 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
     /row\.kpiUsed\s*=\s*dbKpiNow\s*\(/.test(src),
     'nothing records the region a picture used, so a later change cannot tell '
     + 'which pictures went stale');
+  check('deck builder · no row pins a Region over the source\'s own memory',
+    /delete\s+row\.spec\.kpiSheet/.test(pick),
+    'a kpiSheet left pinned on a row outranks the view memory, so the row goes '
+    + 'stale the moment its MTD/YTD twin is changed instead');
+}
+
+/* ---- the Region memory is keyed by VIEW, and Land / Docks are views -------- *
+ * Southwest Land and Southwest Docks are a refine WITHIN Southwest, so all
+ * three rows carry market:'Southwest'. Page_PriceVolume's kpiViewKey has always
+ * had the refine in the key; the deck's copy did not, so one dropdown moved all
+ * three rows — and the refined rows read a different slot from the one the
+ * report page writes. The period stays OUT of the key on purpose: MTD and YTD
+ * of one view read the same region sheet, and that pair moving together is the
+ * only sharing anybody wants.
+ * -------------------------------------------------------------------------- */
+{
+  const pv = read('Deck_PV.html');
+  const key = (pv.match(/function kpiViewKeyFor[\s\S]*?\n  }/) || [''])[0];
+  check('deck · the Region key takes the refine',
+    /function kpiViewKeyFor\s*\(\s*filterField\s*,\s*filterValue\s*,\s*refine\s*\)/.test(key),
+    'kpiViewKeyFor ignores the refine — Southwest, Southwest·Land and '
+    + 'Southwest·Docks then share one slot');
+  check('deck · ...and not the period',
+    !/period/.test(key),
+    'the period is in the Region key — MTD and YTD would remember separately, '
+    + 'and they read the same sheet');
+  check('deck · every Region call site passes the row\'s refine',
+    (pv.match(/bookOf\(spec\),\s*spec\.refine\)/g) || []).length >= 2 &&
+    /kpiRemember\('MARKET',\s*filterValueOf\(spec\.market\),\s*sheet,\s*spec\.refine\)/.test(pv),
+    'a call site still drops the refine, so what is written and what is read '
+    + 'disagree');
+  check('deck · and the report page keys it the same way',
+    /kpiViewKey\s*\(\)\s*\{[\s\S]{0,240}?refineValue/.test(read('Page_PriceVolume.html')),
+    'Page_PriceVolume no longer keys its Region memory by the refine — the two '
+    + 'now disagree about which slot a Land slide reads');
 }
 
 /* ---- the source contract ------------------------------------------------- *

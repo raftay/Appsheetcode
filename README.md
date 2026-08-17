@@ -156,6 +156,15 @@ Everything below lives in `Shell.html` unless noted.
   token. No expiry: entries stay valid until the token moves.
 - **`AmrQlik`** — the per-page ⇣ *Pull from QlikView* button, wired to `QlikSync.gs`.
 - **`AmrProgress`** — the shared progress pill.
+- **The Region memory is keyed by VIEW, in one place.** `pvKpiViewMap` in `localStorage`,
+  key = `MARKET:<market>` plus `:<refine>` when there is one. Southwest, Southwest·Land and
+  Southwest·Docks are three views of one market and each remembers its own region sheet; the
+  **period is deliberately not in the key**, so a view's MTD and YTD slides move together —
+  they read the same sheet in two places on it. `Page_PriceVolume.kpiViewKey` and
+  `Deck_PV.kpiViewKeyFor` must agree, or the deck reads a different slot from the one the
+  report page wrote. A view with nothing remembered falls back to its market's slot before
+  the first sheet on the list. Nothing may pin `spec.kpiSheet` over this map: a pin outranks
+  it and goes stale the moment the twin row is changed instead.
 - **`AmrTick`** — a timer a background tab cannot stop. `AmrTick(ms, fn)` is `setTimeout`
   with the sleep done inside a one-line **Worker**, because a main-thread timer is clamped to
   once a second in a hidden tab and to once a **minute** after five minutes of it.

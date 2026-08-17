@@ -139,8 +139,16 @@ win.AmrKpi = {
         cm2Cy:121.09, cm2Py:133.2 }
     : null,
 };
-win.localStorage = (function(){ var m={}; return {
-  getItem:k=>(k in m?m[k]:null), setItem:(k,v)=>{m[k]=String(v);}, removeItem:k=>{delete m[k];} }; })();
+/* jsdom's own localStorage throws on an opaque origin, and a plain assignment
+   does not replace it — the getter is still jsdom's, so every read threw and
+   every write was swallowed by the callers' try/catch. That is not a harmless
+   difference here: the Region memory IS localStorage, so without this the
+   picker silently remembers nothing and every "it remembered" check passes for
+   the wrong reason. defineProperty actually replaces it. */
+Object.defineProperty(win, 'localStorage', { configurable:true, writable:true,
+  value: (function(){ var m={}; return {
+    getItem:k=>(k in m?m[k]:null), setItem:(k,v)=>{m[k]=String(v);},
+    removeItem:k=>{delete m[k];} }; })() });
 vm.runInContext(scriptOf('Deck_Fuel.html'), win);
 vm.runInContext(scriptOf('Deck_PV.html'), win);
 vm.runInContext(scriptOf('Deck_SEG.html'), win);
@@ -281,6 +289,44 @@ let bad = 0;
   await R.build(specs[0]);                       // fsc_mtd, already built once
   const refetched = calls.length > before;
   ok('a rebuilt slide goes back to the server', refetched);
+
+  /* ------------------------------------------------------------------
+   * EVERY ROW'S DROPDOWN IS ITS OWN — except the MTD / YTD pair.
+   * ------------------------------------------------------------------
+   * Southwest Land and Southwest Docks are a REFINE within Southwest, not
+   * markets, so all three rows carry market:'Southwest'. The deck's memory
+   * key was the market alone, so setting the region on Southwest moved Land
+   * and Docks with it, and the two refined rows also read a different slot
+   * from the one the report page writes for them — Page_PriceVolume's
+   * kpiViewKey has had the refine in it all along.
+   *
+   * The period is deliberately NOT in the key: MTD and YTD of one view read
+   * the same region sheet in two places on it, and that pair moving together
+   * is the one bit of sharing that is wanted.
+   * ---------------------------------------------------------------- */
+  console.log('\neach Region dropdown is its own, except MTD / YTD:');
+  const P = R.get('pv').kpiPicker;
+  const sw      = { market:'Southwest', period:'MTD' };
+  const swYtd   = { market:'Southwest', period:'YTD' };
+  const land    = { market:'Southwest', period:'MTD', refine:'Land' };
+  const landYtd = { market:'Southwest', period:'YTD', refine:'Land' };
+  const docks   = { market:'Southwest', period:'MTD', refine:'Docks' };
+  const sheets  = P.sheets(sw);
+  ok(`the market offers more than one region (${JSON.stringify(sheets)})`, sheets.length > 1);
+
+  P.choose(sw, sheets[0]);
+  P.choose(land, sheets[1]);
+  ok('Southwest keeps the region it was given',        P.current(sw)      === sheets[0]);
+  ok('...and its YTD twin moves with it',              P.current(swYtd)   === sheets[0]);
+  ok('Southwest Land keeps its OWN region',            P.current(land)    === sheets[1]);
+  ok('...and its YTD twin moves with it',              P.current(landYtd) === sheets[1]);
+  ok('changing Land did not drag Southwest with it',   P.current(sw)      === sheets[0]);
+  ok('Docks has never been set, so it follows Southwest',
+     P.current(docks) === sheets[0]);
+  P.choose(docks, sheets[1]);
+  ok('...until it is given one of its own',            P.current(docks)   === sheets[1]);
+  ok('...which leaves Southwest alone',                P.current(sw)      === sheets[0]);
+  ok('...and leaves Land alone',                       P.current(land)    === sheets[1]);
 
   console.log(bad ? `\n${bad} FAILURE(S).` : '\nDECK PATH OK.');
   process.exit(bad ? 1 : 0);
