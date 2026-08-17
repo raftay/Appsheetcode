@@ -223,9 +223,17 @@ unconditionally, outside any `try`/`catch`.
 
 ### Where the data comes from
 
-QlikView exports (`.xlsx`) land in two Drive folders. `QlikSync.gs` opens **every** Excel
-file in the folder and identifies it by its contents, not its filename — re-exporting under
-a different name changes nothing. It writes into:
+QlikView exports land in Drive as `.xls` files. `QlikSync.gs` addresses **three of them by
+file id** (`APP_CONFIG.QLIK_SYNC`) — it does not scan a folder and does not identify a file
+by its contents; `DriveApp.getFileById` is the only Drive lookup in the file. Each export is
+converted to a temporary Google Sheet to be read, and that copy is thrown away afterwards.
+
+> **So the filename does not matter but the file identity does.** Re-exporting *over* an
+> existing file is fine. Exporting to a *new* file — even at the same path with the same
+> name — gives it a new id, and the sync keeps reading the old one until the id in
+> `APP_CONFIG.QLIK_SYNC` is updated.
+
+It writes into:
 
 - **Price & Volume workbook** — `Combined Data CPI Raw`, `Combined Data CPI Other Revenue`,
   plus the typed `REGION LOOKUP` and `TOPLINE REV LOOKUP2` tabs.
@@ -405,23 +413,23 @@ Four layers, each with a different job:
 | `AmrCube` / `AmrKpiStore` | IndexedDB | multi-MB cube data |
 
 **Invalidation is by generation token, never by deletion.** Every server *and* browser
-cache key embeds a version string. Bumping the number strands every old copy on every
-device at once, with nothing to enumerate.
+cache key embeds a version string. When it moves, every old copy on every device is stranded
+at once, with nothing to enumerate.
+
+The token is `APP_getGen_(page)` in `Code.gs` — two parts joined:
 
 ```js
-APP_GEN_PROPS = { pricevolume:'pv_cache_gen', rmx:'cache_gen',
-                  segment:'sb_cache_gen', kpi:'kpi_cache_gen' }
-APP_CODE_BUILD = '2026-08-11a'
+APP_sourceStamp_(page) + '.' + APP_CODE_BUILD
 ```
 
-Two separate things move that token:
-
-- **Data changes** — pressing *Update from source* / `syncAll()` bumps the stored
-  generation number.
-- **Code changes** — `APP_CODE_BUILD` is folded into every token. **Bump it whenever
-  backend logic changes.** Without it, a code fix leaves the data generation untouched,
-  every device keeps serving figures the *old* code computed, and the fix looks like it did
-  nothing.
+- **Data changes** move the first part on their own. It is the **last-modified time of every
+  workbook the page reads** (§5) — not a stored counter. There are no `*_cache_gen` script
+  properties; nothing bumps anything. `syncAll()` and `APP_bumpGen_()` only drop the
+  30-second memo of that time so the next read sees the new one.
+- **Code changes** move the second. `APP_CODE_BUILD` is a literal near the top of `Code.gs`
+  and is folded into every token. **Bump it whenever backend logic changes.** Without it a
+  code fix leaves the data stamp untouched, every device keeps serving figures the *old* code
+  computed, and the fix looks like it did nothing.
 
 `getDataVersions(pages)` returns several pages' tokens in one round trip — the Overview
 needs three, and Apps Script runs one user's calls end to end, so three separate calls cost
@@ -531,8 +539,11 @@ cannot be re-sliced — whatever month the export was run for, both tabs are for
 - The ±50% ASP% coverage cap and `COVERAGE_CAP` were **removed** to match Qlik.
 - The `#N/A` merge toggle moves labels only, never PPI numbers.
 - Group PPIs do **not** weight-average back to Total. This matches Qlik; it is not a bug.
-- Coverage floors come from `APP_CONFIG.CUBE.COVERAGE.rmx` (`pyVol > 1`, `cyVol > 1`,
-  `pyRev > 110`, `cyRev > 110`) — Qlik's actual floors, kept in config to prevent drift.
+- Coverage floors come from `APP_CONFIG.CUBE.COVERAGE.rmx` — **two** keys, `minVol: 1` and
+  `minRev: 110`, which `covered_()` applies to all four figures (both years' volume *and*
+  both years' revenue must clear them). Qlik's actual floors, kept in config to prevent
+  drift. `COVERAGE.agg` is deliberately `0 / 0` until the Aggregates Qlik expression is to
+  hand — the same floors change nothing there.
 
 ### Fuel recovery
 
@@ -644,9 +655,10 @@ cannot be re-sliced — whatever month the export was run for, both tabs are for
 
 ### Rendering traps
 
-- Chart instances are tracked in **per-section registries** (`CH.mkt`, `CH.cust`, `CH.fsc`,
-  `CH.fscc`) — not one global list. A single list means re-rendering one section destroys
-  another section's canvases.
+- Chart instances are tracked in **per-section registries** — `CH` in `Page_Overview.html`
+  holds fifteen arrays (`bd`, `dim`, `exp`, `bridge`, `cust`, `fsc`, `fscc`, `seg`, `pcat`,
+  `ext`, `rdim`, `rasp`, `rtrend`, `atrend`, `rfuel`), not one global list. A single list
+  means re-rendering one section destroys another section's canvases.
 - Grid children default to `min-width:auto`. Panels inside grid containers need
   `min-width:0`, and canvases need `max-width:100%`, or they overflow.
 - `Styles.html` sets `thead th` background to `--blue-80`. A page using a plain `<table>`
@@ -1102,4 +1114,4 @@ before assuming it is finished.**
 | | TP01, the Inventory Report and the Landing page have no boot screen wired — they read no report data, so there may be nothing to do. Check before adding one | ☐ |
 | 2026-08-17 | **Planned the merge to one `app.html` + one `app.gs`** — see [`PLAN.md`](PLAN.md). Eight chunks on the `merging-files` branch, ordered around the fact that `app.gs` cannot coexist with the files it replaces | ✅ plan only, no code |
 | 2026-08-17 | Audited this file against the code and cut ~560 lines of superseded process history from it. Stale line counts removed, `AmrQlik` and the Pull-from-QlikView button struck (neither exists), `Deck_RMX`'s role corrected | ✅ done |
-| | **§5 (sheet IDs, tab names, market lists), §6 (caching) and §7 (domain rules) are not yet line-by-line verified against the code.** §7 is the one that would hurt most if stale, and the merge chunks lean on it. Verify before trusting it | ☐ |
+| 2026-08-17 | **Verified §5, §6 and §7 against the code.** Four errors fixed: §5 described QlikSync as scanning two Drive folders and identifying exports by content, when it addresses three files by id and never touches a folder — contradicting its own table three paragraphs down; §6 documented an `APP_GEN_PROPS` counter map that does not exist and a stale `APP_CODE_BUILD` literal, both left over from the model §5 already says was replaced by the Drive modified-time; §7 named four chart registries of which one (`CH.mkt`) does not exist, and described the two RMX coverage keys as four. **The rest of §7 verified clean** — roughly forty identifiers and rules checked, including the whole Overview period model, the panel-emptiness rule and every rendering trap | ✅ done |

@@ -360,6 +360,8 @@ Stated up front so nobody is surprised later:
 - The `RMX_Backend.gs` "legacy names" wrappers — `getMarkets`, `getKeys`, `getExtras`,
   `syncData`, `uploadRmxData`. Find each caller.
 - The dead nav hook in `Shell.html`, which says in a comment that it is dead.
+- The `EXECUTIVE OVERVIEW — canonical market list + PV/RMX name mapping` block in
+  `Config.gs`, whose own banner comment starts `NOT USED`. Confirm nothing reads it.
 
 **Not a deletion, a warning:** there is no `AmrQlik` and no ⇣ *Pull from QlikView* button
 anywhere in the client, though older docs described both. `QlikSync.gs` is reached by
