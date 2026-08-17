@@ -853,7 +853,12 @@ function dbPickKpi(i, sheet){
   if(src && src.kpiPicker && src.kpiPicker.choose){
     try { src.kpiPicker.choose(r.spec, sheet); } catch(e){}
   }
-  r.spec.kpiSheet = sheet;
+  /* choose() has written the source's own memory, and that memory is keyed by
+     VIEW - market and refine - so it is the only thing that knows which rows
+     this applies to. A kpiSheet pinned on a row would outrank it and go stale
+     the moment its twin was changed instead, so the pins come off and every row
+     reads the memory. */
+  ROWS.forEach(function(row){ if(row.spec) delete row.spec.kpiSheet; });
 
   var requeued = 0, ahead = 0;
   ROWS.forEach(function(row){

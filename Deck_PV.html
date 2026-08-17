@@ -1033,8 +1033,22 @@ var AmrPvSlide = (function(){
   function kpiSaveMap(map){
     try { localStorage.setItem(KPI_MAP_KEY, JSON.stringify(map || {})); } catch(e){}
   }
-  function kpiViewKeyFor(filterField, filterValue){
-    return (filterField||'') + ':' + (filterValue||'__ALL__');
+  /* ONE SLOT PER VIEW, AND LAND / DOCKS ARE THEIR OWN VIEWS.
+     This is the report page's own rule, copied exactly (Page_PriceVolume's
+     kpiViewKey): the market makes the base key and a refine adds a segment on
+     top, so Southwest, Southwest·Land and Southwest·Docks each remember a
+     different region sheet. The deck used to drop the refine on the floor, so
+     all three of a market's rows shared one slot — set the region on Southwest
+     and Land and Docks moved with it — and the two refined rows also read a
+     different slot from the one the report page had written for them.
+
+     The PERIOD is deliberately NOT in the key. MTD and YTD of the same view
+     read the same region sheet in two places on it, so they move together, and
+     that is the one bit of sharing that is wanted. */
+  function kpiViewKeyFor(filterField, filterValue, refine){
+    var base = (filterField||'') + ':' + (filterValue||'__ALL__');
+    var r = String(refine || '').trim() || '__ALL__';
+    return (r === '__ALL__') ? base : (base + ':' + r);
   }
   /* Every region sheet the shared workbook offers. [] when no workbook has
      been uploaded, which is exactly when the KPI row is omitted.
@@ -1057,20 +1071,26 @@ var AmrPvSlide = (function(){
      for this market, and the index kpiExtract() looks the sheet up in.
      `book` scopes BOTH the offered sheets and the fallback default, so the
      remembered-or-first choice can never land on the other workbook. */
-  function kpiFor(vals, filterField, filterValue, override, book){
+  function kpiFor(vals, filterField, filterValue, override, book, refine){
     var list = window.AmrKpi ? (AmrKpi.plantIndex(vals, book) || []) : [];
     var index = {}, sheets = [];
     list.forEach(function(e){ index[e.label] = e; sheets.push(e.label); });
     var map = kpiLoadMap();
-    var remembered = map[kpiViewKeyFor(filterField, filterValue)];
+    /* its own slot first; the market's, if it has never been given one; and
+       only then the first sheet on the list. A refined view that has not been
+       chosen yet should follow its market rather than jump to whatever region
+       happens to sort first - that is a real region sheet, silently the wrong
+       one, and it looks identical to a deliberate choice. */
+    var remembered = map[kpiViewKeyFor(filterField, filterValue, refine)];
+    if(remembered === undefined) remembered = map[kpiViewKeyFor(filterField, filterValue)];
     var sheet = (override && sheets.indexOf(override) !== -1) ? override
               : (remembered && sheets.indexOf(remembered) !== -1) ? remembered
               : (sheets[0] || '');
     return { vals:vals || null, sheet:sheet, index:index, sheets:sheets, map:map };
   }
-  function kpiRemember(filterField, filterValue, sheet){
+  function kpiRemember(filterField, filterValue, sheet, refine){
     var map = kpiLoadMap();
-    map[kpiViewKeyFor(filterField, filterValue)] = sheet;
+    map[kpiViewKeyFor(filterField, filterValue, refine)] = sheet;
     kpiSaveMap(map);
   }
 
@@ -1288,7 +1308,7 @@ var AmrPvSlide = (function(){
       filterField: 'MARKET', filterValue: fv,
       custSecondary: 'CUST_SEGMENT', custSort: 'cyVol', custDir: 'top',
       custTopN: '10', custSearch: '', collapsed: {},
-      kpi: AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET', fv, spec.kpiSheet, bookOf(spec))
+      kpi: AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET', fv, spec.kpiSheet, bookOf(spec), spec.refine)
     };
   }
 
@@ -1327,10 +1347,12 @@ var AmrPvSlide = (function(){
       sheets: function(spec){ return AmrPvSlide.kpiSheets(KPIVALS.vals, bookOf(spec)); },
       current: function(spec){
         return AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET',
-          filterValueOf(spec.market), spec.kpiSheet, bookOf(spec)).sheet;
+          filterValueOf(spec.market), spec.kpiSheet, bookOf(spec), spec.refine).sheet;
       },
+      /* keyed by market AND refine, so this dropdown is this row's - and its
+         MTD / YTD twin's, which reads the same sheet - and nobody else's */
       choose: function(spec, sheet){
-        AmrPvSlide.kpiRemember('MARKET', filterValueOf(spec.market), sheet);
+        AmrPvSlide.kpiRemember('MARKET', filterValueOf(spec.market), sheet, spec.refine);
       },
       book: bookOf,
       hasBook: function(spec){

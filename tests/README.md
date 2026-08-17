@@ -52,6 +52,20 @@ node tests/deckpath.js
 
 Add a case here for every new source id a phase registers.
 
+It also pins **whose dropdown is whose**. Southwest Land and Southwest Docks are a refine
+*within* Southwest, so all three rows carry `market:'Southwest'` — and the deck's Region
+memory was keyed by the market alone, so setting the region on one moved all three (and the
+two refined rows read a different slot from the one `Page_PriceVolume` writes for them; its
+`kpiViewKey` has had the refine in it all along). The cases walk the real sequence: set
+Southwest, set Land, check neither moved the other, then check Docks follows Southwest until
+it is given a region of its own. The period stays out of the key on purpose, so `current()`
+for a view's YTD twin must return what its MTD was set to.
+
+The harness's `localStorage` had to be replaced with `defineProperty`, not assignment: jsdom's
+own throws on an opaque origin and a plain assignment leaves the getter in place, so every
+read threw and every write was swallowed by the callers' `try`/`catch`. The Region memory IS
+`localStorage`, so without that fix the "it remembered" cases pass for the wrong reason.
+
 It also pins two things the Deck Builder's source check depends on.
 
 **The Region dropdown is per row, not per page.** Manitoba and Saskatchewan read the *second*
