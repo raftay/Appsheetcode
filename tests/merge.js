@@ -39,13 +39,38 @@ const BODY = SRC.slice(SRC.indexOf('<body'));
 
 /* ---------------------------------------------------------------- 1. syntax */
 {
+  /* Apps Script scriptlets (<?= … ?>) are server-side templating, not JS — the
+     browser never sees them. Substitute a string literal so the surrounding
+     code can still be parsed: it is valid both as a bare expression and inside
+     the quotes a scriptlet is usually written into. */
+  const stub = code => code.replace(/<\?[-=!]?[\s\S]*?\?>/g, '"__SCRIPTLET__"');
   const blocks = [...BODY.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
   let bad = 0;
   blocks.forEach((code, i) => {
-    try { new vm.Script(code, { filename: `app.html#script[${i}]` }); }
+    try { new vm.Script(stub(code), { filename: `app.html#script[${i}]` }); }
     catch (e) { bad++; fail('syntax', `block ${i}: ${e.message}`); }
   });
   if (!bad) pass('syntax', `${blocks.length} script blocks parse`);
+}
+
+/* --------------------------------------- 1b. the values §D depends on exist */
+{
+  /* APP_URL must be SET, not just read. Without it every href is relative and
+     resolves against the sandbox iframe instead of the web app — the page
+     appears to load and then navigate somewhere wrong. This check exists
+     because exactly that shipped in chunk 2. */
+  const sets = /window\.APP_URL\s*=/.test(SRC);
+  const reads = /window\.APP_URL\b/.test(SRC);
+  if (reads && !sets) fail('server-values', 'app.html reads window.APP_URL but never assigns it');
+  else if (!/<\?=\s*appUrl\s*\?>/.test(SRC)) fail('server-values', 'APP_URL is not fed from <?= appUrl ?>');
+  else pass('server-values', 'APP_URL is emitted from the template');
+
+  /* And it has to be emitted before the runtime reads it. */
+  const iSet = SRC.indexOf('window.APP_URL =');
+  const iUse = SRC.indexOf('var URL_BASE');
+  if (iSet > -1 && iUse > -1 && iSet > iUse) {
+    fail('server-values', 'window.APP_URL is assigned after §D reads it');
+  }
 }
 
 /* ------------------------------------------------- 2. template ↔ registration */

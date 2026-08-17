@@ -523,6 +523,26 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
 
 <script>
 /* ============================================================================
+   §C  SERVER VALUES — the only scriptlets in this file
+   ----------------------------------------------------------------------------
+   These MUST come before §D, which reads them at IIFE-evaluation time.
+
+   APP_URL is the deployed /exec URL. It is not optional and it is not cosmetic:
+   we run inside an Apps Script sandbox iframe, so a RELATIVE href resolves
+   against the googleusercontent.com sandbox address, not the web app. A link
+   built without this navigates the top window somewhere that is not the app —
+   which looks like "the page loads and then redirects".
+
+   APP_MODE is 'app' while the merged client is still behind ?page=app, and ''
+   after the cutover. It is what keeps the landing cards pointing at the NEW
+   pages during the transition instead of bouncing back to the legacy ones.
+   ========================================================================== */
+window.APP_URL  = '<?= appUrl ?>';
+window.APP_MODE = <?= appMode ? "'app'" : "''" ?>;
+</script>
+
+<script>
+/* ============================================================================
    §D  RUNTIME — the AMR core
    ----------------------------------------------------------------------------
    Everything here is shared by every page and runs once, on load. It replaces
@@ -639,16 +659,33 @@ window.AMR = (function(){
   var URL_BASE = window.APP_URL || '';
   var PAGE = document.body.getAttribute('data-page') || 'landing';
 
+  /* The URL of another page in the suite. ONE place knows the difference
+     between the scaffold and the real thing, so the cutover is a one-line
+     change here rather than an edit in every page that links somewhere. */
+  var APP_MODE = window.APP_MODE || '';
+  function hrefFor(pageKey){
+    if (!URL_BASE) {
+      /* Better a visible failure than a silent navigation to the sandbox. */
+      log('error', 'AMR.nav', 'APP_URL is empty — links cannot be built', { page: pageKey });
+      return '#';
+    }
+    if (APP_MODE === 'app'){
+      return pageKey === 'landing' ? (URL_BASE + '?page=app')
+                                   : (URL_BASE + '?page=app&view=' + pageKey);
+    }
+    return pageKey === 'landing' ? URL_BASE : (URL_BASE + '?page=' + pageKey);
+  }
+
   function navTop(href){
     var a = document.createElement('a');
     a.href = href; a.target = '_top';
     document.body.appendChild(a); a.click();
     setTimeout(function(){ if (a.parentNode) a.parentNode.removeChild(a); }, 1500);
   }
-  function goHome(){ navTop(URL_BASE); }
+  function goHome(){ navTop(hrefFor('landing')); }
   function reloadThisPage(){
-    var sep = (PAGE && PAGE !== 'landing') ? ('?page=' + PAGE + '&') : '?';
-    navTop(URL_BASE + sep + 'r=' + Date.now());
+    var href = hrefFor(PAGE);
+    navTop(href + (href.indexOf('?') === -1 ? '?' : '&') + 'r=' + Date.now());
   }
 
   /* The page switcher. To add a page: one line here, one route in app.gs,
@@ -679,7 +716,7 @@ window.AMR = (function(){
     }).join('');
     sel.addEventListener('change', function(){
       if (this.value === PAGE) return;
-      navTop(this.value === 'landing' ? URL_BASE : URL_BASE + '?page=' + this.value);
+      navTop(hrefFor(this.value));
     });
     var brand = bar.querySelector('.brand') || bar.firstElementChild;
     if (brand && brand.nextSibling) bar.insertBefore(sel, brand.nextSibling);
@@ -1029,7 +1066,7 @@ window.AMR = (function(){
     log: log,
     live: LIVE,
     lib: { need: need },
-    nav: { top: navTop, home: goHome, reload: reloadThisPage },
+    nav: { top: navTop, home: goHome, reload: reloadThisPage, hrefFor: hrefFor },
     esc: esc, escAttr: escAttr,
     openHelp: openHelp, openSettings: openSettings,
     page: page, start: start,
@@ -1199,11 +1236,10 @@ AMR.page('landing', {
 
   boot: function(root){
     /* Card links. The deployment URL is only known at render time, so the
-       markup carries a page key and the href is built here — that also keeps
-       the template free of <?= ?> and therefore diffable. */
+       markup carries a page key and AMR.nav.hrefFor builds the href — which
+       also means the cards follow the scaffold while one is in use. */
     [].forEach.call(root.querySelectorAll('[data-page-link]'), function(a){
-      var p = a.getAttribute('data-page-link');
-      a.href = (window.APP_URL || '') + '?page=' + p;
+      a.href = AMR.nav.hrefFor(a.getAttribute('data-page-link'));
     });
 
     /* Inline onclick handlers do not work from inside an IIFE, so the two

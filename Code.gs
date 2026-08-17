@@ -66,9 +66,14 @@ function doGet(e) {
   /* app.html mounts ONE page, chosen by <body data-page>. While it is behind
      ?page=app, &view= is what picks which one; after the cutover ?page= does
      it directly and this falls away. */
+  t.appMode = false;
   if (page === 'app') {
     var view = (e && e.parameter && e.parameter.view) ? String(e.parameter.view).toLowerCase() : '';
-    t.page = view || 'landing';
+    t.page    = view || 'landing';
+    /* Tells app.html to keep its own links inside the scaffold, so clicking a
+       landing card lands on the NEW page and not the legacy one. After the
+       cutover this is always false and the links become plain ?page=. */
+    t.appMode = true;
   }
 
   return t.evaluate()

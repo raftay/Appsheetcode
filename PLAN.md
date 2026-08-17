@@ -564,6 +564,21 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   (`#qsPanel` / `#qsOut`, 17 lines of CSS behind it). Nothing ever wrote to it — it was the
   display for the sync-status feature that was never built, the same one `AmrQlik` belonged
   to. Deleted.
+- **A bug shipped and the gate now covers it.** `app.html` read `window.APP_URL` twice and
+  never set it — every old page had emitted it from `<?= appUrl ?>` and the merge dropped
+  that line. `URL_BASE` was `''`, so every landing card href was **relative**, and a relative
+  href inside the Apps Script sandbox iframe resolves against `googleusercontent.com`, not
+  the web app. Clicking a card navigated the top window off the app: "it loads, then
+  redirects". The page switcher also silently vanished, because `mountPageSwitcher` returns
+  early on an empty `URL_BASE`.
+
+  Two lessons, both now enforced: **`tests/merge.js` fails if `APP_URL` is read but never
+  assigned, or assigned after §D reads it**; and `hrefFor()` is the single place that builds
+  a link to another page, so it can log an error instead of silently returning a relative
+  URL. It is also what makes the scaffold navigable — under `?page=app` the landing cards
+  point at `?page=app&view=…`, so clicking through reaches the NEW pages rather than
+  bouncing back to the legacy ones. `doGet` passes `appMode` for that, and at cutover
+  `hrefFor` is the one function that changes.
 - **`tests/merge.js` is the structural gate** and it works on both sides: it passed the real
   file, and unscoping one `.land-hero` rule made it fail with that selector named. It checks
   six invariants — script syntax, template↔registration pairing, every `getElementById`
