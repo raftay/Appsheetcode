@@ -472,7 +472,26 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
 </style>
 </head>
 
-<body data-page="<?= page ?>">
+<!-- ============================================================================
+     SERVER VALUES live on <body> as data attributes, NOT as scriptlets inside a
+     <script> block. This is not a style choice:
+
+       <?= x ?>  HTML-ESCAPES what it prints.  <?!= x ?>  does not.
+
+     So `window.MODE = <?= cond ? "'a'" : "''" ?>;` renders as
+     `window.MODE = &#39;a&#39;;` — a syntax error that kills the whole script
+     block and everything after it in that block. That shipped once already and
+     took window.APP_URL down with it, which silently broke every link in the
+     suite. In an attribute the escaping is correct and harmless, so this is the
+     safe place for anything the server computes.
+
+       data-app-url   the deployed /exec URL. Relative hrefs resolve against the
+                      sandbox iframe, not the app, so nothing may be linked
+                      without this.
+       data-app-mode  "true" while the merged client is behind ?page=app.
+                      Keeps links inside the scaffold during the transition.
+     ========================================================================= -->
+<body data-page="<?= page ?>" data-app-url="<?= appUrl ?>" data-app-mode="<?= appMode ?>">
 
 <!-- The one mounted page goes here. Each page template carries its own header:
      the landing page deliberately has no header.bar (its hero IS the header),
@@ -520,26 +539,6 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
     <button type="button" class="amr-stale-btn" id="amrStaleBtn">Update from source</button>
   </div>
 </div>
-
-<script>
-/* ============================================================================
-   §C  SERVER VALUES — the only scriptlets in this file
-   ----------------------------------------------------------------------------
-   These MUST come before §D, which reads them at IIFE-evaluation time.
-
-   APP_URL is the deployed /exec URL. It is not optional and it is not cosmetic:
-   we run inside an Apps Script sandbox iframe, so a RELATIVE href resolves
-   against the googleusercontent.com sandbox address, not the web app. A link
-   built without this navigates the top window somewhere that is not the app —
-   which looks like "the page loads and then redirects".
-
-   APP_MODE is 'app' while the merged client is still behind ?page=app, and ''
-   after the cutover. It is what keeps the landing cards pointing at the NEW
-   pages during the transition instead of bouncing back to the legacy ones.
-   ========================================================================== */
-window.APP_URL  = '<?= appUrl ?>';
-window.APP_MODE = <?= appMode ? "'app'" : "''" ?>;
-</script>
 
 <script>
 /* ============================================================================
@@ -656,20 +655,24 @@ window.AMR = (function(){
      We run inside an Apps Script sandbox iframe, so changing location does
      nothing useful. A target=_top anchor is what actually navigates.
      ========================================================================== */
-  var URL_BASE = window.APP_URL || '';
-  var PAGE = document.body.getAttribute('data-page') || 'landing';
+  var BODY     = document.body;
+  var URL_BASE = BODY.getAttribute('data-app-url') || '';
+  var PAGE     = BODY.getAttribute('data-page') || 'landing';
+  var APP_MODE = BODY.getAttribute('data-app-mode') === 'true';
+
+  /* Page code and anything ported from the old files still expects this. */
+  window.APP_URL = URL_BASE;
 
   /* The URL of another page in the suite. ONE place knows the difference
      between the scaffold and the real thing, so the cutover is a one-line
      change here rather than an edit in every page that links somewhere. */
-  var APP_MODE = window.APP_MODE || '';
   function hrefFor(pageKey){
     if (!URL_BASE) {
       /* Better a visible failure than a silent navigation to the sandbox. */
       log('error', 'AMR.nav', 'APP_URL is empty — links cannot be built', { page: pageKey });
       return '#';
     }
-    if (APP_MODE === 'app'){
+    if (APP_MODE){
       return pageKey === 'landing' ? (URL_BASE + '?page=app')
                                    : (URL_BASE + '?page=app&view=' + pageKey);
     }

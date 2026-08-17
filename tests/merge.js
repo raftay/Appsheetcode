@@ -33,9 +33,18 @@ let failures = 0;
 const fail = (test, msg) => { failures++; console.log(`  ✗ ${test}: ${msg}`); };
 const pass = (test, msg) => console.log(`  ✓ ${test}${msg ? ': ' + msg : ''}`);
 
-/* Only look at markup from <body> on — the head comment mentions tag names in
-   prose and would otherwise be read as code. */
-const BODY = SRC.slice(SRC.indexOf('<body'));
+/* Comments in this file describe tag names in prose ("put it in a <body>
+   attribute", "<?= x ?> escapes"). A checker that greps raw source reads those
+   as code and reports failures that are really just documentation — which has
+   now happened twice. So: strip HTML comments once, up front, and anchor on the
+   REAL body element rather than the first text that looks like one. */
+const NO_COMMENTS = SRC.replace(/<!--[\s\S]*?-->/g, '');
+/* The attribute values contain scriptlets, and `<?= page ?>` has a `>` in it —
+   so a plain [^>]* stops halfway through the tag. Allow either a non-'>' char
+   or a whole scriptlet. */
+const BODY_TAG = NO_COMMENTS.match(/<body\s(?:<\?[\s\S]*?\?>|[^>])*>/);
+if (!BODY_TAG) { console.log('  ✗ setup: no <body …> element found'); process.exit(1); }
+const BODY = NO_COMMENTS.slice(NO_COMMENTS.indexOf(BODY_TAG[0]));
 
 /* ---------------------------------------------------------------- 1. syntax */
 {
@@ -55,28 +64,45 @@ const BODY = SRC.slice(SRC.indexOf('<body'));
 
 /* --------------------------------------- 1b. the values §D depends on exist */
 {
-  /* APP_URL must be SET, not just read. Without it every href is relative and
-     resolves against the sandbox iframe instead of the web app — the page
-     appears to load and then navigate somewhere wrong. This check exists
-     because exactly that shipped in chunk 2. */
-  const sets = /window\.APP_URL\s*=/.test(SRC);
-  const reads = /window\.APP_URL\b/.test(SRC);
-  if (reads && !sets) fail('server-values', 'app.html reads window.APP_URL but never assigns it');
-  else if (!/<\?=\s*appUrl\s*\?>/.test(SRC)) fail('server-values', 'APP_URL is not fed from <?= appUrl ?>');
-  else pass('server-values', 'APP_URL is emitted from the template');
-
-  /* And it has to be emitted before the runtime reads it. */
-  const iSet = SRC.indexOf('window.APP_URL =');
-  const iUse = SRC.indexOf('var URL_BASE');
-  if (iSet > -1 && iUse > -1 && iSet > iUse) {
-    fail('server-values', 'window.APP_URL is assigned after §D reads it');
+  /* The deployment URL must reach the client. Without it every href is relative,
+     and a relative href inside the Apps Script sandbox iframe resolves against
+     googleusercontent.com rather than the web app — the page loads and then
+     navigates somewhere wrong. Shipped once; guarded now. */
+  let ok = true;
+  for (const attr of ['data-app-url', 'data-app-mode', 'data-page']) {
+    if (!new RegExp(`\\b${attr}=`).test(BODY_TAG[0])) {
+      ok = false; fail('server-values', `<body> does not carry ${attr}`);
+    }
   }
+  if (!/data-app-url="<\?=\s*appUrl\s*\?>"/.test(BODY_TAG[0])) {
+    ok = false; fail('server-values', 'data-app-url is not fed from <?= appUrl ?>');
+  }
+  if (ok) pass('server-values', '<body> carries app-url, app-mode and page');
+}
+
+/* ------------------------------------ 1c. no escaping scriptlet inside JS */
+{
+  /* <?= x ?> HTML-ESCAPES what it prints; <?!= x ?> does not. So a <?= ?> that
+     emits a quote inside a <script> block renders as &#39; and takes the WHOLE
+     block down with a syntax error — silently, because the server renders fine
+     and only the browser sees the damage. Values the server computes belong in
+     a <body> attribute (checked above), never printed into JS. */
+  let bad = 0;
+  for (const m of BODY.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+    for (const sc of m[1].matchAll(/<\?=[\s\S]*?\?>/g)) {
+      bad++;
+      fail('no-scriptlet-in-js',
+           `escaping scriptlet inside a script block: ${sc[0].slice(0, 48)} — ` +
+           'put the value in a <body> data attribute instead');
+    }
+  }
+  if (!bad) pass('no-scriptlet-in-js', 'no <?= ?> inside any script block');
 }
 
 /* ------------------------------------------------- 2. template ↔ registration */
-const templates = [...SRC.matchAll(/<template id="tpl-([\w-]+)">/g)].map(m => m[1]);
+const templates = [...NO_COMMENTS.matchAll(/<template id="tpl-([\w-]+)">/g)].map(m => m[1]);
 {
-  const regs = [...SRC.matchAll(/AMR\.page\('([\w-]+)'/g)].map(m => m[1]);
+  const regs = [...NO_COMMENTS.matchAll(/AMR\.page\('([\w-]+)'/g)].map(m => m[1]);
   const orphanTpl = templates.filter(t => !regs.includes(t));
   const orphanReg = regs.filter(r => !templates.includes(r));
   const dupTpl = templates.filter((t, i) => templates.indexOf(t) !== i);
@@ -92,10 +118,10 @@ const templates = [...SRC.matchAll(/<template id="tpl-([\w-]+)">/g)].map(m => m[
 
 /* Pull each page's template markup and its registration JS. */
 function sliceFor(name) {
-  const tOpen = SRC.indexOf(`<template id="tpl-${name}">`);
-  const tpl   = SRC.slice(tOpen, SRC.indexOf('</template>', tOpen));
-  const rOpen = SRC.indexOf(`AMR.page('${name}'`);
-  const js    = SRC.slice(rOpen, SRC.indexOf('</script>', rOpen));
+  const tOpen = NO_COMMENTS.indexOf(`<template id="tpl-${name}">`);
+  const tpl   = NO_COMMENTS.slice(tOpen, NO_COMMENTS.indexOf('</template>', tOpen));
+  const rOpen = NO_COMMENTS.indexOf(`AMR.page('${name}'`);
+  const js    = NO_COMMENTS.slice(rOpen, NO_COMMENTS.indexOf('</script>', rOpen));
   return { tpl, js, ids: new Set([...tpl.matchAll(/id="([\w-]+)"/g)].map(m => m[1])) };
 }
 const PAGES = Object.fromEntries(templates.map(n => [n, sliceFor(n)]));
@@ -140,7 +166,7 @@ const SHARED_IDS = new Set([
 {
   /* Find the STYLE BLOCK carrying the §A4 banner — not the first mention of
      "§A4", which is the navigation comment in <head>. */
-  const styleBlocks = [...SRC.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m => m[1]);
+  const styleBlocks = [...NO_COMMENTS.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m => m[1]);
   const block = styleBlocks.find(b => /§A4\s+PAGE CSS/.test(b));
   if (!block) fail('css-scope', 'could not find the §A4 style block');
   else {

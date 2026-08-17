@@ -579,6 +579,22 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   point at `?page=app&view=…`, so clicking through reaches the NEW pages rather than
   bouncing back to the legacy ones. `doGet` passes `appMode` for that, and at cutover
   `hrefFor` is the one function that changes.
+- **`<?= ?>` ESCAPES. `<?!= ?>` does not.** This is the single sharpest edge in Apps Script
+  templating and it cost two rounds. The first fix for the `APP_URL` bug emitted
+  `window.APP_MODE = <?= appMode ? "'app'" : "''" ?>;`, which the server renders as
+  `window.APP_MODE = &#39;app&#39;;` — **a syntax error that kills the entire script block**,
+  taking the `APP_URL` assignment above it down too. It fails silently: the server renders
+  without complaint and only the browser sees the damage.
+
+  **Rule: values the server computes go in a `<body>` data attribute, never printed into
+  JavaScript.** Escaping is correct and harmless in an attribute. `app.html` carries
+  `data-page`, `data-app-url` and `data-app-mode`; the runtime reads them with
+  `getAttribute`. `tests/merge.js` now fails on any `<?= ?>` inside a script block.
+- **A checker must not read prose as code.** Twice now a `merge.js` check keyed off text in a
+  comment — first `§A4` in the head navigation, then `<body>` and `<?= ?>` inside the comment
+  explaining this very hazard. It strips HTML comments up front now and anchors on the real
+  `<body …>` element, matched with a scriptlet-aware pattern (a plain `[^>]*` stops at the
+  `>` inside `<?= page ?>`).
 - **`tests/merge.js` is the structural gate** and it works on both sides: it passed the real
   file, and unscoping one `.land-hero` rule made it fail with that selector named. It checks
   six invariants — script syntax, template↔registration pairing, every `getElementById`
