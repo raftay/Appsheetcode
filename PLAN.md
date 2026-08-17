@@ -9,7 +9,7 @@
 > (chunk 8) is what eventually lands on `main`, as one reviewed merge.
 >
 > If you are a session picking this up cold: `git checkout merging-files`, read this file
-> and §3 of `README.md`, then continue from the first unticked chunk in [§7](#7-the-chunks).
+> and §3 of `README.md`, then continue from the first unticked chunk in [§8](#8-the-chunks).
 
 ---
 
@@ -21,12 +21,13 @@
 4. [The shape of `app.html`](#4-the-shape-of-apphtml)
 5. [The shape of `app.gs`](#5-the-shape-of-appgs)
 6. [The permissions self-check](#6-the-permissions-self-check)
-7. [The chunks](#7-the-chunks)
-8. [What this costs](#8-what-this-costs)
-9. [Deliberately not in this merge](#9-deliberately-not-in-this-merge)
-10. [Legacy hit-list](#10-legacy-hit-list)
-11. [Rules for whoever does the work](#11-rules-for-whoever-does-the-work)
-12. [What this plan measured](#12-what-this-plan-measured)
+7. [Logging, and the debug functions it replaces](#7-logging-and-the-debug-functions-it-replaces)
+8. [The chunks](#8-the-chunks)
+9. [What this costs](#9-what-this-costs)
+10. [Deliberately not in this merge](#10-deliberately-not-in-this-merge)
+11. [Legacy hit-list](#11-legacy-hit-list)
+12. [Rules for whoever does the work](#12-rules-for-whoever-does-the-work)
+13. [What this plan measured](#13-what-this-plan-measured)
 
 ---
 
@@ -40,7 +41,7 @@ copying 37 files one at a time. The goal is:
 > `appsscript.json` and the deck template `.pptx`.
 
 Two files means two copy-pastes to move the whole application. That is the point, and it is
-worth some cost elsewhere ([§8](#8-what-this-costs)).
+worth some cost elsewhere ([§9](#9-what-this-costs)).
 
 Secondary goals, explicitly in scope:
 
@@ -146,7 +147,7 @@ Three things the prefixer cannot do blind:**
 
 Today a page switch is a full page load at `?page=rmx`. That stays true: `doGet` reads
 `?page=`, `app.html` mounts that one page, done. **We are not building a single-page app.**
-Client-side page switching is a real follow-up ([§9](#9-deliberately-not-in-this-merge)) but
+Client-side page switching is a real follow-up ([§10](#10-deliberately-not-in-this-merge)) but
 not part of this merge — doing both at once would make any regression ambiguous between "the
 merge broke it" and "the new router broke it".
 
@@ -240,15 +241,16 @@ Section order:
 
 ```
 §1  CONFIG            APP_CONFIG, APP_EXTRA_SOURCES, Settings API          (Config.gs)
-§2  ROUTER + PLUMBING doGet, include, getLogo, data-generation, cache       (Code.gs)
-§3  PERMISSIONS       APP_verifyPermissions()                              (new — §6)
-§4  SYNC              QlikSync.gs
-§5  AGG               PV_Backend, PV_Lookup, FSC_Backend, Sask_Backend
-§6  RMX               RMX_Backend, RMX_Suggest, RFSC_Backend
-§7  OVERVIEW          Ov_Backend
-§8  DECK              Deck_Backend, Deck_Recipe
-§9  SMALL PAGES       Kpi_Backend, TP01_Backend, IR_Backend
-§10 TRIGGERS / DIAG   scheduled triggers, editor-run diagnostics
+§2  LOGGING           APP_log() + LOG_LEVEL                                (new — §7)
+§3  ROUTER + PLUMBING doGet, include, getLogo, data-generation, cache       (Code.gs)
+§4  PERMISSIONS       APP_verifyPermissions()                              (new — §6)
+§5  SYNC              QlikSync.gs
+§6  AGG               PV_Backend, PV_Lookup, FSC_Backend, Sask_Backend
+§7  RMX               RMX_Backend, RMX_Suggest, RFSC_Backend
+§8  OVERVIEW          Ov_Backend
+§9  DECK              Deck_Backend, Deck_Recipe
+§10 SMALL PAGES       Kpi_Backend, TP01_Backend, IR_Backend
+§11 TRIGGERS          the scheduled trigger entry points
 ```
 
 ---
@@ -287,7 +289,88 @@ is already true today — it is one script project — and the merge does not ch
 
 ---
 
-## 7. The chunks
+## 7. Logging, and the debug functions it replaces
+
+### Every function written for the merge gets a log line
+
+Both files get one logging helper, and every function written or rewritten during the merge
+uses it. Today there is no convention at all: 20 `Logger.log` calls, 15 `console.log`, 9
+`console.error`, all hand-concatenated strings, no levels, no timings, no way to turn any of
+it down.
+
+```js
+APP_log(level, where, msg, data)   // app.gs   — 'debug' | 'info' | 'warn' | 'error'
+AMR.log (level, where, msg, data)  // app.html — same signature, same output shape
+```
+
+One helper means one place to change the format, one place to add a timestamp, and **one
+switch to turn the noise down** — a `LOG_LEVEL` in `APP_CONFIG` for the server and a
+`localStorage` key for the browser, so a quiet production default does not mean editing
+call sites when something needs investigating.
+
+**What a line carries.** Enough to answer "what was asked, what came back, how long, and did
+it come from cache" without adding a second log line:
+
+| Field | Why |
+|---|---|
+| `where` | `RMX.getKeys`, `DECK.addSlide` — the function, not the file |
+| the arguments that select data | market, period, month, page. Not whole payloads |
+| the size of the answer | rows, or bytes for anything cached |
+| elapsed ms | the only field that catches a regression nobody reported |
+| cache `hit` / `miss` / `skip` | see below |
+
+**Log at entry points and phase boundaries. Never inside a per-row loop.** The Ready-Mix
+bundle is 40,000 rows; a log line per row would cost more than the work it describes and
+would bury the line that matters. One line when a server entry point is called, one when it
+answers, one per expensive phase inside it — that is the whole budget.
+
+**The cache field is the one that earns its place.** §6 of the README records the most
+expensive mistake in the suite's history: every RMX entry point opened by pulling a 14 MB
+bundle through `CacheService` to produce a 72 KB answer, and it hid for a long time because
+nothing about it looked wrong. A log line carrying elapsed ms and bytes-read would have shown
+a flat 15–24 s against a varying question on the first read of the transcript. Every cache
+read written during the merge logs which of `hit` / `miss` / `skip` it was — `skip` included,
+because `APP_cachePut_` silently bails above its chunk ceiling and a silent bail is
+indistinguishable from a cache that is simply never warm.
+
+**Errors log the context, not just the message.** Every `catch` writes `where` plus the
+selecting arguments. Half the current `catch` blocks swallow silently — `catch (e) {}` — which
+is right for an optional cache read and wrong for anything else; the merge does not carry the
+silent ones across without deciding which they are.
+
+### The debug functions go
+
+Six of them, ~148 lines, and **not one has a caller** — each is referenced only by its own
+declaration and, for two, a top-level wrapper that is itself uncalled:
+
+| Function | Lines | |
+|---|---|---|
+| `DECK_smokeTest` | 45 | `Deck_Backend.gs` |
+| `RMX_debugMonths` | 46 | `RMX_Backend.gs` |
+| `debugNaOthers` + `RMX_debugNaOthers` | 34 | writes a CSV to Drive |
+| `debugUnclassified` + `RMX_debugUnclassified` | 23 | |
+
+They are editor-run diagnostics from specific past investigations, kept in case they are
+wanted again. That is exactly what the logging above replaces: a diagnostic you have to
+remember exists, paste a market key into and run by hand is worse than a line that was
+already written when the thing happened.
+
+**Delete all six in chunk 8** — but two need a check first, not an assumption:
+
+- `debugUnclassified` lists materials missing from `PRODUCT MASTER`. `RMX_Suggest.gs` and the
+  page's Mapping check appear to cover this, and better. Confirm before deleting; if it turns
+  out to be the only way to get the full list, it is a **feature that needs a button**, not a
+  debug function to preserve.
+- `debugNaOthers` writes a CSV to Drive, so it is part of why the project holds a Drive scope.
+  Removing it does not remove the scope (Drive is needed for much more), but check the
+  `APP_verifyPermissions()` list stays accurate after it goes.
+
+Nothing else is deleted under this heading. A diagnostic with a real caller, or one the
+Deck Builder's ✓ *Check template* button runs, stays.
+
+---
+
+## 8. The chunks
 
 Each chunk is one reviewable commit on `merging-files`, ends with the app in a working state,
 and can be stopped at. Chunks 2–6 are independent of each other: if one turns out to be a
@@ -296,18 +379,18 @@ swamp, the others still land.
 | # | Chunk | What lands | Review by | |
 |---|---|---|---|---|
 | 0 | **Plan** | This file. No code. | reading it | ✅ |
-| 1 | **Foundations + audit** | `app.html` skeleton: §A–§E, the page registry, `AmrLib`, the deduped `AmrQlikGuide`. Landing + Inventory Report ported. One line added to `Code.gs` for the `?page=app` route. Plus the scope-aware `.gs` collision list, written into this file. | `?page=app` shows the landing page and the Inventory Report, identical to `?page=` and `?page=inventoryreport` | ☐ |
+| 1 | **Foundations + audit** | `app.html` skeleton: §A–§E, the page registry, `AmrLib`, `AMR.log` ([§7](#7-logging-and-the-debug-functions-it-replaces)), the deduped `AmrQlikGuide`. Landing + Inventory Report ported. One line added to `Code.gs` for the `?page=app` route. Plus the scope-aware `.gs` collision list, written into this file. | `?page=app` shows the landing page and the Inventory Report, identical to `?page=` and `?page=inventoryreport` | ☐ |
 | 2 | **Fuel pair** | `Page_FuelSurcharge` + `Page_RmxFuel` + `Deck_Fuel`. Deliberately first: `tests/regress.js` already proves these two byte-identical, so the porting method gets validated where there is a real gate on it. | `tests/regress.js` green + both pages side by side | ☐ |
 | 3 | **AGG Price & Volume** | `Page_PriceVolume` + `Deck_PV` + `SlideExport` + `KpiShared` + `Cube`. The heaviest shared-module load, and the only page needing all three libraries. | `tests/pvcheck.js`, `tests/pvlookup.js`, `tests/slidefit.js` + the page | ☐ |
-| 4 | **RMX pair** | `Page_Rmx` + `Page_Segment` + `Deck_RMX` + `Deck_SEG`. Drop `Page_Rmx`'s dead `include('Deck_RMX')` here — see [§10](#10-legacy-hit-list). | `tests/rmxcost.js`, `tests/segboot.js` + both pages | ☐ |
+| 4 | **RMX pair** | `Page_Rmx` + `Page_Segment` + `Deck_RMX` + `Deck_SEG`. Drop `Page_Rmx`'s dead `include('Deck_RMX')` here — see [§11](#11-legacy-hit-list). | `tests/rmxcost.js`, `tests/segboot.js` + both pages | ☐ |
 | 5 | **Overview** | `Page_Overview` alone — 6,022 lines, a quarter of all the client code, and 26 of the 65 CSS scoping hazards. Nothing else in this chunk. | `tests/ovperiod.js`, `tests/freshness.js` + the page | ☐ |
 | 6 | **Deck Builder + TP01** | `Page_DeckBuilder` + `Deck_Sources` + `Deck_Styles`, and `Page_TP01`. TP01 is served from the second, execute-as-user deployment — that deployment must be re-pointed too. | `tests/deckpath.js`, `tests/deckstatic.js`, `tests/bgrender.js` + a real deck build | ☐ |
-| 7 | **`app.gs`** | All 16 `.gs` merged, sectioned and commented. `APP_verifyPermissions()`. `appsscript.json` with explicit `oauthScopes`. Old `.gs` deleted **in this same commit** — they cannot coexist ([§2](#2-the-thing-that-would-have-broken-it)). | `tests/configcheck.js`, `tests/qliksync.js`, `node --check`, then `APP_verifyPermissions()` in the editor | ☐ |
-| 8 | **Cutover + sweep** | `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; legacy hit-list executed; `README.md` rewritten around two files. | the whole suite, every route | ☐ |
+| 7 | **`app.gs`** | All 16 `.gs` merged, sectioned and commented. `APP_log()` and `APP_verifyPermissions()`. `appsscript.json` with explicit `oauthScopes`. Old `.gs` deleted **in this same commit** — they cannot coexist ([§2](#2-the-thing-that-would-have-broken-it)). | `tests/configcheck.js`, `tests/qliksync.js`, `node --check`, then `APP_verifyPermissions()` in the editor | ☐ |
+| 8 | **Cutover + sweep** | `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; legacy hit-list executed; the six debug functions deleted ([§7](#7-logging-and-the-debug-functions-it-replaces)); `README.md` rewritten around two files. | the whole suite, every route | ☐ |
 
 ---
 
-## 8. What this costs
+## 9. What this costs
 
 Stated up front so nobody is surprised later:
 
@@ -319,14 +402,14 @@ Stated up front so nobody is surprised later:
   whole file. HtmlService gzips, so expect roughly 200 KB on the wire against ~25 KB now. The
   extra is markup the browser parses into inert fragments and CSS it discards on a `data-page`
   mismatch — not extra JS to run, since each page's code is one registration IIFE that only
-  executes its body on mount. [§9](#9-deliberately-not-in-this-merge) removes this cost
+  executes its body on mount. [§10](#10-deliberately-not-in-this-merge) removes this cost
   entirely if it ever stops being acceptable.
 - **Two pages get faster.** Landing and the Inventory Report load no CDN libraries at all once
   `AmrLib` is lazy.
 
 ---
 
-## 9. Deliberately not in this merge
+## 10. Deliberately not in this merge
 
 - **Client-side page switching.** Once every page is in one file, switching without a reload
   is nearly free and would make the suite feel much faster. Separate change: it alters
@@ -340,7 +423,7 @@ Stated up front so nobody is surprised later:
 
 ---
 
-## 10. Legacy hit-list
+## 11. Legacy hit-list
 
 **Confirmed — remove when its chunk lands:**
 
@@ -371,7 +454,7 @@ a Pull button is wanted, that is a feature, not a repair.
 
 ---
 
-## 11. Rules for whoever does the work
+## 12. Rules for whoever does the work
 
 - **Branch.** `merging-files`, only. One commit per chunk, so any chunk can be reviewed or
   reverted on its own.
@@ -381,6 +464,11 @@ a Pull button is wanted, that is a feature, not a repair.
 - **Do not flip a file's line endings.** The repo is mixed — most `.html` are CRLF, some `.gs`
   are LF. `app.html` and `app.gs` are written fresh, so pick **LF** for both and keep it.
   Scripted edits to existing files must open with `newline=''` and write back what was there.
+- **Every function you write or rewrite logs.** `APP_log` / `AMR.log`, at entry points and
+  phase boundaries only, never inside a per-row loop, always with elapsed ms and the cache
+  verdict on anything that reads a cache. See [§7](#7-logging-and-the-debug-functions-it-replaces).
+- **Do not carry a `catch (e) {}` across without deciding what it is.** Silent is right for an
+  optional cache read and wrong for everything else.
 - **Comment as you merge, not after.** Every section gets its banner and its "why" note while
   the context is fresh. A 20,000-line file with no signposts is worse than 37 files.
 - **Run the harnesses in `tests/` before and after each chunk.** They are the only proof
@@ -394,7 +482,7 @@ a Pull button is wanted, that is a feature, not a repair.
 
 ---
 
-## 12. What this plan measured
+## 13. What this plan measured
 
 Every number above was measured against the code on 2026-08-17, not recalled.
 
@@ -413,3 +501,5 @@ Every number above was measured against the code on 2026-08-17, not recalled.
 | `AmrQlik` does not exist; QlikSync has no client caller | grepped every `.html` for the object, the ⇣ button, and all four entry points |
 | Routes match the README's table | `doGet`'s nine `page === '…'` branches listed and compared |
 | No `appsscript.json` is committed | `ls` |
+| 6 debug functions, ~148 lines, none with a caller | each name grepped across every `.gs` and `.html`; brace-matched to measure |
+| Logging today: 20 `Logger.log`, 15 `console.log`, 9 `console.error`, no convention | counted per file |
