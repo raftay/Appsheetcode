@@ -8,24 +8,12 @@
  *   TP_saveRecipient    : save/update one market's recipient in that map.
  *
  * SENDER IDENTITY: mail goes out as whoever the web app EXECUTES AS, and
- * appsscript.json pins that to "executeAs": "USER_DEPLOYING". So every
- * TP01 email is sent by the account that DEPLOYED the app, whoever pressed
- * the button. One deployment serves every page; there is no second one.
+ * appsscript.json pins that to "executeAs": "USER_DEPLOYING" - so every
+ * TP01 email is sent by the account that DEPLOYED the app.
  *
- * CONSEQUENCE - THE RECIPIENT LIST IS SHARED, NOT PER-PERSON.
- * PropertiesService.getUserProperties() resolves against the executing
- * user, which under USER_DEPLOYING is the deployer for everybody. So the
- * market -> email map below is ONE list that every user reads and writes:
- * whoever edits a market's recipient changes it for everyone.
- *
- * That is defensible - a market's transfer price report has one correct
- * recipient, not one per sender - but it IS a shared setting, so treat an
- * edit here the way you would treat an edit to the sheet settings.
- *
- * If per-person lists are ever wanted back, do NOT switch the deployment:
- * that would change the sender too. Key Script Properties by
- * Session.getActiveUser().getEmail() instead (Kpi_Backend.gs already reads
- * that, with a '' fallback for when the domain does not release it).
+ * That also makes getUserProperties() the deployer's for everybody, so the
+ * market -> email map below is ONE shared list: editing a market's recipient
+ * changes it for everyone.
  *****************************************************************************/
 
 var TP_RECIP_KEY = 'TP01_RECIPIENTS';

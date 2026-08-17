@@ -2,14 +2,34 @@
 
 **Status: planned. No merge code written yet.**
 
-> ## Work on this plan happens on the `merging-files` branch. Only there.
+> ## Read this file before doing anything. Every session, every agent.
 >
-> Every chunk below is a commit on `merging-files`. Do not commit merge work to `main`, and
-> do not open a pull request for it — the branch is the review surface, and the cutover
-> (chunk 8) is what eventually lands on `main`, as one reviewed merge.
+> Several agents work on this repo, from different accounts, with no shared memory between
+> them. This file is the only thing they have in common — so it is read at the **start** of
+> every session and updated at the **end** of every session that changed anything.
 >
-> If you are a session picking this up cold: `git checkout merging-files`, read this file
-> and §3 of `README.md`, then continue from the first unticked chunk in [§8](#8-the-chunks).
+> **Start of session, in order:**
+> 1. `git checkout merging-files` — all merge work happens here, and nowhere else.
+>    `git pull` first; another agent may have moved it since your last look.
+> 2. Read this file end to end. Not just your chunk — the [rules](#12-rules-for-whoever-does-the-work)
+>    and the [legacy hit-list](#11-legacy-hit-list) are what stop two agents undoing each other.
+> 3. Read §3 of `README.md` for the file map, and §7 for the domain rules. Those numbers are
+>    load-bearing; do not re-derive them from the code on a hunch.
+> 4. Take the **first unticked chunk** in [§8](#8-the-chunks). If it is already in progress,
+>    the note beside it says who and since when — pick the next one instead.
+>
+> **End of session, whether or not you finished:**
+> 1. Tick the chunk, or leave a one-line note beside it saying where it actually stands.
+>    A half-done chunk with no note is the single most expensive thing you can leave behind.
+> 2. Anything you learned that the next agent would otherwise rediscover goes in this file —
+>    not in a commit message, which nobody reads before starting.
+> 3. Commit and push to `merging-files`. Never to `main`, and never open a pull request for
+>    it — the branch is the review surface, and the cutover (chunk 8) is what eventually
+>    lands on `main` as one reviewed merge.
+>
+> **Do not trust your own memory of this repo.** If a session tells you something here is
+> wrong, check it against the code and then fix this file. Four separate rounds of that have
+> already happened; every one found something real.
 
 ---
 
@@ -129,25 +149,69 @@ variable gets renamed.** The only edits are the ~51 inline `on*="…"` handlers 
 pages, which lose access to the global scope — they become `addEventListener` calls inside
 the IIFE.
 
-### Duplicate CSS
+### The CSS is rebuilt, not copied
 
-Each page's private `<style>` block uses generic names — `.wrap`, `.rail`, `.panel`, `.card`
-— with different rules per page.
+This is the one part of the merge that is **not** a move. Copy-pasting fourteen `<style>`
+blocks into one file and scoping each with `body[data-page="x"]` would work, and it would
+preserve today's rendering exactly — but it would also carry every ad-hoc decision across and
+make the result harder to change than what we started with. Measured across the 1,929 lines
+of CSS in those blocks:
 
-**Fix: prefix every selector in a page's block with `body[data-page="rmx"]`.** `<body>`
-carries `data-page` for the one mounted page, so only that page's rules can match. Prefixing
-raises specificity uniformly within a block, so rule order *within* a page is preserved; and
-it raises page rules above the shared stylesheet, which is the direction they already win in
-today (the page block comes after the shared one in `<head>`).
-
-**This is the fiddliest part of the merge and the one most likely to break design silently.
-Three things the prefixer cannot do blind:**
-
-| Hazard | Count | Handling |
+| | Today | Target |
 |---|---|---|
-| Selectors targeting `body`, `html` or `:root` themselves | **65**, concentrated in `Page_Overview` (26) and `Page_Rmx` (18) | by hand — a `body{…}` rule becomes `body[data-page="x"]{…}`, but a `:root{--token:…}` rule must **stay at `:root`** or the token stops resolving |
-| `@media` blocks | 15 across the pages | prefix the rules *inside* the block, never the `@media` line |
-| `@keyframes` | 4 (`Page_InventoryReport`, `Page_PriceVolume`, `Page_Rmx`, `Page_TP01`) | leave entirely alone — percentage selectors are not element selectors. Rename only if two pages define the same animation name with different frames |
+| Breakpoints | **9 distinct**, seven of them near-duplicate narrow widths: 760, 820, 860, 900, 980, 1080, 1180 px | **three named steps**, every stray mapped onto the nearest |
+| Spinners | **three** — `spin` (defined twice), `irspin`, `amrload` | one keyframe, one class |
+| Selectors defined in 3+ separate blocks | **27** — `.shell` ×5, `.seg` + `.seg button` ×5, `.previewCard` ×4, `.empty` ×4, `.dzstat` ×3, plus the guide's 16 | one definition each, in the component layer |
+| `#id` selectors carrying style | **124** | zero — ids are JS hooks, classes carry appearance |
+
+That last row is the reason the other three exist. Styling by id makes a rule
+unshareable by construction: `#tablesHost .card` cannot be reused by a page that calls its
+host something else, so the next page writes its own copy, and the copies drift. Every
+duplicate selector and every stray breakpoint in this table grew out of that.
+
+**So the stylesheet is built in layers, and page CSS is what is left after the layers take
+what belongs to them:**
+
+```
+§A1  TOKENS       :root — colour, type scale, spacing, radius, shadow, the 3 breakpoints
+§A2  BASE         reset, typography, form controls, focus states
+§A3  COMPONENTS   .bar .shell .rail .panel .card .seg .chips .empty .dzstat
+                  .previewCard .qlikGuide … — every block used by more than one page
+§A4  PAGE         only what is genuinely unique to one page, scoped body[data-page="x"]
+§B   SLIDE        .slide-bare — the capture styles (was Deck_Styles.html)
+```
+
+**Rules while porting each page:**
+
+- **A rule that a second page would want goes to §A3, not §A4.** The test is not "does another
+  page use it today" — it is "would another page's version of this be the same". `.seg` was
+  written five times because nobody promoted it the first time.
+- **Ids stop carrying style.** As each page is ported, its `#id` rules become classes. The id
+  stays on the element for `getElementById`; the appearance moves to a class. This is what
+  makes §A3 possible at all, and it is done page by page, not in one sweep.
+- **No raw values.** Every colour, radius, shadow and font step comes from a token. A hex code
+  in §A3 or §A4 is a token that has not been created yet.
+- **Three breakpoints, named.** Every `@media` maps onto one of them. A page needing a fourth
+  needs a reason written next to it.
+
+### What this costs, and how it is checked
+
+Being straight about it: **mechanical scoping was provably safe and this is not.** A designed
+stylesheet will change some pixels somewhere — that is what consolidating seven breakpoints
+into three means. The earlier instruction still stands (do not break the design), so the
+verification has to be stronger than the diffing that covers the JS:
+
+- **`tests/visual.js`** — screenshot every page at each of the three breakpoints, before and
+  after, and diff the images. `tests/slidefit.js` already drives real Chromium through
+  Playwright, so the harness and the browser are here; this is a new script, not new
+  infrastructure. **Any page whose port cannot be screenshot-diffed gets scoped mechanically
+  instead** and is revisited later. The rebuild is not worth an unverified change.
+- **A computed-style diff** for the cases a screenshot cannot separate — hover, focus and
+  `:disabled` states, which never appear in a static capture.
+
+**Order matters:** §A1 and §A2 land in chunk 1, and §A3 grows as each page chunk contributes
+its components. The last page ported should be adding almost nothing to §A3 — if it is still
+adding a lot, the promotion test above is not being applied.
 
 ### Navigation does not change
 
@@ -163,9 +227,11 @@ merge broke it" and "the new router broke it".
 
 ```
 <head>
-  <style>  §A  DESIGN TOKENS + SHARED COMPONENTS     (was Styles.html)          </style>
-  <style>  §B  SLIDE CSS, scoped .slide-bare         (was Deck_Styles.html)     </style>
-  <style>  §C  PER-PAGE BLOCKS, each scoped body[data-page="…"]                 </style>
+  <style>  §A1 TOKENS      :root — colour, type, spacing, the 3 breakpoints      </style>
+  <style>  §A2 BASE        reset, typography, form controls, focus              </style>
+  <style>  §A3 COMPONENTS  every block used by more than one page  (see §3)     </style>
+  <style>  §A4 PAGE        only what is unique, scoped body[data-page="…"]      </style>
+  <style>  §B  SLIDE       .slide-bare capture styles   (was Deck_Styles.html)  </style>
 </head>
 <body data-page="<?= page ?>">
   <header class="bar" id="appBar"></header>   <!-- built from the active page's spec -->
@@ -467,7 +533,10 @@ a Pull button is wanted, that is a feature, not a repair.
 ## 12. Rules for whoever does the work
 
 - **Branch.** `merging-files`, only. One commit per chunk, so any chunk can be reviewed or
-  reverted on its own.
+  reverted on its own. Pull before you start — another agent may have moved it.
+- **Leave the next agent a usable state.** Tick your chunk in [§8](#8-the-chunks) or annotate
+  it with where it really stands, and put anything you learned in this file rather than in a
+  commit message. Nobody reads commit messages before starting.
 - **Nothing is deleted on a hunch.** Every removal needs a repo-wide grep proving zero live
   references, and gets logged in the `README.md` session log with what proved it. "Looks
   unused" is not evidence.
