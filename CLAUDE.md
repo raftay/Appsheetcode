@@ -47,6 +47,10 @@ script project.
   client-side compute and render layer — that is what `tests/` is for. Run the relevant
   harnesses before and after touching a report page; see `tests/README.md`.
 - **`node --check` does not accept `.gs`.** Copy to a `.js` path first.
+- **Apps Script runs every `<? … ?>` in an HTML file, comments included**, and its printing
+  scriptlet HTML-escapes — so one written as an example in a comment breaks the render, and
+  one printed into JavaScript can emit `&#39;` and kill the whole script block. Server values
+  belong in a `<body>` data attribute. `node tests/merge.js` enforces both.
 - **Nothing gets deleted on a hunch.** Every removal needs a repo-wide grep proving zero live
   references, logged in the `README.md` session log with what proved it. "Looks unused" is
   not evidence — several things that look dead are load-bearing, and several things that look

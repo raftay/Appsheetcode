@@ -80,6 +80,29 @@ const BODY = NO_COMMENTS.slice(NO_COMMENTS.indexOf(BODY_TAG[0]));
   if (ok) pass('server-values', '<body> carries app-url, app-mode and page');
 }
 
+/* ------------------------------------ 1b2. every scriptlet is a real one */
+{
+  /* Apps Script evaluates EVERY <? … ?> in the file, including ones inside an
+     HTML comment — a scriptlet written as an example in a comment is code, and
+     it fails the render with a ReferenceError before the page ever loads. That
+     shipped. So: the file may only contain scriptlets over variables doGet
+     actually sets on the template. Note this scans RAW source, comments and
+     all — that is the whole point of the check. */
+  const TEMPLATE_VARS = ['page', 'appUrl', 'appMode'];
+  const scriptlets = [...SRC.matchAll(/<\?[-=!]?\s*([\s\S]*?)\s*\?>/g)];
+  let bad = 0;
+  for (const m of scriptlets) {
+    const expr = m[1].trim();
+    if (!TEMPLATE_VARS.includes(expr)) {
+      bad++;
+      fail('scriptlets-real',
+           `<?= ${expr.slice(0, 40)} ?> is not one of ${TEMPLATE_VARS.join(', ')} — ` +
+           'if this is an example inside a comment, Apps Script will still run it');
+    }
+  }
+  if (!bad) pass('scriptlets-real', `${scriptlets.length} scriptlets, all real`);
+}
+
 /* ------------------------------------ 1c. no escaping scriptlet inside JS */
 {
   /* <?= x ?> HTML-ESCAPES what it prints; <?!= x ?> does not. So a <?= ?> that

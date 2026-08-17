@@ -590,6 +590,13 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   JavaScript.** Escaping is correct and harmless in an attribute. `app.html` carries
   `data-page`, `data-app-url` and `data-app-mode`; the runtime reads them with
   `getAttribute`. `tests/merge.js` now fails on any `<?= ?>` inside a script block.
+- **Apps Script evaluates every scriptlet in the file — including inside an HTML comment.**
+  The comment written to explain the escaping hazard above contained the two forms as
+  examples, and the render died with `ReferenceError: x is not defined` before the page
+  loaded. A scriptlet in a comment is not documentation, it is code. Name the forms in prose
+  or write them with entities; never as literals. `tests/merge.js` now scans **raw** source
+  (comments and all) and fails on any scriptlet that is not one of the three variables `doGet`
+  actually sets: `page`, `appUrl`, `appMode`.
 - **A checker must not read prose as code.** Twice now a `merge.js` check keyed off text in a
   comment — first `§A4` in the head navigation, then `<body>` and `<?= ?>` inside the comment
   explaining this very hazard. It strips HTML comments up front now and anchors on the real

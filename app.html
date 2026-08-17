@@ -473,17 +473,26 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
 </head>
 
 <!-- ============================================================================
-     SERVER VALUES live on <body> as data attributes, NOT as scriptlets inside a
-     <script> block. This is not a style choice:
+     SERVER VALUES live on the body tag as data attributes, NOT printed into a
+     script block. This is not a style choice.
 
-       <?= x ?>  HTML-ESCAPES what it prints.  <?!= x ?>  does not.
+     CAREFUL READING THIS COMMENT. Apps Script scans the WHOLE file for
+     scriptlets and evaluates every one it finds — including inside an HTML
+     comment. Writing one here as an example is not documentation, it is code,
+     and it fails the render with "ReferenceError: x is not defined". That has
+     happened. So the two forms are named below rather than written out:
 
-     So `window.MODE = <?= cond ? "'a'" : "''" ?>;` renders as
-     `window.MODE = &#39;a&#39;;` — a syntax error that kills the whole script
-     block and everything after it in that block. That shipped once already and
-     took window.APP_URL down with it, which silently broke every link in the
-     suite. In an attribute the escaping is correct and harmless, so this is the
-     safe place for anything the server computes.
+       · the PRINTING scriptlet   (&lt;?= … ?&gt;)  HTML-ESCAPES its output
+       · the FORCE-PRINTING one   (&lt;?!= … ?&gt;)  does not
+
+     So printing a quoted value into JavaScript with the escaping form emits
+     &#39; instead of an apostrophe — a syntax error that kills the whole script
+     block and everything after it in that block. That shipped once, and took
+     the APP_URL assignment above it down with it, silently breaking every link
+     in the suite: the server renders happily, only the browser sees the damage.
+
+     In an attribute the escaping is correct and harmless, so this is the safe
+     place for anything the server computes.
 
        data-app-url   the deployed /exec URL. Relative hrefs resolve against the
                       sandbox iframe, not the app, so nothing may be linked
