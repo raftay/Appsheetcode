@@ -22,6 +22,7 @@
   padding:8px 15px; border-radius:9px; cursor:pointer; transition:.14s}
 .seg button:hover{border-color:var(--blue-40)}
 .seg button[aria-pressed="true"]{background:var(--blue-70); border-color:var(--blue-70); color:#fff}
+.seg button[disabled]{opacity:.4; cursor:default; pointer-events:none}
 /* Past twelve months the prior year OVERLAPS the window itself, so a pooled
    "vs last year" double-counts the months it is comparing against. Those
    numbers go muted and blank rather than quietly wrong. */
@@ -265,11 +266,6 @@ body.ovtab-rmx{background:#FCF9FF}
   padding:6px 11px; font:700 11px Inter; cursor:pointer; text-decoration:none; display:inline-block}
 .dq-link:hover{border-color:var(--blue-40); background:var(--blue-10)}
 
-/* a panel that cannot follow a custom window */
-.ov-exempt{border:1px dashed var(--line); background:var(--paper); border-radius:12px;
-  padding:15px 17px; color:var(--muted); font:500 12px Inter; line-height:1.55}
-.ov-exempt b{color:var(--ink)}
-
 .ov-banner{margin:0 0 4px; padding:12px 16px; border-radius:12px; background:var(--neg-bg);
   color:var(--neg); font:600 12.5px Inter; display:none}
 .ov-banner.show{display:block}
@@ -413,9 +409,16 @@ window.APP_PAGE = 'overview';
       <div class="ov-ctl-left">
         <div>
           <p class="eyebrow" style="margin-bottom:8px">Period</p>
+          <!-- Four spans, one control. The two "Prev month" buttons are the
+               same two shapes one month back, computed in the browser from the
+               month cube — which is also the only place the Product Category
+               tabs line up, because they are always LAST month's. They stay
+               disabled until the cube holds the month they need. -->
           <div class="seg" id="periodSeg" role="group" aria-label="Reporting period">
             <button data-period="MTD" aria-pressed="true">This month (MTD)</button>
             <button data-period="YTD" aria-pressed="false">Year to date (YTD)</button>
+            <button data-period="PMTD" aria-pressed="false">Prev month (MTD)</button>
+            <button data-period="PYTD" aria-pressed="false">Prev month (YTD)</button>
           </div>
         </div>
         <div class="grow">
@@ -538,7 +541,7 @@ window.APP_PAGE = 'overview';
           <p class="ov-lab">Revenue growth</p>
           <div class="ov-cbox xtall"><canvas id="br_rev"></canvas></div>
         </div>
-        <div>
+        <div id="aspCol">
           <p class="ov-lab">ASP&nbsp;% growth</p>
           <div class="ov-cbox xtall" id="aspBox"><canvas id="br_asp"></canvas></div>
         </div>
@@ -573,7 +576,7 @@ window.APP_PAGE = 'overview';
     </div>
 
     <!-- Fuel surcharge -->
-    <div class="ov-cols">
+    <div class="ov-cols" id="fscRow">
       <div class="ov-panel" id="colFsc">
         <h3>Fuel surcharge — by market</h3>
         <p class="sub" id="fscSub">All markets, always · $/applied tonne · from the Fuel Surcharge sheet</p>
@@ -718,7 +721,9 @@ window.HELP_HTML = `
 <h3>What this page is</h3>
 <p>A single at-a-glance view of the two commercial lines. <b>Aggregates (AGG)</b> comes from the AGG - Price &amp; Volume tool; <b>Ready-Mix (RMX)</b> comes from the RMX - Price &amp; Volume and RMX - Product Segment tools. Each line has its own tab and they are <b>never added together</b> — Aggregates is in tonnes, Ready-Mix in m³.</p>
 <h3>The controls</h3>
-<p>At the top, <b>Period</b> switches every number between this month (MTD) and the year so far (YTD). <b>Markets</b> lets you focus on one market, a few, or all of them. The same choice applies to whichever tab you are on.</p>
+<p>At the top, <b>Period</b> has four settings: this month (MTD), the year so far (YTD), and the same two shapes one month back — <b>Prev month (MTD)</b> and <b>Prev month (YTD)</b>. The first two are the numbers the Price &amp; Volume and RMX tools report. The Prev-month pair, and any span you drag the <b>Months</b> slider onto, are computed in your browser from the month history, so they need no server call at all. Period and the slider are one control: pressing a button moves the handles, and moving the handles onto one of those four spans lights the button back up. <b>Markets</b> lets you focus on one market, a few, or all of them. The same choice applies to whichever tab you are on.</p>
+<h3>Why a panel sometimes isn't there</h3>
+<p>A panel that has no numbers for what you have selected is <b>not shown</b> — no empty frame, no box explaining itself. Change the period, the market or the filters and it comes straight back. Three things are deliberately narrower than the rest: the <b>SAP / USGAAP cards</b> are statement figures and exist per month or per year only, so they are not shown for a custom span; the <b>fuel-surcharge</b> panels read a live-book field and answer for the current year; and <b>Product category</b> is shown only under the two <b>Prev-month</b> settings, because the Product Segment sheet's tabs are always last month's and reading them under a current-month heading was simply wrong.</p>
 <h3>The numbers</h3>
 <p><b>Volume</b> = tonnes (Aggregates) or m³ (Ready-Mix), this year vs last, with the % change in the box beside it. <b>ASP</b> = average selling price, again with its % change beside it. <b>PPI</b> = the price index (the pure price move, before mix). The <b>growth bridges</b> on the Aggregates tab are the same two waterfalls as the Price &amp; Volume report: revenue split into volume and price impact, and ASP% split into PPI plus the mix effects.</p>
 <h3>SAP / USGAAP KPI cards</h3>
@@ -726,7 +731,7 @@ window.HELP_HTML = `
 <h3>Drill-downs</h3>
 <p>Pick a single market and the breakdown panels pivot to <b>submarkets</b> inside it. The Aggregates tab adds <b>Plant Type / Product Class / Material Family</b> views and a <b>Plants &amp; materials</b> search where you can compare individual plants or materials against the total. The Ready-Mix tab adds <b>Submarket / Project Segment / Strength Class / Product Class / Plant</b> breakdown tables, the <b>ASP build-up</b>, the <b>Extras &amp; VAP</b> tables and the <b>Product Category</b> view. Every drill-down shows volume change, ASP % inc and — where the source carries it — PPI.</p>
 <h3>Cross-filtering (Aggregates tab)</h3>
-<p><b>Click any value</b> — a submarket, plant type, product class, plant, material, or customer, in a table row, pie slice, bar or legend — and <b>every panel filters by it</b>, including the panel you clicked in. Your active filters appear as chips in a bar under the controls; remove one with its ×, or press <b>Clear filters</b>. To combine values within the same dimension (say, two plant types), use the <b>search box on that panel</b> — it lists everything that would be available if that dimension's own filter were lifted, so you can add a second value after the panel has collapsed to your first pick. The <b>Land / Docks</b> toggle appears beside the markets when <b>Southwest</b> is selected — pick Land or Docks to narrow to it (none selected = both). The <b>Fuel Surcharge panels and the SAP/USGAAP cards are deliberately exempt</b> — they always show the unfiltered scope. Under filters, PPI everywhere uses the customer-report method (Plant + Material coverage), which stays exact at any slice depth.</p>
+<p><b>Click any value</b> — a submarket, plant type, product class, plant, material, or customer, in a table row, pie slice, bar or legend — and <b>every panel filters by it</b>, including the panel you clicked in. Your active filters appear as chips in a bar under the controls; remove one with its ×, or press <b>Clear filters</b>. To combine values within the same dimension (say, two plant types), use the <b>search box on that panel</b> — it lists everything that would be available if that dimension's own filter were lifted, so you can add a second value after the panel has collapsed to your first pick. The <b>Land / Docks</b> toggle appears beside the markets when <b>Southwest</b> is selected — pick Land or Docks to narrow to it (none selected = both). On the two server settings (MTD / YTD) the <b>Fuel Surcharge panels and the SAP/USGAAP cards are deliberately exempt</b> — they always show the unfiltered scope; on a Prev-month or custom span the surcharge panels are computed here and do follow the filters. Under filters, PPI everywhere uses the customer-report method (Plant + Material coverage), which stays exact at any slice depth.</p>
 <h3>Good to know</h3>
 <p>These are the same figures the full tools show — this page just brings the headlines together. For the full customer drill-down and slide exports, open the individual tools from the switcher (top-right). Numbers refresh when someone presses <b>&#8635; Update from source</b> on the Price &amp; Volume, RMX or Product Segment page.</p>
 `;
@@ -735,8 +740,21 @@ window.HELP_HTML = `
 (function(){
   var IS_LIVE = (typeof google !== 'undefined' && google.script && google.script.run);
 
-  /* ---- state ---- */
-  var STATE = { period:'MTD', sel:'ALL', split:false, tab:'agg', data:null, win:false };
+  /* ---- state ----
+     period  = the SERVER's period, and only ever 'MTD' or 'YTD'. That is all
+               PV.getReport / RMX.getKeys / the Product Segment tabs know about.
+     pick    = which Period BUTTON is lit: MTD, YTD, PMTD, PYTD — or null when
+               the slider sits on a span that is none of them.
+     win     = the numbers come from the month cube rather than the server. True
+               for a custom window AND for both Prev-month picks, which are the
+               same shapes one month back and so cannot come off the server. */
+  var STATE = { period:'MTD', pick:'MTD', sel:'ALL', split:false, tab:'agg', data:null, win:false };
+  /* pick -> the server payload it needs. Prev-month MTD still wants the MTD
+     payload: the Product Segment sheet splits MTD and YTD into their own tabs
+     and those tabs are ALREADY last month's, so the MTD tab is exactly what a
+     Prev-month MTD view should read. */
+  var PICK_SERVER = { MTD:'MTD', YTD:'YTD', PMTD:'MTD', PYTD:'YTD' };
+  function isPrevPick(){ return STATE.pick==='PMTD' || STATE.pick==='PYTD'; }
   var CH = { bd:[], dim:[], exp:[], bridge:[], cust:[], fsc:[], fscc:[], seg:[], pcat:[], ext:[],
              rdim:[], rasp:[], rtrend:[], atrend:[], rfuel:[] };   // live Chart instances, per section
   var CACHE  = {};                       // period -> overview payload
@@ -817,6 +835,62 @@ window.HELP_HTML = `
   function nPct(n){ return (n==null) ? nDash() : fPct(n); }
   function nPpi(n){ return (n==null) ? nDash() : fPpi(n); }
   function nAsp(n, f){ return (n==null) ? nDash() : (f||fAsp)(n); }
+
+  /* ===================== A PANEL WITH NOTHING IN IT IS NOT SHOWN ============
+     There is exactly one rule on this page for a section that has no numbers
+     for what is selected: it disappears. No box explaining which table the
+     figures live in, no "switch Period back to…", no empty frame with a
+     heading over it. If it cannot be computed for this period, this window,
+     this market or this filter, it is not there — and it comes straight back
+     the moment the selection can answer it.
+
+     The exceptions are FAULTS, not empty selections, and they stay visible
+     because they are fixable and the fix is a link: a source sheet that has
+     not been set, and a call that failed. Those still say so.
+
+     Every body element that can go empty is listed here against the card that
+     wraps it, so hiding is one call from wherever the emptiness is detected. */
+  var PANEL_OF = {
+    aggBody:'colAgg', dimBody:'colDims', expBody:'colExplore', custBody:'colCust',
+    fscBody:'colFsc', fscCustBody:'colFscCust', aggTrendBody:'colAggTrend',
+    aggKpiBody:'colAggKpi', bridgeBody:'colBridge',
+    rmxBody:'colRmx', rmxDimBody:'colRmxDims', pcatBody:'colProdCat',
+    rmxAspBody:'colRmxAsp', rmxFuelBody:'colRmxFuel', extBody:'colExtras',
+    rmxTrendBody:'colRmxTrend', rmxKpiBody:'colRmxKpi'
+  };
+  /* the cards on each tab, so a repaint can put everything back before the
+     painters decide again what has nothing to show */
+  var AGG_PANELS = ['colAggTrend','colAggKpi','colAgg','colDims','colBridge','colExplore','colCust','colFsc','colFscCust'];
+  var RMX_PANELS = ['colRmxTrend','colRmxKpi','colRmx','colRmxDims','colProdCat','colRmxAsp','colRmxFuel','colExtras'];
+
+  function panelShow(colId, on){
+    var p=$(colId); if(!p) return;
+    p.style.display = on ? '' : 'none';
+  }
+  /* Hide the CARD a body sits in, and empty the body so nothing is left to
+     paint over or to read by a screen reader behind display:none. */
+  function hidePanel(bodyId){
+    var b=$(bodyId); if(b) b.innerHTML='';
+    if(PANEL_OF[bodyId]) panelShow(PANEL_OF[bodyId], false);
+    syncPanelRows();
+  }
+  function showPanel(bodyId){ if(PANEL_OF[bodyId]) panelShow(PANEL_OF[bodyId], true); }
+  function panelHidden(colId){ var p=$(colId); return !!(p && p.style.display==='none'); }
+  /* Two cards share a row. When both are gone the row goes with them, so the
+     survivor is not left sitting in half a grid. */
+  function syncPanelRows(){
+    var row=$('fscRow'); if(!row) return;
+    var a=!panelHidden('colFsc'), b=!panelHidden('colFscCust');
+    row.style.display=(a||b)?'':'none';
+    /* a lone survivor takes the whole row rather than sitting in half a grid
+       beside a gap */
+    row.style.gridTemplateColumns=(a&&b)?'':'1fr';
+  }
+  function resetPanels(){
+    AGG_PANELS.concat(RMX_PANELS).forEach(function(id){ panelShow(id, true); });
+    var ac=$('aspCol'); if(ac) ac.style.display='';
+    syncPanelRows();
+  }
   /* The overlay is gone. These keep their old names so every call site reads
      the same, but they now drive the bottom-left pill instead of freezing the
      page — you can carry on reading and clicking while the numbers arrive. */
@@ -1593,10 +1667,8 @@ window.HELP_HTML = `
   function renderBreakdown(bodyId, items, opt){
     var body=$(bodyId);
     clearCH('bd');
-    if(!items.length){
-      body.innerHTML='<div class="ov-notice">No '+opt.name+' data for the selected market in this period.</div>';
-      return;
-    }
+    if(!items.length){ hidePanel(bodyId); return; }
+    showPanel(bodyId);
     body.innerHTML =
       '<div class="ov-donuts">'
       + '<div class="ov-donut"><p class="cap">This year</p><div class="ov-cbox"><canvas id="'+opt.id+'_cy"></canvas></div></div>'
@@ -1684,49 +1756,104 @@ window.HELP_HTML = `
     ch.$seq=W.seq; ch.$fmt=fmt;
     CH.bridge.push(ch);
   }
+  /* THE REVENUE WATERFALL, once. Every caller has the same four numbers. */
+  function drawRevBridge(pyRev, cyRev, pyAsp, cyVol, pyVol){
+    var volImpact=pyAsp*(cyVol-pyVol);
+    $('br_rev') && ($('br_rev').outerHTML='<canvas id="br_rev"></canvas>');
+    waterfall($('br_rev'), [
+      {label:'PY Revenue', value:pyRev, total:true},
+      {label:'Volume Impact', value:volImpact},
+      {label:'Price Impact', value:(cyRev-pyRev)-volImpact},
+      {label:'CY Revenue', value:cyRev, total:true}
+    ], { total:fMoneyFull, delta:fMoneySign }, function(v){ return '$'+(v/1e6).toFixed(1)+'M'; });
+  }
+  /* THE ASP MIX WATERFALL, once. `asp` is { ppi, items:[{label,value}], totalAsp }
+     from wherever it came. Returns false and takes the column with it when there
+     is no bridge to draw — half a panel beats a box apologising for it. */
+  function drawAspBridge(asp){
+    var box=$('aspBox'), col=$('aspCol');
+    if(!asp){ if(box) box.innerHTML=''; if(col) col.style.display='none'; return false; }
+    if(col) col.style.display='';
+    box.innerHTML='<canvas id="br_asp"></canvas>';
+    var seq=[{label:'PPI', value:asp.ppi, total:true}];
+    (asp.items||[]).forEach(function(it){ seq.push({label:it.label, value:it.value}); });
+    seq.push({label:'Total ASP%', value:asp.totalAsp, total:true});
+    waterfall($('br_asp'), seq, { total:fPpi, delta:fPctSign }, function(v){ return (v*100).toFixed(0)+'%'; });
+    return true;
+  }
+
+  /* THE ASP BRIDGE FROM THE CUBE.
+     The server ships this bridge pre-computed for all markets and for each
+     market on its own, and for nothing else — so two markets together, or any
+     span that is not the server's own MTD / YTD, used to get a box saying the
+     breakdown "isn't available". It is available: the bridge is five volume-mix
+     re-weightings and a remainder, and every column it needs (market,
+     submarket, material family, plant type, product class, volume, revenue) is
+     in the month fact table.
+
+     The formula is the report's, unchanged — the same one xfComputeLocal runs
+     for a filtered slice: for each dimension, re-price LAST year's volume mix
+     at THIS year's per-group ASP; whatever of ASP% survives that is price
+     rather than mix. Region and submarket are averaged into one item, and
+     Customer mix is the remainder, so the bars always add to Total ASP%.
+
+     It reads the SELECTED SPAN, which in MTD / YTD is the period's own months
+     (the Period buttons and the slider are one control), so this is the same
+     window the server answered for — not a different one wearing its label. */
+  function cubeMixItem(field, tot){
+    var rows=cubeGroups('agg', field);
+    if(!rows || !rows.length) return null;
+    var sumPy=0, num=0;
+    rows.forEach(function(r){
+      var cyAsp=r.cyVol ? r.cyRev/r.cyVol : 0;
+      sumPy+=r.pyVol; num+=r.pyVol*cyAsp;
+    });
+    var volFixedAsp=sumPy?num/sumPy:0;
+    var priceOnly=tot.pyAsp?(volFixedAsp-tot.pyAsp)/tot.pyAsp:0;
+    return tot.aspPct-priceOnly;
+  }
+  function cubeAspBridge(tot){
+    tot=tot||cubeTotal('agg');
+    /* past twelve months every "vs last year" here compares months with months
+       already inside the window, so there is no bridge to draw */
+    if(!tot || !(tot.cyVol&&tot.pyVol) || pyStale()) return null;
+    var region=cubeMixItem('market',tot), sub=cubeMixItem('sm1',tot),
+        geo=cubeMixItem('matFam',tot), pt=cubeMixItem('plantType',tot), pc=cubeMixItem('prodClass',tot);
+    if(region==null||sub==null||geo==null||pt==null||pc==null) return null;
+    var rm=(region+sub)/2;
+    return { ppi:tot.ppi, totalAsp:tot.aspPct, items:[
+      { label:'Region / Market mix', value:rm },
+      { label:'Geology vol mix', value:geo },
+      { label:'Plant type vol mix', value:pt },
+      { label:'Prod class vol mix', value:pc },
+      { label:'Customer mix', value:(tot.aspPct-tot.ppi)-(rm+geo+pt+pc) }
+    ], local:true };
+  }
+
   function renderBridges(){
     clearCH('bridge');
     var keys=selectedKeys();
     var t=aggTotals(keys);
     var note=$('bridgeNote');
-    if(!t || !t.present){
-      $('bridgeSub').textContent='No data for this selection.';
-      $('aspBox').innerHTML='';
-      if(note) note.textContent='';
-      return;
-    }
+    if(!t || !t.present){ hidePanel('bridgeBody'); return; }
+    showPanel('bridgeBody');
     $('bridgeSub').textContent = 'How revenue and price moved vs last year · '+scopeLabel();
 
-    // Revenue growth (exact for any selection)
-    var pyRev=t.pyAsp*t.pyVol, cyRev=t.cyAsp*t.cyVol;
-    var volImpact=t.pyAsp*(t.cyVol-t.pyVol);
-    var priceImpact=(cyRev-pyRev)-volImpact;
-    waterfall($('br_rev'), [
-      {label:'PY Revenue', value:pyRev, total:true},
-      {label:'Volume Impact', value:volImpact},
-      {label:'Price Impact', value:priceImpact},
-      {label:'CY Revenue', value:cyRev, total:true}
-    ], { total:fMoneyFull, delta:fMoneySign }, function(v){ return '$'+(v/1e6).toFixed(1)+'M'; });
+    drawRevBridge(t.pyAsp*t.pyVol, t.cyAsp*t.cyVol, t.pyAsp, t.cyVol, t.pyVol);
 
-    // ASP % growth — the Price & Volume bridge: PPI → mix items → Total ASP%
+    /* the report's own bridge where the server has one — all markets, or a
+       single market — and the cube's otherwise, which covers every subset */
     var br=STATE.data.bridges||{};
     var asp=null;
     if(isAll()) asp = br.all && br.all.asp;
     else if(keys.length===1) asp = br.byKey && br.byKey[keys[0]] && br.byKey[keys[0]].asp;
-    var box=$('aspBox');
-    if(asp){
-      box.innerHTML='<canvas id="br_asp"></canvas>';
-      var seq=[{label:'PPI', value:asp.ppi, total:true}];
-      (asp.items||[]).forEach(function(it){ seq.push({label:it.label, value:it.value}); });
-      seq.push({label:'Total ASP%', value:asp.totalAsp, total:true});
-      waterfall($('br_asp'), seq, { total:fPpi, delta:fPctSign }, function(v){ return (v*100).toFixed(0)+'%'; });
-    } else {
-      box.innerHTML='<div class="ov-notice" style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center">'
-        +'The ASP mix breakdown isn\u2019t available for this market yet.<br>Press <b>\u21BB Update from source</b> on AGG - Price &amp; Volume, then reopen this page.</div>';
-    }
+    if(!asp) asp=cubeAspBridge();
+    var drew=drawAspBridge(asp);
 
     if(note){
-      note.innerHTML='Same two waterfalls as the Price &amp; Volume report. For the full tables behind them, '
+      note.innerHTML='Same two waterfalls as the Price &amp; Volume report'
+        +((drew && asp.local) ? ', rebuilt for this market selection from the month fact table' : '')
+        +'. For the full tables behind them, '
         +'<a href="'+(window.APP_URL||'')+'?page=pricevolume" target="_top">open AGG - Price &amp; Volume →</a>.';
     }
   }
@@ -1750,6 +1877,11 @@ window.HELP_HTML = `
   }
   function renderTab(){
     if(!STATE.data) return;
+    /* Everything comes back first. The painters below are the only thing that
+       decides a card has nothing to show, and they have to decide it again on
+       every selection - otherwise a panel hidden for last month's pick would
+       still be missing after switching to one that can answer. */
+    resetPanels();
     renderRxfBar();          // shows on the Ready-Mix tab, hides itself everywhere else
 
     if(STATE.tab==='agg'){
@@ -1758,18 +1890,22 @@ window.HELP_HTML = `
         $('kpiAgg').innerHTML='<div class="kpi na">Price &amp; Volume sheet not set.</div>';
         sourceNotice('aggBody','Price & Volume','pricevolume',STATE.data.errors.pv);
         clearCH('bridge'); clearCH('bd'); clearCH('dim');
-        $('bridgeSub').textContent='Needs the Price & Volume sheet.'; $('bridgeNote').textContent=''; $('aspBox').innerHTML='';
-        $('dimBody').innerHTML='<div class="ov-mini">Needs the Price &amp; Volume sheet.</div>';
-        $('expBody').innerHTML='<div class="ov-mini">Needs the Price &amp; Volume sheet.</div>';
+        ['colDims','colBridge','colExplore','colCust','colFsc','colFscCust'].forEach(function(id){ panelShow(id,false); });
+        syncPanelRows();
+      } else if(winMode()){
+        /* WINDOW FIRST, cross-filters second. The cube applies the page's
+           filters itself (trendFilters feeds them straight in), while the
+           cross-report is fetched per SERVER PERIOD and knows nothing about a
+           window - so letting it win here put MTD numbers under a window's
+           label the moment anyone clicked a value. */
+        renderXfBar(); renderRefine();
+        renderWinAgg();
+        scheduleDims();        // keeps the refine options + cross-filter lists warm
       } else if(xfActive()){
         renderXfBar();
         renderRefine();
         renderXfPanels();      // paints the cached slice or loading states, then fetches
         scheduleDims();        // keeps the refine options + shared report cache warm
-      } else if(winMode()){
-        renderXfBar(); renderRefine();
-        renderWinAgg();
-        scheduleDims();        // keeps the refine options + cross-filter lists warm
       } else {
         var keys=selectedKeys();
         renderXfBar();
@@ -1786,24 +1922,29 @@ window.HELP_HTML = `
         renderAggKpis();
         scheduleCustomers(); // debounced (rapid chip changes fire one server call); FSC customers always, Top-10 only when unfiltered
         loadFsc();
+        // footer diagnostics (aggregates markets not mapped on this page)
+        var foot=[];
+        if(STATE.data.unmatched && STATE.data.unmatched.pv && STATE.data.unmatched.pv.length){
+          foot.push('Aggregates markets in the sheet that aren\u2019t mapped on this page: <code>'
+            + STATE.data.unmatched.pv.map(esc).join('</code>, <code>') + '</code>. '
+            + 'Add them to <code>OVERVIEW.MARKETS</code> in Config.gs to include them.');
+        }
+        $('foot').innerHTML = foot.join('<br>');
       }
       setTimeout(prefetchXData, 600);   // background dataset fetch (guarded; no-op once in)
-      // footer diagnostics (aggregates markets not mapped on this page)
-      var foot=[];
-      if(winMode()) foot.push('');   // syncWinPanels owns the footer in window mode
-      else if(STATE.data.unmatched && STATE.data.unmatched.pv && STATE.data.unmatched.pv.length){
-        foot.push('Aggregates markets in the sheet that aren’t mapped on this page: <code>'
-          + STATE.data.unmatched.pv.map(esc).join('</code>, <code>') + '</code>. '
-          + 'Add them to <code>OVERVIEW.MARKETS</code> in Config.gs to include them.');
-      }
-      $('foot').innerHTML = foot.join('<br>');
-      syncWinPanels();   // last, so the window note is not overwritten by the diagnostics above
+      syncWinPanels();
     } else {
       renderXfBar(); renderRefine();     // both hide themselves off the Aggregates tab
+      /* FIRST, not last. This panel is the one that must never be left showing
+         by accident - its numbers are last month's and they look plausible
+         under any heading - so its decision is taken before anything else on
+         the tab can go wrong. */
+      renderProdCat();
       if(STATE.data.errors && STATE.data.errors.rmx){
         $('kpiRmx').innerHTML='<div class="kpi na">RMX sheet not set.</div>';
         sourceNotice('rmxBody','RMX','rmx',STATE.data.errors.rmx);
         clearCH('bd');
+        ['colRmxDims','colProdCat','colRmxAsp','colRmxFuel','colExtras'].forEach(function(id){ panelShow(id,false); });
       } else if(winMode()){
         renderWinRmx();
         scheduleRxf();         // keeps the cross-filter option lists warm
@@ -1815,18 +1956,16 @@ window.HELP_HTML = `
       }
       if(!winMode()){
         renderRmxKpis();
-        renderProdCat();
+        // footer diagnostics (segment markets not mapped on this page)
+        var rfoot=[];
+        var sg=STATE.data.seg;
+        if(sg && sg.unmatched && sg.unmatched.length){
+          rfoot.push('Product Segment markets in the sheet that aren\u2019t mapped on this page: <code>'
+            + sg.unmatched.map(esc).join('</code>, <code>') + '</code>. '
+            + 'Add them to <code>OVERVIEW.MARKETS</code> in Config.gs to include them.');
+        }
+        $('footRmx').innerHTML = rfoot.join('<br>');
       }
-      // footer diagnostics (segment markets not mapped on this page)
-      var rfoot=[];
-      var sg=STATE.data.seg;
-      if(winMode()) rfoot.push('');
-      else if(sg && sg.unmatched && sg.unmatched.length){
-        rfoot.push('Product Segment markets in the sheet that aren’t mapped on this page: <code>'
-          + sg.unmatched.map(esc).join('</code>, <code>') + '</code>. '
-          + 'Add them to <code>OVERVIEW.MARKETS</code> in Config.gs to include them.');
-      }
-      $('footRmx').innerHTML = rfoot.join('<br>');
       syncWinPanels();
     }
   }
@@ -1835,47 +1974,31 @@ window.HELP_HTML = `
      Same painters the MTD/YTD path uses — only the numbers come from the cube
      instead of the server, so the look, the click-to-filter behaviour and the
      colours are identical and there is one set of visuals to maintain.      */
-  function winScopeLine(){ return STATE.tab==='agg' ? 'agg' : 'rmx'; }
-
-  /* Panels that cannot follow a window are hidden or notice-stamped here, in
-     one place, so nothing is left showing a stale year under a month label. */
+  /* The SAP / USGAAP cards are the one thing a window genuinely cannot
+     rebuild: they are statement figures and exist per month or per year only.
+     They go, and nothing takes their place. Everything the cube CAN answer is
+     answered by the painters below; whatever it cannot is simply not on the
+     page. */
   function syncWinPanels(){
-    var on=winMode(), w=winLabel();
-    /* SAP / USGAAP cards: statement figures, month or year only — hidden */
-    ['colAggKpi','colRmxKpi'].forEach(function(id){ var p=$(id); if(p) p.style.display=on?'none':''; });
-    if(!on) return;
-    if(STATE.tab==='agg'){
-      var box=$('aspBox');
-      $('bridgeSub').textContent='Not available for a custom window.';
-      if(box) box.innerHTML='';
-      clearCH('bridge');
-      $('br_rev') && ($('br_rev').outerHTML='<canvas id="br_rev"></canvas>');
-      winExempt('expBody','The plant & material explorer');
-      $('bridgeNote').innerHTML='The ASP mix bridge needs row-level mix data, which the month fact table '
-        +'does not carry. Switch to <b>This month</b> or <b>Year to date</b> for the waterfalls.';
-      winExempt('custBody','The customer breakdown');
-      winExempt('fscBody','Fuel surcharge',
-        'The surcharge dollars are in the month fact table, but whether a line was CHARGED is not \u2014 '
-        +'that is a per-row flag, and applied tonnes cannot be rebuilt from monthly totals.');
-      winExempt('fscCustBody','Top-10 customers by fuel surcharge');
-      $('foot').innerHTML='Custom window \u00b7 <b>'+esc(w)+'</b> \u00b7 volume, ASP and PPI are computed '
-        +'from the month cube in your browser; every other panel needs the server report.';
-    }else{
-      $('pcatSub').textContent='Ready-Mix (m³) · from the RMX - Product Segment sheet';
-      winExempt('pcatBody','Product category',
-        'The Product Segment sheet arrives already split into MTD and YTD and already summed to '
-        + 'segment x market \u2014 it carries no month column, so there is nothing to re-slice for '
-        + winLabel() + '. Its tabs are for ' + (pcatMonthName() || 'one month') + ' only.');
-      winExempt('rmxAspBody','The ASP build-up');
-      winExempt('extBody','Extras & VAP');
-      $('footRmx').innerHTML='Custom window \u00b7 <b>'+esc(w)+'</b> \u00b7 base concrete only: extras and VAP '
-        +'are not carried in the month fact table.';
-    }
+    if(!winMode()) return;      // hide-only: whether the cards have anything to
+                                // show at all is renderAggKpis / renderRmxKpis's
+                                // call, and this runs after them
+    ['colAggKpi','colRmxKpi'].forEach(function(id){ panelShow(id, false); });
   }
 
+  /* ---- the whole Aggregates tab, from the cube --------------------------
+     Every panel here used to stop at MTD / YTD and say so in a box. The month
+     fact table already carries plant, material, plant type, material family,
+     product class, customer parent, customer segment, the surcharge dollars
+     and the tonnes those dollars were charged on — which is everything these
+     panels are made of. So they are computed, not excused. What is left out is
+     left out for a reason that is about the DATA, not about the window:
+       • the SAP / USGAAP cards  — statement figures, per month or per year
+       • fuel surcharge          — its columns are a live-book field (winFscOk)
+     and those simply are not shown.                                        */
   function renderWinAgg(){
     var t=cubeWinTotals('agg');
-    if(!t){ $('kpiAgg').innerHTML='<div class="kpi na">Loading months\u2026</div>'; winWaiting('aggBody'); winWaiting('dimBody'); return; }
+    if(!t){ $('kpiAgg').innerHTML='<div class="kpi na">Loading months…</div>'; winWaiting('aggBody'); winWaiting('dimBody'); return; }
     renderKpiRow('kpiAgg', t, 't', fAsp);
 
     /* breakdown: markets at All, submarkets inside one market — the same
@@ -1889,10 +2012,10 @@ window.HELP_HTML = `
     var g=cubeWinRows('agg', byMarket?'market':'sm1');
     $('aggBdTitle').textContent = byMarket ? 'Market breakdown' : 'Submarket breakdown';
     $('aggBdSub').textContent = (pyStale()
-      ? (byMarket?'Volume share and volume by market':'Submarkets \u00b7 volume share and volume')
+      ? (byMarket?'Volume share and volume by market':'Submarkets · volume share and volume')
       : (byMarket?'Volume share, volume vs last year, and price movement by market':
-        'Submarkets \u00b7 volume share, volume vs last year, and price movement'))
-      +' \u00b7 '+winLabel()+' \u00b7 click to filter.';
+        'Submarkets · volume share, volume vs last year, and price movement'))
+      +' · '+winLabel()+' · click to filter.';
     if(!g){ winWaiting('aggBody'); }
     else renderBreakdown('aggBody', cubeRowsToItems(g.rows),
       { id:'agg', name:byMarket?'Aggregates':'submarket', field:byMarket?'MARKET':'SUBMARKET1' });
@@ -1901,12 +2024,142 @@ window.HELP_HTML = `
     var fld=AGG_CUBE_FIELD[DIM_TAB]||'plantType';
     var dg=cubeWinRows('agg', fld);
     $('dimSub').textContent=(pyStale()?'Volume share and volume':'CY volume share, volume vs last year, ASP % inc and PPI')
-      +' \u00b7 '+scopeLabel()+' \u00b7 '+winLabel()+' \u00b7 click a row to filter by it';
+      +' · '+scopeLabel()+' · '+winLabel()+' · click a row to filter by it';
     var body=$('dimBody');
     clearCH('dim');
-    if(!dg){ winWaiting('dimBody'); return; }
-    if(!dg.rows.length){ body.innerHTML='<div class="ov-notice">No '+esc(DIM_LABEL[DIM_TAB]||DIM_TAB)+' data in this window.</div>'; return; }
-    paintDimTable(body, dg.rows.map(winDimRow), dg.total?winDimRow(dg.total):null);
+    if(!dg) winWaiting('dimBody');
+    else if(!dg.rows.length) hidePanel('dimBody');
+    else paintDimTable(body, dg.rows.map(winDimRow), dg.total?winDimRow(dg.total):null);
+
+    renderWinBridges(t);
+    renderWinExplorer();
+    renderWinCustomers();
+    renderWinFsc();
+    $('foot').innerHTML=esc(winScopeWord())
+      +' · computed in your browser from the month fact table, not the server report.';
+  }
+
+  /* ---- the two waterfalls, from the cube ---- */
+  function renderWinBridges(){
+    var tot=cubeTotal('agg');
+    if(!tot || !(tot.cyVol||tot.pyVol)){ clearCH('bridge'); hidePanel('bridgeBody'); return; }
+    showPanel('bridgeBody');
+    clearCH('bridge');
+    $('bridgeSub').textContent='How revenue and price moved vs last year · '+scopeLabel()+' · '+winLabel();
+    drawRevBridge(tot.pyRev, tot.cyRev, tot.pyAsp, tot.cyVol, tot.pyVol);
+    var asp=cubeAspBridge(tot);
+    drawAspBridge(asp);
+    var note=$('bridgeNote');
+    if(note) note.innerHTML = asp
+      ? ('Same two waterfalls as the Price &amp; Volume report, rebuilt for '+esc(winLabel())+' from the month fact table.')
+      : '';
+  }
+
+  /* ---- plants & materials, from the cube ---- */
+  function renderWinExplorer(){
+    var pg=cubeWinRows('agg','plant'), mg=cubeWinRows('agg','material');
+    clearCH('exp');
+    if(!pg || !mg){ showPanel('expBody'); winWaiting('expBody'); return; }
+    if(!pg.rows.length && !mg.rows.length){ hidePanel('expBody'); return; }
+    showPanel('expBody');
+    $('expSub').textContent='Top plants & materials for '+scopeLabel()+' · '+winLabel()+' · click a row to filter by it';
+    $('expBody').innerHTML='<div class="ov-exp-grid">'+expBlockHtml('PLANT','Plants','expP')+expBlockHtml('MATERIAL','Materials','expM')+'</div>';
+    [['PLANT','expP',pg],['MATERIAL','expM',mg]].forEach(function(x){
+      var rows=x[2].rows.map(cubeRowAsTable);
+      paintExpBlock(x[0], x[1], rows.slice(0,10),
+        x[2].total?cubeRowAsTable(x[2].total):{cyVol:0},
+        'Top 10 by CY volume — search above or click a row to filter.');
+      xfSearchWire(x[1]+'_in', x[1]+'_res', function(){ return x[0]; }, function(){
+        return rows.map(function(r){ return r.label; });
+      });
+    });
+  }
+
+  /* ---- customers, from the cube ----------------------------------------
+     Same merged shape loadCustomers() hands renderCustomers(), so the donut,
+     the bar, the table and the segment split are the ones already on the page.
+     The children are the customer-segment split, which is its own cube dim, so
+     "Split by segment" works here too.                                     */
+  function cubeCustomers(){
+    var cg=cubeWinRows('agg','custParent');
+    if(!cg) return null;
+    var parents=cg.rows.map(cubeRowAsTable);
+    if(STATE.split){
+      /* one grouped pass per top customer would be ten queries; one pass over
+         custParent|custSeg is not available, so the split is read from the
+         segment dimension filtered to that customer — done for the ten rows
+         that are actually drawn, and no further. */
+      parents.slice(0,10).forEach(function(p){
+        var kids=cubeGroups('agg','custSeg', { custParent:[p.label] });
+        p.children=(kids||[]).map(cubeRowAsTable).filter(function(k){ return k.cyVol||k.pyVol; })
+                    .sort(function(a,b){ return b.cyVol-a.cyVol; });
+      });
+    }
+    var top=parents.slice(0,10), rest=parents.slice(10);
+    var others=rest.reduce(function(s,p){ s.cyVol+=p.cyVol; s.pyVol+=(p.pyVol||0); return s; },{cyVol:0,pyVol:0});
+    others.count=rest.length;
+    return { top:top, others:others, total:cg.total?cubeRowAsTable(cg.total):{cyVol:0,pyVol:0},
+             customerCount:parents.length, parents:parents };
+  }
+  function renderWinCustomers(){
+    var d=cubeCustomers();
+    if(!d){ showPanel('custBody'); clearCH('cust'); winWaiting('custBody'); return; }
+    if(!d.top.length){ hidePanel('custBody'); renderWinFscCustomers(null); return; }
+    showPanel('custBody');
+    $('custScope').textContent=scopeLabel()+' · by customer parent'+(STATE.split?' · split by segment':'')
+      +' · '+winLabel();
+    renderCustomers(d);
+    renderWinFscCustomers(d);
+  }
+
+  /* ---- fuel surcharge, from the cube -----------------------------------
+     $/applied tonne is the surcharge dollars over the tonnes that CARRIED a
+     surcharge — both are columns in the fact table (fsc and fv), so this is a
+     sum, not an inference. It answers for the current book year only; see
+     winFscOk().                                                            */
+  function renderWinFsc(){
+    clearCH('fsc');
+    if(!winFscOk()){ hidePanel('fscBody'); return; }
+    var g=cubeWinRows('agg','market');
+    if(!g){ showPanel('fscBody'); winWaiting('fscBody'); return; }
+    var rows=g.rows.map(cubeRowAsTable).filter(function(r){ return r.cyFsc || r.pyFsc; });
+    if(!rows.length){ hidePanel('fscBody'); return; }
+    showPanel('fscBody');
+    $('fscSub').textContent='All markets · '+winLabel()
+      +' · $/applied tonne · from the month fact table (Price & Volume rows)';
+    function rate(f, v){ return v ? f/v : 0; }
+    var tot=g.total?cubeRowAsTable(g.total):null;
+    var LAB='font:700 9.5px Archivo;letter-spacing:.14em;text-transform:uppercase;color:var(--blue-70);margin:0 0 8px';
+    var out='<p style="'+LAB+'">Share of total FSC dollars · this year</p>'
+      +'<div class="ov-cbox tall"><canvas id="fsc_pie"></canvas></div>'
+      +'<table class="ov-table"><thead><tr><th>Market</th><th>FSC $ CY</th><th>$/t CY</th><th>$/t PY</th><th>YOY</th></tr></thead><tbody>';
+    function line(r, isTot){
+      var cyR=rate(r.cyFsc, r.cyFv), pyR=rate(r.pyFsc, r.pyFv);
+      return '<tr'+(isTot?' class="tot"':'')+'><td>'+esc(r.label)+'</td><td>'+fMoneyS(r.cyFsc)+'</td>'
+        +'<td>'+fRateS(cyR)+'</td><td>'+fRateS(pyR)+'</td>'
+        +'<td class="'+cls(cyR-pyR)+'">'+fYoyS(cyR-pyR)+'</td></tr>';
+    }
+    out+=rows.map(function(r){ return line(r,false); }).join('');
+    if(tot){ tot.label='Total'; out+=line(tot,true); }
+    out+='</tbody></table>'
+      +'<p class="ov-note">Applied tonnes are the tonnes on rows that actually carried a surcharge, '
+      +'summed from the same monthly rows as the volumes above.</p>';
+    $('fscBody').innerHTML=out;
+    var withFsc=rows.filter(function(r){ return r.cyFsc>0; });
+    if(withFsc.length) custDonut('fsc', $('fsc_pie'),
+      withFsc.map(function(r){ return truncate(r.label,22); }),
+      withFsc.map(function(r){ return r.cyFsc; }),
+      withFsc.map(function(_,i){ return CUST_COLORS[i%CUST_COLORS.length]; }));
+  }
+  function renderWinFscCustomers(d){
+    clearCH('fscc');
+    if(!winFscOk() || !d){ hidePanel('fscCustBody'); return; }
+    var ranked=(d.parents||[]).filter(function(p){ return (Number(p.cyFsc)||0)>0; })
+      .slice().sort(function(a,b){ return b.cyFsc-a.cyFsc; });
+    if(!ranked.length){ hidePanel('fscCustBody'); return; }
+    showPanel('fscCustBody');
+    $('fscCustScope').textContent=scopeLabel()+' · CY fuel-surcharge dollars · '+winLabel();
+    fscCustTable(ranked);
   }
   function winDimRow(g){
     /* the ungrouped query keys its single bucket with an internal sentinel; the
@@ -1938,22 +2191,64 @@ window.HELP_HTML = `
     var fld=RMX_CUBE_FIELD[RDIM_TAB]||'submarket';
     var dg=cubeWinRows('rmx', fld);
     $('rmxDimSub').textContent=(pyStale()?'Volume share and volume':'CY volume share, volume vs last year, BASE ASP % inc and PPI')
-      +' \u00b7 '+scopeLabel()+' \u00b7 '+winLabel();
+      +' · '+scopeLabel()+' · '+winLabel();
     var body=$('rmxDimBody');
     clearCH('rdim');
-    if(!dg){ winWaiting('rmxDimBody'); return; }
-    if(!dg.rows.length){ body.innerHTML='<div class="ov-notice">No rows for this dimension in this window.</div>'; return; }
-    body.innerHTML=winDimTableHtml(dg.rows.map(winDimRow), dg.total?winDimRow(dg.total):null, 'm\u00b3');
+    if(!dg) winWaiting('rmxDimBody');
+    else if(!dg.rows.length) hidePanel('rmxDimBody');
+    else body.innerHTML=winDimTableHtml(dg.rows.map(winDimRow), dg.total?winDimRow(dg.total):null, 'm³');
+
+    renderWinRmxAsp();
+    /* the month/quarter trend, which paintRxfPanels normally owns - the cube
+       draws it either way, and the all-in overlay (extras per month) is left
+       off because that comes from the server report, for the server's period */
+    renderTrendPanel('rmx', null, null);
+    /* Extras BY TYPE and fuel recovery are the two Ready-Mix panels a window
+       cannot rebuild: the extra type and the per-load surcharge live on rows
+       the fact table does not carry (it carries their money, not their name).
+       They are not shown rather than explained. */
+    hidePanel('extBody');
+    hidePanel('rmxFuelBody');
+    $('footRmx').innerHTML=esc(winScopeWord())
+      +' · computed in your browser from the month fact table, not the server report.';
+  }
+
+  /* ---- ASP build-up, from the cube -------------------------------------
+     Extras and VAP revenue are columns in the Ready-Mix fact table (ex / va),
+     which is exactly what this panel is: three revenue streams over ONE
+     denominator, total concrete m³. So it is summed rather than skipped. What
+     it cannot do is split those streams BY EXTRA TYPE — the type is not a
+     column — which is why the Extras & VAP panel below is not shown. */
+  function renderWinRmxAsp(){
+    clearCH('rasp');
+    var g=cubeTotal('rmx');
+    if(!g){ showPanel('rmxAspBody'); winWaiting('rmxAspBody'); return; }
+    if(!(g.cyVol||g.pyVol)){ hidePanel('rmxAspBody'); return; }
+    showPanel('rmxAspBody');
+    $('rmxAspSub').textContent='Base, Extras, VAP and All-in · '+scopeLabel()+' · '+winLabel()
+      +' · every row divided by the same total concrete m³, so the rows add to All-in.';
+    function row(label, cyRev, pyRev){
+      var aspCY=g.cyVol?cyRev/g.cyVol:0, aspPY=g.pyVol?pyRev/g.pyVol:0;
+      return { label:label, cyRev:cyRev, pyRev:pyRev,
+               aspCY:aspCY, aspPY:aspPY, aspChg:aspCY-aspPY,
+               aspPct:aspPY?(aspCY-aspPY)/aspPY:0,
+               revPct:pyRev?(cyRev-pyRev)/pyRev:0 };
+    }
+    var rows=[ row('Base', g.cyRev, g.pyRev),
+               row('Extras', g.cyEx||0, g.pyEx||0),
+               row('VAP', g.cyVa||0, g.pyVa||0) ];
+    var total=row('All-in', g.cyRev+(g.cyEx||0)+(g.cyVa||0), g.pyRev+(g.pyEx||0)+(g.pyVa||0));
+    renderAspBuildUp({ rows:rows, total:total, volCY:g.cyVol, volPY:g.pyVol });
   }
   /* the Ready-Mix dimension table is a plain table (its painter is bound to the
      cross-report's own row shape), so window mode renders it directly */
   function winDimTableHtml(rows, total, unit){
     function tr(r, tot){
       return '<tr'+(tot?' class="tot"':'')+'><td>'+esc(r.label)+'</td>'
-        +'<td>'+fInt(r.cyVol)+'</td><td>'+fInt(r.pyVol)+'</td>'
-        +'<td class="'+cls(r.volPct)+'">'+fPct(r.volPct)+'</td>'
-        +'<td class="'+cls(r.aspPct)+'">'+fPct(r.aspPct)+'</td>'
-        +'<td class="'+cls(r.ppi)+'">'+fPpi(r.ppi)+'</td></tr>';
+        +'<td>'+fInt(r.cyVol)+'</td><td>'+nInt(r.pyVol)+'</td>'
+        +'<td class="'+cls(r.volPct)+'">'+nPct(r.volPct)+'</td>'
+        +'<td class="'+cls(r.aspPct)+'">'+nPct(r.aspPct)+'</td>'
+        +'<td class="'+cls(r.ppi)+'">'+nPpi(r.ppi)+'</td></tr>';
     }
     return '<table class="ov-table"><thead><tr><th>Value</th>'
       +'<th>Vol ('+unit+') CY</th><th>Vol ('+unit+') PY</th><th>Vol %</th><th>BASE ASP % inc</th><th>PPI</th>'
@@ -2022,6 +2317,14 @@ window.HELP_HTML = `
   function periodLabel(){ return STATE.period==='YTD'?'year to date':'month to date'; }
 
   function scheduleDims(){ if(dimsTimer) clearTimeout(dimsTimer); dimsTimer=setTimeout(loadDims, 220); }
+  /* WHO OWNS THE PANELS RIGHT NOW.
+     A window is answered by the cube and a filter by the cross-report; in
+     either case the plain server report is still fetched, but only to keep the
+     option lists and the shared cache warm. It must not PAINT — its numbers are
+     the server's MTD or YTD, and repainting with them a fifth of a second after
+     the window was drawn is how a July panel ends up under an August heading
+     with nothing on screen to say it happened. */
+  function srvOwnsAgg(){ return !winMode() && !(xfActive() && STATE.tab==='agg'); }
   function loadDims(){
     if(!STATE.data || (STATE.data.errors&&STATE.data.errors.pv)) return;
     var key=dimsKey();
@@ -2029,7 +2332,7 @@ window.HELP_HTML = `
       var dv=AmrCache.get('dims:'+key);
       if(dv) DIMS_CACHE[key]=dv;
     }
-    var xfOwns=function(){ return xfActive() && STATE.tab==='agg'; };
+    var xfOwns=function(){ return !srvOwnsAgg(); };
     if(DIMS_CACHE[key]){
       if(!xfOwns()){ renderAggBreakdown(); renderDimPies(); }
       renderRefine();
@@ -2109,7 +2412,8 @@ window.HELP_HTML = `
     var d=DIMS_CACHE[key];
     if(!d){ body.innerHTML='<div class="ov-mini">'+(IS_LIVE?'Loading…':'Loads in the live web app.')+'</div>'; return; }
     var t=(d.tables||[]).filter(function(x){ return x.key===DIM_TAB; })[0];
-    if(!t || !(t.rows||[]).length){ body.innerHTML='<div class="ov-notice">No '+esc(DIM_LABEL[DIM_TAB]||DIM_TAB)+' data for this selection.</div>'; return; }
+    if(!t || !(t.rows||[]).length){ hidePanel('dimBody'); return; }
+    showPanel('dimBody');
     paintDimTable(body, t.rows, t.total);
   }
     $('dimTabs').addEventListener('click', function(e){
@@ -2162,7 +2466,7 @@ window.HELP_HTML = `
       var v=AmrCache.get('pm:'+key);
       if(v) PM_CACHE[key]=v;
     }
-    var xfOwns=function(){ return xfActive() && STATE.tab==='agg'; };
+    var xfOwns=function(){ return !srvOwnsAgg(); };
     if(PM_CACHE[key]){ if(!xfOwns()) renderExplorer(); return; }
     if(!IS_LIVE || PM_PEND[key]) return;
     PM_PEND[key]=true;
@@ -2190,9 +2494,15 @@ window.HELP_HTML = `
     var key=pmKey();
     clearCH('exp');
     $('expSub').textContent='Top plants &amp; materials for '+scopeLabel()+' · '+periodLabel()+' · click a row to filter by it';
-    if(PM_ERR[key]){ body.innerHTML='<div class="ov-notice">Could not load plants &amp; materials: '+esc(PM_ERR[key])+'</div>'; return; }
+    if(PM_ERR[key]){ showPanel('expBody'); body.innerHTML='<div class="ov-notice">Could not load plants &amp; materials: '+esc(PM_ERR[key])+'</div>'; return; }
     var d=PM_CACHE[key];
-    if(!d){ body.innerHTML='<div class="ov-mini">'+(IS_LIVE?'Loading plants &amp; materials — the biggest tables, this can take a few seconds…':'Loads in the live web app.')+'</div>'; return; }
+    if(!d){ showPanel('expBody'); body.innerHTML='<div class="ov-mini">'+(IS_LIVE?'Loading plants &amp; materials — the biggest tables, this can take a few seconds…':'Loads in the live web app.')+'</div>'; return; }
+    var any=['PLANT','MATERIAL'].some(function(k){
+      var t=(d.tables||[]).filter(function(x){ return x.key===k; })[0];
+      return !!(t && (t.rows||[]).length);
+    });
+    if(!any){ hidePanel('expBody'); return; }
+    showPanel('expBody');
     body.innerHTML='<div class="ov-exp-grid">'+expBlockHtml('PLANT','Plants','expP')+expBlockHtml('MATERIAL','Materials','expM')+'</div>';
     wireExpBlock('PLANT','expP', d);
     wireExpBlock('MATERIAL','expM', d);
@@ -2236,18 +2546,18 @@ window.HELP_HTML = `
     var html='<table class="ov-table compact"><thead><tr>'
       +'<th>Name</th><th>Vol CY</th><th>Vol PY</th><th>Vol %</th><th>ASP % inc</th><th>PPI</th>'
       +'</tr></thead><tbody>'
-      +'<tr class="tot"><td>Total · '+esc(scopeLabel())+'</td><td>'+fInt(tot.cyVol)+'</td><td>'+fInt(tot.pyVol)+'</td>'
-        +'<td class="'+cls(tot.volPct)+'">'+fPct(tot.volPct)+'</td>'
-        +'<td class="'+cls(tot.aspPct)+'">'+fPct(tot.aspPct)+'</td>'
-        +'<td class="'+cls(tot.ppi)+'">'+fPpi(tot.ppi)+'</td></tr>'
+      +'<tr class="tot"><td>Total · '+esc(scopeLabel())+'</td><td>'+fInt(tot.cyVol)+'</td><td>'+nInt(tot.pyVol)+'</td>'
+        +'<td class="'+cls(tot.volPct)+'">'+nPct(tot.volPct)+'</td>'
+        +'<td class="'+cls(tot.aspPct)+'">'+nPct(tot.aspPct)+'</td>'
+        +'<td class="'+cls(tot.ppi)+'">'+nPpi(tot.ppi)+'</td></tr>'
       +list.map(function(r){
         return '<tr class="xfrow'+(xfHas(field,r.label)?' xfsel':'')
           +'" data-xf-f="'+esc(field)+'" data-xf-v="'+esc(r.label)+'">'
           +'<td>'+esc(r.label)+'</td>'
-          +'<td>'+fInt(r.cyVol)+'</td><td>'+fInt(r.pyVol)+'</td>'
-          +'<td class="'+cls(r.volPct)+'">'+fPct(r.volPct)+'</td>'
-          +'<td class="'+cls(r.aspPct)+'">'+fPct(r.aspPct)+'</td>'
-          +'<td class="'+cls(r.ppi)+'">'+fPpi(r.ppi)+'</td></tr>';
+          +'<td>'+fInt(r.cyVol)+'</td><td>'+nInt(r.pyVol)+'</td>'
+          +'<td class="'+cls(r.volPct)+'">'+nPct(r.volPct)+'</td>'
+          +'<td class="'+cls(r.aspPct)+'">'+nPct(r.aspPct)+'</td>'
+          +'<td class="'+cls(r.ppi)+'">'+nPpi(r.ppi)+'</td></tr>';
       }).join('')
       +'</tbody></table>'
       +(capNote?'<p class="ov-foot" style="margin:6px 0 0">'+capNote+'</p>':'');
@@ -2322,7 +2632,8 @@ window.HELP_HTML = `
     if(err){ body.innerHTML='<div class="ov-notice">Could not load this breakdown: '+esc(err)+'</div>'; return; }
     if(!d){ body.innerHTML='<div class="ov-mini">Loading…</div>'; return; }
     var t=xfTableOf(d, DIM_TAB);
-    if(!t || !(t.rows||[]).length){ body.innerHTML='<div class="ov-notice">No '+esc(DIM_LABEL[DIM_TAB]||DIM_TAB)+' rows for this selection.</div>'; return; }
+    if(!t || !(t.rows||[]).length){ hidePanel('dimBody'); return; }
+    showPanel('dimBody');
     paintDimTable(body, t.rows, d.totals);
   }
   function renderXfBridges(d, err){
@@ -2330,7 +2641,8 @@ window.HELP_HTML = `
     var note=$('bridgeNote'), box=$('aspBox');
     if(err){
       xfSubSet('bridgeSub','How revenue and price moved vs last year · ','');
-      box.innerHTML=''; if(note) note.textContent='Could not load the filtered bridges: '+err;
+      showPanel('bridgeBody');
+      drawAspBridge(null); if(note) note.textContent='Could not load the filtered bridges: '+err;
       return;
     }
     if(!d){
@@ -2338,30 +2650,18 @@ window.HELP_HTML = `
       if(note) note.textContent='';
       return;
     }
-    if(!d.totals || !d.totals.present){
-      $('bridgeSub').textContent='No data for this selection.';
-      box.innerHTML=''; if(note) note.textContent='';
-      return;
-    }
+    if(!d.totals || !d.totals.present){ hidePanel('bridgeBody'); return; }
+    showPanel('bridgeBody');
     xfSubSet('bridgeSub','How revenue and price moved vs last year · ','');
     var rb=d.revenueBridge;
+    $('br_rev') && ($('br_rev').outerHTML='<canvas id="br_rev"></canvas>');
     waterfall($('br_rev'), [
       {label:'PY Revenue', value:rb.pyRev, total:true},
       {label:'Volume Impact', value:rb.volImpact},
       {label:'Price Impact', value:rb.priceImpact},
       {label:'CY Revenue', value:rb.cyRev, total:true}
     ], { total:fMoneyFull, delta:fMoneySign }, function(v){ return '$'+(v/1e6).toFixed(1)+'M'; });
-    var asp=d.priceBridge;
-    if(asp){
-      box.innerHTML='<canvas id="br_asp"></canvas>';
-      var seq=[{label:'PPI', value:asp.ppi, total:true}];
-      (asp.items||[]).forEach(function(it){ seq.push({label:it.label, value:it.value}); });
-      seq.push({label:'Total ASP%', value:asp.totalAsp, total:true});
-      waterfall($('br_asp'), seq, { total:fPpi, delta:fPctSign }, function(v){ return (v*100).toFixed(0)+'%'; });
-    } else {
-      box.innerHTML='<div class="ov-notice" style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center">'
-        +'The ASP mix breakdown isn\u2019t available for this selection.</div>';
-    }
+    drawAspBridge(d.priceBridge);
     if(note){
       note.innerHTML='Same two waterfalls as the Price &amp; Volume report, computed for the filtered slice. '
         +'PPI here uses the customer-report method (Plant + Material coverage).';
@@ -2440,15 +2740,19 @@ window.HELP_HTML = `
   var TYPE_ORDER=['vap','conventional'];
   var PROD_ORDER=['performance','decorative','sustainable others','applications','special properties',
                   'general purpose','prescribed','no category'];
-  /* THE PRODUCT SEGMENT SOURCE IS FIXED TO ONE MONTH.
+  /* THE PRODUCT SEGMENT SOURCE IS FIXED TO LAST MONTH.
      Every other panel on this page is rebuilt from month-level facts, so it can
      answer for any month or any window. This one cannot: QlikView hands the
      Slide tabs over already split into MTD and YTD and already summed to
      Segment x Market, with no month column at all. There is nothing to
-     re-aggregate and nothing to swap in. So the panel is shown for the month
-     those tabs are FOR and for nothing else - a January-to-February window
-     drawn from July's tabs would be a table that looks specific and is simply
-     wrong. Out of range it says so instead. */
+     re-aggregate and nothing to swap in.
+
+     And the month they are for is the PREVIOUS calendar month, while the fact
+     tables already run into the current one. So under "This month (MTD)" this
+     panel was drawing July's tabs beneath an August heading - specific-looking
+     and simply wrong. It is now shown for the two Prev-month picks and for
+     nothing else, and only once the month the page is showing is actually the
+     month the tabs are for. Anywhere else it is not on the page. */
   var PC_MONTH_NAMES=['January','February','March','April','May','June',
                       'July','August','September','October','November','December'];
   function pcatMonth(){
@@ -2457,24 +2761,32 @@ window.HELP_HTML = `
     return (m>=1 && m<=12) ? m : 0;
   }
   function pcatMonthName(){ var m=pcatMonth(); return m ? PC_MONTH_NAMES[m-1] : ''; }
+  /* Prev-month picked, AND the month it lands on is the tabs' own month. The
+     second half matters: if the fact tables ever lag a month behind the Slide
+     tabs, "previous month" would be the month before the tabs' month, and the
+     panel would be mislabelled again in the other direction. */
+  function pcatFits(){
+    if(!isPrevPick() || !winReady()) return false;
+    var m=pcatMonth();
+    return !!m && (WIN.to%100)===m;
+  }
 
   function renderProdCat(){
     var body=$('pcatBody'), sub=$('pcatSub');
     clearCH('pcat');
     var d=STATE.data;
+    if(!pcatFits()){ hidePanel('pcatBody'); return; }
     if(d.errors && d.errors.seg){
       sub.textContent='Ready-Mix (m³) · from the RMX - Product Segment sheet';
-      body.innerHTML='<div class="ov-notice">Needs the Product Segment sheet (see the panel above).</div>';
+      hidePanel('pcatBody');
       return;
     }
     var pc=d.prodCat;
     var mName=pcatMonthName();
-    sub.textContent=(mName ? mName+' · ' : '')+periodLabel()+' · '+scopeLabel()+' · Ready-Mix (m³) · from the RMX - Product Segment sheet · no PPI in this source';
-    if(!pc || !pc.ok){
-      body.innerHTML='<div class="ov-notice">No <b>Slide Product</b> tabs were found for this period. '
-        +'The panel fills in once the per-market product tabs exist in the Product Segment sheet.</div>';
-      return;
-    }
+    sub.textContent=(mName ? mName+' · ' : '')
+      +(STATE.pick==='PYTD' ? 'year to date' : 'month')+' · '+scopeLabel()
+      +' · Ready-Mix (m³) · from the RMX - Product Segment sheet · no PPI in this source';
+    if(!pc || !pc.ok){ hidePanel('pcatBody'); return; }
     /* merge the selected markets by (type, category) — vol-weighted ASP/CM2 via the carried sums */
     var acc={}, order=[], missing=[];
     selectedKeys().forEach(function(k){
@@ -2486,10 +2798,8 @@ window.HELP_HTML = `
       });
     });
     var recs=order.map(function(kk){ return acc[kk]; });
-    if(!recs.length){
-      body.innerHTML='<div class="ov-notice">No product-category rows for the selected market in this period.</div>';
-      return;
-    }
+    if(!recs.length){ hidePanel('pcatBody'); return; }
+    showPanel('pcatBody');
     function tRank(tk){ var i=TYPE_ORDER.indexOf(tk); return i<0?99:i; }
     function cRank(r){ if(r.ck==='total') return 1000; var i=PROD_ORDER.indexOf(r.ck); return i<0?500:i; }
     recs.sort(function(a,b){ var t=tRank(a.tk)-tRank(b.tk); return t!==0?t:cRank(a)-cRank(b); });
@@ -2780,6 +3090,11 @@ window.HELP_HTML = `
     }catch(e){ RXF_PEND[sig]=false; RXF_ERR[sig]=String(e&&e.message||e); paintRxfPanels(); }
   }
   function paintRxfPanels(){
+    /* Same rule as the Aggregates side: in window mode every panel below
+       belongs to the cube. The cross-report is still fetched - it is what fills
+       the Ready-Mix filter dropdowns - but it is fetched for the SERVER period
+       and must not paint over a window with it. */
+    if(winMode()) return;
     var sig=rxfSig(), d=RXF_CACHE[sig], err=RXF_ERR[sig];
     renderRmxKpiStrip(d);
     renderRmxBreakdown(d, err);
@@ -2843,7 +3158,8 @@ window.HELP_HTML = `
       else if(r && r.present && r.sub) rows=r.sub;
     }
     if(!rows){ clearCH('bd'); body.innerHTML=rxfWait(err,'the submarket breakdown'); return; }
-    if(!rows.length){ clearCH('bd'); body.innerHTML='<div class="ov-notice">No Ready-Mix rows for this selection.</div>'; return; }
+    if(!rows.length){ clearCH('bd'); hidePanel('rmxBody'); return; }
+    showPanel('rmxBody');
     var items=rows.map(function(g,idx){
       return { label:g.label, value:g.label, color:MK_COLORS[idx%MK_COLORS.length],
                cyVol:g.cyVol, pyVol:g.pyVol, asp:g.aspIncBase, ppi:g.ppiBase };
@@ -2862,7 +3178,8 @@ window.HELP_HTML = `
   function renderBreakdownRmx(bodyId, items, pick, field){
     var body=$(bodyId);
     clearCH('bd');
-    if(!items.length){ body.innerHTML='<div class="ov-notice">No Ready-Mix data for this selection.</div>'; return; }
+    if(!items.length){ hidePanel(bodyId); return; }
+    showPanel(bodyId);
     body.innerHTML =
       '<div class="ov-donuts">'
       + '<div class="ov-donut"><p class="cap">This year</p><div class="ov-cbox"><canvas id="rmx_cy"></canvas></div></div>'
@@ -2916,7 +3233,8 @@ window.HELP_HTML = `
       }).sort(function(a,b){ return b.cyVol-a.cyVol; });
     }
     if(!rows){ body.innerHTML=rxfWait(err,'this breakdown'); return; }
-    if(!rows.length){ body.innerHTML='<div class="ov-notice">No '+esc(RXF_FIELD_LABEL[RDIM_TAB])+' rows for this selection.</div>'; return; }
+    if(!rows.length){ hidePanel('rmxDimBody'); return; }
+    showPanel('rmxDimBody');
     var total = d && d.totals;
     var lab=RXF_FIELD_LABEL[RDIM_TAB];
     body.innerHTML=
@@ -2959,12 +3277,6 @@ window.HELP_HTML = `
     }), pick);
   }
 
-  /* ---- ASP build-up: BASE / EXTRAS / VAP / ALL-IN on one denominator ---- */
-  function aspBlocked(a){
-    return '<div class="ov-notice"><b>Extras and VAP can\u2019t follow this filter.</b><br>'
-      +esc((a&&a.why)||'Extras and VAP are recorded per plant and material, with no product mix.')
-      +'</div>';
-  }
   /* ================= RMX FUEL RECOVERY =================================
      Reads getRmxFscFacts() once - a columnar fact table at
      plant x segment x year x month - and slices it against the live RXF
@@ -3097,19 +3409,18 @@ window.HELP_HTML = `
   }
 
   /* ---- render ---- */
-  function rfuelBlocked(){
-    return '<div class="ov-notice"><b>Fuel recovery can\u2019t follow this filter.</b><br>'
-      +'The surcharge is charged per load, not per mix \u2014 it carries a plant, a month and a '
-      +'project segment, and no product mix at all. Clear the Strength Class / Product Class '
-      +'chips and it comes back.</div>';
-  }
   function renderRmxFuel(){
     var body=$('rmxFuelBody'); if(!body) return;
+    /* a window is the cube's, and the surcharge facts are their own server
+       table with no month cube behind them - so there is nothing here to draw,
+       including any error the fetch left lying around */
+    if(winMode()){ clearCH('rfuel'); hidePanel('rmxFuelBody'); return; }
     clearCH('rfuel');
     rxfSubSet('rmxFuelSub','Surcharge recovered per m\u00b3 \u00b7 ',
               ' \u00b7 '+periodLabel()+' \u00b7 $/m\u00b3 is over the m\u00b3 that were charged, not all m\u00b3.');
 
-    if(rxfMixFiltered()){ body.innerHTML=rfuelBlocked(); return; }
+    if(rxfMixFiltered()){ hidePanel('rmxFuelBody'); return; }
+    showPanel('rmxFuelBody');
     if(!RFUEL){
       loadRmxFuel();
       body.innerHTML = RFUEL_ERR
@@ -3118,9 +3429,8 @@ window.HELP_HTML = `
       return;
     }
     var s=rfuelSlice();
-    if(!s || !s.rows.length){
-      body.innerHTML='<div class="ov-mini">No fuel surcharge in this selection.</div>'; return;
-    }
+    if(!s || !s.rows.length){ hidePanel('rmxFuelBody'); return; }
+    showPanel('rmxFuelBody');
     function money2(v){ return (v<0?'-$':'$')+Math.abs(v).toFixed(2); }
     function line(c, isTot){
       return '<tr'+(isTot?' class="tot"':'')+'><td>'+esc(c.label)+'</td>'
@@ -3162,13 +3472,20 @@ window.HELP_HTML = `
   }
 
   function renderRmxAsp(d, err){
-    var body=$('rmxAspBody');
     clearCH('rasp');
     rxfSubSet('rmxAspSub','Base, Extras, VAP and All-in \u00b7 ',
               ' \u00b7 '+periodLabel()+' \u00b7 every row divided by the same total concrete m\u00b3, so the rows add to All-in.');
-    if(!d){ body.innerHTML=rxfWait(err,'the ASP build-up'); return; }
+    if(!d){ showPanel('rmxAspBody'); $('rmxAspBody').innerHTML=rxfWait(err,'the ASP build-up'); return; }
     var a=d.asp;
-    if(!a || !a.ok){ body.innerHTML=aspBlocked(a); return; }
+    /* a mix filter puts the extras out of reach — extras carry a plant and a
+       material, not a product mix — so there is no build-up to draw */
+    if(!a || !a.ok){ hidePanel('rmxAspBody'); return; }
+    showPanel('rmxAspBody');
+    renderAspBuildUp(a);
+  }
+  /* the drawing half, shared by the server path and the window path */
+  function renderAspBuildUp(a){
+    var body=$('rmxAspBody');
     function line(r, isTot){
       return '<tr'+(isTot?' class="tot"':'')+'><td>'+esc(r.label)+'</td>'
         +'<td>'+fAsp(r.aspCY)+'</td><td>'+fAsp(r.aspPY)+'</td>'
@@ -3217,9 +3534,10 @@ window.HELP_HTML = `
     clearCH('ext');
     rxfSubSet('extSub','By extra type \u00b7 ',' \u00b7 '+periodLabel()+' \u00b7 $/m\u00b3 on total concrete.');
     if(!d){ body.innerHTML=rxfWait(err,'extras'); return; }
-    if(!d.byType){ body.innerHTML=aspBlocked(d.asp); return; }
+    if(!d.byType){ hidePanel('extBody'); return; }
     var rows=d.byType;
-    if(!rows.length){ body.innerHTML='<div class="ov-notice">No extras or VAP rows for this selection.</div>'; return; }
+    if(!rows.length){ hidePanel('extBody'); return; }
+    showPanel('extBody');
     /* one row renderer for the per-type rows, the two stream totals and the
        combined total at the bottom */
     function extraRow(r, isTot){
@@ -3358,20 +3676,27 @@ window.HELP_HTML = `
 
   /* ---- Period and the slider are ONE control ----------------------------
      MTD is the newest month on its own. YTD is January of that month's year
-     through to it. Anything else is a custom window. So pressing a Period
-     button MOVES THE HANDLES, and dragging the handles onto either of those
-     two spans lights the matching button back up. Nothing has to be kept in
-     sync by hand and there is no third button to get out of step.        */
+     through to it. PREV MONTH is those same two shapes ending one month
+     earlier. Anything else is a custom window. So pressing a Period button
+     MOVES THE HANDLES, and dragging the handles onto one of those four spans
+     lights the matching button back up. Nothing has to be kept in sync by hand
+     and there is no separate "custom" button to get out of step.
+
+     Only the first two exist on the server. The Prev-month pair is computed in
+     the browser from the month cube, which is why they stay disabled until it
+     holds the month they need.                                            */
+  function prevMonthOf(){
+    var ms=WIN.months; if(ms.length<2) return null;
+    var p=ymAdd(ms[ms.length-1], -1);
+    return (p>=ms[0]) ? p : null;
+  }
   function periodSpan(p){
     var ms=WIN.months; if(ms.length<2) return null;
-    var last=ms[ms.length-1];
-    if(p==='MTD') return { from:last, to:last };
-    var jan=Math.floor(last/100)*100+1;
-    return { from:Math.max(ms[0], jan), to:last };
-  }
-  function spanIs(p){
-    var sp=periodSpan(p);
-    return !!(sp && WIN.from===sp.from && WIN.to===sp.to);
+    var end=(p==='PMTD'||p==='PYTD') ? prevMonthOf() : ms[ms.length-1];
+    if(end==null) return null;
+    if(p==='MTD' || p==='PMTD') return { from:end, to:end };
+    var jan=Math.floor(end/100)*100+1;
+    return { from:Math.max(ms[0], jan), to:end };
   }
   /* Which Period button, if any, the current handles correspond to.
      The two lines can end on DIFFERENT months and the slider spans their union,
@@ -3390,8 +3715,22 @@ window.HELP_HTML = `
     });
     return ends;
   }
+  /* PREV MONTH IS TESTED FIRST, and only against the union's own last month.
+     When Ready-Mix runs a month ahead of Aggregates, the Aggregates line's last
+     month is BOTH "its MTD" and "the previous month" — and the two answers now
+     lead to different buttons, different panels and a different Product
+     Category state, so the ambiguity has to be resolved rather than inherited.
+     Previous month wins: it is the newer, narrower claim (this exact month, one
+     back from the newest the page holds), and the numbers underneath are the
+     same either way — the cube computes that month whichever name it goes by. */
   function windowPeriod(){
     var ms=WIN.months; if(ms.length<2) return null;
+    var prev=prevMonthOf();
+    if(prev!=null){
+      if(WIN.from===prev && WIN.to===prev) return 'PMTD';
+      var pjan=Math.max(ms[0], Math.floor(prev/100)*100+1);
+      if(WIN.from===pjan && WIN.to===prev) return 'PYTD';
+    }
     var ends=windowEnds();
     for(var i=0;i<ends.length;i++){
       var e=ends[i];
@@ -3409,9 +3748,14 @@ window.HELP_HTML = `
   }
   function syncPeriodSeg(){
     var seg=$('periodSeg'); if(!seg) return;
-    var p=STATE.win ? null : STATE.period;
+    var p=STATE.pick;
     [].forEach.call(seg.querySelectorAll('button'), function(b){
-      b.setAttribute('aria-pressed', String(b.dataset.period===p));
+      var k=b.dataset.period;
+      b.setAttribute('aria-pressed', String(k===p));
+      /* the two server periods always work; the Prev-month pair needs the cube
+         to hold a month before the newest one */
+      var needsCube=(k==='PMTD'||k==='PYTD');
+      b.disabled = needsCube && !periodSpan(k);
     });
   }
   function winSpan(){
@@ -3427,21 +3771,21 @@ window.HELP_HTML = `
     var grew=(ms.length!==WIN.months.length) || (ms.length && WIN.months.length && ms[0]!==WIN.months[0]);
     WIN.months=ms;
     if(!wrap) return;
-    if(ms.length<2){ wrap.classList.add('pending'); $('winVal').textContent='—'; return; }
+    if(ms.length<2){ wrap.classList.add('pending'); $('winVal').textContent='—'; syncPeriodSeg(); return; }
     wrap.classList.remove('pending');
 
     var first=ms[0], last=ms[ms.length-1];
+    var sp=STATE.pick ? periodSpan(STATE.pick) : null;
     if(WIN.from==null || WIN.to==null){
       /* first paint: match whatever Period is already selected, so the slider
          opens showing exactly the months the rest of the page is showing */
-      var sp0=(STATE.period==='MTD') ? { from:last, to:last }
-                                     : { from:Math.max(first, Math.floor(last/100)*100+1), to:last };
+      var sp0=sp || periodSpan('MTD') || { from:last, to:last };
       WIN.from=sp0.from; WIN.to=sp0.to;
-    }else if(!STATE.win){
-      /* still tracking a Period button: follow it as new months land */
-      var sp1=(STATE.period==='MTD') ? { from:last, to:last }
-                                     : { from:Math.max(first, Math.floor(last/100)*100+1), to:last };
-      WIN.from=sp1.from; WIN.to=sp1.to;
+    }else if(sp){
+      /* still tracking a Period button: follow it as new months land. A
+         Prev-month pick moves too - it means "one back from the newest", not
+         "July forever". */
+      WIN.from=sp.from; WIN.to=sp.to;
     }else if(grew){
       /* the window was pinned to the newest month: keep it pinned as history
          or a new month lands, instead of silently freezing in the past */
@@ -3477,8 +3821,9 @@ window.HELP_HTML = `
     WIN.from=ms[iF]; WIN.to=ms[iT];
     var mp=windowPeriod();
     WIN.from=was.from; WIN.to=was.to;
-    $('winN').textContent=n+' month'+(n===1?'':'s')
-      +(mp==='MTD' ? ' \u00b7 = This month' : mp==='YTD' ? ' \u00b7 = Year to date' : ' \u00b7 custom');
+    var PICK_SAYS={ MTD:'= This month', YTD:'= Year to date',
+                    PMTD:'= Prev month', PYTD:'= Prev month (YTD)' };
+    $('winN').textContent=n+' month'+(n===1?'':'s')+' \u00b7 '+(PICK_SAYS[mp]||'custom');
     var lo=iF/(ms.length-1)*100, hi=iT/(ms.length-1)*100;
     var f=$('winFill'); f.style.left=lo+'%'; f.style.width=Math.max(0,hi-lo)+'%';
     renderWinQuick();
@@ -3552,11 +3897,15 @@ window.HELP_HTML = `
      this is a custom window and the cube takes over. */
   function applyWindowChange(){
     var p=windowPeriod();
-    var wasWin=STATE.win, wasPeriod=STATE.period;
-    STATE.win = !p;
-    if(p) STATE.period=p;
+    var wasWin=STATE.win, wasPeriod=STATE.period, wasPick=STATE.pick;
+    STATE.pick=p;
+    /* only the two server picks come off the server; everything else, including
+       both Prev-month spans, is the cube's */
+    STATE.win = !(p==='MTD' || p==='YTD');
+    if(p && PICK_SERVER[p]) STATE.period=PICK_SERVER[p];
     syncPeriodSeg();
-    if(!STATE.win && (wasWin || wasPeriod!==STATE.period)){ load(); return; }   // load() repaints
+    if(wasPeriod!==STATE.period){ load(); return; }                 // load() repaints
+    if(wasWin!==STATE.win || wasPick!==STATE.pick){ renderActiveTab(); return; }
     if(STATE.win) renderActiveTab(); else renderTrendNow();
   }
 
@@ -3633,7 +3982,28 @@ window.HELP_HTML = `
             only exist per month or per year.                                */
 
   function winMode(){ return !!STATE.win && winReady(); }
-  function winLabel(){ return winReady() ? (ymLong(WIN.from)+' \u2013 '+ymLong(WIN.to)) : ''; }
+  function winLabel(){
+    if(!winReady()) return '';
+    return (WIN.from===WIN.to) ? ymLong(WIN.from) : (ymLong(WIN.from)+' \u2013 '+ymLong(WIN.to));
+  }
+  /* What the current pick is called in a sentence. The Prev-month picks say so
+     out loud, because "July 2026" on its own reads like a custom window. */
+  function winScopeWord(){
+    if(STATE.pick==='PMTD') return 'Previous month \u00b7 '+winLabel();
+    if(STATE.pick==='PYTD') return 'Previous month, year to date \u00b7 '+winLabel();
+    return 'Custom window \u00b7 '+winLabel();
+  }
+  /* THE FUEL-SURCHARGE COLUMNS ARE A LIVE-BOOK FIELD. The cube carries the
+     surcharge dollars and the tonnes they were charged on, but only the live
+     Price & Volume export is guaranteed to fill them \u2014 the closed-year books
+     carry them as optional columns and older eras simply have not got them. So
+     the surcharge panels answer for windows inside the CURRENT book year and
+     are not shown for older ones, rather than drawing a real-looking zero. */
+  function winFscOk(){
+    if(!winReady()) return false;
+    var ms=WIN.months, lastY=Math.floor(ms[ms.length-1]/100);
+    return Math.floor(WIN.from/100)>=lastY;
+  }
 
   /* POOLED prior-year numbers stop meaning anything once the window runs past
      twelve months: each month is compared with itself minus a year, so a
@@ -3679,16 +4049,31 @@ window.HELP_HTML = `
      already carry label-compatible key / cyVol / pyVol / volPct / aspPct / ppi,
      plus a Total row computed the same pooled way (NOT the sum of the rows'
      indices — PPI is not additive). */
-  function cubeWinRows(line, groupBy, min){
+  function cubeGroups(line, groupBy, extra){
     var cy=winCy(line); if(!cy) return null;
     var R=trendResolve(line, trendFilters(line));
-    if(!isAll() && !R.filters.market) return { rows:[], total:null };
+    if(!isAll() && !R.filters.market) return [];
+    var f=R.filters;
+    /* `extra` narrows this one query further (a single customer, say) without
+       touching the page's own filters */
+    if(extra){ f={}; Object.keys(R.filters).forEach(function(k){ f[k]=R.filters[k]; });
+               Object.keys(extra).forEach(function(k){ f[k]=extra[k]; }); }
     var py=cy.map(function(m){ return ymAdd(m,-12); });
-    var rows=cube().query({ line:line, cyMonths:cy, pyMonths:py, groupBy:groupBy, filters:R.filters }) || [];
+    return cube().query({ line:line, cyMonths:cy, pyMonths:py, groupBy:groupBy, filters:f }) || [];
+  }
+  function cubeTotal(line){
+    var cy=winCy(line); if(!cy) return null;
+    var R=trendResolve(line, trendFilters(line));
+    if(!isAll() && !R.filters.market) return null;
+    return cube().query({ line:line, cyMonths:cy, pyMonths:cy.map(function(m){ return ymAdd(m,-12); }),
+                          filters:R.filters });
+  }
+  function cubeWinRows(line, groupBy, min){
+    var rows=cubeGroups(line, groupBy);
+    if(rows===null) return null;
     rows=rows.filter(function(g){ return g.key && g.key!=='\u0001all' && (g.cyVol>(min||0) || g.pyVol>(min||0)); })
              .sort(function(a,b){ return b.cyVol-a.cyVol; });
-    var total=cube().query({ line:line, cyMonths:cy, pyMonths:py, filters:R.filters });
-    return { rows:rows, total:total };
+    return { rows:rows, total:cubeTotal(line) };
   }
   function cubeRowsToItems(rows){
     var st=pyStale();
@@ -3697,12 +4082,14 @@ window.HELP_HTML = `
                cyVol:g.cyVol, pyVol:st?0:g.pyVol, asp:st?null:g.aspPct, ppi:st?null:g.ppi };
     });
   }
-  /* the standing notice for a panel that cannot follow a custom window */
-  function winExempt(bodyId, what, fallback){
-    var b=$(bodyId); if(!b) return;
-    b.innerHTML='<div class="ov-exempt"><b>'+esc(what)+' does not follow a custom window.</b><br>'
-      +esc(fallback||'It is not carried in the month fact table, so there is nothing to recompute for '
-        +winLabel()+'.')+' Switch Period back to <b>This month</b> or <b>Year to date</b> to see it.</div>';
+  /* the cube's row shape in the shape the server-fed tables are painted from */
+  function cubeRowAsTable(g){
+    var st=pyStale(), k=String(g.key==null?'':g.key);
+    return { label:k||'(blank)',
+             cyVol:g.cyVol, pyVol:st?null:g.pyVol, volPct:st?null:g.volPct,
+             cyAsp:g.cyAsp, pyAsp:st?null:g.pyAsp, aspPct:st?null:g.aspPct, ppi:st?null:g.ppi,
+             cyRev:g.cyRev, pyRev:g.pyRev, cyFsc:g.cyFsc||0, pyFsc:g.pyFsc||0,
+             cyFv:g.cyFv||0, pyFv:g.pyFv||0 };
   }
   function winWaiting(bodyId){
     var b=$(bodyId); if(!b) return;
@@ -3996,8 +4383,10 @@ window.HELP_HTML = `
     var sec =isAgg?'atrend':'rtrend';
     var unit=isAgg?'t':'m\u00b3';
     var subId=isAgg?'aggTrendSub':'rmxTrendSub';
+    var bodyId=isAgg?'aggTrendBody':'rmxTrendBody';
     clearCH(sec);
     if(!body) return;
+    showPanel(bodyId);
 
     var C0=cube();
     if(!C0 || !C0.manifest(line)){
@@ -4009,11 +4398,9 @@ window.HELP_HTML = `
     var man=C0.manifest(line);
     var have={}; (man.ym||[]).forEach(function(m){ have[m]=1; });
     var cy=winSpan().filter(function(m){ return have[m]; });
-    if(cy.length<2){
-      body.innerHTML='<div class="ov-notice">The window is a single month, so there is nothing to trend. '
-        +'Widen the Months slider, or press Year to date.</div>';
-      return;
-    }
+    /* one month is not a trend. Nothing is drawn and nothing is explained -
+       the panel is simply not there until the window holds two. */
+    if(cy.length<2){ hidePanel(isAgg?'aggTrendBody':'rmxTrendBody'); return; }
     var py=cy.map(function(m){ return ymAdd(m,-12); });
     /* wait for the prior year too - see winCy() */
     var pyNeed=py.filter(function(m){ return have[m]; });
@@ -4023,11 +4410,7 @@ window.HELP_HTML = `
       return;
     }
     var F=trendFilters(line), R=trendResolve(line, F);
-    if(F.market && !R.filters.market){
-      body.innerHTML='<div class="ov-notice">'+esc(labelOf(selectedKeys()[0]))
-        +' has no rows in this window of the month history.</div>';
-      return;
-    }
+    if(F.market && !R.filters.market){ hidePanel(isAgg?'aggTrendBody':'rmxTrendBody'); return; }
     var known={}; (man.ym||[]).forEach(function(m){ known[m]=1; });
     var QUARTER=(TREND_GRAIN==='Q');
 
@@ -4304,12 +4687,6 @@ window.HELP_HTML = `
          statements.                                                        */
   var VALS = null, WB = { loaded:false };   // VALS = the shared KPI numbers
 
-  function kpiHint(where){
-    return '<div class="ov-notice">No EBITDA workbook has been uploaded yet. '
-      +'Upload the <b>AGG &amp; RMX EBITDA Report</b> (and the <b>Manitoba / Saskatchewan</b> one) '
-      +'in the KPIs panel of the <b>'+where+'</b> page — one upload covers everyone and these cards fill in automatically.</div>';
-  }
-
   /* ---- shared card shells (identical look to the PV / Segment strips) ---- */
   function cardShell(eyebrow, pill, body){
     return '<div style="flex:1 1 0;min-width:130px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:8px 11px">'
@@ -4390,7 +4767,7 @@ window.HELP_HTML = `
     if(!WB.loaded || !AKPI.sheets.length){
       selWrap.style.display='none';
       meta.textContent='From the AGG & RMX EBITDA workbook (Aggregates plant statements)';
-      body.innerHTML=kpiHint('AGG - Price &amp; Volume');
+      hidePanel('aggKpiBody');
       return;
     }
     selWrap.style.display='';
@@ -4410,7 +4787,7 @@ window.HELP_HTML = `
         +' · it will be remembered for this market'
       : esc(AKPI.sheet)+' · '+(STATE.period==='YTD'?'year to date':'month to date');
     var x=akExtract();
-    if(!x){ body.innerHTML='<div class="ov-notice">The key rows were not found on the selected tab.</div>'; return; }
+    if(!x){ hidePanel('aggKpiBody'); return; }
     var qv = (STATE.data && !(STATE.data.errors&&STATE.data.errors.pv)) ? aggTotals(selectedKeys()) : null;
     var wait='<div style="font:500 11.5px Inter;color:var(--muted);margin-top:10px">Load market data to fill this card.</div>';
     body.innerHTML='<div style="display:flex;gap:12px;flex-wrap:wrap">'
@@ -4482,7 +4859,7 @@ window.HELP_HTML = `
     if(panel) panel.style.display='';
     if(!WB.loaded){
       meta.textContent='From the RMX Summary tab of the EBITDA workbook · Ready-Mix (m³)';
-      body.innerHTML=kpiHint('RMX - Product Segment');
+      hidePanel('rmxKpiBody');
       return;
     }
     /* one block per selected market; a multi-market pick is summed exactly
@@ -4492,12 +4869,7 @@ window.HELP_HTML = `
       var x=rkExtract(k);
       if(x) got.push({key:k, x:x}); else missing.push(k);
     });
-    if(!got.length){
-      meta.textContent='From the RMX Summary tab of the EBITDA workbook · Ready-Mix (m³)';
-      body.innerHTML='<div class="ov-notice">No RMX Summary blocks matched the selected market(s). '
-        +'Check the workbook on the <b>RMX - Product Segment</b> page — its status line lists the block headers it found.</div>';
-      return;
-    }
+    if(!got.length){ hidePanel('rmxKpiBody'); return; }
     var single = got.length===1;
     var m;
     if(single){
@@ -5148,18 +5520,23 @@ window.HELP_HTML = `
   rxfSearchWire('rmxDimSearchIn','rmxDimSearchRes', function(){ return RDIM_TAB; },
     function(){ return rxfOptionsFor(RDIM_TAB); });
 
-  /* ---- period toggle ---- */
+  /* ---- period toggle ----
+     Pressing a Period button drives the slider, not the other way round. The
+     two Prev-month picks land on a span the server has no report for, so they
+     switch the page to the cube; the two server picks switch it back. */
   $('periodSeg').addEventListener('click', function(e){
-    var b=e.target.closest('button'); if(!b) return;
+    var b=e.target.closest('button'); if(!b || b.disabled) return;
     var p=b.dataset.period;
-    if(!STATE.win && p===STATE.period) return;
-    var wasWin=STATE.win;
-    STATE.win=false; STATE.period=p;
-    /* pressing a Period button drives the slider, not the other way round */
-    snapWindowTo(p);
+    if(p===STATE.pick) return;
+    if(!snapWindowTo(p) && !periodSpan(p)) return;   // the cube has not got that month yet
+    var wasWin=STATE.win, wasPeriod=STATE.period;
+    STATE.pick=p;
+    STATE.win=(p==='PMTD'||p==='PYTD');
+    STATE.period=PICK_SERVER[p]||STATE.period;
     syncWindow();
-    if(wasWin) renderChips();
-    load();
+    if(wasWin!==STATE.win) renderChips();
+    if(wasPeriod!==STATE.period || !STATE.data){ load(); return; }   // load() repaints
+    renderActiveTab();
   });
 
   /* ---- tab switch ---- */
@@ -5202,9 +5579,7 @@ window.HELP_HTML = `
     if(!xfOwns) $('custScope').textContent = scopeLabel()+' · by customer parent'+(STATE.split?' · split by segment':'');
     if(STATE.data.errors && STATE.data.errors.pv){
       if(!xfOwns){
-        body.innerHTML='<div class="ov-notice"><b>Price &amp; Volume isn’t available.</b><br>'
-          +'Customer data comes from the Aggregates sheet — set it on the Price &amp; Volume page.'
-          +'<br><a class="linkbtn" href="'+(window.APP_URL||'')+'?page=pricevolume" target="_top">Open Price &amp; Volume →</a></div>';
+        hidePanel('custBody');
       }
       renderFscCustomers(null);
       return;
@@ -5305,24 +5680,24 @@ window.HELP_HTML = `
       out+='<tr class="parent xfrow'+(exp?' expandable':'')+(xfHas('CUST_PARENT',c.label)?' xfsel':'')
         +'" data-i="'+i+'" data-xf-f="CUST_PARENT" data-xf-v="'+esc(c.label)+'">'
         +'<td>'+(exp?'<span class="caret">▸</span> ':'')+esc(c.label)+'</td>'
-        +'<td>'+fInt(c.cyVol)+'</td><td>'+fInt(c.pyVol)+'</td>'
-        +'<td class="'+cls(c.volPct)+'">'+fPct(c.volPct)+'</td>'
-        +'<td class="'+cls(c.aspPct)+'">'+fPct(c.aspPct)+'</td>'
-        +'<td class="'+cls(c.ppi)+'">'+fPpi(c.ppi)+'</td></tr>';
+        +'<td>'+fInt(c.cyVol)+'</td><td>'+nInt(c.pyVol)+'</td>'
+        +'<td class="'+cls(c.volPct)+'">'+nPct(c.volPct)+'</td>'
+        +'<td class="'+cls(c.aspPct)+'">'+nPct(c.aspPct)+'</td>'
+        +'<td class="'+cls(c.ppi)+'">'+nPpi(c.ppi)+'</td></tr>';
       if(exp){ c.children.forEach(function(ch){
         out+='<tr class="child" data-p="'+i+'"><td>'+esc(ch.label)+'</td>'
-          +'<td>'+fInt(ch.cyVol)+'</td><td>'+fInt(ch.pyVol)+'</td>'
-          +'<td class="'+cls(ch.volPct)+'">'+fPct(ch.volPct)+'</td>'
-          +'<td class="'+cls(ch.aspPct)+'">'+fPct(ch.aspPct)+'</td>'
-          +'<td class="'+cls(ch.ppi)+'">'+fPpi(ch.ppi)+'</td></tr>';
+          +'<td>'+fInt(ch.cyVol)+'</td><td>'+nInt(ch.pyVol)+'</td>'
+          +'<td class="'+cls(ch.volPct)+'">'+nPct(ch.volPct)+'</td>'
+          +'<td class="'+cls(ch.aspPct)+'">'+nPct(ch.aspPct)+'</td>'
+          +'<td class="'+cls(ch.ppi)+'">'+nPpi(ch.ppi)+'</td></tr>';
       }); }
     });
     var t=d.total||{};
     out+='<tr class="tot"><td>All customers ('+(d.customerCount||top.length)+')</td>'
-      +'<td>'+fInt(t.cyVol)+'</td><td>'+fInt(t.pyVol)+'</td>'
-      +'<td class="'+cls(t.volPct)+'">'+fPct(t.volPct)+'</td>'
-      +'<td class="'+cls(t.aspPct)+'">'+fPct(t.aspPct)+'</td>'
-      +'<td class="'+cls(t.ppi)+'">'+fPpi(t.ppi)+'</td></tr>';
+      +'<td>'+fInt(t.cyVol)+'</td><td>'+nInt(t.pyVol)+'</td>'
+      +'<td class="'+cls(t.volPct)+'">'+nPct(t.volPct)+'</td>'
+      +'<td class="'+cls(t.aspPct)+'">'+nPct(t.aspPct)+'</td>'
+      +'<td class="'+cls(t.ppi)+'">'+nPpi(t.ppi)+'</td></tr>';
     return out+'</tbody></table>';
   }
 
@@ -5358,7 +5733,8 @@ window.HELP_HTML = `
     var body=$('custBody');
     clearCH('cust');
     var top=d.top||[];
-    if(!top.length){ body.innerHTML='<div class="ov-notice">No customer volume for this market selection in this period.</div>'; return; }
+    if(!top.length){ hidePanel('custBody'); return; }
+    showPanel('custBody');
     var LAB='font:700 9.5px Archivo;letter-spacing:.14em;text-transform:uppercase;color:var(--blue-70);margin:0 0 8px';
     body.innerHTML =
       '<div class="ov-cust-grid">'
@@ -5430,6 +5806,7 @@ window.HELP_HTML = `
           renderFsc();
         })
         .withFailureHandler(function(err){
+          showPanel('fscBody');
           body.innerHTML='<div class="ov-notice"><b>Fuel Surcharge isn’t available.</b><br>'
             +esc((err&&err.message)||err)
             +'<br><a class="linkbtn" href="'+(window.APP_URL||'')+'?page=fuelsurcharge" target="_top">Open Fuel Surcharge →</a></div>';
@@ -5454,11 +5831,12 @@ window.HELP_HTML = `
   function renderFsc(){
     var body=$('fscBody');
     clearCH('fsc');
-    if(!FSC_DATA || !FSC_DATA.summary){ body.innerHTML='<div class="ov-mini">No fuel-surcharge data.</div>'; return; }
+    if(!FSC_DATA || !FSC_DATA.summary){ hidePanel('fscBody'); return; }
     var rows=(FSC_DATA.summary[STATE.period]||[]);
     var mkRows=rows.filter(function(r){ return !r.isTotal; });
     var tot=rows.filter(function(r){ return r.isTotal; })[0];
-    if(!mkRows.length){ body.innerHTML='<div class="ov-mini">No fuel-surcharge rows for this period.</div>'; return; }
+    if(!mkRows.length){ hidePanel('fscBody'); return; }
+    showPanel('fscBody');
     $('fscSub').textContent='All markets, always ('+(STATE.period==='MTD'?String(FSC_DATA.latestMonth||'latest month'):'year to date')+')'
       + ' \u00b7 $/applied tonne \u00b7 from Price & Volume (Combined Data CPI Raw)';
 
@@ -5500,18 +5878,16 @@ window.HELP_HTML = `
     }
   }
 
-  function renderFscCustomers(merged){
+  /* Whether the ranked list came from the server's customer report or from the
+     month cube, it is the same list and the same picture — so it is drawn once,
+     here, and the two callers only decide whether there is anything to draw.
+     `note` is what differs: the server path reads a different table from the
+     by-market panel and has to say so. */
+  function fscCustTable(ranked, note){
     var body=$('fscCustBody');
-    clearCH('fscc');
-    $('fscCustScope').textContent=scopeLabel()+' \u00b7 CY fuel-surcharge dollars \u00b7 from Price & Volume customer data';
-    if(!merged){ body.innerHTML='<div class="ov-mini">Needs the Price &amp; Volume sheet (see the customers section above).</div>'; return; }
-    var ranked=(merged.parents||[]).filter(function(p){ return (Number(p.cyFsc)||0)>0; })
-      .slice().sort(function(a,b){ return b.cyFsc-a.cyFsc; });
-    if(!ranked.length){ body.innerHTML='<div class="ov-mini">No customer fuel-surcharge dollars for this selection.</div>'; return; }
     var top=ranked.slice(0,10);
     var totalFsc=ranked.reduce(function(s,p){ return s+p.cyFsc; },0);
     var othersFsc=totalFsc-top.reduce(function(s,p){ return s+p.cyFsc; },0);
-
     var LAB='font:700 9.5px Archivo;letter-spacing:.14em;text-transform:uppercase;color:var(--blue-70);margin:0 0 8px';
     var out='<p style="'+LAB+'">Share of customer FSC dollars · this year</p>'
       +'<div class="ov-cbox tall"><canvas id="fscc_pie"></canvas></div>'
@@ -5522,8 +5898,7 @@ window.HELP_HTML = `
     });
     out+='<tr class="tot"><td>All customers with FSC ('+ranked.length+')</td><td>'+fMoneyS(totalFsc)+'</td><td></td><td>100%</td></tr>';
     out+='</tbody></table>'
-      +'<p class="note" style="font:500 10.5px Inter;color:var(--muted);margin-top:10px;line-height:1.45">'
-      +'This panel and the by-market table come from different tables, so small differences in totals are expected.</p>';
+      +(note?'<p class="note" style="font:500 10.5px Inter;color:var(--muted);margin-top:10px;line-height:1.45">'+note+'</p>':'');
     body.innerHTML=out;
 
     var pieLabels=top.map(function(p){ return truncate(p.label,22); });
@@ -5531,6 +5906,18 @@ window.HELP_HTML = `
     var pieCols=top.map(function(_,i){ return CUST_COLORS[i%CUST_COLORS.length]; });
     if(othersFsc>0){ pieLabels.push('All others'); pieData.push(othersFsc); pieCols.push(OTHERS_COLOR); }
     custDonut('fscc', $('fscc_pie'), pieLabels, pieData, pieCols);
+  }
+
+  function renderFscCustomers(merged){
+    clearCH('fscc');
+    $('fscCustScope').textContent=scopeLabel()+' · CY fuel-surcharge dollars · from Price & Volume customer data';
+    if(!merged){ hidePanel('fscCustBody'); return; }
+    var ranked=(merged.parents||[]).filter(function(p){ return (Number(p.cyFsc)||0)>0; })
+      .slice().sort(function(a,b){ return b.cyFsc-a.cyFsc; });
+    if(!ranked.length){ hidePanel('fscCustBody'); return; }
+    showPanel('fscCustBody');
+    fscCustTable(ranked,
+      'This panel and the by-market table come from different tables, so small differences in totals are expected.');
   }
 
   /* segment split toggle */

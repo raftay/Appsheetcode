@@ -552,6 +552,48 @@ cannot be re-sliced — whatever month the export was run for, both tabs are for
   returns the exact `aggAll.ppi`; a single market is exact; **2+ market subsets** use a
   CY-revenue-weighted blend labelled ⓘ *"Estimate for a mix of markets"*.
 - `pyStale()` grays out prior-year-derived metrics when the selected window exceeds 12 months.
+- **Period has FOUR settings, and only two of them exist on the server.** `MTD` and `YTD`
+  are what `PV.getReport` / `RMX_NS.getKeys` / the Product Segment tabs answer for. `PMTD`
+  and `PYTD` — *Prev month (MTD)* and *Prev month (YTD)* — are the same two shapes one month
+  back and are computed in the browser from the month cube. `STATE.pick` is the button;
+  `STATE.period` stays the SERVER period (`PICK_SERVER` maps `PMTD→MTD`, `PYTD→YTD`, so the
+  payload on the matching tab is still loaded); `STATE.win` is true for both Prev-month picks
+  and for any dragged span. `windowPeriod()` tests the Prev-month spans FIRST, against the
+  union's own last month — when Ready-Mix runs a month ahead of Aggregates a single month is
+  both "Aggregates' MTD" and "the previous month", and the two answers now drive different
+  panels.
+- **A panel with nothing in it is not shown.** There is one rule and no exceptions for
+  emptiness: no rows, no data, not computable for this window → `hidePanel(bodyId)`, which
+  clears the body and hides the card in `PANEL_OF`. `resetPanels()` runs at the top of
+  `renderTab()` so every card comes back before the painters decide again. Only genuine
+  FAULTS still speak — a sheet that has not been set, a call that failed — because those are
+  fixable and the message carries the link. The old `winExempt()` / `.ov-exempt` notices,
+  `kpiHint()`, `aspBlocked()` and `rfuelBlocked()` are gone.
+- **Product Category is a Prev-month panel.** The Slide tabs arrive already split into MTD
+  and YTD, already summed to segment × market, with no month column — and the month they are
+  for is `ovSegMonth_()`, the PREVIOUS calendar month, while the fact tables already run into
+  the current one. Under "This month" it was drawing July's tabs under an August heading.
+  `pcatFits()` shows it only when a Prev-month pick is active AND the month it lands on is
+  the tabs' own month; anywhere else the card is not on the page. It is also decided FIRST in
+  the Ready-Mix branch of `renderTab()`, so nothing later can throw and leave it showing.
+- **What the cube answers is not a short list.** The Aggregates fact table carries plant,
+  material, plant type, material family, product class, customer parent, customer segment,
+  the surcharge dollars (`fsc`) and the tonnes those dollars were charged on (`fv`); the
+  Ready-Mix one carries extras and VAP revenue (`ex` / `va`). So in window mode the browser
+  now builds the plant & material explorer, the customer table (segment split included),
+  both fuel-surcharge panels, the revenue and ASP-mix waterfalls and the Ready-Mix ASP
+  build-up. The ASP mix bridge is also the fallback on MTD / YTD for a **2+ market subset**,
+  which the server ships no pre-computed bridge for. What is genuinely absent:
+  the SAP / USGAAP cards (statement figures, per month or per year), extras BY TYPE and the
+  Ready-Mix fuel recovery (the type and the per-load surcharge are not columns), and the
+  surcharge panels outside the current book year (`winFscOk()` — the fsc columns are optional
+  in the closed-year books).
+- **In window mode the server reports must not paint.** `loadDims` / `loadPM` /
+  `paintRxfPanels` still run — they keep the filter option lists and the shared report cache
+  warm — but they are fetched for the SERVER period, so `srvOwnsAgg()` and an early return in
+  `paintRxfPanels()` stop them repainting a fifth of a second after the cube drew the window.
+  For the same reason `renderTab()` tests `winMode()` BEFORE `xfActive()`: the cube applies
+  the page's cross-filters itself, while the cross-report knows nothing about a window.
 - History cube: era files are registered in `APP_EXTRA_SOURCES.overview`; `ERAS` is
   newest-first. History JSON is stamped with shape/dims/vals so stale files auto-rebuild. A
   **dictionary remap** is required when merging per-era files built with independent

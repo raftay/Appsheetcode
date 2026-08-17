@@ -155,6 +155,49 @@ progress job stacked underneath, or a market switch costing more than a couple o
 
 It is a wiring test, not a data test — the payloads are synthetic.
 
+## `ovperiod.js` — the Overview's Period control, in a real browser
+
+```bash
+npm install playwright
+node tests/ovperiod.js                  # checks
+node tests/ovperiod.js /tmp/shots       # …and three full-page screenshots
+DBG=1 node tests/ovperiod.js            # dump the boot state and stop guessing
+CHROMIUM_PATH=/path/to/chrome node tests/ovperiod.js
+```
+
+Two Overview changes are only visible in a browser, and both fail **silently**.
+
+*Period now has four settings.* `Prev month (MTD)` and `Prev month (YTD)` are not server
+periods — they are spans on the month cube — so pressing one has to move the slider, light
+the right button, switch the page to local compute, and still leave the server payload on
+the matching MTD / YTD tab, because Product Category reads it. Nothing here throws when it
+breaks: it shows the wrong month's numbers, which is the exact bug Product Category had.
+
+*A panel with nothing in it is not shown.* There is no notice and no empty frame left
+anywhere on the page, so the failure mode is a card that stays behind after the selection
+moved past it — again, no error, just a stale panel.
+
+So it boots the **real page** with `google.script.run` stubbed and a **synthetic month
+cube**: two years, eight months each, four rows a month, so the newest month is Aug-2025 and
+the one before it is Jul-2025 — the shape the real books are in when the Slide tabs are
+July's. It then presses each Period button on both tabs and reads the DOM.
+
+It fails on: the four buttons not being there or not lighting; a Prev-month press landing on
+the wrong span; **any visible `.ov-notice` / `.ov-exempt` anywhere, on any pick, on either
+tab**; Product Category showing under `MTD` or `YTD`, or missing under either Prev-month
+pick; an empty plants / customers / fuel / ASP-build-up table under a Prev-month span (those
+all come from the cube now, so empty means the wiring went); the SAP cards or the extras-by-
+type panel surviving a cube span; a single-month pick leaving *Month by month* on the page;
+a 2024 window keeping the surcharge panels (their columns are a live-book field); and a card
+that does not come back when a server period is pressed again.
+
+Chart.js is stubbed to a no-op constructor. Every assertion is about a table or about whether
+a card is on the page — but the stub matters more than that sounds: a chart that throws
+aborts the painter around it and leaves exactly the kind of stale panel this test hunts, so
+without it the whole file fails for the wrong reason.
+
+It is a wiring test, not a data test — the payloads are synthetic.
+
 ## `fscheader.js` also proves the fuel read is cached
 
 Added when the other backends were audited. `readData_()` did a full

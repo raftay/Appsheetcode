@@ -195,7 +195,7 @@ function APP_forgetStamp_(page){
    The stamp above tracks the DATA. A code fix leaves the data untouched, so
    without this every device would keep serving figures the OLD code computed
    and the fix would look like it did nothing. */
-var APP_CODE_BUILD = '2026-08-17b';
+var APP_CODE_BUILD = '2026-08-17c';
 
 function APP_getGen_(page) {
   return (APP_sourceStamp_(page) || '0') + '.' + APP_CODE_BUILD;
