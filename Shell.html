@@ -959,3 +959,79 @@ window.AmrFresh = (function(){
   };
 })();
 </script>
+
+<script>
+/* ==================================================================
+ * AmrTick - a timer that a background tab cannot stop.
+ * ------------------------------------------------------------------
+ * A hidden tab is not a paused tab, but the browser treats it as one
+ * in two ways that between them stop long jobs dead:
+ *
+ *   requestAnimationFrame does not fire AT ALL. Not late - never.
+ *     Anything that waits for a frame before continuing waits forever.
+ *     That is what stopped the Deck Builder on whatever slide it was
+ *     rendering the moment somebody clicked onto another tab.
+ *   setTimeout is clamped to once a second in a hidden tab, and after
+ *     five minutes hidden Chrome drops it to once a MINUTE. A forty
+ *     slide render paced by a main-thread timer would then take the
+ *     best part of an hour.
+ *
+ * Timers inside a Worker are not throttled that way, and a message
+ * from a worker is delivered to a hidden page immediately. So this is
+ * one tiny worker whose only job is to sleep and post back, wrapped in
+ * the same shape as setTimeout. Where there is no Worker (or the blob
+ * URL is refused) it degrades to a plain setTimeout, which is exactly
+ * what the caller would have written anyway.
+ *
+ *     var id = AmrTick(250, fn);   // like setTimeout
+ *     AmrTick.clear(id);
+ *     AmrTick.frames(fn);          // "after a frame or two" - but it
+ *                                  //  RESOLVES in a hidden tab
+ *
+ * frames() is the one to reach for before photographing the DOM: it
+ * waits for two real frames when there are frames to be had, and falls
+ * back to the clock when there are not. Whichever comes first wins and
+ * the other is dropped, so a tab that is hidden mid-wait still
+ * continues.
+ * ================================================================== */
+window.AmrTick = (function(){
+  var W = null, seq = 0, waiting = {};
+  try {
+    var src = 'self.onmessage=function(e){var d=e.data;' +
+              'if(d.op==="set"){setTimeout(function(){self.postMessage(d.id);},d.ms);}};';
+    W = new Worker(URL.createObjectURL(new Blob([src], { type:'text/javascript' })));
+    W.onmessage = function(e){
+      var fn = waiting[e.data];
+      if (fn){ delete waiting[e.data]; try { fn(); } catch(err){} }
+    };
+  } catch (e){ W = null; }
+
+  function tick(ms, fn){
+    if (!W) return { t: setTimeout(fn, ms||0) };
+    var id = ++seq;
+    waiting[id] = fn;
+    W.postMessage({ op:'set', id:id, ms:ms||0 });
+    return { w: id };
+  }
+  tick.clear = function(h){
+    if (!h) return;
+    if (h.t != null) clearTimeout(h.t);
+    if (h.w != null) delete waiting[h.w];
+  };
+  /* two frames if the tab is showing, the clock if it is not */
+  tick.frames = function(fn, ms){
+    var done = false, h = null;
+    function go(){
+      if (done) return;
+      done = true;
+      tick.clear(h);
+      fn();
+    }
+    h = tick(ms || 120, go);
+    try {
+      requestAnimationFrame(function(){ requestAnimationFrame(go); });
+    } catch (e){ /* no rAF at all: the tick above still lands */ }
+  };
+  return tick;
+})();
+</script>

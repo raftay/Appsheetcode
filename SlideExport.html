@@ -332,9 +332,19 @@ var AmrSlide = (function(){
     var box = build(contentEl, { bare:true, width:cssW, height:cssH, fit:o.fit });
 
     /* Charts need a frame to settle after any resize the fit triggered, or
-       html2canvas photographs a blank canvas. */
+       html2canvas photographs a blank canvas.
+
+       A HIDDEN TAB NEVER GIVES YOU THAT FRAME. requestAnimationFrame does not
+       fire at all in a background tab, so waiting on two of them waits forever
+       - which is exactly what stopped the Deck Builder on whatever slide it was
+       rendering when somebody clicked away. AmrTick.frames takes the frames
+       when there are frames and the clock when there are not, so the capture
+       finishes either way. Without AmrTick loaded this is the old behaviour. */
+    var settle = (window.AmrTick && AmrTick.frames)
+      ? AmrTick.frames
+      : function(fn){ requestAnimationFrame(function(){ requestAnimationFrame(fn); }); };
     return new Promise(function(resolve, reject){
-      requestAnimationFrame(function(){ requestAnimationFrame(function(){
+      settle(function(){
         var sc = capW / cssW;
         /* Never hand the platform something it will resample. */
         var mx = o.maxPx || 0;
@@ -351,7 +361,7 @@ var AmrSlide = (function(){
             if(box.parentNode) box.parentNode.removeChild(box);
             reject(e);
           });
-      }); });
+      });
     });
   }
 

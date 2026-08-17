@@ -156,6 +156,15 @@ Everything below lives in `Shell.html` unless noted.
   token. No expiry: entries stay valid until the token moves.
 - **`AmrQlik`** — the per-page ⇣ *Pull from QlikView* button, wired to `QlikSync.gs`.
 - **`AmrProgress`** — the shared progress pill.
+- **`AmrTick`** — a timer a background tab cannot stop. `AmrTick(ms, fn)` is `setTimeout`
+  with the sleep done inside a one-line **Worker**, because a main-thread timer is clamped to
+  once a second in a hidden tab and to once a **minute** after five minutes of it.
+  `AmrTick.frames(fn)` is "after a frame or two" that still resolves when there are no
+  frames — `requestAnimationFrame` does not fire **at all** in a hidden tab, which is what
+  used to stop the Deck Builder dead on whatever slide it was rendering when somebody
+  clicked away. Both degrade to plain timers where a Worker cannot be created. Anything that
+  waits before photographing the DOM, or paces a long job, uses these rather than the
+  browser's own.
 - **`AmrKpi`** (`KpiShared.html`) — the two EBITDA workbooks, plus the on-page KPI strip:
   `stripHtml(cards)` builds it, `fitStrip(row)` sizes it to the width it has, `stripPng`
   photographs it from an off-screen clone for *Download KPI PNG*.
@@ -168,6 +177,9 @@ Everything below lives in `Shell.html` unless noted.
   bands (left/right default 120px, top/bottom 30px). `previewInto` renders a scaled live
   preview, `viewSlide` shows it full-window, `exportSlide` captures to PNG with
   html2canvas.
+
+  `captureBare` waits for the layout to settle through `AmrTick.frames`, never on
+  `requestAnimationFrame` alone — see `AmrTick` above; `tests/bgrender.js` is the gate.
 
   Content that overflows is scaled down by a `transform` on `.slide-center`, measured on
   `scrollHeight`. A page's own `fit(box)` callback must therefore fit by **layout**

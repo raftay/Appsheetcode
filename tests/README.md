@@ -155,6 +155,28 @@ progress job stacked underneath, or a market switch costing more than a couple o
 
 It is a wiring test, not a data test — the payloads are synthetic.
 
+## `bgrender.js` — the render keeps going when the tab does not
+
+```bash
+npm install playwright
+node tests/bgrender.js
+```
+
+Clicking onto another tab used to stop the Deck Builder dead on whatever slide it was
+rendering, and there was nothing to see: no error, no red row, the progress line just froze
+mid-deck. One line caused it — a browser does not fire `requestAnimationFrame` in a hidden
+tab **at all**, and `captureBare` waited for two frames before photographing. Not late.
+Never.
+
+So the property under test is not "it is fast in the background", it is *it finishes with no
+frames at all* — which is what a hidden tab is, and which is testable without hiding
+anything: take `requestAnimationFrame` away and see whether the capture still resolves. On
+the pre-fix tree this file reports the hang after 8 s, plus the capture frame left pinned
+off-screen behind it. It also fails if `AmrTick` falls back to a main-thread timer, because
+that is throttled in exactly the situation it exists for.
+
+html2canvas is stubbed. This is about the wait before it, not the picture.
+
 ## `ovperiod.js` — the Overview's Period control, in a real browser
 
 ```bash
