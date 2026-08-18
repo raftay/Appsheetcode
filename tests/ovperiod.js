@@ -25,6 +25,13 @@
  * So this boots the REAL page with google.script.run stubbed and a synthetic
  * month cube, presses each Period button, and reads what is on the page.
  * It is a wiring test, not a data test: the payloads are made up.
+ *
+ * IT RUNS TWICE, against the legacy Page_Overview.html and against app.html's
+ * port of it (chunks 8-9), with the same fixture, the same clicks and the same
+ * checks. That is what makes it a gate on the MERGE and not only on the page:
+ * every failure names the side it happened on, so "both broke" and "the port
+ * broke" cannot be confused. Delete the legacy side at chunk 13, when the file
+ * it reads is gone.
  */
 const fs = require('fs');
 const path = require('path');
@@ -56,8 +63,26 @@ const read = f => fs.readFileSync(path.join(REPO, f), 'utf8');
 function expand(src, depth) {
   return src.replace(/<\?!?=\s*include\('([^']+)'\)\s*\?>/g,
       (m, name) => (depth > 3 ? '' : expand(read(name + '.html'), (depth || 0) + 1)))
+    /* app.html carries its server values in <body> data attributes, so they
+       have to be filled rather than stripped — an empty data-page mounts
+       nothing at all and the failure looks like a dead page. */
+    .replace(/<\?!?=\s*page\s*\?>/g, 'overview')
+    .replace(/<\?!?=\s*appUrl\s*\?>/g, 'https://script.google.com/macros/s/TEST/exec')
+    .replace(/<\?!?=\s*appMode\s*\?>/g, 'false')
     .replace(/<\?[=!]?[\s\S]*?\?>/g, '');
 }
+
+/* The two sides. `merged` is app.html mounted on the overview route; it is the
+   same file the live app serves, with the same stub spliced into its body. */
+const SIDES = [
+  { name: 'legacy', file: 'Page_Overview.html' },
+  /* `shell` is chunk 8's marker and chunk 9 deletes it: the merged page has the
+     period model, the month window and the cube but not the panel painters yet,
+     so checks 1-2 run against it and 3-7 do not. It is here rather than absent
+     because the four Period buttons ARE chunk 8's review, and they are only
+     observable in a browser. */
+  { name: 'merged', file: 'app.html', shell: true }
+];
 
 /* ---- the synthetic cube -------------------------------------------------
    Two years, eight months each, so the newest month is Aug-2025 and the month
@@ -150,6 +175,25 @@ window.Chart = function(canvas, cfg){ this.canvas=canvas; this.config=cfg; };
 window.Chart.prototype.destroy = function(){};
 window.Chart.register = function(){};
 window.ChartDataLabels = { id:'datalabels' };
+/* app.html loads Chart.js and SheetJS through AmrLib, which injects a
+   <script src> and AWAITS its onload before boot(). Off the network that
+   promise never settles and the page never boots — which reads as a dead
+   port rather than as a missing CDN. Resolve every injected script at once;
+   the stubs above are what the checks actually run against, on both sides. */
+(function(){
+  var create = document.createElement.bind(document);
+  document.createElement = function(tag){
+    var el = create(tag);
+    if(String(tag).toLowerCase() === 'script'){
+      var src = '';
+      Object.defineProperty(el, 'src', {
+        get:function(){ return src; },
+        set:function(v){ src = v; setTimeout(function(){ el.onload && el.onload(); }, 0); }
+      });
+    }
+    return el;
+  };
+})();
 window.__CALLS = [];
 window.__CUBE = ${JSON.stringify(CUBE)};
 window.__YMS  = ${JSON.stringify(YMS)};
@@ -167,11 +211,18 @@ window.google = { script: { run: (function(){
       rmx[m.key]={ present:true, cyVol:900+i, pyVol:800+i, baseCY:180000, basePY:160000,
                    aspBaseCY:200, aspBasePY:195, aspIncBase:.026, volPct:.12,
                    rfiBase:1, facBase:.03, ppiBase:.03, sub:[], dims:{} };
+      /* The two periods carry DIFFERENT volumes on purpose. Product Category
+         is the panel that reads the server payload while the page is on a
+         Prev-month span, so PICK_SERVER is what decides which tab it gets —
+         and with one number for both periods, swapping PMTD and PYTD in
+         PICK_SERVER passed this harness clean. Check 4 reads these figures. */
+      var v1 = (period==='MTD') ? 310037 : 410037;
+      var v2 = (period==='MTD') ? 545411 : 645411;
       prodMk[m.key]=[
         { typ:'VAP', cat:'Performance', tk:'vap', ck:'performance', total:false,
-          cyVol:310037, pyVol:328000, cyRev:77e6, pyRev:84e6, cyCm2W:17e6, pyCm2W:22e6 },
+          cyVol:v1, pyVol:328000, cyRev:77e6, pyRev:84e6, cyCm2W:17e6, pyCm2W:22e6 },
         { typ:'VAP', cat:'Total', tk:'vap', ck:'total', total:true,
-          cyVol:545411, pyVol:592000, cyRev:138e6, pyRev:152e6, cyCm2W:31e6, pyCm2W:39e6 }
+          cyVol:v2, pyVol:592000, cyRev:138e6, pyRev:152e6, cyCm2W:31e6, pyCm2W:39e6 }
       ];
     });
     return { ok:true, period:period, markets:MARKETS, pv:pv, rmx:rmx,
@@ -290,15 +341,27 @@ const IN_BROWSER = {
   }
 };
 
-(async () => {
-  const exe = browserPath();
-  const browser = await chromium.launch(exe ? { executablePath: exe } : {});
+async function run(side, browser, allFails) {
   const pg = await browser.newPage({ viewport: { width: 1500, height: 1200 } });
   const errs = [];
   pg.on('pageerror', e => errs.push(e.message));
-  const tmp = path.join(require('os').tmpdir(), 'amr_overview.html');
-  fs.writeFileSync(tmp, expand(read('Page_Overview.html'), 0).replace('<body>', '<body>' + STUB));
-  if (process.env.DBG) pg.on('console', m => console.log('[console]', m.text().slice(0, 200)));
+  const tmp = path.join(require('os').tmpdir(), 'amr_overview_' + side.name + '.html');
+  /* The stub goes straight after the real <body …> tag. Two traps, both hit:
+     app.html's tag carries the data attributes §D reads, so it cannot be
+     matched as a bare "<body>"; and its <head> comment DESCRIBES a body tag in
+     prose, so the first match in the file is inside a comment and the whole
+     stub lands commented out — which reads as a page that boots and does
+     nothing. So: search after </head>, and check the tag really is the
+     element. merge.js learned the same lesson twice. */
+  const raw = expand(read(side.file), 0);
+  const head = raw.indexOf('</head>');
+  if (head < 0) throw new Error(side.file + ': no </head>');
+  const tag = raw.slice(head).match(/<body[^>]*>/);
+  if (!tag) throw new Error(side.file + ': no <body> element after </head>');
+  const at = head + tag.index + tag[0].length;
+  const html = raw.slice(0, at) + STUB + raw.slice(at);
+  fs.writeFileSync(tmp, html);
+  if (process.env.DBG) pg.on('console', m => console.log('[' + side.name + ' console]', m.text().slice(0, 200)));
   await pg.goto('file://' + tmp, { waitUntil: 'load' });
   await pg.waitForTimeout(1500);
   /* DBG=1 prints where the boot got to. Worth having: when this file fails at
@@ -316,7 +379,7 @@ const IN_BROWSER = {
   }
 
   const fails = [];
-  const bad = m => fails.push(m);
+  const bad = m => fails.push(side.name + ': ' + m);
   const snap = () => pg.evaluate('(' + IN_BROWSER.snap.toString() + ')()');
   async function press(kind) {
     await pg.click('#periodSeg button[data-period="' + kind + '"]');
@@ -350,6 +413,10 @@ const IN_BROWSER = {
   s = await press('MTD');
   if (s.win.replace(/\s+/g, ' ') !== 'Aug 2025→Aug 2025') bad('This month window is "' + s.win + '", expected Aug 2025→Aug 2025');
 
+  /* Chunk 8 stops here: everything below reads a panel, and the painters are
+     chunk 9. Delete these three lines with the `shell` flag above. */
+  if (side.shell) { await pg.close(); allFails.push.apply(allFails, fails); return; }
+
   /* ---- 3. no panel anywhere ever explains itself ---- */
   for (const k of ['MTD','YTD','PMTD','PYTD']) {
     const t = await press(k);
@@ -370,6 +437,17 @@ const IN_BROWSER = {
   if (pcat.YTD.shown) bad('Product category is showing under Year to date');
   if (!pcat.PMTD.shown) bad('Product category is NOT showing under Prev month (MTD)');
   if (!pcat.PYTD.shown) bad('Product category is NOT showing under Prev month (YTD)');
+  /* …and it must be showing the RIGHT tab. A Prev-month pick is a cube span,
+     but this one panel still reads the server payload, and PICK_SERVER is the
+     only thing that says which of MTD / YTD that is. The fixture gives the two
+     periods different volumes so the wrong tab is visible rather than
+     plausible — swapping PMTD and PYTD in PICK_SERVER used to pass. */
+  /* All markets is the default, so the panel shows the two markets merged —
+     620,074 is the MTD tab and 820,074 the YTD one. */
+  if (pcat.PMTD.shown && !(/620,074/.test(pcat.PMTD.text) && !/820,074/.test(pcat.PMTD.text)))
+    bad('Prev month (MTD) shows Product Category off the wrong tab — expected the MTD payload');
+  if (pcat.PYTD.shown && !(/820,074/.test(pcat.PYTD.text) && !/620,074/.test(pcat.PYTD.text)))
+    bad('Prev month (YTD) shows Product Category off the wrong tab — expected the YTD payload');
 
   /* ---- 5. plants, materials, customers and the bridges answer for a
              Prev-month span, which is a cube span, not a server one ---- */
@@ -423,21 +501,38 @@ const IN_BROWSER = {
 
   if (SHOTS) {
     fs.mkdirSync(SHOTS, { recursive: true });
-    await pg.screenshot({ path: path.join(SHOTS, 'overview-ytd.png'), fullPage: true });
+    const shot = n => path.join(SHOTS, side.name + '-' + n + '.png');
+    await pg.screenshot({ path: shot('overview-ytd'), fullPage: true });
     await press('PMTD');
-    await pg.screenshot({ path: path.join(SHOTS, 'overview-prevmonth.png'), fullPage: true });
+    await pg.screenshot({ path: shot('overview-prevmonth'), fullPage: true });
     await tab('rmx');
-    await pg.screenshot({ path: path.join(SHOTS, 'overview-prevmonth-rmx.png'), fullPage: true });
+    await pg.screenshot({ path: shot('overview-prevmonth-rmx'), fullPage: true });
   }
 
+  await pg.close();
+  if (errs.length) fails.unshift(side.name + ': page errors: ' + JSON.stringify(errs.slice(0, 4)));
+  allFails.push.apply(allFails, fails);
+}
+
+(async () => {
+  const exe = browserPath();
+  const browser = await chromium.launch(exe ? { executablePath: exe } : {});
+  const fails = [];
+  for (const side of SIDES) {
+    if (!fs.existsSync(path.join(REPO, side.file))) {
+      fails.push(side.name + ': ' + side.file + ' is missing');
+      continue;
+    }
+    await run(side, browser, fails);
+  }
   await browser.close();
 
-  if (errs.length) fails.unshift('page errors: ' + JSON.stringify(errs.slice(0, 4)));
   if (fails.length) {
     console.error('\novperiod: ' + fails.length + ' problem(s)\n');
     fails.forEach(f => console.error('  ✗ ' + f));
     process.exit(1);
   }
-  console.log('ovperiod: ok — four Period settings, Product Category on Prev month only, '
-    + 'no panel left explaining itself.');
+  console.log('ovperiod: ok — ' + SIDES.map(s => s.name + (s.shell ? ' (shell only)' : '')).join(' + ') +
+    ': four Period settings, Product Category on Prev month only, ' +
+    'no panel left explaining itself.');
 })();

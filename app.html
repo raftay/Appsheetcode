@@ -222,6 +222,10 @@ header .spacer{flex:1}
 .seg.full{display:flex}
 .seg.full button{flex:1; padding:8px 6px; color:var(--muted)}
 .seg.full button[aria-pressed="true"]{color:#fff}
+/* Disabled is a state of the control, not of one page: the Overview's two
+   Prev-month buttons are dead until the month cube holds the month they
+   need, and pointer-events is what stops a dead button showing a hover. */
+.seg button[disabled]{opacity:.4; cursor:default; pointer-events:none}
 
 /* ---- headings + cards ---- */
 .section-head{display:flex; align-items:baseline; gap:12px; margin:2px}
@@ -541,7 +545,8 @@ table.fsc-t.exec tbody td{padding:.34em .75em}
 /* ---- a pair of small actions under a rail panel ---- */
 .linkbtns{display:flex; gap:8px; margin-top:10px}
 .linkbtn{flex:1; border:1px solid var(--line); background:#fff; color:var(--blue-80);
-  font:600 11.5px Inter; padding:7px 8px; border-radius:9px; cursor:pointer; transition:.14s}
+  font:600 11.5px Inter; padding:7px 8px; border-radius:9px; cursor:pointer; transition:.14s;
+  text-decoration:none; display:inline-block}   /* an <a> on the Overview */
 .linkbtn:hover{background:var(--blue-10); border-color:var(--blue-40)}
 .linkbtn[disabled]{opacity:.4; cursor:not-allowed}
 
@@ -940,7 +945,371 @@ body[data-page="rmx"] .previewCard{margin-top:4px}
 
 /* the mapping check's two small deltas from §A3's shared block */
 body[data-page="rmx"] .mapHost .card-head{padding:revert}
-body[data-page="rmx"] .mapHost td.val{max-width:460px; font:inherit}/* ---- §P inventoryreport --------------------------------------------------
+body[data-page="rmx"] .mapHost td.val{max-width:460px; font:inherit}/* ---- §P overview -----------------------------------------------------------
+   The biggest page block in the file, and the reason is not that anything here
+   is shared-looking: 136 ids and 234 rules, every one of them the Executive
+   Overview's own. .ov-* is the page frame, .kpi* the headline strip, .dq-* /
+   .lk-* the data-quality sheet and its lookup editor, .xf-* the two
+   cross-filter engines. Nothing on any other page wants a month-window slider
+   or a cross-filter chip bar, so promoting them would only make §A3 harder to
+   change — the chunk 6 test, applied the other way round: these are a PAGE,
+   not a component.
+
+   TWO rules did leave: the segmented control (§A3's .seg.pills) and .linkbtn.
+   Both are noted where they used to sit.
+
+   Four @media queries at 900px and 860px map onto --bp-mid, which is the only
+   layout switch this page has: two columns to one, five KPI columns to a
+   wrapping flex row. Between 860 and 980 the KPI strip now wraps where it used
+   to stay in five columns — one deliberate change, and the safer side of it
+   (five 158px-minimum cards do not fit a 900px viewport).                    */
+/* ---- Overview-only layout (design tokens all come from Styles.html) ---- */
+body[data-page="overview"] .ov-wrap{max-width:1180px; margin:0 auto; padding:22px 24px 60px; display:flex; flex-direction:column; gap:20px}
+
+/* The segmented toggle that stood here is §A3's .seg.pills — same border,
+   same 9px radius, same pressed and hover states — so the eight controls
+   write class="seg pills" and the page carries no copy of it. Its only
+   addition to the shared control was the DISABLED state, which went to
+   §A3 because a dead button is a state, not a page. */
+
+/* Past twelve months the prior year OVERLAPS the window itself, so a pooled
+   "vs last year" double-counts the months it is comparing against. Those
+   numbers go muted and blank rather than quietly wrong. */
+body[data-page="overview"] .ov-na{color:var(--muted); opacity:.5; font-weight:600}
+body[data-page="overview"] .kpi-d.na{opacity:.42}
+body[data-page="overview"] .kpi .ly.na{opacity:.45}
+
+/* top controls bar — two columns: what you are looking at on the left,
+   the month window on the right. They were interleaved on one wrapping flex
+   row, which put the slider between Period and Markets at some widths. */
+body[data-page="overview"] .ov-controls{display:flex; align-items:flex-start; gap:26px 34px; flex-wrap:wrap}
+body[data-page="overview"] .ov-ctl-left{flex:1 1 420px; min-width:0; display:flex; flex-wrap:wrap; align-items:flex-start; gap:18px 26px}
+body[data-page="overview"] .ov-ctl-right{flex:0 0 360px; max-width:100%; padding-left:30px; border-left:1px solid var(--line)}
+@media (max-width:980px){          /* --bp-mid; was 900px */
+  body[data-page="overview"] .ov-ctl-right{flex:1 1 100%; padding-left:0; border-left:0; border-top:1px dashed var(--line); padding-top:16px}
+}
+body[data-page="overview"] .ov-controls .grow{flex:1 1 260px}
+
+/* ===== tabs (Aggregates / Ready-Mix) ===== */
+/* per-tab page tint — the blank space behind the cards tells you at a glance
+   which line you're on: cool blue = Aggregates, soft green = Ready-Mix */
+body[data-page="overview"].ovtab-agg{background:#F3F8FE}
+body[data-page="overview"].ovtab-rmx{background:#FCF9FF}
+body[data-page="overview"] .ov-tabs{display:flex; gap:4px; border-bottom:2px solid var(--line); margin:6px 0 18px}
+body[data-page="overview"] .ov-tab{border:0; background:transparent; color:var(--muted); font:800 14px Archivo; letter-spacing:.01em;
+  padding:11px 20px; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px;
+  display:flex; align-items:baseline; gap:7px; transition:.14s}
+body[data-page="overview"] .ov-tab .u{font:600 11px Inter; color:var(--muted); letter-spacing:0}
+body[data-page="overview"] .ov-tab:hover{color:var(--blue-70)}
+body[data-page="overview"] .ov-tab[aria-selected="true"]{color:var(--blue-100); border-bottom-color:var(--blue-70)}
+body[data-page="overview"] .ov-tab[aria-selected="true"] .u{color:var(--blue-70)}
+body[data-page="overview"] .ov-tabpanel{display:flex; flex-direction:column; gap:20px}
+body[data-page="overview"] .ov-tabpanel[hidden]{display:none}
+
+/* ===== KPI strip (smaller boxes + separate % boxes) ===== */
+body[data-page="overview"] .ov-line-head{display:flex; align-items:center; gap:10px; margin:2px 0 12px}
+body[data-page="overview"] .ov-line-head .name{font:800 13px Archivo; letter-spacing:.02em; color:var(--blue-100)}
+body[data-page="overview"] .ov-line-head .unit{font:600 11px Inter; color:var(--muted)}
+body[data-page="overview"] .ov-line-head .rule{flex:1; height:1px; background:var(--line)}
+
+  /* 5 columns: Volume | VOL% | ASP | ASP% | PPI — main cards equal, % boxes equal, PPI flush right */
+  body[data-page="overview"] .kpi-row{display:grid; grid-template-columns:minmax(0,1fr) 110px minmax(0,1fr) 110px minmax(0,1fr); gap:12px}
+  body[data-page="overview"] .kpi-unit{display:contents}
+  body[data-page="overview"] .kpi.na{grid-column:1/-1}
+  @media (max-width:980px){          /* --bp-mid; was 860px */
+    body[data-page="overview"] .kpi-row{display:flex; flex-wrap:wrap}
+    body[data-page="overview"] .kpi-unit{display:flex; gap:8px; align-items:stretch; flex:1 1 240px; min-width:0}
+  }
+body[data-page="overview"] .kpi{background:#fff; border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--shadow);
+  padding:12px 15px; min-width:158px; flex:1 1 auto; display:flex; flex-direction:column; justify-content:center}
+body[data-page="overview"] .kpi .k{font:700 9px Archivo; letter-spacing:.14em; text-transform:uppercase; color:var(--blue-70); margin:0 0 6px}
+body[data-page="overview"] .kpi .big{font:800 21px Archivo; color:var(--ink); line-height:1; letter-spacing:.01em}
+body[data-page="overview"] .kpi .big .u{font:600 11px Inter; color:var(--muted); margin-left:2px}
+body[data-page="overview"] .kpi .ly{font:600 10.5px Inter; color:var(--muted); margin-top:7px}
+body[data-page="overview"] .kpi .ly b{color:var(--ink); font-weight:700}
+body[data-page="overview"] .kpi.na{align-items:center; text-align:center; color:var(--muted); font:600 12px Inter; min-width:158px}
+body[data-page="overview"] .kpi .big.pos{color:var(--pos)} body[data-page="overview"] .kpi .big.neg{color:var(--neg)}
+
+/* the little "% inc" box that sits to the right of Volume / ASP */
+body[data-page="overview"] .kpi-d{display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center;
+  padding:12px 12px; border-radius:var(--r); border:1px solid var(--line); box-shadow:var(--shadow)}
+/* Styles.html styles .dl as a link/BUTTON (border, white fill, pointer cursor,
+   hover tint) and hovers every tbody row; neither is wanted here. These labels
+   are captions, not controls, so every button affordance is stripped — not
+   just the hover, which still left the border and the pointer behind. */
+body[data-page="overview"] .kpi-d .dl, body[data-page="overview"] .kpi-d .dl:hover, body[data-page="overview"] .kpi-d .dl:focus, body[data-page="overview"] .kpi-d .dl:active{
+  font:700 8.5px Archivo; letter-spacing:.1em; text-transform:uppercase; margin:0 0 6px;
+  border:0; background:transparent; box-shadow:none; padding:0; border-radius:0;
+  cursor:default; text-decoration:none; outline:0}
+body[data-page="overview"] .ov-table tbody tr:hover{background:transparent}
+body[data-page="overview"] .ov-table tbody tr:hover td{background:var(--white)}
+body[data-page="overview"] .ov-table tbody tr.child:hover td{background:var(--paper)}
+body[data-page="overview"] .ov-table tbody tr.tot:hover td{background:#DFEBFB}
+body[data-page="overview"] .ov-table tbody tr.xfrow:hover td{background:var(--paper)}
+/* the EXTRAS / VAP band rows are a solid navy divider, not data — the hover
+   rule above outranks their own background and flashed them white on pass-over */
+body[data-page="overview"] .ov-table tbody tr:hover td.section{background:var(--blue-70)}
+body[data-page="overview"] .kpi-d .dv{font:800 18px Archivo; line-height:1; letter-spacing:.01em}
+body[data-page="overview"] .kpi-d.up{background:var(--pos-bg); color:var(--pos)}   body[data-page="overview"] .kpi-d.up .dl{color:var(--pos)}
+body[data-page="overview"] .kpi-d.down{background:var(--neg-bg); color:var(--neg)} body[data-page="overview"] .kpi-d.down .dl{color:var(--neg)}
+body[data-page="overview"] .kpi-d.flat{background:var(--blue-10); color:var(--blue-70)} body[data-page="overview"] .kpi-d.flat .dl{color:var(--blue-70)}
+
+/* SAP / USGAAP KPI panel head (title + optional Region picker) */
+body[data-page="overview"] .ov-kpihead{display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap}
+body[data-page="overview"] .ov-kpisel{display:flex; align-items:center; gap:8px}
+body[data-page="overview"] .ov-kpisel label{font:700 9.5px Archivo; letter-spacing:.1em; text-transform:uppercase; color:var(--blue-70)}
+body[data-page="overview"] .ov-kpisel select{width:auto; min-width:190px; border:1px solid var(--line); border-radius:9px; background:#fff;
+  padding:7px 10px; font:600 12px Inter; color:var(--ink)}
+/* market changed and no saved region for it yet → prompt the user */
+body[data-page="overview"] .ov-kpisel select.need{border-color:var(--neg); color:var(--neg); background:var(--neg-bg);
+  box-shadow:0 0 0 2px var(--neg-bg)}
+
+/* panels + charts */
+body[data-page="overview"] .ov-cols{display:grid; grid-template-columns:1fr 1fr; gap:22px}
+body[data-page="overview"] .ov-cols > *{min-width:0}
+body[data-page="overview"] .ov-cbox canvas{max-width:100%}
+@media (max-width:980px){body[data-page="overview"] .ov-cols{grid-template-columns:1fr}}   /* --bp-mid; was 900px */
+body[data-page="overview"] .ov-panel{background:#fff; border:1px solid var(--line); border-radius:var(--r); box-shadow:var(--shadow); padding:18px 18px 16px}
+body[data-page="overview"] .ov-panel > h3{font:800 13px Archivo; letter-spacing:.02em; color:var(--blue-100); margin:0 0 2px}
+body[data-page="overview"] .ov-panel > .sub{font:500 11px Inter; color:var(--muted); margin:0 0 14px}
+body[data-page="overview"] .ov-donuts{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+body[data-page="overview"] .ov-donut{display:flex; flex-direction:column; align-items:center}
+body[data-page="overview"] .ov-donut .cap{font:700 9.5px Archivo; letter-spacing:.14em; text-transform:uppercase; color:var(--blue-70); margin:0 0 6px}
+body[data-page="overview"] .ov-cbox{position:relative; width:100%; height:180px}
+body[data-page="overview"] .ov-cbox.tall{height:260px}
+body[data-page="overview"] .ov-cbox.xtall{height:320px}
+body[data-page="overview"] .ov-block{margin-top:16px}
+body[data-page="overview"] .ov-block .lab, body[data-page="overview"] .ov-lab{font:700 9.5px Archivo; letter-spacing:.14em; text-transform:uppercase; color:var(--blue-70); margin:0 0 8px}
+body[data-page="overview"] .ov-legend{display:flex; flex-wrap:wrap; gap:12px; margin-top:12px}
+body[data-page="overview"] .ov-legend .it{display:flex; align-items:center; gap:6px; font:600 11px Inter; color:var(--ink)}
+body[data-page="overview"] .ov-legend .sw{width:11px; height:11px; border-radius:3px; display:inline-block}
+
+/* per-source empty / error notice */
+body[data-page="overview"] .ov-notice{border:1px dashed var(--line); background:var(--paper); border-radius:var(--r);
+  padding:18px 20px; color:var(--muted); font:500 12.5px Inter; line-height:1.5}
+body[data-page="overview"] .ov-notice b{color:var(--ink)}
+body[data-page="overview"] .ov-notice .linkbtn{margin-top:10px}
+
+body[data-page="overview"] .ov-foot{font:500 11px Inter; color:var(--muted); line-height:1.5}
+/* explanatory footnote under a table or chart (Ready-Mix panels) */
+body[data-page="overview"] .ov-note{font:500 10.5px Inter; color:var(--muted); line-height:1.55; margin:10px 0 0;
+  padding-left:10px; border-left:2px solid var(--line)}
+body[data-page="overview"] .ov-note b{color:var(--ink); font-weight:700}
+/* stream divider inside the extras table — matches the RMX page's section rows */
+body[data-page="overview"] .ov-table td.section{font:800 10px Inter; letter-spacing:.05em; color:#fff;
+  background:var(--blue-70); text-align:center; text-transform:uppercase}
+body[data-page="overview"] .ov-foot code{background:var(--blue-10); padding:1px 5px; border-radius:5px}
+
+/* ===== month window: a two-handle range over the months the cube holds =====
+   Replaces the old This year / 12 / 18 / 24 segmented control. Two native
+   range inputs are stacked on one track: the browser gives correct keyboard
+   and touch behaviour for free, and only the thumbs take pointer events so
+   whichever handle you grab is the one that moves. */
+body[data-page="overview"] .ov-win{width:100%}
+body[data-page="overview"] .ov-win-head{display:flex; align-items:baseline; gap:8px; margin-bottom:9px}
+body[data-page="overview"] .ov-win-val{font:700 12px Inter; color:var(--blue-100); white-space:nowrap}
+body[data-page="overview"] .ov-win-val .sep{color:var(--muted); font-weight:600; margin:0 5px}
+body[data-page="overview"] .ov-win-n{font:600 11px Inter; color:var(--muted)}
+body[data-page="overview"] .ov-win-track{position:relative; height:26px}
+body[data-page="overview"] .ov-win-track .rail{position:absolute; left:0; right:0; top:11px; height:4px;
+  border-radius:3px; background:var(--line)}
+body[data-page="overview"] .ov-win-track .fill{position:absolute; top:11px; height:4px; border-radius:3px; background:var(--blue-70)}
+body[data-page="overview"] .ov-win-track input[type=range]{position:absolute; left:0; top:0; width:100%; height:26px; margin:0;
+  background:none; pointer-events:none; -webkit-appearance:none; appearance:none}
+body[data-page="overview"] .ov-win-track input[type=range]:focus{outline:0}
+body[data-page="overview"] .ov-win-track input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; pointer-events:auto;
+  width:16px; height:16px; border-radius:50%; background:#fff; border:2.5px solid var(--blue-70);
+  box-shadow:0 1px 3px rgba(1,30,106,.28); cursor:grab; margin-top:0}
+body[data-page="overview"] .ov-win-track input[type=range]::-webkit-slider-runnable-track{height:26px; background:none; border:0}
+body[data-page="overview"] .ov-win-track input[type=range]::-moz-range-thumb{pointer-events:auto; width:16px; height:16px;
+  border-radius:50%; background:#fff; border:2.5px solid var(--blue-70);
+  box-shadow:0 1px 3px rgba(1,30,106,.28); cursor:grab}
+body[data-page="overview"] .ov-win-track input[type=range]::-moz-range-track{height:26px; background:none; border:0}
+body[data-page="overview"] .ov-win-track input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 4px var(--blue-10)}
+body[data-page="overview"] .ov-win-ends{display:flex; justify-content:space-between; margin-top:2px;
+  font:600 10px Inter; color:var(--muted)}
+body[data-page="overview"] .ov-win-quick{display:flex; flex-wrap:wrap; gap:5px; margin-top:9px}
+body[data-page="overview"] .ov-win-quick button{border:1px solid var(--line); background:#fff; color:var(--muted);
+  font:700 10.5px Inter; padding:4px 10px; border-radius:7px; cursor:pointer; transition:.14s}
+body[data-page="overview"] .ov-win-quick button:hover{border-color:var(--blue-40); color:var(--blue-100)}
+body[data-page="overview"] .ov-win-quick button[aria-pressed="true"]{background:var(--blue-10); border-color:var(--blue-70); color:var(--blue-100)}
+body[data-page="overview"] .ov-win.pending .ov-win-track{opacity:.45; pointer-events:none}
+
+/* The month-history pill used to be defined here. It is now .amr-pill /
+   .amr-pop in Styles.html, driven by AmrProgress (Shell.html), because every
+   page needed the same thing and only this one had it. The Overview still owns
+   the CONTENT of the popover — see AmrProgress.detail() below. */
+
+/* count badge on the header's Data quality button */
+body[data-page="overview"] .dq-n{display:inline-block; margin-left:5px; min-width:16px; padding:0 5px; border-radius:999px;
+  background:var(--neg); color:#fff; font:800 10px Inter; line-height:16px; text-align:center}
+body[data-page="overview"] .dq-n[hidden]{display:none}
+
+/* ===== data quality sheet ===== */
+body[data-page="overview"] .dq-back{position:fixed; inset:0; z-index:80; background:rgba(1,30,106,.34); display:none}
+body[data-page="overview"] .dq-back.show{display:block}
+body[data-page="overview"] .dq-modal{position:fixed; z-index:81; top:6vh; left:50%; transform:translateX(-50%);
+  width:min(880px,94vw); max-height:88vh; overflow:auto; background:#fff; border-radius:16px;
+  box-shadow:0 24px 70px rgba(1,30,106,.34); padding:22px 24px 20px; display:none}
+body[data-page="overview"] .dq-modal.show{display:block}
+body[data-page="overview"] .dq-modal h3{font:800 16px Archivo; color:var(--blue-100); margin:0 0 3px}
+body[data-page="overview"] .dq-modal .sub{font:500 12px Inter; color:var(--muted); margin:0 0 16px}
+body[data-page="overview"] .dq-x{position:absolute; top:14px; right:16px; border:0; background:transparent; color:var(--muted);
+  font:700 22px Inter; line-height:1; cursor:pointer}
+body[data-page="overview"] .dq-x:hover{color:var(--blue-100)}
+body[data-page="overview"] .dq-clear{padding:13px 15px; border-radius:12px; background:var(--pos-bg); color:var(--pos); font:600 12.5px Inter}
+body[data-page="overview"] .dq-sec{border:1px solid var(--line); border-radius:12px; margin-bottom:9px; overflow:hidden}
+body[data-page="overview"] .dq-sec.open{border-color:var(--blue-40)}
+body[data-page="overview"] .dq-sec.ok{display:flex; align-items:center; gap:9px; padding:9px 14px; background:var(--blue-10); border-color:transparent}
+body[data-page="overview"] .dq-sec.ok .dq-t{font-weight:600; color:var(--muted)}
+body[data-page="overview"] .dq-sec.ok .dq-okmark{margin-left:auto; font:600 11.5px Inter; color:var(--pos)}
+body[data-page="overview"] .dq-head{display:flex; align-items:center; gap:10px; width:100%; padding:10px 13px; border:0;
+  background:none; cursor:pointer; text-align:left}
+body[data-page="overview"] .dq-sec.open .dq-head{background:var(--blue-10); border-bottom:1px solid var(--line)}
+body[data-page="overview"] .dq-head .chev{flex:none; width:14px; font:700 15px Inter; color:var(--blue-70); transition:transform .15s}
+body[data-page="overview"] .dq-sec.open .dq-head .chev{transform:rotate(90deg)}
+body[data-page="overview"] .dq-t{font:700 12.5px Archivo; color:var(--blue-100)}
+body[data-page="overview"] .dq-n2{flex:none; padding:2px 9px; border-radius:999px; background:var(--neg-bg); color:var(--neg); font:800 11px Inter}
+body[data-page="overview"] .dq-body{display:none; padding:4px 13px 13px}
+body[data-page="overview"] .dq-sec.open .dq-body{display:block}
+body[data-page="overview"] .dq-body .hint{font:500 11.5px Inter; color:var(--muted); line-height:1.55; margin:8px 2px 10px}
+body[data-page="overview"] .dq-body table{width:100%; border-collapse:collapse; font:500 11.5px Inter}
+body[data-page="overview"] .dq-body th{font:700 9.5px Archivo; letter-spacing:.1em; text-transform:uppercase; color:var(--blue-70);
+  background:var(--blue-10); text-align:right; padding:7px 9px; border-bottom:1px solid var(--line)}
+body[data-page="overview"] .dq-body th:first-child{text-align:left}
+body[data-page="overview"] .dq-body td{padding:7px 9px; border-bottom:1px solid var(--line); text-align:right; font-variant-numeric:tabular-nums}
+body[data-page="overview"] .dq-body td:first-child{text-align:left; font-weight:600; white-space:normal; max-width:380px; line-height:1.35}
+
+/* ===== lookup editor (inside the data-quality sheet) ===== */
+body[data-page="overview"] .lk-wrap{margin-top:10px; border:1px solid var(--blue-40); border-radius:12px; overflow:hidden}
+body[data-page="overview"] .lk-head{display:flex; align-items:center; gap:10px; padding:10px 13px; background:var(--blue-10);
+  border-bottom:1px solid var(--line)}
+body[data-page="overview"] .lk-head .t{font:700 12px Archivo; color:var(--blue-100)}
+body[data-page="overview"] .lk-head .sp{flex:1}
+body[data-page="overview"] .lk-body{padding:11px 13px 13px; max-height:340px; overflow:auto}
+body[data-page="overview"] .lk-row{display:flex; flex-wrap:wrap; gap:7px; align-items:center; padding:7px 0; border-bottom:1px solid var(--line)}
+body[data-page="overview"] .lk-row:last-child{border-bottom:0}
+body[data-page="overview"] .lk-row .k{flex:1 1 170px; font:700 11.5px Inter; color:var(--blue-100); min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+body[data-page="overview"] .lk-row .f{flex:0 1 128px; min-width:96px}
+body[data-page="overview"] .lk-row input, body[data-page="overview"] .lk-row select{width:100%; box-sizing:border-box; border:1px solid var(--line);
+  border-radius:7px; padding:5px 7px; font:500 11.5px Inter; background:#fff; color:var(--ink)}
+body[data-page="overview"] .lk-row .fl{display:block; font:700 8px Archivo; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--blue-70); margin-bottom:2px}
+body[data-page="overview"] .lk-row .sk{flex:0 0 auto; border:0; background:transparent; color:var(--neg); font:700 15px Inter;
+  cursor:pointer; padding:0 4px; line-height:1}
+body[data-page="overview"] .lk-btn{border:1px solid var(--line); background:#fff; color:var(--blue-100); border-radius:8px;
+  padding:6px 12px; font:700 11px Inter; cursor:pointer; white-space:nowrap}
+body[data-page="overview"] .lk-btn:hover{border-color:var(--blue-40); background:var(--blue-10)}
+body[data-page="overview"] .lk-btn.primary{background:var(--blue-100); color:#fff; border-color:var(--blue-100)}
+body[data-page="overview"] .lk-btn.primary:hover{background:var(--blue-70); border-color:var(--blue-70)}
+body[data-page="overview"] .lk-btn:disabled{opacity:.5; cursor:default}
+body[data-page="overview"] .lk-msg{font:600 11.5px Inter; padding:8px 13px; border-top:1px solid var(--line)}
+body[data-page="overview"] .lk-msg.ok{color:var(--pos); background:var(--pos-bg)}
+body[data-page="overview"] .lk-msg.bad{color:var(--neg); background:var(--neg-bg)}
+body[data-page="overview"] .dq-act{display:flex; gap:7px; margin-left:auto; flex:none}
+body[data-page="overview"] .dq-link{border:1px solid var(--line); background:#fff; color:var(--blue-100); border-radius:8px;
+  padding:6px 11px; font:700 11px Inter; cursor:pointer; text-decoration:none; display:inline-block}
+body[data-page="overview"] .dq-link:hover{border-color:var(--blue-40); background:var(--blue-10)}
+
+body[data-page="overview"] .ov-banner{margin:0 0 4px; padding:12px 16px; border-radius:12px; background:var(--neg-bg);
+  color:var(--neg); font:600 12.5px Inter; display:none}
+body[data-page="overview"] .ov-banner.show{display:block}
+
+/* customers section */
+body[data-page="overview"] .ov-cust-grid{display:grid; grid-template-columns:1fr 1fr; gap:22px; margin-top:6px}
+@media (max-width:980px){body[data-page="overview"] .ov-cust-grid{grid-template-columns:1fr}}   /* --bp-mid; was 900px */
+body[data-page="overview"] .ov-mini{min-height:120px; display:flex; align-items:center; justify-content:center; color:var(--muted); font:600 12px Inter}
+body[data-page="overview"] .ov-table{width:100%; border-collapse:collapse; margin-top:18px; font:500 12px Inter}
+body[data-page="overview"] .ov-table th{font:700 9.5px Archivo; letter-spacing:.1em; text-transform:uppercase; color:var(--blue-70);
+  background:var(--blue-10); text-align:right; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap}
+body[data-page="overview"] .ov-table th:first-child{text-align:left}
+body[data-page="overview"] .ov-table td{padding:8px 10px; border-bottom:1px solid var(--line); text-align:right;
+  background:var(--white); font-variant-numeric:tabular-nums; color:var(--ink)}
+body[data-page="overview"] .ov-table td:first-child{text-align:left; font-weight:600}
+body[data-page="overview"] .ov-table td.pos{color:var(--pos)} body[data-page="overview"] .ov-table td.neg{color:var(--neg)}
+body[data-page="overview"] .ov-table tbody tr.parent.expandable td:first-child{cursor:pointer; user-select:none}
+body[data-page="overview"] .ov-table .caret{display:inline-block; width:14px; color:var(--blue-70); transition:transform .12s}
+body[data-page="overview"] .ov-table tr.open .caret{transform:rotate(90deg)}
+body[data-page="overview"] .ov-table tr.child{display:none}
+body[data-page="overview"] .ov-table tr.child.show{display:table-row}
+body[data-page="overview"] .ov-table tr.child td{background:var(--paper); font-weight:500; color:var(--muted); border-bottom:1px solid var(--line)}
+body[data-page="overview"] .ov-table tr.child td:first-child{padding-left:30px; font-weight:500; color:var(--muted)}
+body[data-page="overview"] .ov-table .tot td{font-weight:700; color:var(--blue-100); background:#DFEBFB; border-top:2px solid var(--blue-40, #7CD3FF); border-bottom:0}
+/* merged type column (product category table): one vertically-centred cell per type */
+body[data-page="overview"] .ov-table td.typecell{vertical-align:middle; text-align:center; font:800 10.5px Archivo; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--blue-100); background:var(--blue-10); border-right:1px solid var(--line)}
+body[data-page="overview"] .ov-table td.catcell{text-align:right; font-weight:500}
+body[data-page="overview"] .ov-table tr.tot td.catcell{font-weight:700}
+/* explorer (plants & materials): search + picked chips */
+body[data-page="overview"] .ov-exp-grid{display:flex; flex-direction:column; gap:28px}
+body[data-page="overview"] .ov-search{position:relative}
+body[data-page="overview"] .ov-search input{width:100%; border:1px solid var(--line); border-radius:9px; padding:8px 11px;
+  font:500 12.5px Inter; background:#fff; color:var(--ink)}
+body[data-page="overview"] .ov-results{position:absolute; z-index:30; left:0; right:0; top:calc(100% + 4px); background:#fff;
+  border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow); max-height:240px; overflow:auto; display:none}
+body[data-page="overview"] .ov-results.show{display:block}
+body[data-page="overview"] .ov-results button{display:block; width:100%; text-align:left; border:0; background:#fff; padding:8px 11px;
+  font:500 12px Inter; color:var(--ink); cursor:pointer}
+body[data-page="overview"] .ov-results button:hover{background:var(--blue-10)}
+body[data-page="overview"] .ov-table.compact{font-size:11.5px}
+body[data-page="overview"] .ov-table.compact th, body[data-page="overview"] .ov-table.compact td{padding:6px 8px}
+
+/* ===== cross-filter (Aggregates tab) ===== */
+body[data-page="overview"] tr.xfrow td{cursor:pointer}
+body[data-page="overview"] tr.xfrow:hover td{background:var(--paper)}
+body[data-page="overview"] tr.xfrow.xfsel td:first-child{box-shadow:inset 3px 0 0 var(--blue-70); font-weight:700; color:var(--blue-100)}
+body[data-page="overview"] .ov-legend .it[data-xf-f]{cursor:pointer; border-radius:7px; padding:3px 7px; margin:-3px -1px; border:1px solid transparent}
+body[data-page="overview"] .ov-legend .it[data-xf-f]:hover{background:var(--paper)}
+body[data-page="overview"] .ov-legend .it.xfsel{border-color:var(--blue-70); font-weight:700}
+body[data-page="overview"] .xf-bar{display:none; flex-wrap:wrap; align-items:center; gap:8px}
+body[data-page="overview"] .xf-bar.show{display:flex}
+body[data-page="overview"] .xf-bar .lead{font:700 9.5px Archivo; letter-spacing:.14em; text-transform:uppercase; color:var(--blue-70); margin-right:2px}
+body[data-page="overview"] .xf-bar .grp{display:inline-flex; align-items:center; flex-wrap:wrap; gap:6px; background:var(--blue-10); border:1px solid var(--blue-20); border-radius:9px; padding:5px 9px}
+body[data-page="overview"] .xf-bar .grp .gl{font:700 8.5px Archivo; letter-spacing:.1em; text-transform:uppercase; color:var(--blue-70)}
+body[data-page="overview"] .xf-bar .grp .pk{display:inline-flex; align-items:center; gap:5px; background:#fff; border:1px solid var(--blue-20); border-radius:7px; padding:3px 7px; font:600 11px Inter; color:var(--blue-100)}
+body[data-page="overview"] .xf-bar .grp .pk button{border:0; background:transparent; color:var(--neg); font:700 12px Inter; cursor:pointer; padding:0; line-height:1}
+body[data-page="overview"] .xf-bar .clr{border:1px solid var(--line); background:#fff; color:var(--neg); font:700 11px Inter; padding:6px 11px; border-radius:8px; cursor:pointer; margin-left:auto}
+body[data-page="overview"] .xf-bar .clr:hover{border-color:var(--neg); background:var(--neg-bg)}
+body[data-page="overview"] .xf-note{font:600 10.5px Inter; color:var(--muted); background:var(--paper); border:1px dashed var(--line); border-radius:8px; padding:6px 10px; display:inline-block; margin-top:10px}
+body[data-page="overview"] .xf-search{flex:0 1 240px; min-width:130px}
+/* panel header row: title grows and its sub wraps INSIDE it; the controls
+   (segs + search) never drop to a second line */
+body[data-page="overview"] .ov-phead{display:flex; align-items:flex-start; gap:14px; flex-wrap:nowrap}
+body[data-page="overview"] .ov-phead > .ph-t{flex:1 1 auto; min-width:0}
+body[data-page="overview"] .ov-phead > .seg{flex:0 0 auto; flex-wrap:nowrap}
+body[data-page="overview"] .ov-phead > .xf-search{flex:0 1 240px}
+/* top filter dropdowns (controls panel) — searchable multi-select per dimension */
+body[data-page="overview"] .xf-drops{display:none; flex-wrap:wrap; gap:8px; margin-top:14px; padding-top:12px; border-top:1px dashed var(--line)}
+body[data-page="overview"] .xf-drops.show{display:flex}
+body[data-page="overview"] .xf-dd{position:relative}
+body[data-page="overview"] .xf-dd .trig{display:inline-flex; align-items:center; gap:7px; border:1px solid var(--line); background:#fff; border-radius:9px;
+  padding:7px 11px; font:600 11.5px Inter; color:var(--ink); cursor:pointer; max-width:250px}
+body[data-page="overview"] .xf-dd .trig .fl{font:700 8.5px Archivo; letter-spacing:.1em; text-transform:uppercase; color:var(--blue-70); white-space:nowrap}
+body[data-page="overview"] .xf-dd .trig .fv{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:140px}
+body[data-page="overview"] .xf-dd .trig .n{background:var(--blue-70); color:#fff; border-radius:8px; font:700 10px Inter; padding:1px 7px}
+body[data-page="overview"] .xf-dd .trig .ar{color:var(--muted); font-size:9px}
+body[data-page="overview"] .xf-dd .trig:hover{border-color:var(--blue-20)}
+body[data-page="overview"] .xf-dd.on .trig{border-color:var(--blue-70)}
+body[data-page="overview"] .xf-dd.has .trig{border-color:var(--blue-70)}
+body[data-page="overview"] .xf-dd.has .trig .fv{font-weight:700; color:var(--blue-100)}
+body[data-page="overview"] .xf-dd .pop{display:none; position:absolute; top:calc(100% + 6px); left:0; z-index:60; width:290px; background:#fff;
+  border:1px solid var(--line); border-radius:12px; box-shadow:0 12px 30px rgba(1,30,106,.14); padding:10px}
+body[data-page="overview"] .xf-dd.on .pop{display:block}
+body[data-page="overview"] .xf-dd .pop input{width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:8px; padding:7px 10px;
+  font:500 12px Inter; background:#fff; color:var(--ink)}
+body[data-page="overview"] .xf-dd .opts{max-height:260px; overflow:auto; margin-top:8px; display:flex; flex-direction:column; gap:2px}
+body[data-page="overview"] .xf-dd .opts button{display:flex; align-items:center; gap:8px; width:100%; text-align:left; border:0; background:transparent;
+  border-radius:7px; padding:7px 8px; font:500 12px Inter; color:var(--ink); cursor:pointer}
+body[data-page="overview"] .xf-dd .opts button:hover{background:var(--paper)}
+body[data-page="overview"] .xf-dd .opts button .ck{width:14px; height:14px; flex:0 0 14px; border:1.5px solid var(--line); border-radius:4px;
+  display:inline-flex; align-items:center; justify-content:center; font:700 9px Inter; color:#fff}
+body[data-page="overview"] .xf-dd .opts button.sel .ck{background:var(--blue-70); border-color:var(--blue-70)}
+body[data-page="overview"] .xf-dd .opts button.sel{font-weight:700; color:var(--blue-100)}
+body[data-page="overview"] .xf-dd .opts .none{padding:8px; color:var(--muted); font:600 11.5px Inter}
+body[data-page="overview"] .xf-dd .foot{margin-top:6px; font:600 10.5px Inter; color:var(--muted)}
+body[data-page="overview"] .xf-dd .clr1{margin-top:6px; border:0; background:transparent; color:var(--neg); font:700 11px Inter; cursor:pointer; padding:4px 6px}
+/* ---- §P inventoryreport --------------------------------------------------
    This page fills the viewport: the PDF frame takes whatever is left after the
    toolbar. That needs a height chain from <body> down, which is why these two
    rules target body itself — the one case §3 of PLAN.md warns has to be
@@ -12645,6 +13014,1599 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
     segKpiInit();
     segPageInit();
     wire();
+  }
+});
+</script>
+
+<!-- ===================== §P overview ===================== -->
+<!-- The Executive Overview. Its markup is the page's own, unchanged apart
+     from the header's data-act handlers and class="seg pills"; the 234 style
+     rules it used to carry are §A4, scoped to body[data-page="overview"]. -->
+<template id="tpl-overview">
+<header class="bar">
+  <div class="brand">
+    <span class="mark">AMRIZE</span>
+    <span>
+      <span class="title">Executive Overview</span>
+      <span class="sub">Aggregates &amp; Ready-Mix at a glance · CAD</span>
+    </span>
+  </div>
+  <button class="ghost" data-act="home" title="Back to the suite home">&#8962; Home</button>
+  <button class="ghost" data-act="help" title="How to read this page">? Help</button>
+  <button class="ghost" data-act="settings" title="Choose the Google Sheets this page reads from, including the two history sheets">&#9881; Data sheet</button>
+  <button class="ghost" id="dqBtn" title="Rows the lookups could not match, on both lines">&#9888; Data quality <span class="dq-n" id="dqN" hidden></span></button>
+  <button class="ghost" id="syncBtn" title="Re-read every source sheet and lookup tab and rebuild this page for every user">&#8635; Update from source</button>
+</header>
+
+<!-- No full-screen overlay on this page. Work in progress is reported by the
+     shared AmrProgress pill (bottom-left) and by each panel's own quiet
+     "Loading…" line, so the page is usable from the first paint. -->
+
+
+<div class="ov-wrap">
+
+  <div class="ov-banner" id="banner"></div>
+
+  <!-- ===== Tabs, at the very top ===== -->
+  <div class="ov-tabs" id="ovTabs" role="tablist" aria-label="Business line">
+    <button class="ov-tab" data-tab="agg" role="tab" aria-selected="true">Aggregates</button>
+    <button class="ov-tab" data-tab="rmx" role="tab" aria-selected="false">Ready-Mix</button>
+  </div>
+
+  <!-- ===== Controls — drive both tabs ===== -->
+  <div class="panel">
+    <div class="ov-controls">
+      <div class="ov-ctl-left">
+        <div>
+          <p class="eyebrow" style="margin-bottom:8px">Period</p>
+          <!-- Four spans, one control. The two "Prev month" buttons are the
+               same two shapes one month back, computed in the browser from the
+               month cube — which is also the only place the Product Category
+               tabs line up, because they are always LAST month's. They stay
+               disabled until the cube holds the month they need. -->
+          <div class="seg pills" id="periodSeg" role="group" aria-label="Reporting period">
+            <button data-period="MTD" aria-pressed="true">This month (MTD)</button>
+            <button data-period="YTD" aria-pressed="false">Year to date (YTD)</button>
+            <button data-period="PMTD" aria-pressed="false">Prev month (MTD)</button>
+            <button data-period="PYTD" aria-pressed="false">Prev month (YTD)</button>
+          </div>
+        </div>
+        <div class="grow">
+          <p class="eyebrow" style="margin-bottom:8px">Markets <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)">· pick one market, or all</span></p>
+          <div class="chips" id="marketChips"></div>
+        </div>
+        <div id="refineWrap" style="display:none">
+          <p class="eyebrow" style="margin-bottom:8px">Land / Docks <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)">· none selected = both</span></p>
+          <div class="chips" id="refineChips"></div>
+        </div>
+      </div>
+      <!-- Month window. Period and this slider are two views of ONE thing:
+           picking MTD or YTD moves the handles, and moving the handles off
+           either span is what "custom" means — there is no third button. -->
+      <div class="ov-ctl-right">
+        <div class="ov-win pending" id="winWrap">
+          <div class="ov-win-head">
+            <p class="eyebrow" style="margin:0">Months</p>
+            <span class="ov-win-val" id="winVal">—</span>
+            <span class="ov-win-n" id="winN"></span>
+          </div>
+          <div class="ov-win-track" id="winTrack">
+            <div class="rail"></div><div class="fill" id="winFill"></div>
+            <input type="range" id="winFrom" min="0" max="1" step="1" value="0" aria-label="First month">
+            <input type="range" id="winTo"   min="0" max="1" step="1" value="1" aria-label="Last month">
+          </div>
+          <div class="ov-win-ends"><span id="winLo"></span><span id="winHi"></span></div>
+          <div class="ov-win-quick" id="winQuick"></div>
+        </div>
+      </div>
+    </div>
+    <!-- top filter dropdowns: the same cross-filters, reachable without scrolling -->
+    <div class="xf-drops" id="xfDrops"></div>
+  <div class="xf-drops" id="rxfDrops"></div>
+  </div>
+
+  <!-- Active cross-filters (Aggregates tab) — appears once anything is clicked -->
+  <div class="panel xf-bar" id="xfBar"></div>
+  <div class="panel xf-bar" id="rxfBar"></div>
+
+  <!-- ============================ AGGREGATES TAB ============================ -->
+  <div class="ov-tabpanel" id="panelAgg" role="tabpanel">
+
+    <div>
+      <div class="kpi-row" id="kpiAgg"></div>
+    </div>
+
+    <!-- Month by month (Aggregates) — sits directly under the KPIs; the window
+         is set by the Months slider in the top controls. -->
+    <div class="ov-panel" id="colAggTrend">
+      <div class="ov-phead">
+        <div class="ph-t">
+          <h3>Month by month</h3>
+          <p class="sub" id="aggTrendSub">Volume, ASP and PPI by month, each month against the same month last year.</p>
+        </div>
+        <div class="seg pills" id="aggGrainSeg" role="group" aria-label="Trend grain">
+          <button data-grain="M" aria-pressed="true">Month</button>
+          <button data-grain="Q" aria-pressed="false">Quarter</button>
+        </div>
+      </div>
+      <div id="aggTrendBody"><div class="ov-mini">Loading…</div></div>
+    </div>
+
+    <!-- SAP / USGAAP KPI cards from the uploaded EBITDA workbook (Aggregates statements) -->
+    <div class="ov-panel" id="colAggKpi">
+      <div class="ov-kpihead">
+        <div>
+          <h3>KPIs — SAP / USGAAP</h3>
+          <p class="sub" id="aggKpiMeta">From the AGG &amp; RMX EBITDA workbook (Aggregates plant statements)</p>
+        </div>
+        <div class="ov-kpisel" id="aggKpiSelWrap" style="display:none">
+          <label for="aggKpiSheet">Region</label>
+          <select id="aggKpiSheet"></select>
+        </div>
+      </div>
+      <div id="aggKpiBody"></div>
+    </div>
+
+    <div class="ov-panel" id="colAgg">
+      <div class="ov-phead">
+        <div class="ph-t">
+          <h3 id="aggBdTitle">Market breakdown</h3>
+          <p class="sub" id="aggBdSub">Volume share, volume vs last year, and price movement by market.</p>
+        </div>
+        <div class="seg pills" id="bdModeSeg" role="group" aria-label="Breakdown level" style="display:none">
+          <button data-bd="MARKET" aria-pressed="true">Markets</button>
+          <button data-bd="SUBMARKET1" aria-pressed="false">Submarkets</button>
+        </div>
+        <div class="ov-search xf-search">
+          <input id="subSearchIn" type="text" placeholder="Filter by a submarket…" autocomplete="off">
+          <div class="ov-results" id="subSearchRes"></div>
+        </div>
+      </div>
+      <div id="aggBody"></div>
+    </div>
+
+    <!-- Plant type / Product class / Material family (from the Price & Volume report) -->
+    <div class="ov-panel" id="colDims">
+      <h3>Plant type &amp; product class</h3>
+      <p class="sub" id="dimSub">CY volume share, ASP % inc and PPI by dimension.</p>
+      <div class="ov-phead" style="align-items:center; gap:12px">
+        <div class="seg pills" id="dimTabs" role="group" aria-label="Dimension">
+          <button data-dim="PLANT_TYPE" aria-pressed="true">Plant Type</button>
+          <button data-dim="PROD_CLASS" aria-pressed="false">Product Class</button>
+        </div>
+        <div class="ov-search xf-search">
+          <input id="dimSearchIn" type="text" placeholder="Filter by a value…" autocomplete="off">
+          <div class="ov-results" id="dimSearchRes"></div>
+        </div>
+      </div>
+      <div id="dimBody" style="margin-top:14px"><div class="ov-mini">Loading…</div></div>
+    </div>
+
+    <!-- Growth bridges — the same two waterfalls as the Price & Volume report -->
+    <div class="ov-panel" id="colBridge">
+      <h3>Growth bridges</h3>
+      <p class="sub" id="bridgeSub">How revenue and price moved vs last year.</p>
+      <div class="ov-cols">
+        <div>
+          <p class="ov-lab">Revenue growth</p>
+          <div class="ov-cbox xtall"><canvas id="br_rev"></canvas></div>
+        </div>
+        <div id="aspCol">
+          <p class="ov-lab">ASP&nbsp;% growth</p>
+          <div class="ov-cbox xtall" id="aspBox"><canvas id="br_asp"></canvas></div>
+        </div>
+      </div>
+      <p class="ov-foot" id="bridgeNote" style="margin-top:12px"></p>
+    </div>
+
+    <!-- Plant & material explorer -->
+    <div class="ov-panel" id="colExplore">
+      <h3>Plants &amp; materials</h3>
+      <p class="sub" id="expSub">Pick plants or materials and compare them against the total for the current selection.</p>
+      <div id="expBody"><div class="ov-mini">Loading…</div></div>
+    </div>
+
+    <!-- Customers -->
+    <div class="ov-panel" id="colCust">
+      <div class="ov-phead">
+        <div class="ph-t">
+          <h3>Top 10 customers</h3>
+          <p class="sub" id="custScope">All markets · by customer parent</p>
+        </div>
+        <div class="ov-search xf-search">
+          <input id="custSearchIn" type="text" placeholder="Search &amp; filter customers…" autocomplete="off">
+          <div class="ov-results" id="custSearchRes"></div>
+        </div>
+        <div class="seg pills" id="custSplit" role="group" aria-label="Segment split">
+          <button data-split="off" aria-pressed="true">By customer</button>
+          <button data-split="on" aria-pressed="false">Split by segment</button>
+        </div>
+      </div>
+      <div id="custBody"><div class="ov-mini">Loading customers…</div></div>
+    </div>
+
+    <!-- Fuel surcharge -->
+    <div class="ov-cols" id="fscRow">
+      <div class="ov-panel" id="colFsc">
+        <h3>Fuel surcharge — by market</h3>
+        <p class="sub" id="fscSub">All markets, always · $/applied tonne · from the Fuel Surcharge sheet</p>
+        <div id="fscBody"><div class="ov-mini">Loading fuel surcharge…</div></div>
+      </div>
+      <div class="ov-panel" id="colFscCust">
+        <h3>Top 10 customers — fuel surcharge</h3>
+        <p class="sub" id="fscCustScope">All markets · CY fuel-surcharge dollars · from Price &amp; Volume customer data</p>
+        <div id="fscCustBody"><div class="ov-mini">Loading…</div></div>
+      </div>
+    </div>
+
+    <p class="ov-foot" id="foot"></p>
+  </div>
+
+  <!-- ============================ READY-MIX TAB ============================ -->
+  <div class="ov-tabpanel" id="panelRmx" role="tabpanel" hidden>
+
+    <div>
+      <div class="kpi-row" id="kpiRmx"></div>
+    </div>
+
+    <!-- Month by month (Ready-Mix) — same renderer as the Aggregates tab, plus
+         the Extras / VAP build-up wherever the live cross-report covers the
+         month. Window comes from the Months slider in the top controls. -->
+    <div class="ov-panel" id="colRmxTrend">
+      <div class="ov-phead">
+        <div class="ph-t">
+          <h3>Month by month</h3>
+          <p class="sub" id="rmxTrendSub">Volume, ASP and PPI by month, each month against the same month last year.</p>
+        </div>
+        <div class="seg pills" id="rmxGrainSeg" role="group" aria-label="Trend grain">
+          <button data-grain="M" aria-pressed="true">Month</button>
+          <button data-grain="Q" aria-pressed="false">Quarter</button>
+        </div>
+      </div>
+      <div id="rmxTrendBody"><div class="ov-mini">Loading…</div></div>
+    </div>
+
+    <!-- SAP / USGAAP KPI cards from the uploaded EBITDA workbook (RMX Summary blocks) -->
+    <div class="ov-panel" id="colRmxKpi">
+      <div class="ov-kpihead">
+        <div>
+          <h3>KPIs — SAP / USGAAP</h3>
+          <p class="sub" id="rmxKpiMeta">From the RMX Summary tab of the EBITDA workbook · Ready-Mix (m³)</p>
+        </div>
+      </div>
+      <div id="rmxKpiBody"></div>
+    </div>
+
+    <div class="ov-panel" id="colRmx">
+      <div class="ov-phead">
+        <div class="ph-t">
+          <h3 id="rmxBdTitle">Market breakdown</h3>
+          <p class="sub" id="rmxBdSub">Volume share, volume vs last year, and price movement by market.</p>
+        </div>
+        <div class="seg pills" id="rmxBdModeSeg" role="group" aria-label="Breakdown level" style="display:none">
+          <button data-rbd="MARKET" aria-pressed="true">Markets</button>
+          <button data-rbd="SUBMARKET" aria-pressed="false">Submarkets</button>
+        </div>
+        <div class="ov-search xf-search">
+          <input id="rmxSubSearchIn" type="text" placeholder="Filter by a submarket…" autocomplete="off">
+          <div class="ov-results" id="rmxSubSearchRes"></div>
+        </div>
+      </div>
+      <div id="rmxBody"></div>
+    </div>
+
+    <!-- Submarket / Segment / Strength / Class (from the RMX raw data, plant x mix PPI) -->
+    <div class="ov-panel" id="colRmxDims">
+      <h3>Breakdown tables</h3>
+      <p class="sub" id="rmxDimSub">CY volume share, volume vs last year, BASE ASP % inc and PPI by dimension.</p>
+      <div class="ov-phead" style="align-items:center; gap:12px">
+        <div class="seg pills" id="rmxDimTabs" role="group" aria-label="Dimension">
+          <button data-rdim="SUBMARKET" aria-pressed="true">Submarket</button>
+          <button data-rdim="SEGMENT" aria-pressed="false">Project Segment</button>
+          <button data-rdim="STRENGTH" aria-pressed="false">Strength Class</button>
+          <button data-rdim="CLASS" aria-pressed="false">Product Class</button>
+          <button data-rdim="PLANT" aria-pressed="false">Plant</button>
+        </div>
+        <div class="ov-search xf-search">
+          <input id="rmxDimSearchIn" type="text" placeholder="Filter by a value…" autocomplete="off">
+          <div class="ov-results" id="rmxDimSearchRes"></div>
+        </div>
+      </div>
+      <div id="rmxDimBody" style="margin-top:14px"><div class="ov-mini">Loading…</div></div>
+    </div>
+
+    <!-- Product Category (Ready-Mix, from the Product Segment sheet) -->
+    <div class="ov-panel" id="colProdCat">
+      <h3>Product category</h3>
+      <p class="sub" id="pcatSub">VAP &amp; Conventional split · Ready-Mix (m³) · from the RMX - Product Segment sheet</p>
+      <div id="pcatBody"><div class="ov-mini">Loading…</div></div>
+    </div>
+
+    <!-- ASP build-up: BASE / EXTRAS / VAP / ALL-IN, one denominator -->
+    <div class="ov-panel" id="colRmxAsp">
+      <h3>ASP build-up</h3>
+      <p class="sub" id="rmxAspSub">Base, Extras, VAP and All-in · every row on the same total concrete m³.</p>
+      <div id="rmxAspBody"><div class="ov-mini">Loading…</div></div>
+    </div>
+
+    <!-- Fuel recovery (Ready-Mix, from the RMX Extra Raw Data surcharge lines) -->
+    <div class="ov-panel" id="colRmxFuel">
+      <h3>Fuel recovery</h3>
+      <p class="sub" id="rmxFuelSub">Surcharge recovered per m³, this year against last.</p>
+      <div id="rmxFuelBody"><div class="ov-mini">Loading…</div></div>
+    </div>
+
+    <!-- Extras & VAP (Ready-Mix, from the RMX raw data) -->
+    <div class="ov-panel" id="colExtras">
+      <h3>Extras &amp; VAP</h3>
+      <p class="sub" id="extSub">By extra type, split into the Extras and VAP streams · from RMX - Price &amp; Volume</p>
+      <div id="extBody"><div class="ov-mini">Loading…</div></div>
+    </div>
+
+    <p class="ov-foot" id="footRmx"></p>
+  </div>
+
+</div>
+
+<!-- Month-history status is reported through the shared AmrProgress pill,
+     which mounts itself; nothing to place here. -->
+
+<div class="dq-back" id="dqBack"></div>
+<div class="dq-modal" id="dqModal" role="dialog" aria-modal="true" aria-label="Data quality">
+  <button class="dq-x" id="dqX" title="Close">&times;</button>
+  <h3>Data quality</h3>
+  <p class="sub">Every row the lookups could not match, on both lines, across all markets and every month
+    the cube holds — never filtered by what is selected on the page. This is about fixing the lookup tabs.
+    The lookups are read from the <b>live</b> Price&nbsp;&amp;&nbsp;Volume and RMX sheets, never the closed-year
+    history books, so a row added here fixes the current data straight away.</p>
+  <div style="display:flex;align-items:center;gap:10px;margin:0 0 14px">
+    <button class="lk-btn" id="dqReread">&#8635; Re-read the lookup tabs</button>
+    <span style="font:500 11px Inter;color:var(--muted)">Use this if someone edited a lookup in Sheets directly.</span>
+  </div>
+  <div id="dqBody"><div class="ov-mini">Reading the month cube…</div></div>
+</div>
+</template>
+
+<script>
+/* ---- §P overview — registration --------------------------------------------
+   Ported from Page_Overview.html — 6,021 lines, the largest page in the suite.
+   TRANSFORMED, not retyped: the page's script block is here whole and every
+   edit is listed below, so reviewing this means reviewing the list.
+
+   CHUNK 8 LANDS THE SHELL ONLY. The panels are chunk 9 — see the CHUNK 9 SEAM
+   block at the top of boot(). What works after this commit: the four Period
+   buttons, the Months slider, the market chips, both tabs, the month cube and
+   its history pill, the boot sequence and Update from source. Every panel sits
+   at its own "Loading…" line, which is what it shows today until a painter
+   answers.
+
+   The edits:
+
+     · the DOMContentLoaded handler became a direct boot() call at the END of
+       the body — the position the event gave it, and the chunk 5 rule
+     · the header's inline on*= handlers became data-act delegation
+     · the script tag that printed window.APP_URL from the escaping scriptlet
+       form is gone. §D reads the URL off a body data attribute instead; a
+       server value printed into JavaScript is the hazard chunk 2 wrote up,
+       and naming the scriptlet in prose rather than writing one is the other
+       half of it — Apps Script evaluates a scriptlet inside a comment too
+     · eight class="seg" became class="seg pills" — this page's segmented
+       control IS §A3's wrapping variant, and the one thing it added (the
+       disabled state) went to §A3 rather than into the page block
+     · 234 style rules became §A4, scoped to body[data-page="overview"]
+
+   NOT changed, deliberately: wireCube() still polls for AmrCube even though §E
+   guarantees it, and IS_LIVE is still computed here rather than read from
+   AMR.live. Both are one line and neither is what a 5,000-line port should
+   also be rewriting.                                                        */
+AMR.page('overview', {
+  title: 'Amrize Commercial Suite — Executive Overview',
+  /* Chart.js (with the datalabels plugin) for every panel's charts, SheetJS
+     because AmrKpi parses the uploaded EBITDA workbooks. No html2canvas —
+     this page exports no slide. */
+  libs: ['chart', 'xlsx'],
+  help: `<h3>What this page is</h3>
+<p>A single at-a-glance view of the two commercial lines. <b>Aggregates (AGG)</b> comes from the AGG - Price &amp; Volume tool; <b>Ready-Mix (RMX)</b> comes from the RMX - Price &amp; Volume and RMX - Product Segment tools. Each line has its own tab and they are <b>never added together</b> — Aggregates is in tonnes, Ready-Mix in m³.</p>
+<h3>The controls</h3>
+<p>At the top, <b>Period</b> has four settings: this month (MTD), the year so far (YTD), and the same two shapes one month back — <b>Prev month (MTD)</b> and <b>Prev month (YTD)</b>. The first two are the numbers the Price &amp; Volume and RMX tools report. The Prev-month pair, and any span you drag the <b>Months</b> slider onto, are computed in your browser from the month history, so they need no server call at all. Period and the slider are one control: pressing a button moves the handles, and moving the handles onto one of those four spans lights the button back up. <b>Markets</b> lets you focus on one market, a few, or all of them. The same choice applies to whichever tab you are on.</p>
+<h3>Why a panel sometimes isn't there</h3>
+<p>A panel that has no numbers for what you have selected is <b>not shown</b> — no empty frame, no box explaining itself. Change the period, the market or the filters and it comes straight back. Three things are deliberately narrower than the rest: the <b>SAP / USGAAP cards</b> are statement figures and exist per month or per year only, so they are not shown for a custom span; the <b>fuel-surcharge</b> panels read a live-book field and answer for the current year; and <b>Product category</b> is shown only under the two <b>Prev-month</b> settings, because the Product Segment sheet's tabs are always last month's and reading them under a current-month heading was simply wrong.</p>
+<h3>The numbers</h3>
+<p><b>Volume</b> = tonnes (Aggregates) or m³ (Ready-Mix), this year vs last, with the % change in the box beside it. <b>ASP</b> = average selling price, again with its % change beside it. <b>PPI</b> = the price index (the pure price move, before mix). The <b>growth bridges</b> on the Aggregates tab are the same two waterfalls as the Price &amp; Volume report: revenue split into volume and price impact, and ASP% split into PPI plus the mix effects.</p>
+<h3>SAP / USGAAP KPI cards</h3>
+<p>If the <b>AGG &amp; RMX EBITDA workbook</b> (and the MB/SK one) has been uploaded on the AGG - Price &amp; Volume or RMX - Product Segment page, the cards appear here automatically — no re-upload needed. The Aggregates tab reads the plant-statement tabs; the Ready-Mix tab reads the RMX Summary blocks (that data is Ready-Mix, even though both come from the same workbook).</p>
+<h3>Drill-downs</h3>
+<p>Pick a single market and the breakdown panels pivot to <b>submarkets</b> inside it. The Aggregates tab adds <b>Plant Type / Product Class / Material Family</b> views and a <b>Plants &amp; materials</b> search where you can compare individual plants or materials against the total. The Ready-Mix tab adds <b>Submarket / Project Segment / Strength Class / Product Class / Plant</b> breakdown tables, the <b>ASP build-up</b>, the <b>Extras &amp; VAP</b> tables and the <b>Product Category</b> view. Every drill-down shows volume change, ASP % inc and — where the source carries it — PPI.</p>
+<h3>Cross-filtering (Aggregates tab)</h3>
+<p><b>Click any value</b> — a submarket, plant type, product class, plant, material, or customer, in a table row, pie slice, bar or legend — and <b>every panel filters by it</b>, including the panel you clicked in. Your active filters appear as chips in a bar under the controls; remove one with its ×, or press <b>Clear filters</b>. To combine values within the same dimension (say, two plant types), use the <b>search box on that panel</b> — it lists everything that would be available if that dimension's own filter were lifted, so you can add a second value after the panel has collapsed to your first pick. The <b>Land / Docks</b> toggle appears beside the markets when <b>Southwest</b> is selected — pick Land or Docks to narrow to it (none selected = both). On the two server settings (MTD / YTD) the <b>Fuel Surcharge panels and the SAP/USGAAP cards are deliberately exempt</b> — they always show the unfiltered scope; on a Prev-month or custom span the surcharge panels are computed here and do follow the filters. Under filters, PPI everywhere uses the customer-report method (Plant + Material coverage), which stays exact at any slice depth.</p>
+<h3>Good to know</h3>
+<p>These are the same figures the full tools show — this page just brings the headlines together. For the full customer drill-down and slide exports, open the individual tools from the switcher (top-right). Numbers refresh when someone presses <b>&#8635; Update from source</b> on the Price &amp; Volume, RMX or Product Segment page.</p>`,
+
+  boot: function(root){
+
+    /* The header's Home / Help / Data sheet buttons, by delegation. */
+    root.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!b) return;
+      switch (b.getAttribute('data-act')){
+        case 'home':     AMR.nav.home();     break;
+        case 'help':     AMR.openHelp();     break;
+        case 'settings': AMR.openSettings(); break;
+      }
+    });
+
+    /* ---- CHUNK 9 SEAM -----------------------------------------------------
+       Chunk 8 is the shell: this page's markup, its CSS, the period model, the
+       month window and the AmrCube wiring. The PANELS — every painter, both
+       cross-filter engines, the fifteen chart registries, the SAP/USGAAP
+       cards, customers, fuel surcharge, product category and the data-quality
+       sheet — are chunk 9.
+
+       These ten names are the whole seam: everything the shell calls into, and
+       the one piece of painter state the market chips reset. Chunk 9 replaces
+       every one of them with the real thing and deletes this block. Nothing
+       else in the port knows the difference; grep CHUNK 9 SEAM to find it. */
+    var RXF = { SUBMARKET:[], SEGMENT:[], STRENGTH:[], CLASS:[], PLANT:[] };
+    function renderTab(){ if(STATE.data) resetPanels(); }
+    function renderActiveTab(){
+      var agg=(STATE.tab==='agg');
+      $('panelAgg').hidden=!agg;
+      $('panelRmx').hidden=agg;
+      renderTab();
+    }
+    function renderXfBar(){}
+    function renderRxfBar(){}
+    function renderTrendNow(){}
+    function renderTrendSoon(){}
+    function dqBadge(){}
+    function loadWorkbooks(){}
+    function afterLookupWrite(done){ CACHE={}; try{ boot(); }catch(e){ load(); } done && done(); }
+    /* ---- end CHUNK 9 SEAM ---------------------------------------------- */
+
+    var IS_LIVE = (typeof google !== 'undefined' && google.script && google.script.run);
+
+    /* ---- state ----
+       period  = the SERVER's period, and only ever 'MTD' or 'YTD'. That is all
+                 PV.getReport / RMX.getKeys / the Product Segment tabs know about.
+       pick    = which Period BUTTON is lit: MTD, YTD, PMTD, PYTD — or null when
+                 the slider sits on a span that is none of them.
+       win     = the numbers come from the month cube rather than the server. True
+                 for a custom window AND for both Prev-month picks, which are the
+                 same shapes one month back and so cannot come off the server. */
+    var STATE = { period:'MTD', pick:'MTD', sel:'ALL', split:false, tab:'agg', data:null, win:false };
+    /* pick -> the server payload it needs. Prev-month MTD still wants the MTD
+       payload: the Product Segment sheet splits MTD and YTD into their own tabs
+       and those tabs are ALREADY last month's, so the MTD tab is exactly what a
+       Prev-month MTD view should read. */
+    var PICK_SERVER = { MTD:'MTD', YTD:'YTD', PMTD:'MTD', PYTD:'YTD' };
+    function isPrevPick(){ return STATE.pick==='PMTD' || STATE.pick==='PYTD'; }
+    var CH = { bd:[], dim:[], exp:[], bridge:[], cust:[], fsc:[], fscc:[], seg:[], pcat:[], ext:[],
+               rdim:[], rasp:[], rtrend:[], atrend:[], rfuel:[] };   // live Chart instances, per section
+    var CACHE  = {};                       // period -> overview payload
+    var CUST_CACHE = {};                   // period|scope|split -> MERGED customers payload
+    var RAW_CUST = {};                     // JSON(params) -> raw getCustomerReport payload
+    var FSC_DATA = null;                   // getFscData payload (one call, both periods inside)
+    var custTimer = null;
+
+    /* ---- cross-filter state (Aggregates tab) ----
+       Clicking any value on the Aggregates tab filters EVERY panel by it —
+       including the panel it was clicked in (full filtering, own field too).
+       Adding more values within a field is done through each panel's search,
+       which is fed by server-side options computed with that field's own
+       filter lifted. Market stays in STATE.sel (single or All) and is fed
+       into the engine as its MARKET filter. */
+    var XF_FIELD_LABEL = { MARKET:'Market', SUBMARKET1:'Submarket', PLANT_TYPE:'Plant Type',
+                           MATERIAL_FAM:'Material Family', PROD_CLASS:'Product Class',
+                           PLANT:'Plant', MATERIAL:'Material', CUST_PARENT:'Customer' };
+    var XF = { SUBMARKET1:[], PLANT_TYPE:[], MATERIAL_FAM:[], PROD_CLASS:[], PLANT:[], MATERIAL:[], CUST_PARENT:[] };
+    var XREF = { values:[], mode:'include' };            // MB-submarket refine (Land / Docks)
+    var XF_CACHE = {}, XF_PEND = {}, XF_ERR = {}, xfTimer = null;
+    var BD_MODE = 'MARKET';                              // filtered breakdown card at All markets: 'MARKET' | 'SUBMARKET1'
+
+    var MONTH_NAMES=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+    /* fixed colour per market — the SAME palette the Price & Volume report uses */
+    var MK_COLORS = ['#011E6A','#185CB5','#74A9E8','#0E3D78','#2C74CC','#9DC4F0','#134C96','#4A8FE0','#C7DEF8'];
+    var CUST_COLORS = ['#011E6A','#0E3D78','#134C96','#185CB5','#2C74CC','#4A8FE0','#74A9E8','#9DC4F0','#C7DEF8','#5FC0FF'];
+    var OTHERS_COLOR = '#B8C4D6';
+    /* growth-bridge waterfall colours (same as the Price & Volume report) */
+    var BR = { total:'#011E6A', up:'#2C74CC', down:'#9DC4F0', grid:'#E6EEF8' };
+    /* clean, single-line market labels, PER TAB: the Aggregates side uses the
+       PV names, the Ready-Mix side uses the RMX names. Everything that shows a
+       market name (chips, KPI metas, legends, subtitles) goes through labelOf(),
+       so it follows the active tab automatically. */
+    var MKT_LABEL = {
+      agg: { sw:'SW Ontario', gta:'GTA AGG' },
+      rmx: { sw:'HNS SW',    gta:'Innocon' }
+    };
+
+    var CSS = getComputedStyle(document.documentElement);
+    var C = {
+      pos: (CSS.getPropertyValue('--pos')||'#1F7A4D').trim(),
+      neg: (CSS.getPropertyValue('--neg')||'#B23A48').trim(),
+      b70: (CSS.getPropertyValue('--blue-70')||'#185CB5').trim(),
+      b30: (CSS.getPropertyValue('--blue-30')||'#5FC0FF').trim(),
+      navy:(CSS.getPropertyValue('--blue-100')||'#011E6A').trim(),
+      b40: (CSS.getPropertyValue('--blue-40')||'#24A0FF').trim(),
+      ink: (CSS.getPropertyValue('--ink')||'#16243B').trim(),
+      muted:(CSS.getPropertyValue('--muted')||'#5C6B82').trim(),
+      line:(CSS.getPropertyValue('--line')||'#DCE6F2').trim()
+    };
+
+    /* ---- helpers ---- */
+    function $(id){ return document.getElementById(id); }
+    function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+    function fInt(n){ return Math.round(Number(n)||0).toLocaleString('en-US'); }
+    function fAsp(n){ var v=Number(n)||0; return (v<0?'-$':'$')+Math.abs(v).toFixed(2); }
+    function fMoneyFull(n){ var v=Math.round(Number(n)||0); return (v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US'); }
+    /* cents kept: on the PPI-excluded rows the whole point is that real volume
+       was booked against a few cents of revenue, and $0.18 rounded to "$0"
+       hides exactly the thing the table exists to show. */
+    function fMoneyCents(n){
+      var v=Number(n)||0, a=Math.abs(v);
+      return (v<0?'-$':'$') + (a<1000 ? a.toFixed(2)
+        : Math.round(a).toLocaleString('en-US'));
+    }
+    function fMoneySign(n){ var v=Math.round(Number(n)||0); return (v>=0?'+$':'−$')+Math.abs(v).toLocaleString('en-US'); }
+    function fPct(n){ var v=(Number(n)||0)*100; return (v>0?'+':'')+v.toFixed(1)+'%'; }
+    function fPctSign(n){ var v=(Number(n)||0)*100; return (v>=0?'+':'−')+Math.abs(v).toFixed(1)+'%'; }
+    function fPpi(n){ var v=(Number(n)||0)*100; return (v>0?'+':'')+v.toFixed(1)+'%'; }
+    function sign(n){ n=Number(n)||0; return n>0.00005?'up':(n<-0.00005?'down':'flat'); }
+    /* null means "there is no honest number here" - a month with no prior year,
+       or a window too long for the comparison to mean anything. It prints as a
+       muted dash, never as zero. */
+    function nDash(){ return '<span class="ov-na">\u2014</span>'; }
+    function nInt(n){ return (n==null) ? nDash() : fInt(n); }
+    function nPct(n){ return (n==null) ? nDash() : fPct(n); }
+    function nPpi(n){ return (n==null) ? nDash() : fPpi(n); }
+    function nAsp(n, f){ return (n==null) ? nDash() : (f||fAsp)(n); }
+
+    /* ===================== A PANEL WITH NOTHING IN IT IS NOT SHOWN ============
+       There is exactly one rule on this page for a section that has no numbers
+       for what is selected: it disappears. No box explaining which table the
+       figures live in, no "switch Period back to…", no empty frame with a
+       heading over it. If it cannot be computed for this period, this window,
+       this market or this filter, it is not there — and it comes straight back
+       the moment the selection can answer it.
+
+       The exceptions are FAULTS, not empty selections, and they stay visible
+       because they are fixable and the fix is a link: a source sheet that has
+       not been set, and a call that failed. Those still say so.
+
+       Every body element that can go empty is listed here against the card that
+       wraps it, so hiding is one call from wherever the emptiness is detected. */
+    var PANEL_OF = {
+      aggBody:'colAgg', dimBody:'colDims', expBody:'colExplore', custBody:'colCust',
+      fscBody:'colFsc', fscCustBody:'colFscCust', aggTrendBody:'colAggTrend',
+      aggKpiBody:'colAggKpi', bridgeBody:'colBridge',
+      rmxBody:'colRmx', rmxDimBody:'colRmxDims', pcatBody:'colProdCat',
+      rmxAspBody:'colRmxAsp', rmxFuelBody:'colRmxFuel', extBody:'colExtras',
+      rmxTrendBody:'colRmxTrend', rmxKpiBody:'colRmxKpi'
+    };
+    /* the cards on each tab, so a repaint can put everything back before the
+       painters decide again what has nothing to show */
+    var AGG_PANELS = ['colAggTrend','colAggKpi','colAgg','colDims','colBridge','colExplore','colCust','colFsc','colFscCust'];
+    var RMX_PANELS = ['colRmxTrend','colRmxKpi','colRmx','colRmxDims','colProdCat','colRmxAsp','colRmxFuel','colExtras'];
+
+    function panelShow(colId, on){
+      var p=$(colId); if(!p) return;
+      p.style.display = on ? '' : 'none';
+    }
+    /* Hide the CARD a body sits in, and empty the body so nothing is left to
+       paint over or to read by a screen reader behind display:none. */
+    function hidePanel(bodyId){
+      var b=$(bodyId); if(b) b.innerHTML='';
+      if(PANEL_OF[bodyId]) panelShow(PANEL_OF[bodyId], false);
+      syncPanelRows();
+    }
+    function showPanel(bodyId){ if(PANEL_OF[bodyId]) panelShow(PANEL_OF[bodyId], true); }
+    function panelHidden(colId){ var p=$(colId); return !!(p && p.style.display==='none'); }
+    /* Two cards share a row. When both are gone the row goes with them, so the
+       survivor is not left sitting in half a grid. */
+    function syncPanelRows(){
+      var row=$('fscRow'); if(!row) return;
+      var a=!panelHidden('colFsc'), b=!panelHidden('colFscCust');
+      row.style.display=(a||b)?'':'none';
+      /* a lone survivor takes the whole row rather than sitting in half a grid
+         beside a gap */
+      row.style.gridTemplateColumns=(a&&b)?'':'1fr';
+    }
+    function resetPanels(){
+      AGG_PANELS.concat(RMX_PANELS).forEach(function(id){ panelShow(id, true); });
+      var ac=$('aspCol'); if(ac) ac.style.display='';
+      syncPanelRows();
+    }
+    /* The overlay is gone. These keep their old names so every call site reads
+       the same, but they now drive the bottom-left pill instead of freezing the
+       page — you can carry on reading and clicking while the numbers arrive. */
+    /* During BOOT the screen is AmrBoot's - ONE screen, up until every step this
+       page named has landed. After boot these are ordinary AmrProgress jobs, and
+       AmrProgress waits out a grace period before painting, so anything quick
+       shows nothing at all. */
+    function showLoader(m){
+      if(window.AmrBoot && !AmrBoot.finished()) return;    // the boot screen owns it
+      if(window.AmrProgress) AmrProgress.set('page', { text:m||'Pulling from Google Sheets…', order:10 });
+    }
+    function hideLoader(){
+      if(window.AmrBoot) AmrBoot.done('data');
+      if(window.AmrProgress) AmrProgress.clear('page');
+    }
+    function banner(msg){ var b=$('banner'); if(!msg){b.classList.remove('show');b.textContent='';return;} b.textContent=msg; b.classList.add('show'); }
+    function markets(){ return (STATE.data&&STATE.data.markets)||[]; }
+    function allKeys(){ return markets().map(function(m){return m.key;}); }
+    function selectedKeys(){ return (STATE.sel==='ALL') ? allKeys() : STATE.sel.slice(); }
+    function isAll(){ return STATE.sel==='ALL' || selectedKeys().length===allKeys().length; }
+    function labelOf(key){
+      var ov=(MKT_LABEL[STATE.tab]||{})[key];
+      if(ov) return ov;
+      var m=markets().filter(function(x){return x.key===key;})[0]; return m?m.label:key;
+    }
+    function colorOf(key){ var i=allKeys().indexOf(key); return MK_COLORS[i%MK_COLORS.length]; }
+
+    /* ---- market chips (shared across both tabs) ----
+       SINGLE-SELECT on purpose: one market or All. Every number on the page is
+       then either a grand total or a single market — both already computed and
+       cached by the base tools, so nothing is ever blended or estimated. */
+    function renderChips(){
+      var host=$('marketChips'); if(!host) return;
+      var html = '<button class="chip" data-mk="__ALL__" aria-pressed="'+(STATE.sel==='ALL')+'">All markets</button>';
+      markets().forEach(function(m){
+        var on = STATE.sel!=='ALL' && STATE.sel[0]===m.key;
+        html += '<button class="chip" data-mk="'+esc(m.key)+'" aria-pressed="'+on+'">'+esc(labelOf(m.key))+'</button>';
+      });
+      host.innerHTML = html;
+      [].forEach.call(host.querySelectorAll('.chip'), function(c){
+        c.addEventListener('click', function(){
+          var mk=c.dataset.mk;
+          var next = (mk==='__ALL__') ? 'ALL' : [mk];
+          if(JSON.stringify(next)===JSON.stringify(STATE.sel)) return;
+          STATE.sel=next;
+          XF.SUBMARKET1=[]; XREF.values=[];        // submarkets & land/docks are market-specific
+          RXF.SUBMARKET=[]; RXF.PLANT=[];          // ditto on the Ready-Mix side
+          renderChips(); renderXfBar(); renderRxfBar(); renderTab();
+        });
+      });
+    }
+
+    /* ===================== MONTH BY MONTH (both tabs) =====================
+
+       ONE renderer, both lines. Everything comes from AmrCube — the month fact
+       table the browser holds — so changing the window, the market or a
+       cross-filter costs a local scan, never a server call. The Ready-Mix tab
+       adds an ASP BUILD-UP block on top, fed by the live cross-report, for
+       whichever months of the window that report actually covers.
+
+       The window is the Months slider in the top controls: any start month and
+       any end month the BROWSER ALREADY HOLDS. Every number in this panel — the
+       charts, the axis bounds, the window recap, the notes — is computed over
+       exactly that span.
+
+       The slider grows while the page is being used. Month-blocks arrive one
+       calendar year at a time, newest first, so the left handle stops at Jan of
+       the newest year in hand and walks backwards as the older years land —
+       Jul 26 alone, then back to Jan 26, Jan 25, Jan 24, Jan 23. Nothing between
+       the handles is ever a month whose block is still in flight.
+
+       How far back it can go is however many closed-year books have been READ IN
+       (APP_CONFIG.CUBE.ERAS). Each book reads ITSELF, one at a time, once the
+       blocks already built have landed; the pill at the bottom-left is the only
+       thing that mentions it.                                                  */
+
+    var WIN_FLOOR = 202301;                 // fallback only; the server's CUBE.FLOOR wins
+    var WIN   = { from:null, to:null, months:[] };   // months[] = every ym the slider can land on
+    /* done[] is keyed era|line: a book is marked the moment it is ATTEMPTED, so a
+       read that fails can never become a loop of retries. */
+    var HIST  = { busy:false, msg:'', err:'', done:{}, pct:0 };
+    var TMON  = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var trendTimer = null;
+    var TREND_GRAIN = 'M';                  // 'M' month by month, 'Q' quarter by quarter
+
+    function cube(){ return window.AmrCube || null; }
+    function ymAdd(ym, d){
+      var y=Math.floor(ym/100), m=(ym%100)+d;
+      y += Math.floor((m-1)/12); m = ((m-1)%12+12)%12 + 1;
+      return y*100+m;
+    }
+    function ymShort(ym){ return TMON[ym%100]+' '+String(Math.floor(ym/100)).slice(2); }
+    function ymLong(ym){ return TMON[ym%100]+' '+Math.floor(ym/100); }
+
+    /* ------------------------------ the window ------------------------------ */
+    /* The oldest month the slider will ever offer. The server sets it
+       (APP_CONFIG.CUBE.FLOOR) so retiring a book is a config change, not a code
+       change; the constant above is only there for a manifest that predates it. */
+    function winFloor(){
+      var C0=cube(), f=0;
+      ['agg','rmx'].forEach(function(l){
+        var m=C0 && C0.manifest(l);
+        if(m && m.floor && (!f || m.floor<f)) f=m.floor;
+      });
+      return f || WIN_FLOOR;
+    }
+    /* Every month the browser ACTUALLY HOLDS, from either line, floored and
+       gap-filled so the two handles move over a continuous calendar.
+
+       This reads AmrCube.months() - what has landed - and NOT manifest.ym, which
+       is everything the server could eventually send. The manifest version made
+       the slider claim the full range the instant the page opened, so dragging
+       into a month whose block was still in flight drew an empty panel that said
+       "Loading months... 40%". Month-blocks arrive one calendar year at a time,
+       newest first, so the left edge now walks backwards on its own - Jan 26,
+       then Jan 25, then Jan 24, then Jan 23 - and everything between the handles
+       is a month the page can actually answer for. */
+    function winMonths(){
+      var C0=cube(), lo=null, hi=null;
+      ['agg','rmx'].forEach(function(l){
+        var ms=(C0 && C0.months) ? (C0.months(l) || []) : [];
+        if(!ms.length) return;
+        var a=ms[0], b=ms[ms.length-1];
+        if(lo===null || a<lo) lo=a;
+        if(hi===null || b>hi) hi=b;
+      });
+      if(lo===null) return [];
+      var fl=winFloor();
+      if(lo<fl) lo=fl;
+      if(hi<lo) hi=lo;
+      var out=[], ym=lo;
+      while(ym<=hi){ out.push(ym); ym=ymAdd(ym,1); }
+      return out;
+    }
+    function winReady(){ return WIN.months.length>1 && WIN.from!=null && WIN.to!=null; }
+
+    /* ---- Period and the slider are ONE control ----------------------------
+       MTD is the newest month on its own. YTD is January of that month's year
+       through to it. PREV MONTH is those same two shapes ending one month
+       earlier. Anything else is a custom window. So pressing a Period button
+       MOVES THE HANDLES, and dragging the handles onto one of those four spans
+       lights the matching button back up. Nothing has to be kept in sync by hand
+       and there is no separate "custom" button to get out of step.
+
+       Only the first two exist on the server. The Prev-month pair is computed in
+       the browser from the month cube, which is why they stay disabled until it
+       holds the month they need.                                            */
+    function prevMonthOf(){
+      var ms=WIN.months; if(ms.length<2) return null;
+      var p=ymAdd(ms[ms.length-1], -1);
+      return (p>=ms[0]) ? p : null;
+    }
+    function periodSpan(p){
+      var ms=WIN.months; if(ms.length<2) return null;
+      var end=(p==='PMTD'||p==='PYTD') ? prevMonthOf() : ms[ms.length-1];
+      if(end==null) return null;
+      if(p==='MTD' || p==='PMTD') return { from:end, to:end };
+      var jan=Math.floor(end/100)*100+1;
+      return { from:Math.max(ms[0], jan), to:end };
+    }
+    /* Which Period button, if any, the current handles correspond to.
+       The two lines can end on DIFFERENT months and the slider spans their union,
+       so "the newest month" is ambiguous: a window ending on the Aggregates line's
+       last month is still Year to date even when Ready-Mix runs a month further.
+       Every plausible end month is accepted, not just the union's. */
+    function windowEnds(){
+      var ms=WIN.months, ends=[];
+      if(ms.length) ends.push(ms[ms.length-1]);
+      ['agg','rmx'].forEach(function(l){
+        var m=cube() && cube().manifest(l);
+        if(m && m.ym && m.ym.length){
+          var e=m.ym[m.ym.length-1];
+          if(ends.indexOf(e)===-1) ends.push(e);
+        }
+      });
+      return ends;
+    }
+    /* PREV MONTH IS TESTED FIRST, and only against the union's own last month.
+       When Ready-Mix runs a month ahead of Aggregates, the Aggregates line's last
+       month is BOTH "its MTD" and "the previous month" — and the two answers now
+       lead to different buttons, different panels and a different Product
+       Category state, so the ambiguity has to be resolved rather than inherited.
+       Previous month wins: it is the newer, narrower claim (this exact month, one
+       back from the newest the page holds), and the numbers underneath are the
+       same either way — the cube computes that month whichever name it goes by. */
+    function windowPeriod(){
+      var ms=WIN.months; if(ms.length<2) return null;
+      var prev=prevMonthOf();
+      if(prev!=null){
+        if(WIN.from===prev && WIN.to===prev) return 'PMTD';
+        var pjan=Math.max(ms[0], Math.floor(prev/100)*100+1);
+        if(WIN.from===pjan && WIN.to===prev) return 'PYTD';
+      }
+      var ends=windowEnds();
+      for(var i=0;i<ends.length;i++){
+        var e=ends[i];
+        if(WIN.from===e && WIN.to===e) return 'MTD';
+        var jan=Math.max(ms[0], Math.floor(e/100)*100+1);
+        if(WIN.from===jan && WIN.to===e) return 'YTD';
+      }
+      return null;
+    }
+    function snapWindowTo(p){
+      var sp=periodSpan(p); if(!sp) return false;
+      if(WIN.from===sp.from && WIN.to===sp.to) return false;
+      WIN.from=sp.from; WIN.to=sp.to;
+      return true;
+    }
+    function syncPeriodSeg(){
+      var seg=$('periodSeg'); if(!seg) return;
+      var p=STATE.pick;
+      [].forEach.call(seg.querySelectorAll('button'), function(b){
+        var k=b.dataset.period;
+        b.setAttribute('aria-pressed', String(k===p));
+        /* the two server periods always work; the Prev-month pair needs the cube
+           to hold a month before the newest one */
+        var needsCube=(k==='PMTD'||k==='PYTD');
+        b.disabled = needsCube && !periodSpan(k);
+      });
+    }
+    function winSpan(){
+      if(!winReady()) return [];
+      return WIN.months.filter(function(m){ return m>=WIN.from && m<=WIN.to; });
+    }
+    function winSig(){ return WIN.from+'-'+WIN.to; }
+
+    /* Rebuild the slider whenever the cube gains months. The user's own choice
+       survives a rebuild — only the parts that fell outside the new range move. */
+    function syncWindow(){
+      var ms=winMonths(), wrap=$('winWrap');
+      var grew=(ms.length!==WIN.months.length) || (ms.length && WIN.months.length && ms[0]!==WIN.months[0]);
+      WIN.months=ms;
+      if(!wrap) return;
+      if(ms.length<2){ wrap.classList.add('pending'); $('winVal').textContent='—'; syncPeriodSeg(); return; }
+      wrap.classList.remove('pending');
+
+      var first=ms[0], last=ms[ms.length-1];
+      var sp=STATE.pick ? periodSpan(STATE.pick) : null;
+      if(WIN.from==null || WIN.to==null){
+        /* first paint: match whatever Period is already selected, so the slider
+           opens showing exactly the months the rest of the page is showing */
+        var sp0=sp || periodSpan('MTD') || { from:last, to:last };
+        WIN.from=sp0.from; WIN.to=sp0.to;
+      }else if(sp){
+        /* still tracking a Period button: follow it as new months land. A
+           Prev-month pick moves too - it means "one back from the newest", not
+           "July forever". */
+        WIN.from=sp.from; WIN.to=sp.to;
+      }else if(grew){
+        /* the window was pinned to the newest month: keep it pinned as history
+           or a new month lands, instead of silently freezing in the past */
+        if(WIN.to>last || WIN.to===WIN.months[WIN.months.length-2]) WIN.to=last;
+        if(WIN.from<first) WIN.from=first;
+        if(WIN.to>last) WIN.to=last;
+      }
+      if(WIN.from<first) WIN.from=first;
+      if(WIN.to>last)   WIN.to=last;
+      if(WIN.from>WIN.to) WIN.from=WIN.to;
+
+      var iF=ms.indexOf(WIN.from), iT=ms.indexOf(WIN.to);
+      if(iF<0) iF=0; if(iT<0) iT=ms.length-1;
+      var a=$('winFrom'), b=$('winTo');
+      a.max=b.max=String(ms.length-1); a.min=b.min='0';
+      a.value=String(iF); b.value=String(iT);
+      $('winLo').textContent=ymShort(first);
+      $('winHi').textContent=ymShort(last);
+      paintWindow();
+      syncPeriodSeg();
+    }
+    /* label + filled track + quick-pick states; no data work, so it can run on
+       every drag frame */
+    function paintWindow(){
+      var ms=WIN.months; if(ms.length<2) return;
+      var iF=Number($('winFrom').value), iT=Number($('winTo').value);
+      $('winVal').innerHTML=esc(ymLong(ms[iF]))+'<span class="sep">→</span>'+esc(ymLong(ms[iT]));
+      var n=iT-iF+1;
+      /* say out loud whether these handles ARE one of the Period buttons - the
+         coupling is invisible otherwise, and a window one month off the span
+         looks identical to an exact match */
+      var was={ from:WIN.from, to:WIN.to };
+      WIN.from=ms[iF]; WIN.to=ms[iT];
+      var mp=windowPeriod();
+      WIN.from=was.from; WIN.to=was.to;
+      var PICK_SAYS={ MTD:'= This month', YTD:'= Year to date',
+                      PMTD:'= Prev month', PYTD:'= Prev month (YTD)' };
+      $('winN').textContent=n+' month'+(n===1?'':'s')+' \u00b7 '+(PICK_SAYS[mp]||'custom');
+      var lo=iF/(ms.length-1)*100, hi=iT/(ms.length-1)*100;
+      var f=$('winFill'); f.style.left=lo+'%'; f.style.width=Math.max(0,hi-lo)+'%';
+      renderWinQuick();
+    }
+    /* Quick picks — the old presets plus one chip per YEAR the cube holds, which
+       is the "filter by year" side of the control. */
+    function winQuickList(){
+      var ms=WIN.months; if(ms.length<2) return [];
+      var last=ms[ms.length-1], first=ms[0], out=[];
+      var years={}; ms.forEach(function(m){ years[Math.floor(m/100)]=1; });
+      Object.keys(years).map(Number).sort().forEach(function(y){
+        var lo=Math.max(first, y*100+1), hi=Math.min(last, y*100+12);
+        out.push({ id:'y'+y, lab:String(y), from:lo, to:hi });
+      });
+      /* A rolling chip only once the browser holds MORE months than the window
+         asks for - otherwise 24M is just All wearing a different label. They
+         appear on their own as the older books land. */
+      [12,18,24].forEach(function(n){
+        if(ms.length<=n) return;
+        out.push({ id:'r'+n, lab:n+'M', from:ymAdd(last,-(n-1)), to:last });
+      });
+      out.push({ id:'all', lab:'All', from:first, to:last });
+      return out;
+    }
+    function renderWinQuick(){
+      var host=$('winQuick'); if(!host) return;
+      var ms=WIN.months, iF=Number($('winFrom').value), iT=Number($('winTo').value);
+      var from=ms[iF], to=ms[iT];
+      host.innerHTML=winQuickList().map(function(q){
+        var on=(q.from===from && q.to===to);
+        return '<button type="button" data-from="'+q.from+'" data-to="'+q.to+'" aria-pressed="'+on+'">'+esc(q.lab)+'</button>';
+      }).join('');
+    }
+    function wireWindow(){
+      var a=$('winFrom'), b=$('winTo'); if(!a||!b) return;
+      /* the two handles may not cross; whichever one is being dragged pushes the
+         other rather than jumping past it */
+      function onInput(which){
+        return function(){
+          var iF=Number(a.value), iT=Number(b.value);
+          if(iF>iT){ if(which==='a') b.value=String(iF); else a.value=String(iT); }
+          paintWindow();
+        };
+      }
+      a.addEventListener('input', onInput('a'));
+      b.addEventListener('input', onInput('b'));
+      function commit(){
+        var ms=WIN.months; if(ms.length<2) return;
+        var f=ms[Number(a.value)], t=ms[Number(b.value)];
+        if(f===WIN.from && t===WIN.to) return;
+        WIN.from=f; WIN.to=t;
+        applyWindowChange();
+      }
+      ['change','pointerup','keyup','touchend'].forEach(function(ev){
+        a.addEventListener(ev, commit); b.addEventListener(ev, commit);
+      });
+      $('winQuick').addEventListener('click', function(e){
+        var btn=e.target.closest('button'); if(!btn) return;
+        var ms=WIN.months, f=Number(btn.dataset.from), t=Number(btn.dataset.to);
+        var iF=ms.indexOf(f), iT=ms.indexOf(t);
+        if(iF<0||iT<0) return;
+        a.value=String(iF); b.value=String(iT);
+        WIN.from=f; WIN.to=t;
+        paintWindow();
+        applyWindowChange();
+      });
+    }
+
+    /* The handles moved. If they landed exactly on the MTD or YTD span, that
+       Period comes back on and the server panels are loaded for it; otherwise
+       this is a custom window and the cube takes over. */
+    function applyWindowChange(){
+      var p=windowPeriod();
+      var wasWin=STATE.win, wasPeriod=STATE.period, wasPick=STATE.pick;
+      STATE.pick=p;
+      /* only the two server picks come off the server; everything else, including
+         both Prev-month spans, is the cube's */
+      STATE.win = !(p==='MTD' || p==='YTD');
+      if(p && PICK_SERVER[p]) STATE.period=PICK_SERVER[p];
+      syncPeriodSeg();
+      if(wasPeriod!==STATE.period){ load(); return; }                 // load() repaints
+      if(wasWin!==STATE.win || wasPick!==STATE.pick){ renderActiveTab(); return; }
+      if(STATE.win) renderActiveTab(); else renderTrendNow();
+    }
+
+    /* ---- page filters -> cube column names ---- */
+    var AGG_CUBE_FIELD = { SUBMARKET1:'sm1', PLANT_TYPE:'plantType', MATERIAL_FAM:'matFam',
+                           PROD_CLASS:'prodClass', PLANT:'plant', MATERIAL:'material',
+                           CUST_PARENT:'custParent', SOLD_TO:'soldTo' };
+    var RMX_CUBE_FIELD = { SUBMARKET:'submarket', SEGMENT:'segment', STRENGTH:'strength',
+                           CLASS:'cls', PLANT:'plant' };
+    var CUBE_FIELD_LABEL = { market:'Market', sm1:'Submarket', submarket:'Submarket',
+      plantType:'Plant Type', matFam:'Material Family', prodClass:'Product Class',
+      cls:'Product Class', plant:'Plant', material:'Material', custParent:'Customer',
+      soldTo:'Sold To',
+      mb:'Land / Docks', segment:'Project Segment', strength:'Strength Class' };
+
+    function trendFilters(line){
+      var C0=cube(), f={};
+      if(!isAll()){
+        f.market = selectedKeys().map(function(k){
+          var m=markets().filter(function(x){ return x.key===k; })[0];
+          return m ? (line==='agg' ? m.pvName : m.rmxName) : null;
+        }).filter(Boolean);
+      }
+      if(line==='agg'){
+        Object.keys(AGG_CUBE_FIELD).forEach(function(k){
+          if(XF[k] && XF[k].length) f[AGG_CUBE_FIELD[k]]=XF[k].slice();
+        });
+        /* the cube masks by inclusion only, so an "excluding" Land/Docks refine
+           becomes "everything else" against the cube's own list */
+        if(XREF.values && XREF.values.length){
+          var mbAll=(C0 && C0.dict('agg','mb')) || [];
+          f.mb = (XREF.mode==='exclude')
+            ? mbAll.filter(function(v){ return XREF.values.indexOf(v)===-1; })
+            : XREF.values.slice();
+        }
+      }else{
+        Object.keys(RMX_CUBE_FIELD).forEach(function(k){
+          if(RXF[k] && RXF[k].length) f[RMX_CUBE_FIELD[k]]=RXF[k].slice();
+        });
+      }
+      return f;
+    }
+    /* Drop values the cube has never heard of rather than masking everything to
+       zero — a filter that matches nothing would otherwise draw an empty chart
+       with no explanation. Whatever gets dropped is named under the charts. */
+    function trendResolve(line, f){
+      var C0=cube(), out={}, dropped=[];
+      Object.keys(f).forEach(function(k){
+        var list=(C0 && C0.dict(line,k)) || [], idx={}, i;
+        for(i=0;i<list.length;i++) idx[list[i]]=1;
+        var keep=f[k].filter(function(v){ return idx[v]; });
+        if(keep.length) out[k]=keep; else dropped.push(k);
+      });
+      return { filters:out, dropped:dropped };
+    }
+
+    /* ===================== CUSTOM WINDOW: the rest of the page =====================
+       Period has three settings. MTD and YTD are the server's, unchanged. The
+       third — Custom window — hands every panel the cube can answer over to the
+       Months slider, so the headline numbers, the market breakdown and the
+       dimension tables all read for the span you picked instead of the year.
+
+       WHAT THE CUBE CAN AND CANNOT ANSWER
+         Can: volume, revenue, ASP, ASP % inc and PPI, at any grain the fact
+              table carries (market, submarket, plant type, product class,
+              plant, material; RMX adds segment, strength and product class).
+              PPI stays EXACT because coverage is recomputed on whatever the
+              window collapses to, not blended from monthly indices.
+         Cannot: extras and VAP, the ASP mix bridge, customers, fuel surcharge,
+              product category, and the SAP / USGAAP cards. None of those are in
+              the month fact table, so in window mode those panels say so
+              plainly rather than showing a year's number under a month's label.
+              The SAP cards are hidden outright — they are statement figures and
+              only exist per month or per year.                                */
+
+    function winMode(){ return !!STATE.win && winReady(); }
+    function winLabel(){
+      if(!winReady()) return '';
+      return (WIN.from===WIN.to) ? ymLong(WIN.from) : (ymLong(WIN.from)+' \u2013 '+ymLong(WIN.to));
+    }
+    /* What the current pick is called in a sentence. The Prev-month picks say so
+       out loud, because "July 2026" on its own reads like a custom window. */
+    function winScopeWord(){
+      if(STATE.pick==='PMTD') return 'Previous month \u00b7 '+winLabel();
+      if(STATE.pick==='PYTD') return 'Previous month, year to date \u00b7 '+winLabel();
+      return 'Custom window \u00b7 '+winLabel();
+    }
+    /* THE FUEL-SURCHARGE COLUMNS ARE A LIVE-BOOK FIELD. The cube carries the
+       surcharge dollars and the tonnes they were charged on, but only the live
+       Price & Volume export is guaranteed to fill them \u2014 the closed-year books
+       carry them as optional columns and older eras simply have not got them. So
+       the surcharge panels answer for windows inside the CURRENT book year and
+       are not shown for older ones, rather than drawing a real-looking zero. */
+    function winFscOk(){
+      if(!winReady()) return false;
+      var ms=WIN.months, lastY=Math.floor(ms[ms.length-1]/100);
+      return Math.floor(WIN.from/100)>=lastY;
+    }
+
+    /* POOLED prior-year numbers stop meaning anything once the window runs past
+       twelve months: each month is compared with itself minus a year, so a
+       31-month window compares against months that are already inside it. Volume
+       and ASP levels are unaffected - only the vs-last-year side goes.
+
+       This applies to the pooled panels (the KPI strip, the market breakdown, the
+       dimension tables). The month/quarter trend is NOT stale: every point there
+       is one bucket against the same bucket a year earlier, which stays true at
+       any window length. */
+    function pyStale(){ return winMode() && winSpan().length > 12; }
+
+    /* The months of the window this LINE actually holds, plus their comparison
+       months. null when the cube is not ready to answer yet. */
+    function winCy(line){
+      var C0=cube(); if(!C0 || !C0.manifest(line)) return null;
+      var man=C0.manifest(line), have={};
+      (man.ym||[]).forEach(function(m){ have[m]=1; });
+      var cy=winSpan().filter(function(m){ return have[m]; });
+      if(!cy.length) return null;
+      /* The prior year is read for every comparison on this page, so a window is
+         only answerable once THOSE months have landed too. Without this a panel
+         drawn mid-load takes the missing PY as zero and reports a total collapse.
+         Months the server does not carry at all - the year before the oldest book
+         - are exempt: they are absent, not late. */
+      var py=cy.map(function(m){ return ymAdd(m,-12); }).filter(function(m){ return have[m]; });
+      if(!C0.has(line, cy.concat(py))) return null;
+      return cy;
+    }
+    /* Pooled totals for the window, in exactly the shape renderKpiRow expects. */
+    function cubeWinTotals(line){
+      var cy=winCy(line); if(!cy) return null;
+      var R=trendResolve(line, trendFilters(line));
+      if(!isAll() && !R.filters.market) return { present:false };
+      var g=cube().query({ line:line, cyMonths:cy, pyMonths:cy.map(function(m){ return ymAdd(m,-12); }),
+                           filters:R.filters });
+      if(!g) return { present:false };
+      var st=pyStale();
+      return { present:!!(g.cyVol||g.pyVol), cyVol:g.cyVol, pyVol:st?null:g.pyVol, volPct:st?null:g.volPct,
+               cyAsp:g.cyAsp, pyAsp:st?null:g.pyAsp, aspPct:st?null:g.aspPct, ppi:st?null:g.ppi };
+    }
+    /* Grouped rows for the window. Returns the cube's own row objects, which
+       already carry label-compatible key / cyVol / pyVol / volPct / aspPct / ppi,
+       plus a Total row computed the same pooled way (NOT the sum of the rows'
+       indices — PPI is not additive). */
+    function cubeGroups(line, groupBy, extra){
+      var cy=winCy(line); if(!cy) return null;
+      var R=trendResolve(line, trendFilters(line));
+      if(!isAll() && !R.filters.market) return [];
+      var f=R.filters;
+      /* `extra` narrows this one query further (a single customer, say) without
+         touching the page's own filters */
+      if(extra){ f={}; Object.keys(R.filters).forEach(function(k){ f[k]=R.filters[k]; });
+                 Object.keys(extra).forEach(function(k){ f[k]=extra[k]; }); }
+      var py=cy.map(function(m){ return ymAdd(m,-12); });
+      return cube().query({ line:line, cyMonths:cy, pyMonths:py, groupBy:groupBy, filters:f }) || [];
+    }
+    function cubeTotal(line){
+      var cy=winCy(line); if(!cy) return null;
+      var R=trendResolve(line, trendFilters(line));
+      if(!isAll() && !R.filters.market) return null;
+      return cube().query({ line:line, cyMonths:cy, pyMonths:cy.map(function(m){ return ymAdd(m,-12); }),
+                            filters:R.filters });
+    }
+    function cubeWinRows(line, groupBy, min){
+      var rows=cubeGroups(line, groupBy);
+      if(rows===null) return null;
+      rows=rows.filter(function(g){ return g.key && g.key!=='\u0001all' && (g.cyVol>(min||0) || g.pyVol>(min||0)); })
+               .sort(function(a,b){ return b.cyVol-a.cyVol; });
+      return { rows:rows, total:cubeTotal(line) };
+    }
+    function cubeRowsToItems(rows){
+      var st=pyStale();
+      return rows.map(function(g,i){
+        return { label:String(g.key), value:String(g.key), color:MK_COLORS[i%MK_COLORS.length],
+                 cyVol:g.cyVol, pyVol:st?0:g.pyVol, asp:st?null:g.aspPct, ppi:st?null:g.ppi };
+      });
+    }
+    /* the cube's row shape in the shape the server-fed tables are painted from */
+    function cubeRowAsTable(g){
+      var st=pyStale(), k=String(g.key==null?'':g.key);
+      return { label:k||'(blank)',
+               cyVol:g.cyVol, pyVol:st?null:g.pyVol, volPct:st?null:g.volPct,
+               cyAsp:g.cyAsp, pyAsp:st?null:g.pyAsp, aspPct:st?null:g.aspPct, ppi:st?null:g.ppi,
+               cyRev:g.cyRev, pyRev:g.pyRev, cyFsc:g.cyFsc||0, pyFsc:g.pyFsc||0,
+               cyFv:g.cyFv||0, pyFv:g.pyFv||0 };
+    }
+    function winWaiting(bodyId){
+      var b=$(bodyId); if(!b) return;
+      var p=(cube()&&cube().progress&&cube().progress())||{pct:0};
+      b.innerHTML='<div class="ov-mini">Loading months\u2026 '+p.pct+'%</div>';
+    }
+
+    /* ------------------------- the month-history pill ------------------------- */
+    function histSpan(){
+      var C0=cube(), lo=null, hi=null;
+      ['agg','rmx'].forEach(function(l){
+        var m=C0 && C0.manifest(l);
+        if(!m || !m.ym || !m.ym.length) return;
+        if(lo===null || m.ym[0]<lo) lo=m.ym[0];
+        if(hi===null || m.ym[m.ym.length-1]>hi) hi=m.ym[m.ym.length-1];
+      });
+      return (lo && hi) ? { lo:lo, hi:hi } : null;
+    }
+    /* What the browser is actually holding right now. The pill quotes THIS, not
+       the server's full range, because it is the span the slider will let you
+       use. */
+    function loadedSpan(){
+      var ms=WIN.months;
+      return ms.length ? { lo:ms[0], hi:ms[ms.length-1] } : null;
+    }
+    function histHave(){
+      var C0=cube(), a=C0&&C0.manifest('agg'), r=C0&&C0.manifest('rmx');
+      return { a:!!(a&&a.history), r:!!(r&&r.history), any:!!(a||r) };
+    }
+    /* ---- the closed-year books ----------------------------------------------
+       One row per era, merged across the two lines, in the order the server
+       declares them (newest book first). A manifest that predates the era list
+       is read as a single unnamed book, which is exactly how it used to work. */
+    function histEras(){
+      var C0=cube(), out=[], byId={};
+      ['agg','rmx'].forEach(function(l){
+        var m=C0 && C0.manifest(l); if(!m) return;
+        var list=(m.eras && m.eras.length) ? m.eras
+               : [{ id:'h1', label:'history', linked:true, built:!!m.history }];
+        list.forEach(function(e){
+          var g=byId[e.id];
+          if(!g){ g=byId[e.id]={ id:e.id, label:e.label||e.id, lines:{} }; out.push(g); }
+          g.lines[l]={ linked:!!e.linked, built:!!e.built };
+        });
+      });
+      return out;
+    }
+    /* Books with a sheet link and no built file, newest first. A book drops off
+       this list the moment it is attempted, so a read that fails cannot loop. */
+    function histPending(){
+      var out=[];
+      histEras().forEach(function(e){
+        ['agg','rmx'].forEach(function(l){
+          var st=e.lines[l];
+          if(st && st.linked && !st.built && !HIST.done[e.id+'|'+l])
+            out.push({ era:e.id, label:e.label, line:l });
+        });
+      });
+      return out;
+    }
+    /* Every linked book, built or not - what the pill's Reload re-reads. */
+    function histAllJobs(){
+      var out=[];
+      histEras().forEach(function(e){
+        ['agg','rmx'].forEach(function(l){
+          var st=e.lines[l];
+          if(st && st.linked) out.push({ era:e.id, label:e.label, line:l });
+        });
+      });
+      return out;
+    }
+    function histJobName(j){
+      return (j.line==='agg'?'Aggregates':'Ready-Mix')+' '+j.label;
+    }
+    /* state -> { cls, short, long }. The pill hides itself entirely once
+       everything is in and nothing has gone wrong: no chrome for a solved
+       problem. */
+    function histState(){
+      var C0=cube(), p=(C0&&C0.progress&&C0.progress())||{pct:0,done:0,total:0};
+      var ld=loadedSpan(), span=ld?(ymLong(ld.lo)+' \u2013 '+ymLong(ld.hi)):'';
+      var h=histHave(), pend=histPending();
+      if(!IS_LIVE) return { cls:'', hide:true };
+      if(HIST.err) return { cls:'bad', short:'History unavailable',
+        long:'<b>The month history could not be loaded.</b><br>'+esc(HIST.err)
+            +'<br>The charts still work on whatever months are already in\u2014 '
+            +(span?('currently '+esc(span)+'.'):'currently the live sheet only.') };
+      if(HIST.busy) return { cls:'', short:HIST.msg||'Building history\u2026', pct:null,
+        long:'<b>'+esc(HIST.msg||'Building the month history\u2026')+'</b><br>'
+            +'A closed-year book is being read end to end. This happens once per book, '
+            +'runs in the background, and the charts keep working meanwhile'
+            +(span?(' \u2014 they are on '+esc(span)+' right now.'):'.') };
+      if(!h.any) return { cls:'', short:'Preparing months\u2026', pct:0,
+        long:'<b>Preparing the month history\u2026</b>' };
+      if(p.total && p.done<p.total) return {
+        cls:'', pct:p.pct,
+        short:'Loading months\u2026 '+p.pct+'%'+(ld?(' \u00b7 back to '+ymShort(ld.lo)):''),
+        long:'<b>Loading the month blocks\u2026 '+p.pct+'%</b><br>'
+            +'One calendar year lands at a time, newest first. The slider covers '
+            +(span?esc(span):'nothing yet')+' and grows as the older years arrive \u2014 '
+            +'everything between the handles is already in. Nothing else on the page is waiting on this.' };
+      if(pend.length) return { cls:'', short:'Extending history\u2026 '+esc(pend[0].label), pct:null,
+        long:'<b>Reading the '+esc(pend[0].label)+' book\u2026</b><br>'
+            +esc(span||'The live sheet')+' is in and usable. Earlier months are being added in '
+            +'the background and the slider will grow when they land.' };
+      return { cls:'done', hide:true, short:'History loaded',
+        long:'<b>History loaded.</b><br>'+esc(span)+' is available on both lines. '
+            +'Reload only if one of the history books changes.' };
+    }
+    /* histState() decides WHAT to say; AmrProgress owns the pill itself, so the
+       month history now shares one indicator with every other job on the page
+       instead of having a second one of its own. */
+    var PILL_DONE=false;
+    function renderPill(){
+      if(!window.AmrProgress) return;
+      var s=histState();
+      if(s.hide){
+        /* Nothing left to say. No tick either: a tick that flashes for a second and
+           is replaced by the next job is the flicker this is meant to remove. */
+        PILL_DONE = true;
+        if(window.AmrBoot) AmrBoot.done('month history');
+        AmrProgress.clear('cube');
+        return;
+      }
+      if(s.cls!=='done') PILL_DONE=false;   // a reload starts the cycle again
+      if(s.cls === 'bad'){
+        /* the server path still works, so this is not a failure - but the boot step
+           has to be answered either way, or the screen never lifts */
+        if(window.AmrBoot) AmrBoot.done('month history');
+      }
+      /* During boot this rides the ONE screen as a percentage rather than becoming
+         a screen of its own. */
+      if(window.AmrBoot && !AmrBoot.finished() && s.cls !== 'bad'){
+        AmrProgress.set('boot', { pct:(s.pct!=null?s.pct:null), order:0, now:true,
+                                  note:s.short || 'Month history' });
+        return;
+      }
+      AmrProgress.set('cube', { text:s.short||'Month history', pct:(s.pct!=null?s.pct:null),
+                                cls:s.cls||'', order:30 });
+    }
+    function wirePill(){
+      if(!window.AmrProgress) return;
+      /* The Overview owns the popover body: the month span, what is still being
+         read, and the two buttons that act on it. */
+      AmrProgress.detail({
+        html: function(job){
+          if(job.key!=='cube') return '';
+          var s=histState();
+          return (s.long||'')
+            +'<div class="acts">'
+            +'<button type="button" data-act="settings">\u2699 Data sheet</button>'
+            +'<button type="button" data-act="build"'+(HIST.busy?' disabled':'')+'>Reload history</button>'
+            +'</div>';
+        },
+        act: function(name){
+          if(name==='build'){ buildHistory(true); }
+          else if(name==='settings' && window.amrOpenSettings) amrOpenSettings();
+        }
+      });
+    }
+    /* Runs itself: once every block of what is ALREADY built has landed, the
+       oldest book that still has no file is read in the background. One book per
+       run, so the months it adds are usable before the next one starts. */
+    function maybeBuildHistory(){
+      if(!IS_LIVE || HIST.busy || HIST.err) return;
+      var C0=cube(); if(!C0) return;
+      var p=C0.progress();
+      if(!p.total || p.done<p.total) return;        // still streaming what is built
+      if(!histPending().length) return;             // nothing left to read
+      buildHistory(false);
+    }
+    /* Read closed-year books and fold them into the cube.
+         force=false  the NEWEST book that is linked but not built, one era per
+                      run: it lands, the slider grows, the page stays usable, and
+                      the era behind it starts once those blocks are in.
+         force=true   the pill's Reload - every linked book, then one cube reload.
+       Either way each server call is ONE line of ONE book, so no single call has
+       to read four workbooks inside the 6-minute limit.                       */
+    function buildHistory(force){
+      if(!IS_LIVE || HIST.busy) return;
+      if(force){ HIST.done={}; HIST.err=''; }
+      var jobs;
+      if(force) jobs=histAllJobs();
+      else{
+        var pend=histPending();
+        if(!pend.length) return;
+        jobs=pend.filter(function(j){ return j.era===pend[0].era; });   // one book at a time
+      }
+      if(!jobs.length) return;
+
+      HIST.busy=true; HIST.err='';
+      var i=0;
+      function fail(msg){ HIST.busy=false; HIST.msg=''; HIST.err=msg; renderPill(); }
+      function finish(){
+        var C0=cube();
+        if(!C0 || !C0.reload){ HIST.busy=false; HIST.msg=''; renderPill(); return; }
+        HIST.msg='Rebuilding the month history\u2026'; renderPill();
+        C0.reload().then(function(){
+          HIST.busy=false; HIST.msg='';
+          syncWindow(); renderPill(); renderTrendNow();
+          /* reload() emits its own 'ready' while this handler is still marked
+             busy, so the next book has to be kicked off from here rather than
+             left to that event. */
+          setTimeout(maybeBuildHistory, 0);
+        }, function(e){ fail((e&&e.message)||String(e)); });
+      }
+      function step(){
+        if(i>=jobs.length){ finish(); return; }
+        var j=jobs[i++];
+        HIST.done[j.era+'|'+j.line]=true;           // attempted, whatever comes back
+        HIST.msg='Reading the '+histJobName(j)+' book\u2026';
+        renderPill();
+        google.script.run
+          .withSuccessHandler(function(res){
+            if(res && res.ok===false){ fail(res.error||'That sheet could not be read.'); return; }
+            step();
+          })
+          .withFailureHandler(function(e){ fail((e&&e.message)||String(e)); })
+          .CUBE_rebuildHistory({ line:j.line, era:j.era });
+      }
+      step();
+    }
+
+    /* ---- load a period from the server ---- */
+    function load(){
+      if(!CACHE[STATE.period] && window.AmrCache){          // per-device copy, wiped when a base table updates
+        var dev=AmrCache.get('ov:'+STATE.period);
+        if(dev) CACHE[STATE.period]=dev;
+      }
+      if(CACHE[STATE.period]){
+        hideLoader();                       // the pill is running from boot(); this path is done
+        STATE.data=CACHE[STATE.period]; renderChips(); renderActiveTab(); return;
+      }
+      if(!IS_LIVE){
+        banner('Open this inside the Apps Script web app to load live data. (Preview mode shows no numbers.)');
+        hideLoader(); return;
+      }
+      showLoader('Loading the latest numbers…');
+      banner('');
+      google.script.run
+        .withSuccessHandler(function(d){
+          hideLoader();
+          if(!d || !d.ok){ banner('Could not load the overview data.'); return; }
+          if(window.AmrCache && d.generation!=null){ AmrCache.check(d.generation); AmrCache.set('ov:'+STATE.period, d); }
+          CACHE[STATE.period]=d; STATE.data=d;
+          renderChips(); renderActiveTab();
+          prefetchPeriod();          // so the OTHER button is instant when pressed
+        })
+        .withFailureHandler(function(err){
+          hideLoader();
+          banner('Could not load the overview: '+((err&&err.message)||err));
+        })
+        .getOverview({ period: STATE.period });
+    }
+
+    /* The only reason pressing the other Period button ever waited is that its
+       payload had not been fetched yet - load() is already cache-first. So the
+       moment one period is in, the other is fetched quietly in the background.
+       Both then sit in memory and on the device, and switching is instant. */
+    var PREFETCHING = {};
+    function prefetchPeriod(){
+      if(!IS_LIVE) return;
+      var other = (STATE.period==='MTD') ? 'YTD' : 'MTD';
+      if(CACHE[other] || PREFETCHING[other]) return;
+      PREFETCHING[other]=1;
+      if(window.AmrCache){
+        var dev=AmrCache.get('ov:'+other);
+        if(dev){ CACHE[other]=dev; return; }
+      }
+      google.script.run
+        .withSuccessHandler(function(d){
+          PREFETCHING[other]=0;
+          if(!d || !d.ok) return;                  // opportunistic: never surfaces
+          CACHE[other]=d;
+          if(window.AmrCache && d.generation!=null) AmrCache.set('ov:'+other, d);
+        })
+        .withFailureHandler(function(){ PREFETCHING[other]=0; })   // the button still works without it
+        .getOverview({ period: other });
+    }
+
+    /* ---- Month window (both tabs). The history pill is wired in boot(),
+           once AmrProgress is known to exist. ---- */
+    wireWindow();
+
+    /* ---- header: Update from source -------------------------------------
+       syncAll() bumps the Price & Volume, RMX, Segment and KPI generations in
+       one go. That makes every server cache key unreachable AND changes
+       ovcGen_(), so the cube rebuilds and the lookup tabs are re-read on the
+       next request \u2014 this button covers both "refresh the data" and "refresh
+       the lookups". The targeted re-read inside Data quality is still there for
+       when only a lookup tab changed and a full rebuild would be overkill. */
+    (function wireSync(){
+      var b=$('syncBtn'); if(!b) return;
+      b.addEventListener('click', function(){
+        if(!IS_LIVE){ banner('Update from source only works in the live Apps Script web app.'); return; }
+        b.disabled=true; b.classList.add('busy');
+        function stop(){ b.disabled=false; b.classList.remove('busy'); }
+        /* Ask first. This page reads Price & Volume, Ready-Mix AND Segment, so
+           its version covers all three (APP_EXTRA_SOURCES in Config.gs): if none
+           of them has been touched there is nothing to rebuild, for anyone. */
+        if(window.AmrFresh){ AmrFresh.ifChanged(function(changed){
+          if(!changed){ stop(); return; }
+          go();
+        }); return; }
+        go();
+
+        function go(){
+        if(window.AmrProgress) AmrProgress.set('sync', { text:'Re-reading every source sheet\u2026', order:5 });
+        google.script.run
+          .withSuccessHandler(function(){
+            afterLookupWrite(function(){
+              stop();
+              /* no tick: it flashes for a second and is replaced by the next
+                 job going up, which is the flicker */
+              if(window.AmrProgress) AmrProgress.clear('sync');
+            });
+          })
+          .withFailureHandler(function(e){
+            stop();
+            if(window.AmrProgress) AmrProgress.fail('sync','Update failed');
+            banner('Update failed: '+((e&&e.message)||e));
+          })
+          .syncAll();
+        }
+      });
+    })();
+
+
+    /* ---- period toggle ----
+       Pressing a Period button drives the slider, not the other way round. The
+       two Prev-month picks land on a span the server has no report for, so they
+       switch the page to the cube; the two server picks switch it back. */
+    $('periodSeg').addEventListener('click', function(e){
+      var b=e.target.closest('button'); if(!b || b.disabled) return;
+      var p=b.dataset.period;
+      if(p===STATE.pick) return;
+      if(!snapWindowTo(p) && !periodSpan(p)) return;   // the cube has not got that month yet
+      var wasWin=STATE.win, wasPeriod=STATE.period;
+      STATE.pick=p;
+      STATE.win=(p==='PMTD'||p==='PYTD');
+      STATE.period=PICK_SERVER[p]||STATE.period;
+      syncWindow();
+      if(wasWin!==STATE.win) renderChips();
+      if(wasPeriod!==STATE.period || !STATE.data){ load(); return; }   // load() repaints
+      renderActiveTab();
+    });
+
+    /* ---- tab switch ---- */
+    function setTabTint(){
+      document.body.classList.toggle('ovtab-agg', STATE.tab==='agg');
+      document.body.classList.toggle('ovtab-rmx', STATE.tab!=='agg');
+    }
+    setTabTint();
+    $('ovTabs').addEventListener('click', function(e){
+      var b=e.target.closest('button'); if(!b) return;
+      if(b.dataset.tab===STATE.tab) return;
+      STATE.tab=b.dataset.tab;
+      [].forEach.call(this.querySelectorAll('.ov-tab'),function(x){x.setAttribute('aria-selected', x===b);});
+      setTabTint();
+      /* whatever the cube has not fetched yet, fetch this tab's line first */
+      try{ if(window.AmrCube && AmrCube.prioritise) AmrCube.prioritise(STATE.tab==='agg'?'agg':'rmx'); }catch(e){}
+      renderChips();          // market names differ per tab (Southwest/GTA vs HNS SW/Innocon)
+      renderActiveTab();
+    });
+
+    /* ---- go ---------------------------------------------------------------
+       TWO changes here, and between them they are most of why this page used to
+       sit and think for so long.
+
+       1. ONE version call, not three. The Overview has no sheet of its own, so
+          its device cache has to be checked against Price & Volume, RMX AND
+          Product Segment. It used to ask three times; Apps Script runs a user's
+          calls end to end, so that was three round trips of dead air before the
+          page even started. getDataVersions answers all three in one.
+
+       2. THE CUBE GOES FIRST. It used to start 1.2s after everything else and
+          therefore landed LAST, behind every server report on the page — which
+          is exactly backwards, because once the cube is in, those reports are
+          not needed to change month or market. Starting it first means the
+          second half of the loading time is spent making the page instant
+          rather than repeating work.
+
+       Nothing blocks: load() runs regardless of what the cube is doing, and the
+       panels fill in as their data arrives. */
+    function boot(){
+      /* ONE screen for the whole opening. Both steps are named up front and the
+         screen comes down when the LAST of them lands - not when the first does,
+         which is what used to leave people reading a half-filled page. */
+      if(window.AmrBoot){ AmrBoot.need('data'); AmrBoot.need('month history'); }
+      loadWorkbooks();   // SAP/USGAAP cards (shared KPI numbers, independent of the sheet data)
+      wirePill(); renderPill(); wireCube();
+      if(!IS_LIVE || !window.AmrCache){ load(); return; }
+      function done(gens){
+        gens = gens || {};
+        var combo=(gens.pricevolume&&gens.rmx&&gens.segment)
+          ? gens.pricevolume+'-'+gens.rmx+'-'+gens.segment : '';
+        AmrCache.check(combo);      // '' -> device cache stays off this visit
+        load();
+      }
+      try{
+        google.script.run
+          .withSuccessHandler(function(r){ done(r && r.generations); })
+          .withFailureHandler(function(){ done(null); })
+          .getDataVersions(['pricevolume','rmx','segment']);
+      }catch(e){ done(null); }
+    }
+    /* AmrCube is §E, above §P, so it exists by construction now — the poll
+       resolves on its first call and is left alone rather than rewritten
+       inside a 5,000-line port. Starts both lines, the tab you are looking at
+       first, and repaints whenever a month-block lands. */
+    function wireCube(tries){
+      tries=tries||0;
+      if(!window.AmrCube){ if(tries<40) setTimeout(function(){ wireCube(tries+1); }, 150); return; }
+      if(wireCube.done) return;
+      wireCube.done=true;
+      AmrCube.on(function(ev, payload){
+        if(ev==='error'){ HIST.err=String(payload||'unknown'); renderPill(); return; }
+        /* the slider's range is whatever the cube holds, so it is rebuilt on
+           every manifest and every block; the auto history read fires once the
+           current year has finished streaming */
+        syncWindow(); renderPill(); dqBadge();
+        if(ev==='ready') maybeBuildHistory();
+        if(winMode()) renderActiveTab(); else renderTrendSoon();
+      });
+      try{
+        AmrCube.configure({ lines:['agg','rmx'], priority:(STATE.tab==='agg'?'agg':'rmx') }).init();
+      }catch(e){}
+      syncWindow(); renderPill(); dqBadge(); renderTrendSoon();
+    }
+
+    /* The \u2699 Data sheet modal (§D) calls this after it is pointed
+       somewhere new. boot() re-checks each page's generation and reloads
+       every card. */
+    window.amrReloadData = boot;
+
+    /* WAS a DOMContentLoaded handler, waiting for Shell.html to be included
+       below this script. §D and §E are above §P here, so there is nothing to
+       wait for — and AMR.start() only calls this after the template is mounted.
+       It still runs LAST, which is the position the event used to give it. */
+    boot();
   }
 });
 </script>

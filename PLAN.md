@@ -1,6 +1,6 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: in progress on `merging-files`. Chunks 0–7 done — `app.html` is ~652 KB and holds the runtime, ten shared modules and seven of the eleven pages (Landing, Inventory Report, both Fuel Recovery pages, AGG Price & Volume, Ready-Mix, Product Segment). §A3 is 362 rules; §A4 is 68 and did not grow in chunk 7. All 17 test harnesses run and are green. The 16 `.gs` files are untouched and stay that way until chunk 12.**
+**Status: in progress on `merging-files`. Chunks 0–8 done — `app.html` is ~742 KB and holds the runtime, ten shared modules and eight of the eleven pages (Landing, Inventory Report, both Fuel Recovery pages, AGG Price & Volume, Ready-Mix, Product Segment, and the Executive Overview's shell). §A3 is 363 rules — chunk 8 added exactly one; §A4 is 302, because the Overview is 234 of them. All 17 test harnesses run and are green, and `tests/ovperiod.js` now drives `app.html` as well as the legacy page. The 16 `.gs` files are untouched and stay that way until chunk 12.**
 
 > ## Read this file before doing anything. Every session, every agent.
 >
@@ -557,8 +557,8 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 5 | **AGG Price & Volume** | `Page_PriceVolume` + `Deck_PV` + `KpiShared` + `Cube`; `SlideExport` had already come in chunk 3. 1,800 lines of page JS, all three libraries, and all 54 id-scoped declarations converted — **and it needed exactly ONE §A4 rule.** §E gains `AmrCache`, `AmrKpi`, `AmrCube`, `AmrPvSlide`. | `merge.js`, `modparity.js`, `pageparity.js` (126 comparisons), `pvcheck.js`, `pvlookup.js`, `slidefit.js` — and the whole suite, all 17 harnesses, green | ✅ |
 | 6 | **Ready-Mix** | `Page_Rmx` only — **`Deck_RMX` does NOT come here**, see below. 65 of its 67 id-scoped rules were deleted rather than ported, because chunk 5 had already promoted the same mapping check and dialog. **Two dead includes removed from the legacy page**: `Deck_RMX` and `Cube`, ~1,225 lines on every Ready-Mix load. The one page with a real §A4 block, and the reason is bare element selectors. | `tests/merge.js`, `tests/pageparity.js` (147 comparisons), `tests/rmxcost.js`, `tests/segboot.js` + the whole suite — all green | ✅ |
 | 7 | **Product Segment** | `Page_Segment` + `Deck_SEG`. §E gains `AmrSegSlide`; §A3 gains `table.gt` and the slide-body rows. **Zero §A4 rules** — six id-scoped rules became `.tbl-stack` / `.previewHost`, and everything else was already shared. | `tests/merge.js`, `tests/pageparity.js` (170 comparisons), `tests/segboot.js`, `tests/deckstatic.js` + the whole suite — all green | ✅ |
-| 8 | **Overview, part 1 — shell and cube** | `Page_Overview`'s markup, its CSS (26 of the 65 `:root`/`body` hazards live here), the period model (`STATE`, `PICK_SERVER`, `windowPeriod`) and the `AmrCube` wiring. No panel painters yet. **136 ids and by far the largest style block** — expect a real §A4 block, as Ready-Mix needed, wherever it styles bare elements. Use the literal-aware indenter and defer every DOMContentLoaded handler. | `tests/ovperiod.js`, `tests/pageparity.js` + the page's four period buttons | ☐ |
-| 9 | **Overview, part 2 — the panels** | The painters, the fifteen chart registries, `hidePanel` / `resetPanels` / `pcatFits`. Split from chunk 8 because 6,022 lines is a quarter of all client code and reviewing it in one commit is not reviewing it. | `tests/freshness.js` + every panel, all four periods | ☐ |
+| 8 | **Overview, part 1 — shell and cube** | `Page_Overview`'s whole markup (342 lines, 136 ids), its whole style block as **234 §A4 rules**, and the shell half of its script: state, helpers, the panel primitives, the market chips, the period model (`STATE`, `PICK_SERVER`, `windowPeriod`), the month window, the `AmrCube` wiring, the history pill, `load()` and `boot()`. No painters — they are behind a ten-name **CHUNK 9 SEAM** block. §A3 gained exactly one rule. `tests/ovperiod.js` drives `app.html` as a second side now, and `tests/merge.js` learned to resolve `$('id')`. | `tests/merge.js`, `tests/ovperiod.js` (both sides; merged is shell-only) + the whole suite — all green | ✅ |
+| 9 | **Overview, part 2 — the panels** | Every painter, both cross-filter engines, the fifteen chart registries in `CH`, `pcatFits`, the SAP/USGAAP cards, customers, fuel surcharge, product category, and the data-quality sheet with its lookup editor — 4,128 lines. The chunk-8 seam block goes. *(`hidePanel` / `resetPanels` are NOT here: they are the panel primitives the shell's own `renderTab` needs, so they landed in chunk 8. Corrected against the code.)* Split from chunk 8 because 6,022 lines is a quarter of all client code and reviewing it in one commit is not reviewing it. | `tests/ovperiod.js` with the merged side's shell flag removed — all seven checks, both tabs, all four periods — plus `tests/freshness.js` and the whole suite | ☐ |
 | 10 | **Deck Builder** | `Page_DeckBuilder` + `Deck_Sources` + `Deck_Styles`. | `tests/deckpath.js`, `tests/bgrender.js` + a real deck build | ☐ |
 | 11 | **TP01** | `Page_TP01`. Mail sends as the deploying account. | a real send to a test recipient | ☐ |
 
@@ -640,6 +640,107 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   global. *(The id check was replaced in chunk 4 — see [§3](#3-how-the-pages-live-inside-one-html-file).
   Ids repeat across pages on purpose; what is checked now is that none repeats within one page
   and that the mount empties `#appRoot`.)*
+
+### What chunk 8 settled
+
+- **The seam, and where it actually is.** Chunk 9's row used to claim `hidePanel` /
+  `resetPanels`; they are the shell's, not a painter's — `renderTab()` calls `resetPanels()`
+  before anything paints, so splitting them off would have left chunk 8 unable to mount its
+  own page. They are in chunk 8. `pcatFits` really is chunk 9's: it is the Product Category
+  panel's own decision and nothing else calls it.
+
+  The seam is otherwise **ten names**, in one block marked `CHUNK 9 SEAM` at the top of
+  `boot()`: `renderTab`, `renderActiveTab`, `renderXfBar`, `renderRxfBar`, `renderTrendNow`,
+  `renderTrendSoon`, `dqBadge`, `loadWorkbooks`, `afterLookupWrite`, and `var RXF` — the one
+  piece of painter state the shell touches, because the market chips clear the Ready-Mix
+  submarket filter when the market changes. Chunk 9 replaces all ten and deletes the block.
+  That is the whole cost of splitting a 5,272-line IIFE in two, and it was worth measuring
+  before assuming: the naive guess was "a dozen stubs everywhere", and it is one block.
+
+- **234 §A4 rules — and that is the right answer, not a failure of the promotion test.**
+  Chunk 6 wrote the test as *"is this rule a component"*, and this page is where it pays out
+  in the other direction. `.ov-*` is the page frame, `.kpi*` the headline strip, `.dq-*` /
+  `.lk-*` the data-quality sheet and its lookup editor, `.xf-*` the two cross-filter engines.
+  No other page has tabs, a month-window slider, a cross-filter chip bar or a lookup editor,
+  and the two pages left to port (Deck Builder, TP01) have none of them either. Promoting any
+  of it would only make §A3 harder to change. **§A3 grew by exactly one rule.**
+
+- **The one rule it did add, and the finding behind it.** This page's `.seg` **is** §A3's
+  `.seg.pills` — same 1px border, same 9px radius, same hover, same pressed state, written
+  out again because nobody had promoted it. Eight controls now say `class="seg pills"` and
+  the page carries no copy. The only thing its version had that §A3's did not is
+  `.seg button[disabled]`, and that went to §A3: the two Prev-month buttons are dead until
+  the cube holds the month they need, and a disabled state is a state of the control, not of
+  a page. The one deliberate pixel change is 6px: `.seg.pills` pads `8px 12px` where this
+  page padded `8px 15px`.
+
+- **`.linkbtn` was an `<a>` all along.** §A3's version is a `<button>` in a `.linkbtns` row
+  and never needed `display:inline-block` or `text-decoration:none`. The Overview's
+  source-missing notice links to another tool with an anchor, so without those two the link
+  underlines and its vertical padding does nothing. Both are in §A3 now — a fix, not a
+  preference — and the page takes §A3's slightly smaller type and padding with it.
+
+- **Four `@media` queries, two strays, one step.** 900px ×3 and 860px ×1 all map onto
+  `--bp-mid` (980px), which is the only layout switch this page has: two columns to one, five
+  KPI columns to a wrapping flex row. Between 860 and 980 the KPI strip now wraps where it
+  used to stay in five columns — deliberate, and the safer side of it, because five cards
+  with `min-width:158px` do not fit a 900px viewport without overflowing their tracks.
+
+- **`tests/merge.js` could not see 139 of this page's id lookups.** The Overview and Ready-Mix
+  both declare `function $(id){ return document.getElementById(id); }` and then use `$`
+  everywhere; the ids-resolve check only matched the long form, so it was reading a third of
+  what those two pages actually look up. It resolves both spellings now — but only on a page
+  that declares that exact helper, so a jQuery-shaped `$` on some future page cannot be
+  misread as an id lookup. It also had to learn that **an id can be built by the page**: every
+  chart canvas here is written into a panel by the painter that then looks it up, so a lookup
+  resolves against the template *or* against markup this page's own code builds. 110 lookups
+  checked before, 249 after. Mutation-tested: `$('winVal')` → `$('winVall')` fails by name.
+
+- **`tests/ovperiod.js` runs against `app.html` now, not only the legacy page.** Same fixture,
+  same clicks, same seven checks, one label per side, and it is the gate this chunk and chunk
+  9 rest on. Three things it taught:
+  - **A `<body>` written in prose is still matched by a regex looking for `<body>`.** The stub
+    is spliced in after the body tag; `app.html`'s `<head>` navigation comment *describes* one,
+    so the first match in the file is inside a comment and the entire stub landed commented
+    out — a page that boots and does nothing, which looks like a dead port. It searches after
+    `</head>` now. That is the **third** time a checker in this repo has read prose as markup
+    (see chunk 2's two); the lesson is not "be careful", it is *anchor on the element*.
+  - **`AmrLib` has to be neutralised in any browser harness.** The merged page awaits an
+    injected `<script src>`'s `onload` before `boot()`. Off the network that promise never
+    settles and the page never boots. The stub resolves every injected script at once — the
+    same trick `pageparity.js` already used under jsdom, now needed under Chromium too.
+  - **A fixture that answers the same thing twice cannot test which question was asked.**
+    `PICK_SERVER` says which server tab a Prev-month pick reads, and Product Category is the
+    only panel that reads it — but the fixture returned identical rows for MTD and YTD, so
+    **swapping `PMTD` and `PYTD` in `PICK_SERVER` passed clean, on both sides.** The two
+    periods now carry different volumes and check 4 reads them. The swap fails by name.
+- **Chunk 8's merged side is `shell: true`** — checks 1–2 (the Period control, the slider, the
+  cube) run against it, 3–7 do not, because they read panels. Chunk 9 deletes the flag and the
+  three lines that honour it. It is there rather than absent because the four Period buttons
+  **are** chunk 8's review and they are only observable in a browser; mutation-tested by making
+  `prevMonthOf()` step back two months, which fails both window assertions on the merged side
+  alone.
+
+- **`AmrTick` is NOT the Overview's** — the plan asked for this to be decided here. Grepped
+  both ways: the page has zero references. Its real callers are `Page_DeckBuilder.html`'s
+  `dbSoon` and `SlideExport.html`'s capture settle, so it ports in **chunk 10** with the Deck
+  Builder, and `tests/bgrender.js` / `tests/deckstatic.js` are what will prove it. §E's
+  `AmrSlide` already falls back gracefully when it is absent, which is why nothing has noticed.
+  `AmrKpiStore` is still unclaimed and still goes at chunk 13 unless chunk 10 or 11 wants it.
+
+- **The port was derived, not retyped**, as chunks 4 and 7 did it: the page's script block is
+  spliced in whole and every edit is a declared substitution asserted to match exactly once.
+  Three substitutions in the script, one in the markup, and the `class="seg"` rewrite is
+  asserted to hit exactly eight. The style block went through a character scanner that copies
+  everything outside a selector run byte for byte, so §A4 diffs cleanly against the original,
+  and a separate pass checks all 234 rules survived with their declarations unchanged.
+
+- **`String.replace(from, to)` ate the file.** The assembly spliced the registration in with a
+  plain string replacement, and the page's own `fMoneyFull` contains `'-$':'$'` — a `$` followed
+  by a quote, which `replace` reads as *"insert everything after the match"*. The Inventory
+  Report block was duplicated 34 times and `app.html` came out 6,300 lines too long. Every
+  splice in the assembly passes a **function** as the replacement now. `merge.js` caught it
+  instantly, with 75 failures naming a duplicate registration.
 
 ### What chunk 7 settled
 
@@ -1055,9 +1156,12 @@ not prove it** — read the next box before deleting anything.
   are the one place grep IS conclusive (§11's box: no dynamic dispatch, and a browser module
   cannot be reached by a trigger or the Run menu). It was deliberately NOT ported in chunk 5.
   If no page chunk claims it by chunk 13, it goes.
-- **`AmrTick` in `Shell.html`** *(decide by chunk 9)*. No caller on any page ported so far.
-  `tests/bgrender.js` exercises the behaviour it exists for, so check the Overview before
-  concluding anything.
+- **`AmrTick` in `Shell.html`** *(decided in chunk 8: KEEP, ports in chunk 10)*. The Overview
+  was the page left to check and it has **zero** references. Its real callers are
+  `Page_DeckBuilder.html`'s `dbSoon` and `SlideExport.html`'s capture settle, so it comes
+  across with the Deck Builder; `tests/bgrender.js` and `tests/deckstatic.js` are the gates.
+  §E's `AmrSlide` already degrades to `requestAnimationFrame` without it, which is why no
+  ported page has missed it.
 
 ### The QlikView sync is trigger-only, and stays that way
 
@@ -1125,6 +1229,11 @@ from a page:
   - `tests/modparity.js` *(chunk 3, retires at chunk 13)* — every §E module is byte-for-byte
     the file it came from, which is what makes `regress.js`, `slidefit.js`, `pvcheck.js` and
     `deckpath.js` cover `app.html` too.
+  - `tests/ovperiod.js` *(pointed at `app.html` in chunk 8)* — the only harness that drives a
+    merged page through a real browser. It runs the same fixture and the same checks against
+    the legacy page and against `app.html`, labelling every failure with the side it happened
+    on, so "both broke" and "the port broke" cannot be confused. Its legacy side goes at
+    chunk 13 with the file it reads.
 - **Install the harness dependencies once, together.** `npm install playwright chart.js jsdom`
   — Chromium is already at `/opt/pw-browsers`. Five harnesses were being reported as
   "unavailable" for two chunks because nobody had run that line.

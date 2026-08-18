@@ -164,16 +164,38 @@ const SHARED_IDS = new Set([
 
 /* ------------------------------------------------------- 3. ids resolve */
 {
-  let bad = 0;
+  /* Two spellings, because the pages have two. Most write getElementById; the
+     Overview and Ready-Mix declare `function $(id){ return
+     document.getElementById(id); }` and then use $ everywhere — 183 call sites
+     between them, none of which this check could see when it only looked for
+     the long form. A page that does NOT declare that helper is not scanned for
+     `$(…)`, so a jQuery-shaped $ on some future page cannot be misread as an
+     id lookup. */
+  let bad = 0, seen = 0;
+  const SHORT = /function\s+\$\s*\(\s*id\s*\)\s*\{\s*return\s+document\.getElementById\(\s*id\s*\)/;
   for (const [name, p] of Object.entries(PAGES)) {
     const used = new Set([...p.js.matchAll(/getElementById\('([\w-]+)'\)/g)].map(m => m[1]));
+    const how = new Map([...used].map(id => [id, "getElementById('" + id + "')"]));
+    if (SHORT.test(p.js)) {
+      for (const m of p.js.matchAll(/(?:^|[^\w$.])\$\('([\w-]+)'\)/g)) {
+        if (!used.has(m[1])) how.set(m[1], "$('" + m[1] + "')");
+        used.add(m[1]);
+      }
+    }
+    /* An id can also be created by the page itself: every chart canvas on the
+       Overview is written into a panel by the painter that then looks it up.
+       So a lookup resolves against the template OR against the markup this
+       page's own code builds. A typo still fails, because the write and the
+       read have to agree on the spelling either way. */
+    const built = new Set([...p.js.matchAll(/id="([\w-]+)"/g)].map(m => m[1]));
+    seen += used.size;
     for (const id of used) {
-      if (!p.ids.has(id) && !SHARED_IDS.has(id)) {
-        bad++; fail('ids-resolve', `${name}: getElementById('${id}') matches nothing in tpl-${name}`);
+      if (!p.ids.has(id) && !SHARED_IDS.has(id) && !built.has(id)) {
+        bad++; fail('ids-resolve', `${name}: ${how.get(id)} matches nothing in tpl-${name} and nothing in this page builds it`);
       }
     }
   }
-  if (!bad) pass('ids-resolve', 'every getElementById target exists');
+  if (!bad) pass('ids-resolve', `every id a page looks up exists (${seen} lookups)`);
 }
 
 /* ------------------------------- 4. one id once per page, one page mounted */
