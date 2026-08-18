@@ -10,6 +10,16 @@ Builder extraction work lives. These two harnesses are the regression gate for P
 Nothing here is uploaded to Apps Script. The repo root is a flat mirror of the script
 project; this folder is not part of it.
 
+**Since chunk 12 the server side is one `app.gs` and the 16 `.gs` files are gone.** The seven
+harnesses that used to read one by name — `configcheck`, `qliksync`, `fscheader`, `pvlookup`,
+`rmxcost`, `freshness`, `deckstatic` — read a **region** of `app.gs` through `appgs.js` now,
+and `gsparity.js` is what proves a region is still byte-for-byte the file it came from. Read
+both of those sections before pointing anything new at `app.gs`.
+
+Install everything at once: `npm install playwright chart.js jsdom`. `--no-save` prunes
+whatever is not on the command line, so doing them one at a time leaves you with only the last.
+Chromium is already at `/opt/pw-browsers`.
+
 ## `regress.js` — the extraction gate
 
 Runs the **pre-extraction** page code and the **post-extraction** shared module over the same
@@ -30,6 +40,18 @@ git show <commit-before-your-change>:Page_FuelSurcharge.html > /tmp/old/old_fsc.
 git show <commit-before-your-change>:Page_RmxFuel.html       > /tmp/old/old_rfsc.html
 OLD_DIR=/tmp/old node tests/regress.js
 ```
+
+**`pvcheck.js` needs staging too, and its commit was never written down.** It reads
+`$OLD_DIR/old_pv.html`, the Price & Volume page from before the `Deck_PV` lift, and without it
+the harness dies on a missing file rather than reporting anything — which reads like a broken
+harness and is not. The commit is **`cc3adc9`**, the parent of `b713df9`:
+
+```bash
+git show cc3adc9:Page_PriceVolume.html > /tmp/old/old_pv.html
+OLD_DIR=/tmp/old node tests/pvcheck.js
+```
+
+Both are green as of chunk 12. Neither reads a `.gs`, so neither was affected by the merge.
 
 The line ranges for the old files are in the `CASES` array — they bracket the state block
 through the last exec builder. Re-check them against the commit you are diffing; they are
@@ -102,6 +124,66 @@ Three things it does deliberately, each of which took a wrong answer to find:
 It boots the **legacy** page too, which makes it the gate for deletions from those files: the
 two dead includes chunk 6 removed from `Page_Rmx.html` would have broken the legacy side if
 either had been live.
+
+## `gsparity.js` — `app.gs` holds verbatim copies of the 16 `.gs`
+
+Chunk 12 merged 10,889 lines of working backend into one file. The argument that made it safe
+was that it is a **move** — ordered concatenation, no renaming, nothing reconciled. This turns
+that argument into something checkable.
+
+```bash
+node tests/gsparity.js           # no dependencies
+REF=<commit> node tests/gsparity.js
+```
+
+It reads the 16 originals **out of git**, not off disk: they were deleted in the same commit
+that added `app.gs`, because the two cannot coexist in an Apps Script project. That is the same
+staging trick `regress.js` and `pvcheck.js` use, pointed at a commit instead of a directory.
+
+Five checks: every source appears verbatim after the ten edits declared in the file and no
+others; the sections are in `PLAN.md` §5 order; the top-level name set moved by exactly the
+declared deletions and additions; no top-level name is declared twice; LF throughout.
+
+**The third check is the one that earns its place.** Every cut in the build had to match its
+anchor exactly once, which sounds sufficient and is not. The `RMX_debugMonths` cut ran to the
+first `  return s;\n}` after its banner — and `RMX_debugMonths` does not end that way,
+`RMX_whoWins` does. The cut matched, uniquely, and silently deleted `RMX_whoWins`: a function
+the Ready-Mix page names *in an error banner shown to the user*, telling them to run it.
+`node --check` passed. Every structural check passed. A set difference of declared names named
+it instantly. **When you delete code by anchored text, diff the symbol table, not the syntax.**
+
+Mutation-tested four ways before being trusted: deleting `RMX_whoWins` (fails two checks),
+appending a second top-level `getReport` (fails the collision check), flipping the file to CRLF
+(fails the line-ending check and every region), and moving the §5 engine down into §8 (fails
+the ordering check, and only that one).
+
+**Retire this at chunk 13**, same as `modparity.js`: the moment a legitimate change lands
+inside a moved region, `app.gs` stops being a copy of anything and this starts failing for the
+right reason. Delete it then — do not weaken it.
+
+## `appgs.js` — not a harness; the region slicer the others use
+
+Seven harnesses used to read a `.gs` file by name. They read a **region** of `app.gs` now, and
+this is the one place that knows how to find one.
+
+```js
+const { region, load } = require('./appgs.js');
+region('PV_Backend.gs')      // the merged text, minus its banner
+load(ctx, 'Config.gs')       // ...evaluated into a vm context
+```
+
+**Read this before repointing anything else at `app.gs`.** Several of those harnesses assert on
+*source text* — "PV takes its generation from the sheet", "no local header-is-row-1 reader is
+back in `PV_Lookup`". Run against the whole merged file, those regexes pass if **any** of the
+eleven sections satisfies them, so a check that used to pin one backend would start passing
+because a different one happens to contain the pattern. Repointing them at the file rather than
+the region would have left eight checks that could no longer fail.
+
+`QlikSync.gs` is listed twice, because it is: the engine is §5 and its four entry points are
+§11. `region('QlikSync.gs')` joins both, which is what a harness that used to read the whole
+file wants.
+
+Three of the seven have a `load()` of their own, so import it as `loadRegions`.
 
 ## `modparity.js` — §E holds verbatim copies
 

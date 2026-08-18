@@ -107,30 +107,38 @@ makes those borrowed sheets appear and be editable in each page's ⚙ panel.
 
 ## 3. File map
 
-### Server (`.gs`) — one shared global namespace
+### Server — one file, `app.gs`, in one shared global namespace
 
-Apps Script evaluates every `.gs` file into **one** global scope; the last writer wins.
-Entry points are therefore uniquely prefixed (`RMX_`, `PV`, `DECK_`, `TP_`, `IR`) and
-namespace objects are captured at evaluation time.
+**Since chunk 12 the server is a single `app.gs`.** The 16 `.gs` files below were merged into
+it and deleted in the same commit — they cannot coexist, because Apps Script evaluates every
+`.gs` into **one** global scope and the last writer wins, silently. That is also why entry
+points are uniquely prefixed (`RMX_`, `PV`, `DECK_`, `TP_`, `IR`) and namespace objects are
+captured at evaluation time; the prefixes stay, and so does the reason.
 
-| File | Role |
-|---|---|
-| `Code.gs` | Router (`doGet`), `include()`, `getLogo()`, data-generation helpers, chunked cache helpers, `syncAll()`, and the `SB` Slide-Builder sheet reader |
-| `Config.gs` | `APP_CONFIG` — every sheet ID, tab name, market list, cube constants — plus the Settings API |
-| `PV_Backend.gs` | AGG Price & Volume aggregation |
-| `PV_Lookup.gs` | REGION LOOKUP mapping-check for Price & Volume |
-| `RMX_Backend.gs` | Ready-Mix PPI/ASP engine; also serves the Segment page via `RMX_getSlideTables`. **`RMX_prepare` is the one pull** — see [§6](#6-caching-model) |
-| `RMX_Suggest.gs` | Lookup-miss suggestions (PRODUCT MASTER / CUSTOM FLAG / EXTRAS), three independent models |
-| `Ov_Backend.gs` | Executive Overview aggregator + the closed-year history cube |
-| `FSC_Backend.gs` | AGG fuel recovery |
-| `RFSC_Backend.gs` | RMX fuel recovery |
-| `Sask_Backend.gs` | Saskatchewan per-customer mid-year price increase (read + name matching only) |
-| `Kpi_Backend.gs` | Shared EBITDA KPI workbook values in a Drive folder |
-| `QlikSync.gs` | Pulls QlikView exports out of Drive and replaces sheet tabs; scheduled triggers |
-| `TP01_Backend.gs` | Transfer Price — per-market email send, recipients in User Properties |
-| `IR_Backend.gs` | Inventory Report — stores/derives a Drive PDF file ID (never touches DriveApp) |
-| `Deck_Backend.gs` | Deck Builder server plumbing: template geometry, create/addSlide/finish/status, validator. See §8 |
-| `Deck_Recipe.gs` | **Config, not code** — which 43 slides the deck contains, in order, plus `DECK_getRecipe()` which checks them |
+Navigate it by section banner — `Ctrl+F` for `§7`, or for the original filename, which each
+region still carries as a `/* ---- RMX_Backend.gs ----` locator.
+
+| Section | Was | Role |
+|---|---|---|
+| §1 CONFIG | `Config.gs` | `APP_CONFIG` — every sheet ID, tab name, market list, cube constants — plus the Settings API and `LOG_LEVEL`. **First on purpose:** IIFEs run at evaluation time, so nothing that reads config while constructing itself can precede it |
+| §2 LOGGING | *new* | `APP_log(level, where, msg, data)`, same signature and output shape as `app.html`'s `AMR.log` |
+| §3 ROUTER + PLUMBING | `Code.gs` | Router (`doGet`), `include()`, `getLogo()`, data-generation helpers, chunked cache helpers, `syncAll()`, and the `SB` Slide-Builder sheet reader |
+| §4 PERMISSIONS | *new* | `APP_verifyPermissions()` — run from the editor; one line per service. **Read its banner before adding a service:** `oauthScopes` is explicit now, so it replaces auto-detection |
+| §5 SYNC | `QlikSync.gs` | The engine that pulls QlikView exports out of Drive and replaces sheet tabs. Its entry points are §11 |
+| §6 AGG | `PV_Backend.gs` | AGG Price & Volume aggregation |
+| | `PV_Lookup.gs` | REGION LOOKUP mapping-check for Price & Volume |
+| | `FSC_Backend.gs` | AGG fuel recovery |
+| | `Sask_Backend.gs` | Saskatchewan per-customer mid-year price increase (read + name matching only) |
+| §7 RMX | `RMX_Backend.gs` | Ready-Mix PPI/ASP engine; also serves the Segment page via `RMX_getSlideTables`. **`RMX_prepare` is the one pull** — see [§6](#6-caching-model) |
+| | `RMX_Suggest.gs` | Lookup-miss suggestions (PRODUCT MASTER / CUSTOM FLAG / EXTRAS), three independent models |
+| | `RFSC_Backend.gs` | RMX fuel recovery |
+| §8 OVERVIEW | `Ov_Backend.gs` | Executive Overview aggregator + the closed-year history cube |
+| §9 DECK | `Deck_Backend.gs` | Deck Builder server plumbing: template geometry, create/addSlide/finish/status, validator. See §8 |
+| | `Deck_Recipe.gs` | **Config, not code** — which 43 slides the deck contains, in order, plus `DECK_getRecipe()` which checks them |
+| §10 SMALL PAGES | `Kpi_Backend.gs` | Shared EBITDA KPI workbook values in a Drive folder |
+| | `TP01_Backend.gs` | Transfer Price — per-market email send, recipients in User Properties |
+| | `IR_Backend.gs` | Inventory Report — stores/derives a Drive PDF file ID (never touches DriveApp) |
+| §11 TRIGGERS | `QlikSync.gs` | `qlikSyncCheck` (**the time-driven trigger — the whole data pipeline runs through it**), `qlikMarkCurrent`, `qlikStamps`, `qlikSyncNow`. Everything reached from outside the repo, in one place, because nothing in the repo can point at a hand-configured trigger |
 
 ### Client (`.html`)
 
@@ -1100,7 +1108,7 @@ before assuming it is finished.**
 | 2026-08-14 | **Half of the Phase 4 debt paid** — `Page_Segment.html` delegates its slide content, KPI cards and fitter to `AmrSegSlide`; `tests/deckstatic.js` fails if a second copy comes back | ✅ done |
 | | **The other half** — make `Page_Rmx.html` delegate to `AmrRmxSlide` instead of holding a duplicate copy | ☐ |
 | 2026-08-13 | `DECK_CONFIG.TEMPLATE_ID` + `FOLDER_ID` set to the live template and deck folder | ✅ done |
-| | **Add the Slides + Drive scopes to `appsscript.json`**, then run `DECK_validateTemplate()` | ☐ |
+| | ~~**Add the Slides + Drive scopes to `appsscript.json`**~~ — done in chunk 12, along with five more; `DECK_validateTemplate()` still to run | ☐ |
 | | A real end-to-end deck build against the live deployment. Every adapter is registered but `DECK_create` / `addSlide` / `finish` have never been run, and no capture has gone through html2canvas outside a test harness | ☐ |
 | 2026-08-13 | AGG slide layout — fill the frame: bigger charts, bigger table type, KPI strip grown without clipping, and `tests/slidefit.js` to hold it there | ✅ done |
 | 2026-08-14 | Product Segment slide — the same treatment: fit to the frame instead of letting `build()` scale the stack, so the KPI strip is readable on a deck slide | ✅ done |
@@ -1150,4 +1158,15 @@ before assuming it is finished.**
 | 2026-08-18 | **Two sentences of TP01's page copy corrected** — it told users mail is sent "from your account" and that a recipient is remembered "for your account". Neither has been true since `executeAs: USER_DEPLOYING` was pinned: `TP01_Backend.gs` and README §1 both say the deployer sends and the recipient map is one shared list. It is the sentence someone reads before typing a colleague's address | ✅ done |
 | 2026-08-18 | **`.ghost` on white is closed** — the last two pages to check, TP01 and Landing, put no buttons inside their guides at all. The bug was on the two fuel pages and Price & Volume and is fixed on all three | ✅ done |
 | | **A real TP01 send is still owed.** Nothing off-platform can exercise `MailApp`; the page's parity case covers everything up to the click | ☐ |
-| | **Chunk 12 is next: the 16 `.gs` files into one `app.gs`.** It is one atomic commit by construction — `app.gs` cannot coexist with the files it replaces — and `app.html` is now known good for all ten pages, which is the precondition `PLAN.md` §2 set for taking it | ☐ |
+| 2026-08-18 | Merge **chunk 12** — the 16 `.gs` files into one `app.gs`, in one commit, because `app.gs` cannot coexist with the files it replaces. **542 KB, 11,388 lines, eleven sections, zero top-level collisions.** `APP_log()` + `APP_CONFIG.LOG_LEVEL`, `APP_verifyPermissions()`, and seven explicit `oauthScopes`. Both files now exist; only the cutover is left | ✅ done |
+| 2026-08-18 | **`tests/gsparity.js`** — proves every region of `app.gs` is byte-for-byte the `.gs` it came from, reading the originals out of git because they were deleted in the same commit. Mutation-tested four ways. Retires at chunk 13, like `modparity.js` | ✅ done |
+| 2026-08-18 | **A cut deleted `RMX_whoWins` and nothing noticed.** The `RMX_debugMonths` cut ran to the first `  return s;\n}` after its banner, and that is how `RMX_whoWins` ends, not `RMX_debugMonths`. The anchor matched *uniquely*; `node --check` and every structural check passed. What caught it was diffing the top-level **name set** before and after — now a permanent check in `gsparity.js`. `Page_Rmx.html` tells users to run `RMX_whoWins()` by name, so it would have shipped as a dead instruction | ✅ done |
+| 2026-08-18 | **Six debug functions deleted, and both of `PLAN.md` §7's required pre-deletion checks actually run.** `debugUnclassified`'s Drive CSV is a strict subset of what the live Mapping check already shows on screen (`getUnmapped` → `finishUnmapped_` carries row counts, markets, `mat_prod_hier_3` and CY/PY volume *and* revenue, sorted by money impact). Removing it does not cost the Drive scope. §7 also had the CSV attributed to `debugNaOthers`, which only writes to `Logger` — corrected | ✅ done |
+| 2026-08-18 | **`syncSlideData` and `CUBE_historyStatus` deleted; `qlikStamps`, `getSaskRatesStatus`, `SB` and `getSlideData` kept.** Three of the four open "callerless" candidates turned out not to be: `qlikStamps` is exercised by three checks in `tests/qliksync.js`, `getSaskRatesStatus` says "and a quick manual run" in its own comment, and `getSlideData` is called by the Overview at `Ov_Backend.gs:240`. `syncSlideData`'s own comment *claimed* a caller it does not have | ✅ done |
+| 2026-08-18 | **The chunk-1 audit's count was wrong and the analyser was the reason.** It is 181 top-level declarations (154 functions, 27 `var`/`const`), not 127: the original did not blank **regex literals**, so a `/[)]/` unbalanced its brace counter and whole regions read as nested — `Ov_Backend.gs` reported 5 top-level names against an actual 62. Every verdict survived; the fix is that a counter-based analyser must assert its counters return to zero. `PLAN.md` §1a and §13 corrected | ✅ done |
+| 2026-08-18 | **The repo's line endings are mixed three ways, not two.** `FSC_Backend.gs` and `RFSC_Backend.gs` each carry a lone `\r` as a line terminator, between `cPut_` and `cachedRead_`. Harmless to JavaScript, but `wc -l` undercounts and line-based tools see two statements on one line. `app.gs` normalises all three to LF | ✅ done |
+| 2026-08-18 | **The seven harnesses that read a `.gs` read a *region* of `app.gs` now**, via the new `tests/appgs.js`. Deliberately regions, not the whole file: eight of their checks assert on source text and would have passed against any of the eleven sections, leaving checks that could no longer fail. `tests/rmxcost.js` also had a literal `\r\n` in the anchor it splices the RMX IIFE return on — it matches the line ending now instead of spelling it | ✅ done |
+| | **`APP_verifyPermissions()` has never been run.** Nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp`, so the whole of §4 is unproven code. Run it from the editor as the first thing after pasting `app.gs` in | ☐ |
+| | **Two sentences in `app.html` are now untrue**, both user-facing strings rather than comments, both for chunk 13: the Ready-Mix month-list banner still tells users "a SECOND file in the Apps Script project is also defining RMX and winning", which is now impossible; and the Price & Volume cross-year notice still says to paste `PV_Backend.gs`, a file that no longer exists | ☐ |
+| | **`APP_log` has almost no call sites, on purpose.** Chunk 12 moved 10,889 lines and edited none of them — `PLAN.md` §7 says "written or rewritten", and moving is neither. Wiring it in is chunk 18, starting with `APP_cachePut_`'s silent `n > 250` bail, which is the whole reason the `cache` field exists. The `catch (e) {}` pass goes with it | ☐ |
+| | **Chunk 13 is next: the cutover.** `doGet` serves `app.html` for every route, the `?page=app` scaffold goes, all old `.html` are deleted, and `README.md` + `CLAUDE.md` are rewritten around two files | ☐ |

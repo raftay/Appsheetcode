@@ -16,6 +16,7 @@
  *   node tests/freshness.js
  */
 const fs = require('fs'), vm = require('vm'), path = require('path');
+const { region, load: loadRegions } = require('./appgs.js');   // this file has its own load()
 const REPO = path.resolve(__dirname, '..');
 
 let fails = 0;
@@ -73,8 +74,7 @@ function load() {
   };
   ctx.global = ctx;
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(`${REPO}/Config.gs`, 'utf8'), ctx);
-  vm.runInContext(fs.readFileSync(`${REPO}/Code.gs`, 'utf8'), ctx);
+  loadRegions(ctx, 'Config.gs', 'Code.gs');
   ctx.PV = { clearCache: () => {} };
   ctx.RMX_NS = { bumpGeneration: () => {} };
 
@@ -258,8 +258,12 @@ console.log('\nit always reads Drive again rather than trusting the cached copy:
  * ==================================================================== */
 console.log('\nPrice & Volume and Ready-Mix read the same stamp:');
 {
-  const src = fs.readFileSync(`${REPO}/PV_Backend.gs`, 'utf8');
-  const rmx = fs.readFileSync(`${REPO}/RMX_Backend.gs`, 'utf8');
+  /* Each backend's own REGION of app.gs, not the whole file: these four checks
+     are about PV and RMX agreeing with each other, and run against all eleven
+     sections at once every one of them would pass as long as SOMETHING in the
+     file matched — which is the opposite of what they are for. */
+  const src = region('PV_Backend.gs');
+  const rmx = region('RMX_Backend.gs');
   checkThat('PV takes its generation from the sheet',
     /APP_sourceStamp_\('pricevolume'\)/.test(src));
   checkThat('RMX takes its generation from the sheet',

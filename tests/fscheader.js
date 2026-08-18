@@ -21,7 +21,11 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 
-const SRC = path.resolve(__dirname, '..', 'FSC_Backend.gs');
+const { region } = require('./appgs.js');
+/* Was FSC_Backend.gs; it is app.gs §6 now. tests/gsparity.js proves the region
+   is still byte-for-byte that file, which is what keeps this harness a proof
+   about the code that actually runs. */
+const SRC = region('FSC_Backend.gs');
 
 /* ---- the tab, as the sheet really lays it out ---------------------------- */
 const HEADER = ['LOOKUP KEY', 'Plant', 'Year', 'Month', '2026 Volume', '2025 Volume',
@@ -75,7 +79,7 @@ function load(cpi) {
     ? JSON.parse(ctx.__cache[k]) : null; };
   ctx.APP_cachePut_ = function(k, v){ ctx.__cache[k] = JSON.stringify(v); };
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(SRC, 'utf8'), ctx, { filename: 'FSC_Backend.gs' });
+  vm.runInContext(SRC, ctx, { filename: 'app.gs (FSC_Backend.gs)' });
   return ctx;
 }
 

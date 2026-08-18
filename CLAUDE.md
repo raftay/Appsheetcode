@@ -29,19 +29,32 @@ file in the script editor — no folders, no build step, no package manager. `ap
 is the project manifest and is tracked; `tests/` is Node-only and is **not** part of the
 script project.
 
+**The server side is already one file.** Chunk 12 merged the 16 `.gs` into `app.gs` and
+deleted them in the same commit — they cannot coexist. Navigate it by section banner
+(`Ctrl+F "§7"`) or by the original filename, which each region carries as a
+`/* ---- RMX_Backend.gs ----` locator. The client side is mid-merge: `app.html` holds all ten
+pages and the old `.html` are still there until chunk 13 retires them.
+
 - It is a standalone web app, not bound to a spreadsheet. Each page opens its own Google
   Sheet by id, resolved at call time.
 - `doGet(e)` maps `?page=` to an HTML file. Nine routes plus a landing page.
-- Apps Script evaluates every `.gs` into **one** global scope, so entry points are prefixed
-  (`RMX_`, `PV`, `DECK_`, `TP_`, `IR`) and everything real lives inside a namespace IIFE.
+- Apps Script evaluates every `.gs` into **one** global scope — which is why there is now
+  only one. Entry points are still prefixed (`RMX_`, `PV`, `DECK_`, `TP_`, `IR`) and
+  everything real still lives inside a namespace IIFE; the reasons outlived the file count.
+- `appsscript.json` carries an explicit `oauthScopes` array, which **replaces** Apps Script's
+  automatic scope detection. Add a service, add its scope by hand — nothing warns you, the
+  call just throws for every user. `APP_verifyPermissions()` (`app.gs` §4) catches it in one
+  editor run.
 - `appsscript.json` pins `executeAs: USER_DEPLOYING` — everything runs as the deploying
   account.
 
 ## Things that will bite you
 
-- **Do not flip a file's line endings.** The repo is mixed: most `.html` are CRLF, some `.gs`
-  are LF. Scripted edits must open with `newline=''` and write back what was already there,
-  or a two-line change shows up as a whole-file diff.
+- **Do not flip a file's line endings.** The repo is mixed **three ways**: most `.html` are
+  CRLF, `Code.gs` was LF, and two files carried a lone `\r` as a line terminator. `app.gs` and
+  `app.html` are LF throughout — keep them that way. Scripted edits to the older files must
+  open with `newline=''` and write back what was already there, or a two-line change shows up
+  as a whole-file diff. Never anchor a test on a spelled-out `\r\n`.
 - **Most of this cannot be tested off-platform.** Anything touching `SlidesApp`, `DriveApp`,
   `CacheService` or a spreadsheet needs the live deployment. What *can* be checked is the
   client-side compute and render layer — that is what `tests/` is for. Run the relevant
@@ -51,6 +64,10 @@ script project.
   scriptlet HTML-escapes — so one written as an example in a comment breaks the render, and
   one printed into JavaScript can emit `&#39;` and kill the whole script block. Server values
   belong in a `<body>` data attribute. `node tests/merge.js` enforces both.
+- **When you delete code by anchored text, diff the symbol table, not just the syntax.** A cut
+  that takes one function too many is still valid JavaScript. Chunk 12 lost `RMX_whoWins` that
+  way — the anchor matched *uniquely*, `node --check` passed, every structural check passed,
+  and the only thing that noticed was a before/after set difference of top-level names.
 - **Nothing gets deleted on a hunch.** Every removal needs a repo-wide grep proving zero live
   references, logged in the `README.md` session log with what proved it. "Looks unused" is
   not evidence — several things that look dead are load-bearing, and several things that look

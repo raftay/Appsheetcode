@@ -31,7 +31,8 @@
 const fs = require('fs');
 const path = require('path');
 const REPO = path.resolve(__dirname, '..');
-const read = f => fs.readFileSync(path.join(REPO, f), 'utf8');
+const read = f => (f.endsWith('.gs') ? require('./appgs.js').region(f)
+                                    : fs.readFileSync(path.join(REPO, f), 'utf8'));
 
 let failed = 0;
 function check(label, ok, detail) {
@@ -366,7 +367,7 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
 /* ---- the recipe ---------------------------------------------------------- */
 {
   const ctx = {};
-  require('vm').runInNewContext(read('Deck_Recipe.gs'), ctx, { filename: 'Deck_Recipe.gs' });
+  require('vm').runInNewContext(read('Deck_Recipe.gs'), ctx, { filename: 'app.gs (Deck_Recipe.gs)' });
   const out = ctx.DECK_getRecipe();
 
   check('recipe · no structural problems', out.problems.length === 0, out.problems.join('; '));

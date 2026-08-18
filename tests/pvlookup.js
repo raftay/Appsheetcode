@@ -17,6 +17,7 @@
  *   node tests/pvlookup.js
  */
 const fs = require('fs'), vm = require('vm'), path = require('path');
+const { region, load: loadRegions } = require('./appgs.js');   // this file has its own load()
 const REPO = path.resolve(__dirname, '..');
 
 let fails = 0;
@@ -134,10 +135,9 @@ function load() {
   };
   ctx.global = ctx;
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(`${REPO}/Config.gs`, 'utf8'), ctx);
+  loadRegions(ctx, 'Config.gs');
   ctx.APP_openSpreadsheet_ = () => book;
-  vm.runInContext(fs.readFileSync(`${REPO}/PV_Backend.gs`, 'utf8'), ctx);
-  vm.runInContext(fs.readFileSync(`${REPO}/PV_Lookup.gs`, 'utf8'), ctx);
+  loadRegions(ctx, 'PV_Backend.gs', 'PV_Lookup.gs');
   return ctx;
 }
 
@@ -210,7 +210,10 @@ console.log('\nthere is one tab reader, and PV_Lookup uses it:');
   checkThat('...along with the names it scores against',
     Array.isArray(ctx.PV.RAW_HEADER_NAMES) && ctx.PV.RAW_HEADER_NAMES.length > 8);
 
-  const src = fs.readFileSync(`${REPO}/PV_Lookup.gs`, 'utf8');
+  /* The REGION, not the whole of app.gs: run against all eleven sections these
+     two negative regexes would match on any backend that happens to slice a
+     header off, and this check would pass while PV_Lookup regressed. */
+  const src = region('PV_Lookup.gs');
   checkThat('PV_Lookup keeps no header-row rule of its own',
     !/values\[0\]\s*\|\|\s*\[\]/.test(src) && !/\.slice\(1\)/.test(src),
     'a local "header is row 1" reader is back in PV_Lookup.gs');

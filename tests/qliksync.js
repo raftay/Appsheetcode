@@ -25,6 +25,7 @@
  *   node tests/qliksync.js
  */
 const fs = require('fs'), vm = require('vm'), path = require('path');
+const { load: loadRegions } = require('./appgs.js');   // qliksync has its own load()
 const REPO = path.resolve(__dirname, '..');
 
 let fails = 0;
@@ -254,13 +255,14 @@ function load({ tick = 0, lockFree = true } = {}) {
   };
   ctx.global = ctx;
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(`${REPO}/Config.gs`, 'utf8'), ctx);
+  loadRegions(ctx, 'Config.gs');
   /* the page's workbook comes from the fake service, not from a property */
   ctx.APP_openSpreadsheet_ = page => {
     if (!BOOKS[page]) throw new Error('no fake workbook for ' + page);
     return BOOKS[page];
   };
-  vm.runInContext(fs.readFileSync(`${REPO}/QlikSync.gs`, 'utf8'), ctx);
+  /* §5 builds QLIKSYNC; §11 holds the four entry points that drive it. */
+  loadRegions(ctx, 'QlikSync.gs');
   return ctx;
 }
 
