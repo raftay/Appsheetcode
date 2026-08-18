@@ -149,6 +149,45 @@ function pvModel() {
   };
 }
 
+/* Ready-Mix. The shape is lifted from tests/segboot.js, which already drives
+   the real page through RMX_prepare in a browser — reusing it means this
+   harness and that one cannot disagree about what the server sends. */
+const RMX_MARKETS = ['HNS_SW', 'Innocon', 'Manitoba', 'North', 'Saskatchewan'];
+
+function rmxKeysPayload(o) {
+  o = o || {};
+  return {
+    ok: true, market: o.market || '__ALL__', period: o.period || 'YTD',
+    month: 7, latestMonth: 7,
+    months: { all: [1, 2, 3, 4, 5, 6, 7], cy: [1, 2, 3, 4, 5, 6, 7] },
+    markets: RMX_MARKETS, allMarkets: '__ALL__', build: 'b1', generation: 'g1',
+    breakdowns: [{ key: 'SUBMARKET', label: 'Submarket' },
+                 { key: 'STRENGTH', label: 'Strength Class' },
+                 { key: 'PLANT', label: 'Top 10 Plants' },
+                 { key: 'PROD_CLASS', label: 'Product Class' }],
+    keys: [
+      { dims: { submarket: 'SM1', segment: 'ICI', app: 'Slab', cls: 'Standard', strength: '25 MPa' },
+        pyVol: 1000, cyVol: 1200, baseCY: 240000, basePY: 190000 },
+      { dims: { submarket: 'SM2', segment: 'Civil', app: 'Wall', cls: 'Standard', strength: '32 MPa' },
+        pyVol: 820, cyVol: 910, baseCY: 201000, basePY: 168000 },
+    ],
+    ppi: { total: { w: 1, f: 0.02 }, SUBMARKET: { SM1: { w: 1, f: 0.02 }, SM2: { w: 1, f: 0.03 } },
+           STRENGTH: { '25 MPa': { w: 1, f: 0.02 }, '32 MPa': { w: 1, f: 0.03 } },
+           PROD_CLASS: { Standard: { w: 1, f: 0.02 } }, PLANT: { P100: { w: 1, f: 0.02 } } },
+    plants: [{ label: 'P100', pyVol: 1000, cyVol: 1200, baseCY: 240000, basePY: 190000 }],
+  };
+}
+
+function rmxModel() {
+  const man = Object.assign({}, rmxKeysPayload({}), { warmed: 26, want: 'keys', ms: 9000 });
+  man.payloads = {};
+  ['MTD', 'YTD'].forEach(per => ['__ALL__'].concat(RMX_MARKETS).forEach(m => {
+    man.payloads['keys|' + m + '|' + per] = rmxKeysPayload({ market: m, period: per });
+  }));
+  man.payload = man.payloads['keys|__ALL__|YTD'];
+  return man;
+}
+
 /* Server replies, by function name. A page asking for anything not listed here
    is a finding, not something to paper over — the runner reports it. */
 function serverStubs(model) {
@@ -165,6 +204,13 @@ function serverStubs(model) {
     getPvLookupForm:   () => ({ ok: true, rows: [], columns: [] }),
     getKpiValues:      () => null,
     CUBE_getManifest:  () => ({ ok: false, blocks: [] }),
+    /* Ready-Mix */
+    RMX_prepare:    () => model,
+    RMX_getKeys:    () => model.payload || model,
+    RMX_getExtras:  o => ({ ok: true, market: o && o.market, period: o && o.period,
+                            byTypeExtras: [], byTypeVap: [], extras: [], vap: [] }),
+    RMX_getUnmapped:    () => ({ ok: true, sections: [] }),
+    RMX_getSuggestions: () => ({ ok: true, sections: [] }),
     getLogo:         () => '',
     getGuideImages:  ids => (ids || []).map(() => ''),
     getDataVersion:  () => ({ generation: 'test-gen-1' }),
@@ -367,6 +413,34 @@ const PAGES = [
     },
   },
   {
+    /* Ready-Mix. One view, so `views` is the single mount — what this case is
+       really for is the breakdown chips and the period control, which rebuild
+       the tables without going back to the server. */
+    id: 'rmx',
+    legacy: 'Page_Rmx.html',
+    model: rmxModel,
+    views: ['__mounted__'],
+    viewButton: () => '',
+    payload:   { host: 'tablesHost' },
+    readHtml:  { extras: 'extrasHost', chips: 'chips', extraChips: 'extraChips',
+                 market: 'market', months: 'monthSel', preview: 'previewHost' },
+    /* the two ids this port renamed onto the suite's shared names */
+    legacyIds: { previewHost: 'rmxPreviewHost', sugHost: 'sugModalHost' },
+    readText:  { stamp: 'syncStamp', banner: 'bannerText' },
+    chrome: {
+      guideSteps: 3,
+      guideExtra: 'upMain',
+      /* Ready-Mix registers no AmrHint, so no `hint` here — asserting one
+         would fail for the right reason on the wrong page. */
+      noGlobals: ['STATE', 'IS_LIVE', 'esc', 'fInt', 'refresh', 'renderNow',
+                  'buildTables', 'renderReport', 'renderExtras', 'doSync',
+                  'loadUnmapped', 'openSug', 'closeSug', 'rmxPageInit',
+                  'buildRmxContent', 'renderRmxPreview', 'exportComposite'],
+      modules: ['AMR', 'AmrSlide', 'AmrCache', 'AmrProgress', 'AmrBoot',
+                'AmrFresh', 'AmrHint', 'AmrQlikGuide'],
+    },
+  },
+  {
     /* The Ready-Mix twin. It shares 21 ids with the case above ON PURPOSE
        (PLAN.md §3) — that is not a mistake to be fixed, and the two cases
        being nearly identical is the point. */
@@ -452,12 +526,18 @@ function checkChrome(win, spec, id, ok, fail) {
    numbers still have to match even when the markup carrying them does not.
    (Chunk 3 is exactly that case: the Saskatchewan notice's inline hex became
    the §A3 .notice component. Same sentence, different wrapper.) */
-function snapshot(win, page) {
+function snapshot(win, page, side) {
   const doc = win.document;
-  const txt = id => { const e = doc.getElementById(id); return e ? e.innerHTML : '(missing #' + id + ')'; };
-  const val = id => { const e = doc.getElementById(id); return e ? e.value : '(missing #' + id + ')'; };
+  /* A port may rename an id where the merged page adopts a name the suite
+     already uses for that role — Ready-Mix's #rmxPreviewHost became
+     #previewHost. `legacyIds` maps the new name back to the old one for the
+     legacy side, so the rename is DECLARED and the comparison still happens,
+     rather than the reading being quietly dropped. */
+  const map = id => (side === 'legacy' && page.legacyIds && page.legacyIds[id]) || id;
+  const txt = i => { const id = map(i); const e = doc.getElementById(id); return e ? e.innerHTML : '(missing #' + id + ')'; };
+  const val = i => { const id = map(i); const e = doc.getElementById(id); return e ? e.value : '(missing #' + id + ')'; };
 
-  const host = doc.getElementById(page.payload.host);
+  const host = doc.getElementById(map(page.payload.host));
   const card = host && (page.payload.inner ? host.querySelector(page.payload.inner) : host);
   const aside = page.payload.inner
     ? [].filter.call(host ? host.children : [], el => !el.matches(page.payload.inner))
@@ -470,8 +550,8 @@ function snapshot(win, page) {
   };
   for (const [key, id] of Object.entries(page.readHtml || {})) out[key] = txt(id);
   for (const [key, id] of Object.entries(page.readValue || {})) out[key] = val(id);
-  for (const [key, id] of Object.entries(page.readText || {})) {
-    const e = doc.getElementById(id);
+  for (const [key, i] of Object.entries(page.readText || {})) {
+    const id = map(i); const e = doc.getElementById(id);
     out[key] = e ? e.textContent : '(missing #' + id + ')';
   }
   return out;
@@ -503,7 +583,7 @@ function clickView(win, view, page) {
        fixture carries an unmatched Saskatchewan customer for the same reason:
        a notice that silently stopped rendering would otherwise read as a match. */
     for (const [name, side] of [['legacy', A], ['merged', B]]) {
-      const snap = snapshot(side.window, page);
+      const snap = snapshot(side.window, page, name);
       checks++;
       if (snap.tables && snap.tables.includes('<table')) ok(`${page.id} · ${name} rendered a table`);
       else fail(`${page.id} · ${name} rendered no table — got ${JSON.stringify(String(snap.tables).slice(0, 120))}`);
@@ -520,7 +600,7 @@ function clickView(win, view, page) {
       if (view !== page.views[0]) {
         clickView(A.window, view, page); clickView(B.window, view, page); await settle(60);
       }
-      const a = snapshot(A.window, page), b = snapshot(B.window, page);
+      const a = snapshot(A.window, page, 'legacy'), b = snapshot(B.window, page, 'merged');
       for (const key of Object.keys(a)) {
         checks++;
         if (a[key] === b[key]) { ok(`${page.id} · ${view} · ${key}`); continue; }

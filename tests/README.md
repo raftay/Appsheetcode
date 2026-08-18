@@ -83,6 +83,14 @@ Three things it does deliberately, each of which took a wrong answer to find:
 - **It stubs injected `<script src>` to resolve at once.** jsdom fetches nothing, so
   `AMR.lib.need()` would wait forever on a CDN library and `boot()` would never run. Nothing
   under test uses html2canvas or SheetJS at boot.
+- **A renamed id is declared, not dropped.** When a port adopts a name the suite already uses
+  for that role — Ready-Mix's `#rmxPreviewHost` became `#previewHost` — put it in the case's
+  `legacyIds` map. The legacy side then reads the old id and the comparison still happens.
+  Deleting the reading instead is how a rename hides a break.
+
+It boots the **legacy** page too, which makes it the gate for deletions from those files: the
+two dead includes chunk 6 removed from `Page_Rmx.html` would have broken the legacy side if
+either had been live.
 
 ## `modparity.js` — §E holds verbatim copies
 

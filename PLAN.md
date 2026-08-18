@@ -1,6 +1,6 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: in progress on `merging-files`. Chunks 0–5 done — `app.html` is ~459 KB and holds the runtime, nine shared modules and five of the eleven pages (Landing, Inventory Report, both Fuel Recovery pages, AGG Price & Volume). All 17 test harnesses run and are green. The 16 `.gs` files are untouched and stay that way until chunk 12.**
+**Status: in progress on `merging-files`. Chunks 0–6 done — `app.html` is ~547 KB and holds the runtime, nine shared modules and six of the eleven pages (Landing, Inventory Report, both Fuel Recovery pages, AGG Price & Volume, Ready-Mix). §A3 is 338 rules; §A4 is 68, of which 27 are Ready-Mix's bare-element overrides. All 17 test harnesses run and are green. The 16 `.gs` files are untouched and stay that way until chunk 12.**
 
 > ## Read this file before doing anything. Every session, every agent.
 >
@@ -555,7 +555,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 3 | **AGG Fuel Recovery** | `Page_FuelSurcharge` + `Deck_Fuel`. First real port, chosen because `tests/regress.js` already proves this page byte-identical — the method gets validated where there is a gate on it. §E gains `AmrProgress`, `AmrBoot`, `AmrFresh`, `AmrSlide`, `AmrFuelExec`; §A3 gains the slide frame, the load screen and the fuel tables. **No §A4 block at all** — see [§8's chunk 3 notes](#what-chunk-3-settled). Plus `tests/pageparity.js` and `tests/modparity.js`. `Code.gs` needed no change. | `tests/merge.js`, `tests/modparity.js`, `tests/pageparity.js`, `OLD_DIR=… tests/regress.js` — all green | ✅ |
 | 4 | **RMX Fuel Recovery** | `Page_RmxFuel`, reusing the `AmrFuelExec` and components chunk 3 promoted. **It added zero CSS and zero modules** — §A3 is byte-for-byte the same 385 lines it was after chunk 3, which is the promotion test paying out. Settled the duplicate-id question ([§3](#3-how-the-pages-live-inside-one-html-file)) and hardened the mount. | `tests/merge.js`, `tests/pageparity.js` (90 comparisons, both fuel pages), `OLD_DIR=… tests/regress.js` — all green | ✅ |
 | 5 | **AGG Price & Volume** | `Page_PriceVolume` + `Deck_PV` + `KpiShared` + `Cube`; `SlideExport` had already come in chunk 3. 1,800 lines of page JS, all three libraries, and all 54 id-scoped declarations converted — **and it needed exactly ONE §A4 rule.** §E gains `AmrCache`, `AmrKpi`, `AmrCube`, `AmrPvSlide`. | `merge.js`, `modparity.js`, `pageparity.js` (126 comparisons), `pvcheck.js`, `pvlookup.js`, `slidefit.js` — and the whole suite, all 17 harnesses, green | ✅ |
-| 6 | **Ready-Mix** | `Page_Rmx` + `Deck_RMX`. Drop the dead `include('Deck_RMX')` here. **Its mapping check and add-row dialog are already in §A3** — chunk 5 promoted Price & Volume's copy and 27 of the 33 shared selectors were byte-identical, so delete Ready-Mix's rather than port it. Its 70 id-styled rules are the other half of [§1a](#1a-chunk-1-results--the-three-audits)'s audit. Mind the DOMContentLoaded rule in chunk 5's notes. | `tests/rmxcost.js`, `tests/pageparity.js` + the page | ☐ |
+| 6 | **Ready-Mix** | `Page_Rmx` only — **`Deck_RMX` does NOT come here**, see below. 65 of its 67 id-scoped rules were deleted rather than ported, because chunk 5 had already promoted the same mapping check and dialog. **Two dead includes removed from the legacy page**: `Deck_RMX` and `Cube`, ~1,225 lines on every Ready-Mix load. The one page with a real §A4 block, and the reason is bare element selectors. | `tests/merge.js`, `tests/pageparity.js` (147 comparisons), `tests/rmxcost.js`, `tests/segboot.js` + the whole suite — all green | ✅ |
 | 7 | **Product Segment** | `Page_Segment` + `Deck_SEG`. | `tests/segboot.js`, `tests/deckstatic.js` | ☐ |
 | 8 | **Overview, part 1 — shell and cube** | `Page_Overview`'s markup, its CSS (26 of the 65 `:root`/`body` hazards live here), the period model (`STATE`, `PICK_SERVER`, `windowPeriod`) and the `AmrCube` wiring. No panel painters yet. | `tests/ovperiod.js` + the page's four period buttons | ☐ |
 | 9 | **Overview, part 2 — the panels** | The painters, the fifteen chart registries, `hidePanel` / `resetPanels` / `pcatFits`. Split from chunk 8 because 6,022 lines is a quarter of all client code and reviewing it in one commit is not reviewing it. | `tests/freshness.js` + every panel, all four periods | ☐ |
@@ -640,6 +640,57 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   global. *(The id check was replaced in chunk 4 — see [§3](#3-how-the-pages-live-inside-one-html-file).
   Ids repeat across pages on purpose; what is checked now is that none repeats within one page
   and that the mount empties `#appRoot`.)*
+
+### What chunk 6 settled
+
+- **65 of 67 id-scoped rules were DELETED, not ported.** Chunk 5 promoted Price & Volume's
+  mapping check and add-row dialog into §A3; Ready-Mix's near-identical copies simply went
+  away. That is the whole return on chunk 5's promotion work, and it is why §A3 grew by only
+  28 rules here while the page shed 67. The two survivors were `#rmxPreviewHost`, which became
+  §A3's existing `.previewHost`.
+- **This is the page that genuinely needs §A4, and the reason is worth knowing.** Ready-Mix
+  styles **bare element selectors** — `table`, `th,td`, `thead th`, `tfoot td`, `aside`,
+  `main`. In one document those repaint every other page. So they are *scoped*, not promoted:
+  27 rules under `body[data-page="rmx"]`. That is the opposite call from chunks 3–5 and the
+  right one — these are not a component, they are one page overriding the base layer for its
+  dense, sticky-header report tables. **The test is not "is this rule shared", it is "is this
+  rule a component".**
+- **`Deck_RMX` is NOT ported here, and the chunk-6 row used to say it was.** `Page_Rmx.html`
+  contains **zero** references to `AmrRmxSlide`. The module is the Deck Builder's and arrives
+  in chunk 10, by the same rule that held `AmrCache` back to chunk 5. The `include` was 603
+  lines shipped on every page load to register an adapter that early-returns without
+  `AmrDeckSource`.
+- **`include('Cube')` was dead here too — a new finding.** `Page_Rmx.html`'s only mention of
+  the word "cube" is the include line itself, and `Cube.html` has **no auto-init** (its own
+  closing comment says so: each page must call `AmrCube.configure({…}).init()`). So that is a
+  second 622 lines. Both includes are removed from the legacy page: **~1,225 lines off every
+  Ready-Mix page load, now, before cutover.**
+- **The harness proved the removal.** `pageparity.js` boots the *legacy* page, so if either
+  include had been live the legacy side would have broken and the diff would have failed. It
+  still reports 147 comparisons identical. A deletion that a gate has to survive is worth more
+  than a deletion with a grep beside it.
+- **Ids renamed onto the suite's shared names**, as [§3](#3-how-the-pages-live-inside-one-html-file)
+  asks: `#rmxPreviewHost` → `#previewHost`, `#sugModalHost` → `#sugHost` (and Price & Volume's
+  `#pvSugHost` renamed to match — one component, one id), `.view on` → `.view active`.
+  `pageparity.js` carries a **`legacyIds`** map so a rename is declared and still compared,
+  rather than the reading being quietly dropped. Use it whenever a port adopts a shared name.
+- **One deliberate pixel change, stated plainly.** The add-row dialog's cells are left-aligned
+  now on Ready-Mix, where the page's `th,td{text-align:right}` had been right-aligning label
+  text and dropdowns. Price & Volume had already fixed that on its own copy, with a comment;
+  sharing the component shares the fix. The dialog is also 80px wider and its inputs 16px
+  wider — PV's values, taken because keeping both meant keeping two dialogs. **Nothing here is
+  screenshot-verified**; it is the one place chunk 6 changes appearance on purpose.
+- **The DOMContentLoaded rule from chunk 5 paid for itself immediately.** Ready-Mix's handler
+  sits near the *top* of its script with ~1,200 lines of declarations below it — the worst
+  possible case. It became `rmxPageInit()`, called at the end of `boot()`. Written down once,
+  applied without a debugging round.
+- **Ready-Mix registers no `AmrHint`.** Its parity case has no `hint` assertion, on purpose: a
+  chrome check that fails for the right reason on the wrong page is worse than no check.
+- **`.ghost` on white — a fourth page.** Same invisible guide buttons. `Page_Segment`,
+  `Page_TP01` and `Landing` are what is left to check.
+- **Reuse the fixtures that already exist.** The Ready-Mix model in `pageparity.js` is lifted
+  from `tests/segboot.js`, which drives the real page through `RMX_prepare` in a browser.
+  Two harnesses that disagree about what the server sends are worse than one.
 
 ### What chunk 5 settled
 
@@ -944,10 +995,15 @@ not prove it** — read the next box before deleting anything.
 
 ### Confirmed dead — remove when its chunk lands
 
-- **`Page_Rmx.html`'s `include('Deck_RMX')`** *(chunk 6)*. The page calls nothing in
+- **`Page_Rmx.html`'s `include('Deck_RMX')`** *(chunk 6, done)*. The page calls nothing in
   `AmrRmxSlide`, and `Deck_RMX`'s only load-time side effect is registering the `rmx` adapter,
   which early-returns without `AmrDeckSource` — a file `Page_Rmx` does not include. 603 lines
   shipped on every Ready-Mix page load to do nothing. The module stays; the Deck Builder needs it.
+- **`Page_Rmx.html`'s `include('Cube')`** *(chunk 6, done)*. Found while porting: the page's
+  only mention of "cube" was the include line, and `Cube.html` has no auto-init — each page
+  must call `AmrCube.configure({…}).init()` itself. Another 622 lines. Both removals are
+  covered by `tests/pageparity.js`, which boots the legacy page and would break if either
+  had been live.
 - **Six of the seven QlikView guide copies** *(chunk 2)*. ~720 lines.
 - **The six debug functions** *(chunk 12)* — see [§7](#7-logging-and-the-debug-functions-it-replaces).
 - **`Page_PriceVolume`'s `var AMR` and `CONFIG.colors.palette`** *(chunk 5, done)*. One
