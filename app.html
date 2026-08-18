@@ -8179,7 +8179,12 @@ AMR.page('fuelsurcharge', {
   /* month: 0 = last closed month (the backend decides), 1-12 pins it. It rides
      in every read, so the whole payload - MTD, YTD and the by-month table - is
      for the month the picker names. */
-  var STATE = { view:'EXEC', month:0, byMonthMarket:'', hidden:{},
+  /* upload: TRUE while the page is running on a workbook the user dropped in.
+     It is the device cache's boundary (chunk 17) — session-only data that is
+     not what the sheet holds must never be written to localStorage, and a
+     cached payload must never be served over it. The page tracked upload mode
+     in the DOM alone before; a flag is what the cache can actually ask. */
+  var STATE = { view:'EXEC', month:0, byMonthMarket:'', hidden:{}, upload:false,
                 title:'', titleDirty:false, sub:'Per applied tonne · $CAD', logo:'', logoSVG:'' };
 
   /* ======================= helpers ======================= */
@@ -8520,26 +8525,66 @@ AMR.page('fuelsurcharge', {
       else   AmrProgress.fail('sheet', 'Could not read the sheet');
     }
 
+    /* THE DEVICE CACHE  (chunk 17)
+       -------------------------------------------------------------------
+       A repeat visit paints from localStorage instead of waiting on the
+       sheet. Three things make that safe, and all three are decisions rather
+       than details:
+
+         · A HIT IS CURRENT BY CONSTRUCTION. AmrCache.boot asked the server for
+           this page's data version before boot() ever called in here, and
+           wiped this device's entries if it had moved. So there is nothing to
+           re-check and no background re-read to make — if the sheet changes
+           while the page is open, AmrFresh is what greys it out, and it is
+           already wired.
+         · THE MONTH IS PART OF THE KEY. Every read sends {month} and the whole
+           payload — MTD, YTD and the by-month table — is for that month. A key
+           on the page alone would serve July's figures for May.
+         · NOTHING TYPED IS IN HERE. Only the server's payload is stored. The
+           user's edits live in NUM_OV / TXT_OV, which are not part of it, and
+           the month picker already clears them for exactly this reason —
+           restoring a cached model must not resurrect them.
+
+       And the upload path is not cached at all: STATE.upload data is
+       session-only by design and is not what the sheet holds. */
+    var ckey = 'd:m' + STATE.month;
+
     var t0 = Date.now();
-    AMR.log('info', 'FSC.getFscData', 'reading', { month: STATE.month });
+
+    /* One painter, so a cached model and a fresh one cannot drift apart. */
+    function applyData(data, cache){
+      if(btn) btn.disabled = false;
+      if(!data || !data.markets){
+        loadDone(false);
+        showProblem('The server replied but sent no data. Click Reload from sheet to try again.');
+        return;
+      }
+      loadDone(true);
+      DATA = data;
+      AMR.log('info', 'FSC.getFscData', 'ok', { ms: Date.now() - t0, cache: cache,
+              markets: DATA.markets.length, latest: DATA.latestMonth || '?' });
+      buildMonthPicker();
+      buildMarketControls();
+      autoTitle();
+      if(st){ st.className='dzstat ok';
+        st.textContent='✓ Loaded · '+DATA.markets.length+' markets · through '+(DATA.latestMonth||'?')+' 2026'; }
+      renderAll();
+    }
+
+    if(!STATE.upload && window.AmrCache){
+      var hit = AmrCache.get(ckey);
+      if(hit && hit.markets){
+        AMR.log('info', 'FSC.getFscData', 'reading', { month: STATE.month, cache: 'hit' });
+        applyData(hit, 'hit');
+        return;
+      }
+    }
+    AMR.log('info', 'FSC.getFscData', 'reading',
+            { month: STATE.month, cache: STATE.upload ? 'skip' : 'miss' });
     google.script.run
       .withSuccessHandler(function(data){
-        if(btn) btn.disabled = false;
-        if(!data || !data.markets){
-          loadDone(false);
-          showProblem('The server replied but sent no data. Click Reload from sheet to try again.');
-          return;
-        }
-        loadDone(true);
-        DATA = data;
-        AMR.log('info', 'FSC.getFscData', 'ok', { ms: Date.now() - t0,
-                markets: DATA.markets.length, latest: DATA.latestMonth || '?' });
-        buildMonthPicker();
-        buildMarketControls();
-        autoTitle();
-        if(st){ st.className='dzstat ok';
-          st.textContent='✓ Loaded · '+DATA.markets.length+' markets · through '+(DATA.latestMonth||'?')+' 2026'; }
-        renderAll();
+        if(data && data.markets && !STATE.upload && window.AmrCache) AmrCache.set(ckey, data);
+        applyData(data, STATE.upload ? 'skip' : 'miss');
       })
       .withFailureHandler(function(err){
         if(btn) btn.disabled = false;
@@ -8666,6 +8711,7 @@ AMR.page('fuelsurcharge', {
     if(st){ st.className='dzstat'+(cls?' '+cls:''); st.textContent=msg; }
   }
   function upOff(){
+    STATE.upload = false;                    /* the cache boundary — see STATE */
     document.getElementById('upStatus').style.display='none';
     document.getElementById('upGo').style.display='';
     ['upComb','upOther'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
@@ -8685,6 +8731,7 @@ AMR.page('fuelsurcharge', {
       google.script.run.withSuccessHandler(function(data){
         go.disabled=false;
         if(!data || !data.markets){ stat('The server replied but sent no data.','err'); return; }
+        STATE.upload = true;                 /* nothing from here is cached */
         DATA=data;
         AMR.log('info', 'FSC.getFscDataFromUpload', 'ok', { ms: Date.now() - t0,
                 markets: data.markets.length });
@@ -8843,7 +8890,13 @@ AMR.page('fuelsurcharge', {
       +'The data will still try to load — refresh the page if anything looks off.');
   }
 
-  loadData();
+  /* One tiny server call before the first read: which data version is this page
+     on? AmrCache wipes this device's saved payloads if it has moved, and
+     AmrFresh starts watching it for free — which is new on these two pages, so
+     an update landing while the page is open now greys it out here as well.
+     If the call fails, loadData() still runs and the page simply has no cache.
+     Price & Volume does exactly this; see chunk 17. */
+  if(window.AmrCache) AmrCache.boot(loadData); else loadData();
   }
 });
 </script>
@@ -9040,7 +9093,12 @@ AMR.page('rmxfuel', {
   /* month: 0 = last closed month (the backend decides), 1-12 pins it. It rides
      in every read, so the whole payload - MTD, YTD and the by-month table - is
      for the month the picker names. */
-  var STATE = { view:'EXEC', month:0, byMonthMarket:'', hidden:{},
+  /* upload: TRUE while the page is running on a workbook the user dropped in.
+     It is the device cache's boundary (chunk 17) — session-only data that is
+     not what the sheet holds must never be written to localStorage, and a
+     cached payload must never be served over it. The page tracked upload mode
+     in the DOM alone before; a flag is what the cache can actually ask. */
+  var STATE = { view:'EXEC', month:0, byMonthMarket:'', hidden:{}, upload:false,
                 title:'', titleDirty:false, sub:'Per applied m³ · $CAD', logo:'', logoSVG:'' };
 
   /* The backend names its slots 26/25 so this page can be a straight clone of
@@ -9369,26 +9427,66 @@ AMR.page('rmxfuel', {
       else   AmrProgress.fail('sheet', 'Could not read the sheet');
     }
 
+    /* THE DEVICE CACHE  (chunk 17)
+       -------------------------------------------------------------------
+       A repeat visit paints from localStorage instead of waiting on the
+       sheet. Three things make that safe, and all three are decisions rather
+       than details:
+
+         · A HIT IS CURRENT BY CONSTRUCTION. AmrCache.boot asked the server for
+           this page's data version before boot() ever called in here, and
+           wiped this device's entries if it had moved. So there is nothing to
+           re-check and no background re-read to make — if the sheet changes
+           while the page is open, AmrFresh is what greys it out, and it is
+           already wired.
+         · THE MONTH IS PART OF THE KEY. Every read sends {month} and the whole
+           payload — MTD, YTD and the by-month table — is for that month. A key
+           on the page alone would serve July's figures for May.
+         · NOTHING TYPED IS IN HERE. Only the server's payload is stored. The
+           user's edits live in NUM_OV / TXT_OV, which are not part of it, and
+           the month picker already clears them for exactly this reason —
+           restoring a cached model must not resurrect them.
+
+       And the upload path is not cached at all: STATE.upload data is
+       session-only by design and is not what the sheet holds. */
+    var ckey = 'd:m' + STATE.month;
+
     var t0 = Date.now();
-    AMR.log('info', 'RFSC.getRmxFuelData', 'reading', { month: STATE.month });
+
+    /* One painter, so a cached model and a fresh one cannot drift apart. */
+    function applyData(data, cache){
+      if(btn) btn.disabled = false;
+      if(!data || !data.markets){
+        loadDone(false);
+        showProblem('The server replied but sent no data. Click Reload from sheet to try again.');
+        return;
+      }
+      loadDone(true);
+      DATA = data;
+      AMR.log('info', 'RFSC.getRmxFuelData', 'ok', { ms: Date.now() - t0, cache: cache,
+              markets: DATA.markets.length, latest: DATA.latestMonth || '?' });
+      buildMonthPicker();
+      buildMarketControls();
+      autoTitle();
+      if(st){ st.className='dzstat ok';
+        st.textContent='✓ Loaded · '+DATA.markets.length+' markets · through '+(DATA.latestMonth||'?')+' '+cyY(); }
+      renderAll();
+    }
+
+    if(!STATE.upload && window.AmrCache){
+      var hit = AmrCache.get(ckey);
+      if(hit && hit.markets){
+        AMR.log('info', 'RFSC.getRmxFuelData', 'reading', { month: STATE.month, cache: 'hit' });
+        applyData(hit, 'hit');
+        return;
+      }
+    }
+    AMR.log('info', 'RFSC.getRmxFuelData', 'reading',
+            { month: STATE.month, cache: STATE.upload ? 'skip' : 'miss' });
     google.script.run
       .withSuccessHandler(function(data){
-        if(btn) btn.disabled = false;
-        if(!data || !data.markets){
-          loadDone(false);
-          showProblem('The server replied but sent no data. Click Reload from sheet to try again.');
-          return;
-        }
-        loadDone(true);
-        DATA = data;
-        AMR.log('info', 'RFSC.getRmxFuelData', 'ok', { ms: Date.now() - t0,
-                markets: DATA.markets.length, latest: DATA.latestMonth || '?' });
-        buildMonthPicker();
-        buildMarketControls();
-        autoTitle();
-        if(st){ st.className='dzstat ok';
-          st.textContent='✓ Loaded · '+DATA.markets.length+' markets · through '+(DATA.latestMonth||'?')+' '+cyY(); }
-        renderAll();
+        if(data && data.markets && !STATE.upload && window.AmrCache) AmrCache.set(ckey, data);
+        applyData(data, STATE.upload ? 'skip' : 'miss');
       })
       .withFailureHandler(function(err){
         if(btn) btn.disabled = false;
@@ -9515,6 +9613,7 @@ AMR.page('rmxfuel', {
     if(st){ st.className='dzstat'+(cls?' '+cls:''); st.textContent=msg; }
   }
   function upOff(){
+    STATE.upload = false;                    /* the cache boundary — see STATE */
     document.getElementById('upStatus').style.display='none';
     document.getElementById('upGo').style.display='';
     var el=document.getElementById('upMain'); if(el) el.value='';
@@ -9533,6 +9632,7 @@ AMR.page('rmxfuel', {
       google.script.run.withSuccessHandler(function(data){
         go.disabled=false;
         if(!data || !data.markets){ stat('The server replied but sent no data.','err'); return; }
+        STATE.upload = true;                 /* nothing from here is cached */
         DATA=data;
         AMR.log('info', 'RFSC.getRmxFuelDataFromUpload', 'ok', { ms: Date.now() - t0,
                 markets: data.markets.length });
@@ -9694,7 +9794,13 @@ AMR.page('rmxfuel', {
       +'The data will still try to load — refresh the page if anything looks off.');
   }
 
-  loadData();
+  /* One tiny server call before the first read: which data version is this page
+     on? AmrCache wipes this device's saved payloads if it has moved, and
+     AmrFresh starts watching it for free — which is new on these two pages, so
+     an update landing while the page is open now greys it out here as well.
+     If the call fails, loadData() still runs and the page simply has no cache.
+     Price & Volume does exactly this; see chunk 17. */
+  if(window.AmrCache) AmrCache.boot(loadData); else loadData();
   }
 });
 </script>

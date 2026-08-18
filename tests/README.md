@@ -268,6 +268,33 @@ it to render the *same* ones: cssparity's whole guarantee — any difference is 
 difference — holds only while both sides are looking at identical markup. Two copies of the
 model would drift and the guarantee would quietly stop being true.
 
+## `fuelcache.js` — the fuel pages cache the sheet, and only the sheet
+
+Chunk 17 wired `AmrCache` into both Fuel Recovery pages. `PLAN.md` §10 named three things the
+chunk must not guess at, and each is a check here, on both pages:
+
+| check | what it would catch |
+|---|---|
+| `cold` | a first visit reads the sheet once and stores exactly one entry, keyed on the month |
+| `warm` | a repeat visit paints with **no** sheet read — and painted something, so a page that failed to boot cannot pass as a cache hit |
+| `month-keyed` | picking another month reads the sheet; going back does not; two months means two entries |
+| `typed-not-data` | typing into a cell must not change what is stored — `NUM_OV`/`TXT_OV` are the user's edits, not the sheet's data |
+| `upload-not-cached` | running on an uploaded workbook writes nothing; the fixture stamps every payload with its source so this is read off the store rather than inferred |
+| `version-bump` | a new data version wipes the store and re-reads |
+
+It drives real Chromium: `localStorage`, a real boot and a real upload through a file input.
+SheetJS is stubbed because what is under test is the cache, not the parser.
+
+**One mutation is worth repeating.** "Cache the upload too" was first mutated by removing the
+`!STATE.upload` guard on the write in `loadData` — and it **passed**, because the upload path
+has its own success handler and never called `AmrCache.set` at all. The mutation that models
+the real future mistake is *adding* a write to `runUpload`, and that fails with the store's
+contents named. A mutation that does not change behaviour tells you nothing about the gate.
+
+```bash
+node tests/fuelcache.js
+```
+
 ## `slidecss.js` — §B is only what a capture cannot inherit
 
 `Deck_Styles.html` was 86 rules because the Deck Builder loaded the slide modules **without**

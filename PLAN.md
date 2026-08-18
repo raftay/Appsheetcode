@@ -706,7 +706,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 14 | **Page switching without reload** *(reviewed, and four bugs fixed — see below)* | The nav mounts a page instead of reloading — the switcher, Home, and every `data-page-link` card, all through one `AMR.nav.go()`. **All of it is §D**: no page and no §E module was touched, so `pageparity` / `cssparity` / `modparity` all survive. Teardown is automatic rather than per-page — the runtime records what a mounted page registers and removes it — because eleven `document`/`window` listeners across the ten registrations would otherwise stack, and **48 listeners leak per lap** without it, measured. `tests/pageswitch.js` is the gate. | `pageswitch.js` (two laps of all ten pages, mutation-tested three ways) + the whole suite, 20 green | ✅ |
 | 15 | **The three drifted helpers** | Diffed all of them — **six `toNum_`, six `norm_`, two `gk_` across SEVEN namespaces, not three** — and the verdict is **do not unify**: neither dialect is a superset, each is right exactly where the other is wrong. `tests/helpers.js` pins all fourteen definitions to a table of inputs instead, and two latent bugs fell out. | ✅ |
 | 16 | **Collapse `Deck_Styles`** | **§B is 7 rules where it was 86.** 79 of them restated something §A1–§A3 already say, which was true the moment the merge made the deck and the pages one document. Proven, not eyeballed: `tests/slidecss.js` blanks one rule at a time under all ten pages, iterated to a fixpoint because §B's rules masked each other, and the deletion was checked end to end at **784,380 computed values across 880 specimens — all identical.** | ✅ |
-| 17 | **Device cache on both fuel pages** | Wire `AmrCache` into AGG Fuel Recovery and RMX Fuel Recovery, so a repeat visit paints from `localStorage` instead of waiting on the sheet. **Requested; new behaviour, not a port** — see [§10](#10-four-things-this-merge-does-not-touch). | ☐ |
+| 17 | **Device cache on both fuel pages** | Wired. A repeat visit paints from `localStorage` with **no sheet read**. All three things [§10](#10-four-things-this-merge-does-not-touch) said must not be guessed at are checks in `tests/fuelcache.js`, on both pages, each mutation-tested: the uploaded workbook is never cached, the month is part of the key, and a typed-over cell never reaches the store. `AmrFresh` now watches these two pages as well, which it never did before. | ✅ |
 | 18 | **`APP_log` at the server entry points** | Chunk 12 wrote the helper and left the 10,889 moved lines alone, on purpose — see its notes. This wires it in, and the order is the order of the payoff: **`APP_cachePut_`'s `n > 250` bail first** (that silent `skip` is the whole reason the `cache` field exists, and README §6 is what it costs), then `APP_cacheGet_`'s hit/miss, then the entry points a harness already covers so each line lands with a gate on it — `getFscData`, `getPvUnmapped`, `qlikSyncCheck`, `RMX_prepare`. Never inside a per-row loop. **Do the `catch (e) {}` pass in the same chunk**: [§7](#7-logging-and-the-debug-functions-it-replaces) says silent is right for an optional cache read and wrong for everything else, and chunk 12 carried all of them across undecided because deciding them is an edit, not a move. | ☐ |
 | 20 | **`PV.toNum_` drops accounting negatives** | Found by chunk 15. `PV.toNum_('(1,234)')` is `0` where every other copy in the suite gives `-1234`: the strip leaves the parentheses, `parseFloat` gives `NaN`, and `NaN` becomes `0`. The figure is **dropped, not mis-signed**, which is why nothing looks wrong. **Whether it bites cannot be answered off-platform** — it depends on whether the Price & Volume source ever writes a negative that way. Check the sheet first; only then decide. | ☐ |
 | 21 | **`PVLOOK.gk_` ignores `SCHEMA_`** | Found by chunk 15. `PV.gk_` mixes `SCHEMA_` into its cache key and `PVLOOK.gk_` does not, so a schema bump invalidates one Price & Volume cache and leaves the other serving rows shaped the old way. Fixing it changes every existing `PVLOOK` cache key — which is harmless (a miss, then a rebuild) but should be stated rather than discovered. `tests/helpers.js` fails if either changes. | ☐ |
@@ -783,6 +783,59 @@ and re-added them each switch; the third binds to `#amrSetList`, a `<body>`-leve
 that teardown leaves alone, so it stacked one duplicate per switch — six identical handlers
 means one click on *Save* sends six writes and schedules six reloads. They wire the permanent
 shell, so they are installed once in `start()`, **before** `MOUNTED` goes true.
+
+### What chunk 17 settled
+
+- **The three things [§10](#10-four-things-this-merge-does-not-touch) said not to guess at are
+  now three checks, on both pages, each mutation-tested.** `tests/fuelcache.js` drives real
+  Chromium because all three need `localStorage`, a real boot and a real upload through a file
+  input; stubbing those in jsdom would leave the harness testing its own stubs.
+  - **The uploaded workbook is never cached.** The pages had no upload flag at all — they
+    tracked upload mode in the DOM — so `STATE.upload` is new, `upOff()` clears it and
+    `runUpload` sets it, which is what makes `upOff()` the boundary §10 said it was.
+  - **The month is part of the key** (`d:m<month>`), and the fixture answers a different stamp
+    per month so a key without one cannot pass.
+  - **A typed-over cell never reaches the store.** Only the server payload is written;
+    `NUM_OV` / `TXT_OV` are not part of it, and the check types into a cell and asserts the
+    stored bytes did not move.
+
+- **The first mutation of "cache the upload too" PASSED, and the mutation was the thing that
+  was wrong.** It removed the `!STATE.upload` guard on the write in `loadData` — but the upload
+  path has its own success handler and never calls `AmrCache.set` at all, so nothing was
+  actually cached. The mutation that models the real future mistake is **adding** a
+  `AmrCache.set` to `runUpload`, and that one fails with the store's own contents named.
+  Worth writing down: **a mutation that does not change behaviour tells you nothing about the
+  gate.**
+
+- **A hit is current by construction, so there is no background re-read.** `AmrCache.boot`
+  asks the server for this page's data version before `boot()` ever calls `loadData`, and
+  wipes the device's entries if it moved. If the sheet changes while the page is open,
+  `AmrFresh` is what greys it out — and that is genuinely new here: `AmrFresh.start` is only
+  reached through `AmrCache.boot`, so **until this chunk the two fuel pages never watched their
+  data version at all.** A stale-data grey-out appearing on them is expected, not a bug.
+
+- **`pageparity.js` still passes for both fuel pages, and it is still honest.** Its claim is
+  that the merged page renders what the old page rendered, and on a cold visit — no device
+  entry, so a server read — that is exactly what still happens. What is true is that it no
+  longer covers the whole page: the cached path is behaviour the legacy page never had, and
+  `fuelcache.js` is what covers it. Retiring a green harness that still proves something would
+  have cost the cold-render proof for nothing.
+
+- **The switch harness was swallowing render throws, and this chunk is how that surfaced.**
+  `pageswitch.js`'s stub wrapped every success handler in a `try/catch` that called the page's
+  **failure** handler — so a page that crashed while rendering looked like a page whose server
+  call had failed, and `pageerror` never saw it. Its one shared payload gave every call the
+  same envelope, and **the fuel pages take `months` as an ARRAY where Price & Volume takes
+  `{all, cy}`** — so `buildMonthPicker`'s `list.forEach` had been throwing on both fuel pages
+  all along, silently. Adding a cache read moved that call out of the stub's `try` and it
+  became visible at once. Both are fixed: the stub answers each entry point with the shape its
+  own server returns, and a throw inside a success handler is re-raised so the gate can see it.
+  Doing that then exposed a second one on the Overview, which indexes `STATE.data.pv` without
+  checking and had no such key in the fixture.
+
+  > **The lesson is chunk 8's, again: a fixture that answers the same thing for every question
+  > cannot fail on which question was asked.** And a harness that converts crashes into
+  > "the server said no" cannot fail on crashes.
 
 ### What chunk 16 settled
 
@@ -1865,8 +1918,8 @@ accounting negative, everyone else does the reverse, so there is no direction to
 does not silently break the other half. `tests/helpers.js` pins every one of them instead.
 See [what chunk 15 settled](#what-chunk-15-settled).
 
-**3. Caching the two fuel pages on the device.** Asked for during chunk 3, and it belongs
-here rather than in chunk 3 or 4 for the usual reason: **neither fuel page has ever had a
+**3. Caching the two fuel pages on the device.** ✅ **Done — chunk 17.** Asked for during chunk
+3, and it belonged here rather than in chunk 3 or 4 for the usual reason: **neither fuel page has ever had a
 device cache, so adding one is a new feature wearing a port's clothes.** If the merged page
 then painted a stale figure, "the merge broke it" and "the new cache broke it" would look
 identical — and the whole point of chunks 3 and 4 is that their output is provably the same
@@ -2086,6 +2139,10 @@ you can `Ctrl+F` is the substitute for the reference that cannot exist.
     the same commit. Also checks no top-level name is declared twice, and that the name set
     moved by exactly the declared deletions — **that last check is the one that caught a cut
     silently deleting `RMX_whoWins` while every syntax check still passed.**
+  - `tests/fuelcache.js` *(chunk 17)* — the fuel pages cache the sheet and only the sheet.
+    Cold visit reads once and stores one entry, warm visit reads nothing, each month is its own
+    entry, an uploaded workbook writes nothing, a typed-over cell never reaches the store, and a
+    version bump wipes it. Real Chromium, both pages, mutation-tested three ways.
   - `tests/slidecss.js` *(chunk 16)* — every rule in §B still does something §A1–§A3 do not.
     It blanks one rule at a time, in the real document, under all ten `data-page` values, and
     fails on any rule that changes no computed value. That is the standing form of chunk 16's

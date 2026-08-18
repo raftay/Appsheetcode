@@ -118,6 +118,25 @@ const STUB = `<script>
     if (name === 'IR_getSettings')  return { configured:false };
     if (name === 'TP_getRecipients') return { ok:true, rows:[] };
     if (name === 'CUBE_getManifest') return { ok:false, blocks:[] };
+    /* THE FUEL PAGES TAKE months AS AN ARRAY, and PV takes it as
+       { all, cy }. One envelope for every call cannot tell which question was
+       asked — the same lesson ovperiod.js learned in chunk 8 — and here it hid
+       a real throw: buildMonthPicker() does list.forEach, the stub handed it an
+       object, and the stub's own catch turned the crash into a quiet call to
+       the page's failure handler. It looked like a page that had failed to
+       load, which on a fixture is exactly what you expect to see. */
+    /* THE OVERVIEW READS STATE.data.pv / .rmx / .seg AS MAPS and indexes them
+       without checking. EMPTY has none of those keys, so every market lookup
+       was "cannot read properties of undefined" — and the stub's own catch
+       turned that into a quiet failure-handler call too. Empty maps are a
+       legitimate answer (a period with no markets) and are enough to boot;
+       ovperiod.js is where the Overview's real model lives. */
+    if (name === 'getOverview')
+      return Object.assign({}, EMPTY, { pv:{}, rmx:{}, seg:{}, aggAll:null,
+              bridges:{}, errors:[], unmatched:[], markets:[] });
+    if (/^get(Fsc|RmxFuel)Data/.test(name))
+      return Object.assign({}, EMPTY, { months:[1,2,7], monthNames:['Jan','Feb','Mar','Apr','May',
+              'Jun','Jul','Aug','Sep','Oct','Nov','Dec'], defaultMonth:7 });
     return EMPTY;
   }
   window.__calls = [];
@@ -130,7 +149,18 @@ const STUB = `<script>
       return function(){
         var args = [].slice.call(arguments);
         window.__calls.push(prop);
-        setTimeout(function(){ try { ok && ok(answer(prop, args)); } catch(e){ bad && bad(e); } }, 0);
+        setTimeout(function(){
+          try { ok && ok(answer(prop, args)); }
+          catch(e){
+            /* A RENDER THAT THROWS IS A BUG, NOT A SERVER FAILURE. Calling the
+               page's failure handler and saying nothing else is how this stub
+               hid a fixture mismatch on both fuel pages: the page looked like
+               it had merely failed to load. Surface it as a real page error
+               too, so the pageerror check below can see it. */
+            setTimeout(function(){ throw e; }, 0);
+            bad && bad(e);
+          }
+        }, 0);
       };
     }});
     return proxy;
