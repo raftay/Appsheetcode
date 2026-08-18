@@ -2974,9 +2974,6 @@ var PIVOT_COLS_CUST = ['REGION', 'SUBREGION', 'MARKET', 'COUNTRY', 'SUBMARKET1',
  * period means.
  * ======================================================================== */
 
-var PV_MONTH_NAMES_ = ['January','February','March','April','May','June',
-                       'July','August','September','October','November','December'];
-
 /* "Jul", "Jul-25", 7, a real date -> 7. Anything unreadable -> 0. */
 function pvMonthNum_(v) {
   if (Object.prototype.toString.call(v) === '[object Date]' && !isNaN(v)) return v.getMonth() + 1;
@@ -3021,12 +3018,6 @@ function pvReportMonth_(rows) {
   return latestCy || prev;
 }
 
-/* sel: 1-12 pins the report to that month; 0 or absent uses the report month.
-   MTD returns it positive, YTD negative - one number carries both. */
-function pvMonthFor_(rows, period, sel) {
-  var m = pvMonthSel_(rows, sel);
-  return (period === 'MTD') ? m : -m;
-}
 function pvMonthSel_(rows, sel) {
   var m = Number(sel) || 0;
   if (m < 1 || m > 12) m = pvReportMonth_(rows);
@@ -6013,9 +6004,6 @@ function scopeMonth_(rows, month){
 }
 
 /* =================== computation =================== */
-function aspInc_(cyRev, cyVol, pyRev, pyVol){
-  var a = pyVol? pyRev/pyVol : 0, b = cyVol? cyRev/cyVol : 0; return a ? (b-a)/a : 0;
-}
 /* PPI COVERAGE — Qlik floors (shared with the Overview month cube)
  * ------------------------------------------------------------------
  * A plant x mix pair only earns PPI weight when BOTH years clear the

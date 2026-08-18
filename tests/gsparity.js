@@ -337,6 +337,23 @@ function doGet(e) {
 
   'RMX_Backend.gs': [
 
+  /* ---- DEAD CODE FOUND BY THE 404-NAME AUDIT ---------------------------------
+     Not debug functions — those are all gone. These are IIFE-private helpers with
+     zero readers anywhere in app.gs, app.html or tests/, which the trailing
+     underscore also puts out of reach of google.script.run. */
+    /* gone: [] — the scope-aware analyser puts this INSIDE the namespace IIFE, so it
+       was never one of the top-level names check 3 tracks. That is a stronger
+       statement than 'no caller': it was never reachable from outside this section. */
+    { kind: 'replace', gone: [],
+      why: 'aspInc_ — an ASP-increase calculator with zero callers. Every ASP percentage the ' +
+           'suite shows is computed where it is rendered; this is a leftover of a server-side ' +
+           'version. IIFE-private, so not reachable from a page even by name. ',
+      from: `function aspInc_(cyRev, cyVol, pyRev, pyVol){
+  var a = pyVol? pyRev/pyVol : 0, b = cyVol? cyRev/cyVol : 0; return a ? (b-a)/a : 0;
+}
+`,
+      to:   `` },
+
   /* ---- THE LAST DEBUG FUNCTION ----------------------------------------------
      Chunk 12 deleted six; RMX_whoWins was kept because the Ready-Mix page names it
      in an error banner. It goes now, and the reason is not that chunk 18 gave us
@@ -822,6 +839,41 @@ function RMX_whoWins(){
   ],
 
   'PV_Backend.gs': [
+
+  /* ---- DEAD CODE FOUND BY THE 404-NAME AUDIT ---------------------------------
+     Not debug functions — those are all gone. These are IIFE-private helpers with
+     zero readers anywhere in app.gs, app.html or tests/, which the trailing
+     underscore also puts out of reach of google.script.run. */
+    /* gone: [] — the scope-aware analyser puts this INSIDE the namespace IIFE, so it
+       was never one of the top-level names check 3 tracks. That is a stronger
+       statement than 'no caller': it was never reachable from outside this section. */
+    { kind: 'replace', gone: [],
+      why: 'PV_MONTH_NAMES_ — a month-name constant with zero readers. pvMonthNum_ four lines ' +
+           'below carries its own three-letter map and every renderer formats months in the ' +
+           'browser, so nothing on the server has needed a list of month names. Not reachable ' +
+           'from a page either: the trailing underscore is Apps Script\'s private convention and ' +
+           'google.script.run cannot call a var. ',
+      from: `var PV_MONTH_NAMES_ = ['January','February','March','April','May','June',
+                       'July','August','September','October','November','December'];
+
+`,
+      to:   `` },
+    /* gone: [] — the scope-aware analyser puts this INSIDE the namespace IIFE, so it
+       was never one of the top-level names check 3 tracks. That is a stronger
+       statement than 'no caller': it was never reachable from outside this section. */
+    { kind: 'replace', gone: [],
+      why: 'pvMonthFor_ — a two-line wrapper over pvMonthSel_ that nothing calls. pvMonthSel_ ' +
+           'itself is live and stays; this is the sign-carrying variant (MTD positive, YTD ' +
+           'negative) that callers stopped using when the period stopped being encoded in the ' +
+           'month. ',
+      from: `/* sel: 1-12 pins the report to that month; 0 or absent uses the report month.
+   MTD returns it positive, YTD negative - one number carries both. */
+function pvMonthFor_(rows, period, sel) {
+  var m = pvMonthSel_(rows, sel);
+  return (period === 'MTD') ? m : -m;
+}
+`,
+      to:   `` },
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.

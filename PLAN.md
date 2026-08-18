@@ -2165,6 +2165,30 @@ All four now live in `app.gs` **§11**, split off from the `QLIKSYNC` engine in 
 own trigger banner. Nothing in the repo can point at a hand-configured trigger, so a section
 you can `Ctrl+F` is the substitute for the reference that cannot exist.
 
+### Confirmed dead by the 404-name audit, and removed
+
+Run after chunk 19, over every top-level declaration in `app.gs`, with comments and string
+literals blanked so a mention in prose does not count as a caller, and cross-checked against
+`app.html` and `tests/`. **Seven names have no caller anywhere. Three are gone, four stay, and
+the four are the interesting half.**
+
+| | |
+|---|---|
+| `PV_MONTH_NAMES_` | ✅ **Deleted.** A month-name constant with no readers — `pvMonthNum_` four lines below carries its own three-letter map, and every renderer formats months in the browser |
+| `pvMonthFor_` | ✅ **Deleted.** A two-line wrapper over `pvMonthSel_`, which is live and stays. This is the sign-carrying variant callers stopped using when the period stopped being encoded in the month |
+| `aspInc_` | ✅ **Deleted.** An ASP-increase calculator with no callers; every ASP percentage the suite shows is computed where it is rendered |
+| `DECK_status` | **Keep, and the reason has not changed since chunk 1.** A real deck build has *still* never run against the live deployment, and that is what decides whether the Publish stage needs it. Do not delete before then |
+| `RMX_getCrossReport` · `getRmxUnmapped` · `uploadRmxData` | **Keep.** These are the "legacy names" wrappers already held open below as their own chunk. Zero callers is not the test for them: they exist so a stale deployment still resolves, and removing them changes what one does |
+
+**All three deletions are IIFE-private**, which the scope-aware analyser confirmed by *not*
+listing them among the 404 top-level names — a stronger statement than "no caller": they were
+never reachable from outside their own section, and the trailing underscore puts them out of
+reach of `google.script.run` as well.
+
+> **Note what this audit did NOT find: a debug function.** There are none left. Six went in
+> chunk 12 and `RMX_whoWins` after chunk 19, and every remaining callerless name is either a
+> deliberate keep or was dead code rather than a diagnostic.
+
 ### To audit before chunk 2 ends — audit, do not assume
 
 - ✅ **Done, chunk 12.** The `SB` reader / `getSlideData` / `syncSlideData` in `Code.gs`. The
