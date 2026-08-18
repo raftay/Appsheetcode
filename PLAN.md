@@ -1,6 +1,11 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: in progress on `merging-files`. Chunks 0–10 done — `app.html` is ~1.07 MB and holds the runtime, thirteen shared modules and nine of the ten pages. Only TP01 (chunk 11) is left on the client side. §A3 is 363 rules and §A4 is 372. All 17 test harnesses run and are green; `tests/ovperiod.js` and `tests/bgrender.js` both drive `app.html` through a real browser alongside their legacy side, and `tests/pageparity.js` now covers seven pages. The 16 `.gs` files are untouched and stay that way until chunk 12.**
+**Status: in progress on `merging-files`. Chunks 0–11 done — every page is in. `app.html` is ~1.13 MB and holds the runtime, thirteen shared modules and all ten pages; §A3 is 363 rules and §A4 is 441. All 17 test harnesses run and are green; `tests/ovperiod.js` and `tests/bgrender.js` drive `app.html` through a real browser alongside their legacy side, and `tests/pageparity.js` covers eight of the ten pages. The 16 `.gs` files are untouched — chunk 12 merges them, and it is the next thing to do.**
+
+> **Note on the chunk numbers.** They are a way of splitting the work, not a structure the
+> code should carry. Nothing in `app.html` is arranged around them and nothing should be: a
+> chunk reference in a comment is there to point at the entry in this file that explains a
+> decision, and that is the only reason to write one.
 
 > ## Read this file before doing anything. Every session, every agent.
 >
@@ -560,7 +565,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 8 | **Overview, part 1 — shell and cube** | `Page_Overview`'s whole markup (342 lines, 136 ids), its whole style block as **234 §A4 rules**, and the shell half of its script: state, helpers, the panel primitives, the market chips, the period model (`STATE`, `PICK_SERVER`, `windowPeriod`), the month window, the `AmrCube` wiring, the history pill, `load()` and `boot()`. No painters — they are behind a ten-name **CHUNK 9 SEAM** block. §A3 gained exactly one rule. `tests/ovperiod.js` drives `app.html` as a second side now, and `tests/merge.js` learned to resolve `$('id')`. | `tests/merge.js`, `tests/ovperiod.js` (both sides; merged is shell-only) + the whole suite — all green | ✅ |
 | 9 | **Overview, part 2 — the panels** | Every painter, both cross-filter engines, the fifteen chart registries in `CH`, `pcatFits`, the SAP/USGAAP cards, customers, fuel surcharge, product category, and the data-quality sheet with its lookup editor — 4,128 lines, and **zero CSS**. The chunk-8 seam block goes; all ten names are the real thing. *(`hidePanel` / `resetPanels` are NOT here: they are the panel primitives the shell's own `renderTab` needs, so they landed in chunk 8. Corrected against the code.)* | `tests/ovperiod.js`, merged side's shell flag removed — all seven checks, both tabs, all four periods, mutation-tested three ways — plus the whole 17-harness suite, all green | ✅ |
 | 10 | **Deck Builder** | `Page_DeckBuilder` + `Deck_Sources` + `Deck_Styles` **+ `Deck_RMX` + `AmrTick`** — §E gains `AmrDeckSource`, `AmrRmxSlide` and `AmrTick`, and §B gains the 86 `.slide-bare` capture rules. **70 §A4 rules, all `.db-*`, zero collisions.** Nine inline handlers became listeners, three of them delegated because the rows are redrawn. `tests/bgrender.js` drives `app.html` as a second side and checks all six deck sources register — the one thing that could only break in the merge. | `tests/merge.js`, `tests/modparity.js` (13 modules), `tests/bgrender.js` (both sides), `tests/pageparity.js` (190 comparisons) + the whole suite — all green. **A real deck build is still owed**: `DECK_create` / `addSlide` / `finish` have never run against the live deployment | ✅ |
-| 11 | **TP01** | `Page_TP01`. Mail sends as the deploying account. | a real send to a test recipient | ☐ |
+| 11 | **TP01** | `Page_TP01`. **The seventh and last QlikView guide copy goes** — one `AmrQlikGuide.mount()` where there were seven asides. Eleven inline handlers became listeners, three of them delegated. 69 §A4 rules; the page's private `.spinner` and the suite's fourth `@keyframes spin` are gone. Two sentences of page copy corrected: mail sends as the deploying account and the saved recipients are shared, which the page denied. | `tests/merge.js`, `tests/pageparity.js` (217 comparisons) + the whole suite — all green. **A real send is still owed**: nothing off-platform can exercise `MailApp` | ✅ |
 
 ### The server, and the cutover
 
@@ -640,6 +645,61 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   global. *(The id check was replaced in chunk 4 — see [§3](#3-how-the-pages-live-inside-one-html-file).
   Ids repeat across pages on purpose; what is checked now is that none repeats within one page
   and that the mount empties `#appRoot`.)*
+
+### What chunk 11 settled
+
+- **The seventh and last copy of the QlikView guide is gone.** Chunk 2 replaced six of them
+  with `AmrQlikGuide`; this was the one left, and with it the 817-line duplication §3 counted
+  is fully paid off — an aside, a FAB, 35 lines of CSS and 50 of JS became one `mount()` with
+  one step in it.
+
+- **Eleven inline handlers, three of them generated.** Same shape as the Deck Builder, and the
+  same fix: eight in the markup wired by id or `data-act`, three written into rows by
+  `renderPanels()` and delegated on `#marketList` / `#excList`. One difference worth copying:
+  a market name is **sheet data**, so the row carries `data-tp-kind` and `data-tp-market` as
+  separate attributes rather than one packed string with a delimiter the data could contain.
+  The old code had the same problem and solved it by escaping quotes into a JS string literal
+  (`market.replace(/'/g, "\\'")`), which is the trick that stops working the moment a market
+  is named with a double quote.
+
+- **The fourth spinner, and the fourth `@keyframes` rotating a circle 360°.** This page's
+  private `.spinner` is §A3's `.spinner.sm` to the pixel bar a 1px margin. Both it and its
+  keyframe go; the four call sites say `class="spinner sm"`. Chunk 2 collapsed three spinners
+  into one and this is the last of them.
+
+- **Two sentences of page copy are corrected, and it is the only thing in either chunk that is
+  not a move.** The page told users emails are sent "from **your** account" and that a typed
+  recipient "will be remembered for **your** account". Neither has been true since
+  `appsscript.json` pinned `"executeAs": "USER_DEPLOYING"` — `TP01_Backend.gs` says so in its
+  own banner, README §1 says so, and `getUserProperties()` resolves to the deployer for
+  everybody, which is exactly why the recipient map is one shared list. Only the page said
+  otherwise, and it is the sentence someone reads before typing a colleague's address into a
+  box they believe is private to them. **Changing user-facing copy inside a port is a thing to
+  do sparingly and to state plainly** — this is stated here, in the registration's own header,
+  and in the README log.
+
+- **A parity case for a page with nothing to render.** TP01 does everything in the browser
+  until Send, so before a workbook is dropped there is almost no DOM to diff — and diffing it
+  would prove nothing anyway. What the case actually rests on is: the recipient map filling
+  the two "always send to" boxes (a boot that never ran is visible), the twenty-two former
+  globals all being gone, the guide mounted with this page's one step, and — the part that
+  needed a new hook — **typing into a box whose handler saves through the server and changes
+  nothing on screen.** `readAsked` compares the call list each side made; deleting that
+  listener fails with the two lists printed side by side.
+
+- **`.ghost` on white is closed, and the answer is that it was never there.** The last two
+  pages to check were TP01 and Landing. Neither puts a button inside its guide at all — TP01's
+  is one step with no upload panel, Landing's is five steps with none. The bug was on the two
+  fuel pages and Price & Volume, and it is fixed on all three.
+
+- **Every page is ported, so `AmrKpiStore` is now provably unclaimed.** It was "decide by
+  chunk 13" on the hit-list because a later page might have wanted it. There is no later page.
+  It goes at chunk 13.
+
+- **What is left is the server.** Chunk 12 merges the 16 `.gs` files, and §2's asymmetry is
+  why it comes last: `app.gs` cannot coexist with the files it replaces, so it is one atomic
+  commit — delete all 16, add `app.gs` — taken at a point where `app.html` is already known
+  good. It is now known good for all ten pages.
 
 ### What chunk 10 settled
 
@@ -1247,7 +1307,8 @@ not prove it** — read the next box before deleting anything.
   must call `AmrCube.configure({…}).init()` itself. Another 622 lines. Both removals are
   covered by `tests/pageparity.js`, which boots the legacy page and would break if either
   had been live.
-- **Six of the seven QlikView guide copies** *(chunk 2)*. ~720 lines.
+- **All seven QlikView guide copies** *(six in chunk 2, TP01's in chunk 11)*. ~817 lines,
+  now one `AmrQlikGuide.mount()` per page with that page's own steps.
 - **The six debug functions** *(chunk 12)* — see [§7](#7-logging-and-the-debug-functions-it-replaces).
 - **`Page_PriceVolume`'s `var AMR` and `CONFIG.colors.palette`** *(chunk 5, done)*. One
   occurrence of `AMR` in the whole repo — its own declaration — and the palette fed nothing

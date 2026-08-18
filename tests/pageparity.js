@@ -264,6 +264,14 @@ function deckModel() {
   };
 }
 
+/* TP01 does everything in the browser until Send, so a boot-time fixture is
+   the recipient map — which is also what proves the boot path ran: the two
+   "always send to" boxes are filled from it. */
+function tp01Model() {
+  return { 'ALL::mkt': 'ops@amrize.com', 'ALL::exc': 'controlling@amrize.com',
+           'GTA AGG': 'gta@amrize.com', 'EXC::GTA AGG': 'gta.exc@amrize.com' };
+}
+
 /* Server replies, by function name. A page asking for anything not listed here
    is a finding, not something to paper over — the runner reports it. */
 function serverStubs(model) {
@@ -271,6 +279,9 @@ function serverStubs(model) {
     /* Deck Builder */
     DECK_readTemplate: () => model.template,
     DECK_getRecipe:    () => model.recipe,
+    /* TP01 */
+    TP_getRecipients:  () => model,
+    TP_saveRecipient:  () => ({ ok: true }),
     getFscData:      () => model,
     getRmxFuelData:  () => model,
     getFscDataFromUpload:     () => model,
@@ -605,6 +616,43 @@ const PAGES = [
     },
   },
   {
+    /* TP01. Everything happens in the browser until Send, so there is little
+       to diff before a workbook is dropped — and that is not what this case is
+       for. Its risk is that the page had ~90 top-level names and eleven inline
+       handlers, all of which resolved against window and none of which can. */
+    id: 'tp01',
+    legacy: 'Page_TP01.html',
+    model: tp01Model,
+    views: ['__mounted__', '__typed__'],
+    viewButton: () => '',
+    /* Type into the "always send to" box. It is the one control on this page
+       reachable without a workbook, and its handler is one of the eleven the
+       port moved off an inline on*= attribute. */
+    drive: (win, view) => {
+      if (view !== '__typed__') return;
+      const el = win.document.getElementById('alwaysto-mkt');
+      if (!el) throw new Error('no #alwaysto-mkt');
+      el.value = 'new.recipient@amrize.com';
+      el.dispatchEvent(new win.Event('change', { bubbles: true }));
+    },
+    readAsked: true,
+    payload:  { host: 'marketList' },
+    expectMarkup: 'exc-empty',
+    readHtml: { exc: 'excList', pills: 'colPills', stats: 'statsGrid', status: 'status' },
+    /* filled from the recipient map, so a boot that never ran is visible */
+    readValue: { alwaysMkt: 'alwaysto-mkt', alwaysExc: 'alwaysto-exc' },
+    chrome: {
+      guideSteps: 1,             // the seventh and last copy, now one mount
+      noGlobals: ['sapData', 'qlkBytes', 'sapWB', 'compWB', 'savedRecips',
+                  'showStatus', 'slug', 'recipKey', 'parseEmails', 'alwaysList',
+                  'onAlwaysToChange', 'recipientsFor', 'onRecipChange',
+                  'downloadSAP', 'downloadComparison', 'downloadMarket',
+                  'emailMarket', 'sendAll', 'sendAsOne', 'renderPanels',
+                  'marketDataMap', 'excDataMap', 'setupDrop'],
+      modules: ['AMR', 'AmrHint', 'AmrQlikGuide', 'AmrProgress', 'AmrBoot'],
+    },
+  },
+  {
     /* The Ready-Mix twin. It shares 21 ids with the case above ON PURPOSE
        (PLAN.md §3) — that is not a mistake to be fixed, and the two cases
        being nearly identical is the point. */
@@ -800,10 +848,10 @@ function clickView(win, view, page) {
         clickView(A.window, view, page); clickView(B.window, view, page); await settle(60);
       }
       const a = snapshot(A.window, page, 'legacy'), b = snapshot(B.window, page, 'merged');
-      /* Some rewiring has no DOM to read — a control that saves through the
-         server and changes nothing on screen. What proves its listener
-         survived the move off an inline on*= is that both sides asked the
-         server the same things in the same order. */
+      /* Some rewiring has no DOM to read: TP01's "always send to" box saves
+         through the server and changes nothing on screen, so what proves its
+         listener survived the move off an inline onchange is that both sides
+         asked the server the same things in the same order. */
       if (page.readAsked) { a.asked = A.asked.join(','); b.asked = B.asked.join(','); }
       /* DUMP=<page id> prints what this case actually compares. Worth running
          when a mutation you expected to fail passes instead — usually the
