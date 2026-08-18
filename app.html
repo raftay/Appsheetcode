@@ -2086,7 +2086,10 @@ window.AMR = (function(){
       setTitle.textContent = 'Data sources · Google Sheets';
       setIntro.textContent = 'Each tool reads from its own Google Sheet. Update any of them below.';
       google.script.run
-        .withSuccessHandler(function(list){ setList.innerHTML = (list || []).map(renderSettingsRow).join(''); })
+        .withSuccessHandler(function(list){
+          setList.innerHTML = (list || []).map(renderSettingsRow).join('');
+          fillSaskStatus();
+        })
         .withFailureHandler(function(e){ fillError('Could not read settings: ' + (e && e.message || e)); })
         .getAllSettings();
     } else {
@@ -2103,10 +2106,89 @@ window.AMR = (function(){
             setIntro.textContent = 'This tool reads from the sheets below. Paste a link and click Save.';
           }
           setList.innerHTML = rows.map(renderSettingsRow).join('');
+          fillSaskStatus();
         })
         .withFailureHandler(function(e){ fillError('Could not read settings: ' + (e && e.message || e)); })
         .getSettingsFor(PAGE);
     }
+  }
+
+  /* ==========================================================================
+     THE SASKATCHEWAN RATE TABLE, READ OUT  (chunk 19)
+     --------------------------------------------------------------------------
+     getSaskRatesStatus has existed since before the merge and NOTHING HAS EVER
+     CALLED IT. Its own comment says it is there "so the Settings screen (and a
+     quick manual run) can check the sheet without loading a whole page" — the
+     manual run is real and is why chunk 12 kept it, but the Settings screen half
+     of that sentence was simply untrue. Chunk 19's choice was to wire it or to
+     delete it and the sentence; wiring it is what makes the sentence true, and
+     the function was being kept either way.
+
+     IT FOLLOWS APP_EXTRA_SOURCES RATHER THAN A PAGE LIST. app.gs already
+     declares which pages read the Saskatchewan sheet — Price & Volume, AGG Fuel
+     Recovery and the Deck Builder — and getSettingsFor returns a row for every
+     one of a page's sources, so the saskrates row is ALREADY in this modal on
+     exactly those pages. Attaching the readout to that row means there is no
+     second list of pages to drift out of step with the first.
+
+     WHAT IT ANSWERS is the question the sheet cannot: not "is a sheet
+     configured", which the row above already shows, but "does the table in it
+     actually match the customers in the data". An unmatched name is a rate that
+     silently never applies — the mid-year increase is simply not charged, and
+     nothing anywhere says so.
+
+     It is best-effort by construction: a failure leaves the row exactly as it
+     was, because a rate-table readout must never be the reason somebody cannot
+     repoint a sheet. */
+  function saskStatusHtml(n){
+    if (!n) return '<span class="amr-status muted">No answer from the rate table.</span>';
+    if (n.error) return '<span class="amr-status err">' + esc(n.error) + '</span>';
+    if (!n.configured)
+      return '<span class="amr-status muted">No rate sheet is set, so the Saskatchewan ' +
+             'mid-year increase is not being applied at all.</span>';
+
+    var bits = [n.customers + ' customer' + (n.customers === 1 ? '' : 's'), n.matched + ' matched'];
+    var un = n.unmatched || [], du = n.duplicates || [];
+    if (un.length) bits.push(un.length + ' not found in the data');
+    if (du.length) bits.push(du.length + ' listed twice');
+
+    var bad = un.length || du.length || n.ok === false;
+    var html = '<span class="amr-status ' + (bad ? 'err' : 'ok') + '">' +
+               esc(n.market || 'Saskatchewan') + ' \u00b7 ' + bits.join(' \u00b7 ') + '</span>';
+    /* Name them. "2 unmatched" sends somebody to open the sheet; the two names
+       are usually enough to see the typo from here. */
+    if (un.length)
+      html += '<div style="margin-top:4px;font:500 12px Inter;color:var(--muted);line-height:1.5">' +
+              'No rate applied for: ' + un.slice(0, 8).map(esc).join(', ') +
+              (un.length > 8 ? ' and ' + (un.length - 8) + ' more' : '') + '</div>';
+    return html;
+  }
+
+  function fillSaskStatus(){
+    var row = document.querySelector('.amr-set-row[data-page="saskrates"]');
+    if (!row || !LIVE) return;
+    var slot = document.createElement('div');
+    slot.className = 'amr-sask-status';
+    slot.innerHTML = '<span class="amr-status muted">Checking the rate table\u2026</span>';
+    var cur = row.querySelector('.amr-cur');
+    if (cur && cur.nextSibling) row.insertBefore(slot, cur.nextSibling);
+    else row.appendChild(slot);
+
+    var t0 = Date.now();
+    google.script.run
+      .withSuccessHandler(function(n){
+        slot.innerHTML = saskStatusHtml(n);
+        log('info', 'AMR.settings', 'saskatchewan rate table read',
+            { ms: Date.now() - t0, customers: n && n.customers,
+              unmatched: n && n.unmatched ? n.unmatched.length : 0 });
+      })
+      .withFailureHandler(function(e){
+        /* Not silent, and not fatal: the row above still works. */
+        slot.innerHTML = '<span class="amr-status muted">Could not read the rate table.</span>';
+        log('warn', 'AMR.settings', 'could not read the saskatchewan rate table',
+            { ms: Date.now() - t0, error: String((e && e.message) || e) });
+      })
+      .getSaskRatesStatus();
   }
 
   function wireSettingsRows(){

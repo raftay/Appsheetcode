@@ -715,7 +715,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 
 | # | Chunk | What lands | | |
 |---|---|---|---|---|
-| 19 | **The unwired Saskatchewan rates readout** | `getSaskRatesStatus` says in its own comment that it exists "so the Settings screen can check the sheet without loading a whole page", and no `.html` has ever called it. Either wire it into Settings or delete it and the sentence — but not inside a merge. See [§1a](#1a-chunk-1-results--the-three-audits). | ☐ |
+| 19 | **The unwired Saskatchewan rates readout** | **Wired.** It reads out under the `saskrates` row in the Settings modal, on exactly the pages that read that sheet — because it follows `APP_EXTRA_SOURCES` rather than a page list in `app.html`. It answers the question the row above cannot: not *is a sheet configured* but *does the table in it match the customers in the data* — and it **names** the customers with no rate, because an unmatched name is a rate that silently never applies. `tests/settings.js` is the gate. | ✅ |
 
 ### What the chunk-14 REVIEW found — four bugs, all shipped, all now gated
 
@@ -783,6 +783,33 @@ and re-added them each switch; the third binds to `#amrSetList`, a `<body>`-leve
 that teardown leaves alone, so it stacked one duplicate per switch — six identical handlers
 means one click on *Save* sends six writes and schedules six reloads. They wire the permanent
 shell, so they are installed once in `start()`, **before** `MOUNTED` goes true.
+
+### What chunk 19 settled
+
+- **Wire it or delete it — and deleting it was never actually on the table.** Chunk 12 had
+  already kept `getSaskRatesStatus` on the editor-tool criterion, and that half of its comment
+  was true. What was untrue was the other half: *"so the Settings screen … can check the sheet"*.
+  So the real choice was between making the sentence true and retreating from it, and wiring it
+  costs one `google.script.run` on a modal that already makes one.
+
+- **It follows `APP_EXTRA_SOURCES`, not a list of pages.** `app.gs` already declares which pages
+  read the Saskatchewan sheet — Price & Volume, AGG Fuel Recovery, the Deck Builder — and
+  `getSettingsFor` returns a row per source, so **the `saskrates` row was already in that modal on
+  exactly those pages.** Attaching the readout to that row means there is no second list to drift
+  out of step with the first. `tests/settings.js` checks both directions, because "it appears
+  everywhere" and "it appears where it should" look identical if you only ever look at one page.
+
+- **What it answers is not what the row above answers.** The row says which sheet is configured.
+  The readout says whether the table *in* it matches the customers in the data — and **an
+  unmatched name is a rate that silently never applies**: the mid-year increase is simply not
+  charged and nothing anywhere says so. So it names them rather than counting them. "2 unmatched"
+  sends somebody to open the sheet; two names are usually enough to see the typo from here.
+
+- **It is best-effort by construction, and that is a check.** A rate-table readout must never be
+  the reason somebody cannot repoint a sheet, so a failure leaves the row exactly as it was. The
+  harness asserts the Save buttons survive a failing call — mutation-tested by removing the
+  wiring entirely, which puts the code back in the state chunk 19 exists to fix and fails three
+  checks by name.
 
 ### What chunk 18 settled
 
@@ -2207,6 +2234,10 @@ you can `Ctrl+F` is the substitute for the reference that cannot exist.
     the same commit. Also checks no top-level name is declared twice, and that the name set
     moved by exactly the declared deletions — **that last check is the one that caught a cut
     silently deleting `RMX_whoWins` while every syntax check still passed.**
+  - `tests/settings.js` *(chunk 19)* — the Settings modal and the Saskatchewan readout. Proves
+    the readout appears where the page has that source and **is not even asked for** where it does
+    not, that unmatched customers are named rather than counted, and that a failing readout still
+    leaves every sheet repointable.
   - `tests/logging.js` *(chunk 18)* — the silent-catch census and the entry points. Every
     `catch (…) {}` left in `app.gs` is listed with its reason, so a new one fails with "decide
     it"; the four named entry points must log arrival, answer, failure and elapsed ms; the cache

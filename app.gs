@@ -5097,9 +5097,11 @@ function getFscDataFromUpload(p){
 }
 
 /* ---- Sask_Backend.gs ---------------------------------------------------------
-   The Saskatchewan rate table, read through PV. getSaskRatesStatus is run by
-   hand — its own comment says so — and the Settings screen it was written for
-   never wired it up. See PLAN.md §11.  */
+   The Saskatchewan rate table, read through PV. getSaskRatesStatus is BOTH an
+   editor tool and, since chunk 19, the readout under the saskrates row in the
+   Settings modal — it took until then for the second half of its own comment to
+   become true. It follows APP_EXTRA_SOURCES rather than a page list, so it
+   appears on exactly the pages that read the sheet.  */
 
 /*****************************************************************************
  * SASKATCHEWAN MID-YEAR INCREASE — the rates sheet
