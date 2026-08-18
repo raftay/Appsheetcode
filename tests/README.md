@@ -62,11 +62,25 @@ added. Twelve comparisons, all identical, as of chunk 3.
 
 ## `merge.js` — the structural gate for `app.html`
 
-Six invariants that nothing enforces at runtime: every inline script parses, every
+Eight invariants that nothing enforces at runtime: every inline script parses, every
 `<template id="tpl-X">` has exactly one `AMR.page('X')`, every `getElementById` target exists
-in that page's own template, no id is declared by two pages, every §A4 rule is scoped, and no
-page registration leaks a global. Plus the three Apps Script templating traps that have each
-shipped once — see `PLAN.md` §8.
+in that page's own template, no id is declared by two pages, every §A4 rule is scoped, no
+page registration leaks a global, no page shadows a runtime global, and **no §A4 rule reaches
+outside its own page's markup** (check 8, `css-reach`). Plus the three Apps Script templating
+traps that have each shipped once — see `PLAN.md` §8.
+
+`css-reach` is the one that needs explaining. It builds the real document — the shared modal
+shells, the guide aside and FAB `AmrQlikGuide` appends to `<body>` at runtime, and the page
+mounted in `#appRoot` — and asks each §A4 selector what it actually **matches**, rather than
+what it looks like. A match outside `#appRoot` fails; a match on `#appRoot` fails unless the
+selector names it, because `#appRoot` is a `<main>` and a rule meant for the mount should say
+so. Two shipped bugs are why: `body[data-page="rmx"] main{}` restyled the mount, and
+`body[data-page="rmx"] aside{}` reached the QlikView guide and held it open.
+
+A selector may name its page three ways — `body[data-page="x"] …`,
+`html:has(body[data-page="x"])`, and **`:where(body[data-page="x"]) …`**, which is the
+specificity-neutral form and the one to use where a page block styles bare elements. See
+`cssparity.js` for what the other two cost.
 
 ```bash
 node tests/merge.js
@@ -124,6 +138,59 @@ Three things it does deliberately, each of which took a wrong answer to find:
 It boots the **legacy** page too, which makes it the gate for deletions from those files: the
 two dead includes chunk 6 removed from `Page_Rmx.html` would have broken the legacy side if
 either had been live.
+
+## `cssparity.js` — the merged page's CASCADE, not just its markup
+
+`pageparity.js` proves the merged page emits the same HTML. That is not the same as proving it
+**looks** the same, and the gap is a property of how the merge was done rather than bad luck.
+
+Every page's style block was scoped by prefixing `body[data-page="x"] `. That does two things
+and only one of them was intended: it narrows what the selector matches, **and it raises the
+selector's specificity by one attribute selector.** The raise is invisible until a shared
+§A1–§A3 rule declares the same property on the same element — then the page rule, which used
+to lose, starts winning, and the DOM is byte-identical while the pixels are not.
+
+```bash
+npm install playwright
+node tests/cssparity.js
+CHROMIUM_PATH=/path/to/chrome node tests/cssparity.js
+```
+
+It boots `Page_Rmx.html` and `app.html`'s Ready-Mix route in **real Chromium** off the same
+model, then compares the computed value of every property the §A4 Ready-Mix block declares,
+for every element inside `#tablesHost` and `#extrasHost`. 10,600 values per run.
+
+**Ready-Mix is the page that needs this**, because it is the only one whose §A4 block styles
+bare elements — `table`, `th`, `td`, `thead th`, `tfoot td`, `tr.subtotal td`. Every other page
+anchors on its own classes, where the same raise cannot reach a shared rule. It found 673
+differing computed values on the first run: `.rtbl`, which is §A3's and had always governed
+these tables, was losing to the scoped page rules. Headers rendered at 10.5px instead of 13px,
+cells at 8/10px padding instead of 6/9px, and the grand-total row changed colour and weight.
+
+Four things about it are deliberate:
+
+- **The property list is derived from the §A4 block, not hard-coded**, and the run FAILS if the
+  block declares a shorthand the harness cannot expand. A list that quietly stopped covering a
+  new rule would be worse than no list.
+- **It waits for a table rather than sleeping.** A fixed timeout that is slightly too short
+  reports "no differences", which is the worst possible pass.
+- **It pairs elements inside the two hosts `pageparity.js` already proves are byte-identical**,
+  so pairing is safe by construction — and it re-asserts tag and count per element anyway.
+- **`KNOWN` is a list of claims, not a tolerance.** Each entry says why a difference is
+  deliberate, and the run fails if the difference it describes has **stopped** happening. A
+  silenced check that no longer applies is how an allow-list becomes a blindfold.
+
+The fix it drove is worth copying: scoping a page block with **`:where(body[data-page="x"])`**
+instead of `body[data-page="x"]` narrows the rule without adding weight, so the specificity is
+exactly what the unscoped legacy rule had. That is what "scoping a style block" was assumed to
+mean all along.
+
+## `rmxfixture.js` — not a harness; the Ready-Mix model both sides render
+
+`pageparity.js` and `cssparity.js` both need Ready-Mix to render its real tables, and they need
+it to render the *same* ones: cssparity's whole guarantee — any difference is a **cascade**
+difference — holds only while both sides are looking at identical markup. Two copies of the
+model would drift and the guarantee would quietly stop being true.
 
 ## `gsparity.js` — `app.gs` holds verbatim copies of the 16 `.gs`
 

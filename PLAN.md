@@ -1,8 +1,10 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: in progress on `merging-files`. Chunks 0–12 done — both files now exist.** `app.html` is ~1.13 MB and holds the runtime, thirteen shared modules and all ten pages; §A3 is 363 rules and §A4 is 441. **`app.gs` is 542 KB / 11,388 lines in eleven sections, and the 16 `.gs` files are gone** — deleted in the same commit that added it, because they cannot coexist ([§2](#2-the-thing-that-would-have-broken-it)). All **18** harnesses run and are green: `tests/ovperiod.js` and `tests/bgrender.js` drive `app.html` through a real browser alongside their legacy side, `tests/pageparity.js` covers eight of the ten pages, and the new `tests/gsparity.js` proves every region of `app.gs` is still byte-for-byte the file it came from.
+**Status: in progress on `merging-files`. Chunks 0–12 done — both files now exist.** `app.html` is ~1.13 MB and holds the runtime, thirteen shared modules and all ten pages; §A3 is 363 rules and §A4 is 441. **`app.gs` is 542 KB / 11,388 lines in eleven sections, and the 16 `.gs` files are gone** — deleted in the same commit that added it, because they cannot coexist ([§2](#2-the-thing-that-would-have-broken-it)). All **19** harnesses run and are green: `tests/ovperiod.js` and `tests/bgrender.js` drive `app.html` through a real browser alongside their legacy side, `tests/pageparity.js` covers eight of the ten pages, `tests/gsparity.js` proves every region of `app.gs` is still byte-for-byte the file it came from, and `tests/cssparity.js` proves the merged Ready-Mix page does not merely emit the same HTML but RENDERS it the same — which it did not, until it was written.
 
-**Chunk 13, the cutover, is the next thing to do** — and it is now the only thing between here and two files. Three owed items carry into it: two user-facing sentences in `app.html` that chunk 12 made untrue and `APP_verifyPermissions()`, which has never been run because nothing off-platform can run it (both under [chunk 12's notes](#what-chunk-12-settled)); plus the **Ready-Mix bare-element specificity audit**, which has to happen *before* the file it is diffed against is deleted — see [the notes on the gap after chunk 12](#what-the-gap-after-chunk-12-settled).
+**Chunk 13, the cutover, is the next thing to do** — and it is now the only thing between here and two files. Two owed items carry into it, both under [chunk 12's notes](#what-chunk-12-settled): two user-facing sentences in `app.html` that chunk 12 made untrue, and `APP_verifyPermissions()`, which has never been run because nothing off-platform can run it.
+
+The Ready-Mix specificity audit that had to happen *before* the cutover deletes the file it diffs against is **done**. It found a **673-value rendering regression** in the merged Ready-Mix tables, fixed it, and left `tests/cssparity.js` holding the line — see [the notes on the gap after chunk 12](#what-the-gap-after-chunk-12-settled).
 
 > **Note on the chunk numbers.** They are a way of splitting the work, not a structure the
 > code should carry. Nothing in `app.html` is arranged around them and nothing should be: a
@@ -301,12 +303,25 @@ what belongs to them:**
   in §A3 or §A4 is a token that has not been created yet.
 - **Three breakpoints, named.** Every `@media` maps onto one of them. A page needing a fourth
   needs a reason written next to it.
-- **`body[data-page="x"] ` is not only a narrowing prefix — it also RAISES SPECIFICITY.** A
-  bare `aside{}` is (0,0,1) and loses to any class. Prefixed, it is (0,1,2) and beats one. On
-  Ready-Mix that turned `.qlikGuide{display:none}` into a rule that no longer applied, and the
-  QlikView guide opened on load and would not close — on that page and no other. **Anchor a
-  bare element selector on the page's own container** (`… .wrap > aside`), never on the body
-  scope alone.
+- **`body[data-page="x"] ` is not only a narrowing prefix — it also RAISES SPECIFICITY**, and
+  the fix is `:where()`. A bare `aside{}` is (0,0,1) and loses to any class. Prefixed, it is
+  (0,1,2) and beats one. **`:where(body[data-page="x"]) aside` is (0,0,1) again** — `:where()`
+  contributes nothing, so the scope narrows what the rule matches and changes nothing else.
+  That is what "scoping a page's style block" was assumed to mean all along, and it is the form
+  to use wherever a page block styles bare elements. Ready-Mix's whole §A4 block is written
+  that way; `tests/cssparity.js` is what proves the result matches the legacy page, and
+  `tests/merge.js` accepts all three scoping forms.
+
+  What the plain prefix cost, before the conversion: **673 differing computed values** on the
+  Ready-Mix tables, because §A3's `table.rtbl` rules — which had always governed them — drew
+  level with the scoped page rules and lost on source order. Headers rendered at 10.5px instead
+  of 13px, cells at 8/10px padding instead of 6/9px, and the grand total changed colour and
+  weight. `pageparity.js` was green throughout: the markup never changed.
+- **Reach is a separate problem from weight, and needs a separate fix.** `:where()` stops a
+  page rule outranking a shared one; it does not stop it MATCHING an element that is not the
+  page's. `#appRoot` is a `<main>` and `AmrQlikGuide` appends its aside to `<body>`, so both
+  are inside the reach of a bare element selector however it is scoped. **Anchor those on the
+  page's own container** (`… .wrap > aside`), which is what `merge.js` check 8 enforces.
 - **The page is not the document any more, and `#appRoot` is a `<main>`.** Two consequences
   that both shipped: `body[data-page="rmx"] main{}` matched the mount itself, and
   `AmrQlikGuide` appends its aside to `<body>`, *outside* `#appRoot`, where a page rule can
@@ -675,7 +690,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | # | Chunk | What lands | Review by | |
 |---|---|---|---|---|
 | 12 | **`app.gs`** | All 16 `.gs` merged in the [§5](#5-the-shape-of-appgs) order — **542 KB, 11,388 lines, eleven sections, zero top-level collisions.** `APP_log()` + `APP_CONFIG.LOG_LEVEL`, `APP_verifyPermissions()`, and seven explicit `oauthScopes` in `appsscript.json`. Six debug functions deleted, plus `CUBE_historyStatus` and `syncSlideData`; `qlikStamps` and `getSaskRatesStatus` kept, with reasons. Old `.gs` deleted **in this same commit** ([§2](#2-the-thing-that-would-have-broken-it)). The seven harnesses that read a `.gs` now read a **region** of `app.gs` through the new `tests/appgs.js`, and `tests/gsparity.js` proves every region is still byte-for-byte its source. | `tests/gsparity.js` (mutation-tested four ways), `configcheck`, `qliksync`, `fscheader`, `pvlookup`, `rmxcost`, `freshness`, `deckstatic`, `node --check` **on a `.js` copy** — plus the whole 18-harness suite, all green. **`APP_verifyPermissions()` in the editor is still owed**: nothing off-platform can run it | ✅ |
-| 13 | **Cutover** | **Also owed here: the Ready-Mix bare-element specificity audit** — see [the chunk-12→13 notes](#what-the-gap-after-chunk-12-settled). `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; `README.md` and `CLAUDE.md` rewritten around two files. **Delete `tests/modparity.js`** and repoint `regress.js` / `pageparity.js` / `slidefit.js` / `deckpath.js` at `app.html` — they compare against files that no longer exist after this commit. **`tests/gsparity.js` retires here too, for the same reason its header gives.** Also: `AmrKpiStore` goes ([§11](#11-legacy-hit-list)), and **two user-facing sentences in `app.html` that chunk 12 made untrue** — see [chunk 12's notes](#what-chunk-12-settled). | the whole suite, every route | ☐ |
+| 13 | **Cutover** | **`cssparity.js` and `pageparity.js` both read `Page_Rmx.html` and must be repointed or retired with it** — and the Ready-Mix specificity audit they exist for is **done**, see [the chunk-12→13 notes](#what-the-gap-after-chunk-12-settled). `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; `README.md` and `CLAUDE.md` rewritten around two files. **Delete `tests/modparity.js`** and repoint `regress.js` / `pageparity.js` / `slidefit.js` / `deckpath.js` at `app.html` — they compare against files that no longer exist after this commit. **`tests/gsparity.js` retires here too, for the same reason its header gives.** Also: `AmrKpiStore` goes ([§11](#11-legacy-hit-list)), and **two user-facing sentences in `app.html` that chunk 12 made untrue** — see [chunk 12's notes](#what-chunk-12-settled). | the whole suite, every route | ☐ |
 
 ### After the merge is proven — see [§10](#10-four-things-this-merge-does-not-touch)
 
@@ -731,12 +746,33 @@ a neutral transformation of it.**
   named. 454 selectors checked; the 2 skipped are `::-moz-range-thumb` / `::-moz-range-track`,
   both anchored on `.ov-win-track` and unable to escape.
 
-- **What `css-reach` does NOT cover, and is owed at chunk 13.** It proves no §A4 rule escapes
-  the page. It cannot see the other half of the same trap: a raised-specificity rule beating a
-  shared `.class` rule *inside* the page. Ready-Mix still styles bare `table`, `th`, `td`,
-  `thead th`, `tfoot td` and `tr.subtotal td` that way. Proving those needs a **booted** page
-  and a computed-style diff against `Page_Rmx.html` — so it wants doing **before** chunk 13
-  deletes the file that is the only thing left to compare against.
+- ✅ **The other half of the trap was real, and it was the bigger half.** `css-reach` proves no
+  §A4 rule escapes the page; it cannot see a raised-specificity rule beating a shared `.class`
+  rule *inside* it. `tests/cssparity.js` was written for that — it boots `Page_Rmx.html` and
+  `app.html`'s Ready-Mix route in real Chromium off one shared model and diffs **computed
+  styles**, 10,600 values a run — and the first run found **673 differences**.
+
+  The rival was §A3's own `table.rtbl` block. On the legacy page it was `table.rtbl th` (0,1,2)
+  against a bare `th, td` (0,0,1), so `.rtbl` governed the tables, which is what it is for and
+  what the slide engine renders. Scoped, the page rule became (0,1,2) too — level, and §A4
+  comes after §A3, so it won. Ready-Mix's table headers rendered at 10.5px instead of 13px,
+  every cell at 8/10px padding instead of 6/9px, the grand-total row in `--blue-10` at weight
+  700 with a `--blue-40` rule instead of `#D3E3F6` at weight 800 with a navy one.
+
+  **The fix is `:where()`, and it is the general answer.** `:where(body[data-page="rmx"]) th`
+  is (0,0,1) — byte-for-byte the specificity the legacy selector had — so every one of those
+  cascades resolves the way it always did. Converting the block took the diff from 673 to 0.
+  `merge.js` accepts the form; anywhere else in §A4 that styles a bare element should use it.
+
+- **One difference is deliberate and is recorded as a claim, not a tolerance.** `.amr-qm`'s
+  font-family went from `Inter, sans-serif` to `Inter`. `Shell.html` was the only file in the
+  suite that wrote a fallback after Inter — 4 declarations out of roughly 200 — and §A3
+  normalised it. `cssparity.js`'s `KNOWN` list carries the reason and **fails if the difference
+  stops happening**, so the entry cannot outlive what it describes.
+
+- **`pageparity.js` and `cssparity.js` share one model, in `tests/rmxfixture.js`.** They have
+  to: cssparity's guarantee is that any difference it finds is a *cascade* difference, and that
+  holds only while both sides render identical markup. Two copies would drift.
 
 - **Ten of the seventeen harnesses read a legacy `.html`**, so "delete the old files" is a
   harness job, not an `rm`: `bgrender`, `deckpath`, `deckstatic`, `freshness`, `modparity`,
@@ -1686,10 +1722,12 @@ you can `Ctrl+F` is the substitute for the reference that cannot exist.
 - **Scoping a CSS rule is not a neutral transformation of it.** `body[data-page="x"] ` narrows
   what a selector matches AND raises its specificity by an attribute selector, so a prefixed
   bare `aside{}` / `main{}` / `table{}` can start beating the shared class rules the original
-  lost to. And the page is no longer the document: `#appRoot` is a `<main>` between `<body>`
-  and the page, `AmrQlikGuide` appends outside it, and a `flex:1` chain that used to start at
-  `<body>` now has a block box in the middle of it. `tests/merge.js` check 8 covers the reach
-  half; the specificity half still needs a computed-style diff. See [§3](#3-how-the-pages-live-inside-one-html-file).
+  lost to — **so scope with `:where(body[data-page="x"])`, which adds no weight**, wherever a
+  page block styles a bare element. And the page is no longer the document: `#appRoot` is a
+  `<main>` between `<body>` and the page, `AmrQlikGuide` appends outside it, and a `flex:1`
+  chain that used to start at `<body>` now has a block box in the middle of it.
+  `tests/merge.js` check 8 covers reach; `tests/cssparity.js` covers weight, by diffing
+  computed styles in a real browser. See [§3](#3-how-the-pages-live-inside-one-html-file).
 - **Comment as you merge, not after.** Every section gets its banner and its "why" note while
   the context is fresh. A 20,000-line file with no signposts is worse than 37 files.
 - **Run the harnesses in `tests/` before and after each chunk.** They are the only proof
@@ -1706,6 +1744,13 @@ you can `Ctrl+F` is the substitute for the reference that cannot exist.
   - `tests/modparity.js` *(chunk 3, retires at chunk 13)* — every §E module is byte-for-byte
     the file it came from, which is what makes `regress.js`, `slidefit.js`, `pvcheck.js` and
     `deckpath.js` cover `app.html` too.
+  - `tests/cssparity.js` *(after chunk 12)* — the merged page's CASCADE. Boots
+    `Page_Rmx.html` and `app.html`'s Ready-Mix route in real Chromium off one shared model and
+    diffs computed styles. `pageparity` proves the HTML matches; this proves the PIXELS do, and
+    the two are not the same thing when scoping has moved specificity under the page.
+  - `tests/rmxfixture.js` *(after chunk 12)* — not a harness; the one Ready-Mix model the two
+    above share, because cssparity's guarantee only holds while both sides render the same
+    markup.
   - `tests/gsparity.js` *(chunk 12, retires at chunk 13)* — every region of `app.gs` is
     byte-for-byte the `.gs` it came from, read out of git because the sources were deleted in
     the same commit. Also checks no top-level name is declared twice, and that the name set

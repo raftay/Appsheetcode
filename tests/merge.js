@@ -16,7 +16,11 @@
  *      other's — which is only safe while exactly one page is in the document.
  *      That is the invariant checked here; see PLAN.md §3.
  *   5. Every rule in the §A4 page block is scoped to body[data-page="…"].
- *      An unscoped rule there leaks onto every other page.
+ *      An unscoped rule there leaks onto every other page. `:where(body[…])`
+ *      counts as scoped and is the preferred form where a page block styles
+ *      BARE ELEMENTS: :where() narrows without adding specificity, which is
+ *      what a page prefix was always assumed to do and does not. Ready-Mix is
+ *      written that way — see check 8 and PLAN.md §3.
  *   6. No page's boot() leaks a global: no bare assignment to window.* beyond
  *      the short allow-list the runtime itself sets.
  *   7. No page declares a local that SHADOWS one of the runtime's globals.
@@ -247,6 +251,18 @@ const SHARED_IDS = new Set([
             'would share ids. See PLAN.md §3.');
 }
 
+/* The three ways a §A4 selector may name its page. `:where(body[data-page=…])`
+   is the specificity-neutral one: it narrows what the rule matches without
+   adding an attribute selector's weight, which is the ONLY form that makes
+   "scoping a page's style block" the neutral transformation the merge assumed
+   it was. PLAN.md §3 has what went wrong when it was not. */
+const SCOPED = /^(?::where\(\s*)?(?:body\[data-page=|html:has\(\s*body\[data-page=)/;
+/* the page id a selector is scoped to, whichever form it used */
+const scopedPage = sel => {
+  const m = sel.match(/body\[data-page="([\w-]+)"\]/);
+  return m ? m[1] : null;
+};
+
 /* ------------------------------------------------------- 5. §A4 is scoped */
 {
   /* Find the STYLE BLOCK carrying the §A4 banner — not the first mention of
@@ -265,7 +281,7 @@ const SHARED_IDS = new Set([
       for (const part of selector.split(',')) {
         const sel = part.trim();
         if (!sel) continue;
-        if (!/^body\[data-page=/.test(sel) && !/^html:has\(body\[data-page=/.test(sel)) {
+        if (!SCOPED.test(sel)) {
           bad++; fail('css-scope', `unscoped §A4 selector: ${sel.slice(0, 70)}`);
         }
       }
@@ -368,8 +384,12 @@ const SHARED_IDS = new Set([
       for (const part of rule[2].split(',')) {
         const sel = part.trim();
         if (!sel) continue;
-        const m = sel.match(/^body\[data-page="([\w-]+)"\]/);
-        if (m) rules.push({ sel, page: m[1] });
+        /* Match on the SCOPED forms, not on a raw `body[` prefix: the rmx block
+           is written `:where(body[data-page="rmx"]) …`, and a prefix test drops
+           all 27 of its rules from this check without saying so. */
+        if (!SCOPED.test(sel)) continue;
+        const page = scopedPage(sel);
+        if (page) rules.push({ sel, page });
       }
     }
 
@@ -410,9 +430,11 @@ const SHARED_IDS = new Set([
                  `${sel.slice(0, 60)} reaches <${el.tagName.toLowerCase()}` +
                  (el.id ? '#' + el.id : '') +
                  (el.className ? '.' + String(el.className).split(/\s+/)[0] : '') +
-                 `> which is OUTSIDE #appRoot — and at a higher specificity than ` +
-                 `the shared rule that styles it. Anchor the selector on the ` +
-                 `page's own container.`);
+                 `> which is OUTSIDE #appRoot. A page block has no business ` +
+                 `styling the shared shell or anything the runtime appends to ` +
+                 `<body>, and if the scope is a plain body[data-page=…] prefix ` +
+                 `it does so at a HIGHER specificity than the shared rule that ` +
+                 `owns the element. Anchor the selector on the page's own container.`);
           }
         }
       }

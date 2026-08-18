@@ -899,68 +899,85 @@ body[data-page="pricevolume"] .shell{grid-template-columns:264px 1fr; max-width:
    layer for its own dense, sticky-header report tables.
 
    Its mapping check, add-row dialog, report table and export blocks are NOT
-   here — those went to §A3 in chunks 5 and 6 and are shared. */
-body[data-page="rmx"] .stamp{font:500 11px Inter; color:#A9C4E6; margin-right:10px; white-space:nowrap}
+   here — those went to §A3 in chunks 5 and 6 and are shared.
+
+   THE SCOPE IS :where(), AND ON THIS PAGE THAT IS LOAD-BEARING. A plain
+   `body[data-page="rmx"] ` prefix does two things, not one: it narrows what the
+   selector matches, and it ADDS AN ATTRIBUTE SELECTOR'S SPECIFICITY. Only the
+   first was ever intended. `:where()` contributes nothing, so
+   `:where(body[data-page="rmx"]) th` is (0,0,1) — byte-for-byte the weight the
+   legacy page's bare `th` had — and every cascade below resolves the way it
+   always did.
+
+   What the plain prefix cost here, before the conversion: §A3's `table.rtbl`
+   block had always governed these tables at (0,1,2) against a bare `th, td` at
+   (0,0,1). Scoped, the page rule drew LEVEL and won on source order, because
+   §A4 comes after §A3. Headers rendered at 10.5px instead of 13px, every cell
+   at 8/10px padding instead of 6/9px, and the grand total changed colour and
+   weight — 673 differing computed values, with pageparity.js green throughout,
+   because the markup never changed. tests/cssparity.js is what found it and
+   what holds the line. See PLAN.md §3. */
+:where(body[data-page="rmx"]) .stamp{font:500 11px Inter; color:#A9C4E6; margin-right:10px; white-space:nowrap}
 
 /* Ready-Mix lays itself out with .wrap + bare aside/main rather than the
    shared .shell grid. Left as it was; unifying the two layouts is a design
    change, not a move. */
-body[data-page="rmx"] .wrap{display:flex; gap:18px; padding:18px 22px; align-items:flex-start}
-/* Both of these are anchored on .wrap, and that is not tidiness. The page's own
-   aside and main are the only ones inside .wrap; unanchored, the selectors also
-   reach two elements the legacy page's bare `aside{}` / `main{}` could never
-   have hit at this weight:
+:where(body[data-page="rmx"]) .wrap{display:flex; gap:18px; padding:18px 22px; align-items:flex-start}
+/* Both of these are anchored on .wrap, and that is REACH, not weight — a second
+   problem from the same cause, and :where() above does nothing for it. The
+   page's own aside and main are the only ones inside .wrap; unanchored, these
+   selectors also match two elements that are not the page's at all:
      · #appRoot IS a <main>, so `… main` restyled the mount itself — every page
        element picked up a 16px flex gap that was never in the design.
-     · AmrQlikGuide appends its aside to <body>, so `… aside` outranked
-       .qlikGuide{display:none} — (0,1,2) against (0,1,0) — and the guide opened
-       on load and would not close. Legacy's `aside{}` was (0,0,1) and lost to
-       the class, which is exactly why nobody saw this before the merge.
-   Scoping a BARE ELEMENT selector to body[data-page="…"] raises its specificity
-   by an attribute selector. It does not only narrow — it can also start winning
-   cascades the original lost. */
-body[data-page="rmx"] .wrap > aside{width:248px; flex:none; display:flex;
+     · AmrQlikGuide appends its aside to <body>, OUTSIDE #appRoot, so `… aside`
+       reached it. Under the plain prefix it also outranked .qlikGuide's
+       display:none — (0,1,2) against (0,1,0) — and the guide opened on load and
+       would not close. Legacy's bare `aside{}` was (0,0,1) and lost to the
+       class, which is why this could not exist before the merge.
+   tests/merge.js check 8 is the gate: a §A4 selector may not match anything
+   outside #appRoot, or #appRoot itself without naming it. */
+:where(body[data-page="rmx"]) .wrap > aside{width:248px; flex:none; display:flex;
   flex-direction:column; gap:14px}
-body[data-page="rmx"] .wrap > main{flex:1; min-width:0; display:flex;
+:where(body[data-page="rmx"]) .wrap > main{flex:1; min-width:0; display:flex;
   flex-direction:column; gap:16px}
 
 /* the period / N-A / theme controls are §A3's .seg.full, but pressed is navy here */
-body[data-page="rmx"] .seg button[aria-pressed="true"]{background:var(--blue-100)}
+:where(body[data-page="rmx"]) .seg button[aria-pressed="true"]{background:var(--blue-100)}
 
 /* tables — scrollable, sticky navy header, coloured group headers */
-body[data-page="rmx"] .tbl-scroll{padding:0 6px 10px}
-body[data-page="rmx"] table{min-width:560px}
-body[data-page="rmx"] th, body[data-page="rmx"] td{padding:8px 10px; text-align:right;
+:where(body[data-page="rmx"]) .tbl-scroll{padding:0 6px 10px}
+:where(body[data-page="rmx"]) table{min-width:560px}
+:where(body[data-page="rmx"]) th, :where(body[data-page="rmx"]) td{padding:8px 10px; text-align:right;
   border-bottom:1px solid #EEF3F9; white-space:nowrap}
-body[data-page="rmx"] th:first-child, body[data-page="rmx"] td:first-child{text-align:left}
-body[data-page="rmx"] thead th{background:var(--blue-100); color:#fff; font:700 10.5px Inter;
+:where(body[data-page="rmx"]) th:first-child, :where(body[data-page="rmx"]) td:first-child{text-align:left}
+:where(body[data-page="rmx"]) thead th{background:var(--blue-100); color:#fff; font:700 10.5px Inter;
   border-bottom:0; position:sticky; top:0; text-transform:none; letter-spacing:0; text-align:right;
   padding:11px 10px; line-height:1.25; vertical-align:middle}
 /* the BASE sub-label, in the on-navy accent */
-body[data-page="rmx"] thead th small{display:block; font-weight:600; color:var(--blue-30); font-size:.82em}
+:where(body[data-page="rmx"]) thead th small{display:block; font-weight:600; color:var(--blue-30); font-size:.82em}
 /* the label column header stays left, like its values */
-body[data-page="rmx"] thead th:first-child{text-align:left}
+:where(body[data-page="rmx"]) thead th:first-child{text-align:left}
 /* group-header accents — stepped Amrize blues, white header text stays legible */
-body[data-page="rmx"] th.gB{background:var(--blue-60)}
-body[data-page="rmx"] th.gA{background:var(--blue-70)}
-body[data-page="rmx"] th.gV{background:var(--blue-80)}
-body[data-page="rmx"] tfoot td{font-weight:700; border-top:2px solid var(--blue-40); background:var(--blue-10)}
-body[data-page="rmx"] tr.subtotal td{font-weight:700; background:#EEF3FB; border-top:1px solid var(--blue-40)}
-body[data-page="rmx"] td.section{font:800 11px Inter; letter-spacing:.04em; color:#fff;
+:where(body[data-page="rmx"]) th.gB{background:var(--blue-60)}
+:where(body[data-page="rmx"]) th.gA{background:var(--blue-70)}
+:where(body[data-page="rmx"]) th.gV{background:var(--blue-80)}
+:where(body[data-page="rmx"]) tfoot td{font-weight:700; border-top:2px solid var(--blue-40); background:var(--blue-10)}
+:where(body[data-page="rmx"]) tr.subtotal td{font-weight:700; background:#EEF3FB; border-top:1px solid var(--blue-40)}
+:where(body[data-page="rmx"]) td.section{font:800 11px Inter; letter-spacing:.04em; color:#fff;
   background:var(--blue-70); text-align:center; vertical-align:middle; white-space:normal}
-body[data-page="rmx"] td.pos{color:var(--pos)}
-body[data-page="rmx"] td.neg{color:var(--neg)}
+:where(body[data-page="rmx"]) td.pos{color:var(--pos)}
+:where(body[data-page="rmx"]) td.neg{color:var(--neg)}
 
 /* Ready-Mix's banner is a yellow warning, not §A3's blue info strip */
-body[data-page="rmx"] .banner{display:none; margin:0 22px; background:#FFF3CD; border:1px solid #F2D98B;
+:where(body[data-page="rmx"]) .banner{display:none; margin:0 22px; background:#FFF3CD; border:1px solid #F2D98B;
   color:#7A5B00; border-radius:var(--r-xs); padding:10px 14px; font:600 12px Inter}
-body[data-page="rmx"] .banner.show{display:block}
+:where(body[data-page="rmx"]) .banner.show{display:block}
 
-body[data-page="rmx"] .previewCard{margin-top:4px}
+:where(body[data-page="rmx"]) .previewCard{margin-top:4px}
 
 /* the mapping check's two small deltas from §A3's shared block */
-body[data-page="rmx"] .mapHost .card-head{padding:revert}
-body[data-page="rmx"] .mapHost td.val{max-width:460px; font:inherit}/* ---- §P overview -----------------------------------------------------------
+:where(body[data-page="rmx"]) .mapHost .card-head{padding:revert}
+:where(body[data-page="rmx"]) .mapHost td.val{max-width:460px; font:inherit}/* ---- §P overview -----------------------------------------------------------
    The biggest page block in the file, and the reason is not that anything here
    is shared-looking: 136 ids and 234 rules, every one of them the Executive
    Overview's own. .ov-* is the page frame, .kpi* the headline strip, .dq-* /

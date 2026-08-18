@@ -43,6 +43,10 @@
 const fs   = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
+/* The Ready-Mix model lives in its own module because cssparity.js renders the
+   same page from it, and that harness's whole guarantee — any difference is a
+   CASCADE difference — holds only while both sides render identical markup. */
+const { RMX_MARKETS, rmxKeysPayload, rmxModel } = require('./rmxfixture');
 
 const ROOT = path.join(__dirname, '..');
 const URL_BASE = 'https://script.google.com/macros/s/TEST/exec';
@@ -152,32 +156,6 @@ function pvModel() {
 /* Ready-Mix. The shape is lifted from tests/segboot.js, which already drives
    the real page through RMX_prepare in a browser — reusing it means this
    harness and that one cannot disagree about what the server sends. */
-const RMX_MARKETS = ['HNS_SW', 'Innocon', 'Manitoba', 'North', 'Saskatchewan'];
-
-function rmxKeysPayload(o) {
-  o = o || {};
-  return {
-    ok: true, market: o.market || '__ALL__', period: o.period || 'YTD',
-    month: 7, latestMonth: 7,
-    months: { all: [1, 2, 3, 4, 5, 6, 7], cy: [1, 2, 3, 4, 5, 6, 7] },
-    markets: RMX_MARKETS, allMarkets: '__ALL__', build: 'b1', generation: 'g1',
-    breakdowns: [{ key: 'SUBMARKET', label: 'Submarket' },
-                 { key: 'STRENGTH', label: 'Strength Class' },
-                 { key: 'PLANT', label: 'Top 10 Plants' },
-                 { key: 'PROD_CLASS', label: 'Product Class' }],
-    keys: [
-      { dims: { submarket: 'SM1', segment: 'ICI', app: 'Slab', cls: 'Standard', strength: '25 MPa' },
-        pyVol: 1000, cyVol: 1200, baseCY: 240000, basePY: 190000 },
-      { dims: { submarket: 'SM2', segment: 'Civil', app: 'Wall', cls: 'Standard', strength: '32 MPa' },
-        pyVol: 820, cyVol: 910, baseCY: 201000, basePY: 168000 },
-    ],
-    ppi: { total: { w: 1, f: 0.02 }, SUBMARKET: { SM1: { w: 1, f: 0.02 }, SM2: { w: 1, f: 0.03 } },
-           STRENGTH: { '25 MPa': { w: 1, f: 0.02 }, '32 MPa': { w: 1, f: 0.03 } },
-           PROD_CLASS: { Standard: { w: 1, f: 0.02 } }, PLANT: { P100: { w: 1, f: 0.02 } } },
-    plants: [{ label: 'P100', pyVol: 1000, cyVol: 1200, baseCY: 240000, basePY: 190000 }],
-  };
-}
-
 /* Product Segment reads RMX_getSlideTables. Shape lifted from segboot.js's
    slide() fixture, for the same reason as rmxKeysPayload above. */
 const SEG_ROWS = [
@@ -221,15 +199,6 @@ function kpiValues() {
   };
 }
 
-function rmxModel() {
-  const man = Object.assign({}, rmxKeysPayload({}), { warmed: 26, want: 'keys', ms: 9000 });
-  man.payloads = {};
-  ['MTD', 'YTD'].forEach(per => ['__ALL__'].concat(RMX_MARKETS).forEach(m => {
-    man.payloads['keys|' + m + '|' + per] = rmxKeysPayload({ market: m, period: per });
-  }));
-  man.payload = man.payloads['keys|__ALL__|YTD'];
-  return man;
-}
 
 /* The Deck Builder reads two things before it can draw anything: the template's
    geometry (which drives every preview mock and every capture size) and the
