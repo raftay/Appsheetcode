@@ -770,6 +770,23 @@ a neutral transformation of it.**
   normalised it. `cssparity.js`'s `KNOWN` list carries the reason and **fails if the difference
   stops happening**, so the entry cannot outlive what it describes.
 
+- **§B was malformed from chunk 10 and one rule was silently gone.** `Deck_Styles.html`
+  explains itself in an HTML comment whose prose names a style element by its tag, and the
+  builder split that file on the FIRST such token — the one inside the sentence, not the
+  element. §B therefore opened with the tail of that prose, a bare `-->` and a second opening
+  tag. **A style element's content is text until its closing tag**, so none of that was markup;
+  it was CSS. CSS error recovery reads garbage before the first `{` as a selector prelude and
+  throws away the rule that follows, so §B parsed as **85 rules where the file has 86** and
+  `.slide-bare .tbl-card` never applied. It had no visible effect only because §A3 declares the
+  same padding and the merge put both in one document — the next rule to land at the top of a
+  block would not be so lucky.
+
+  > **This is [§3](#3-how-the-pages-live-inside-one-html-file)'s "a checker must not read prose
+  > as code", in the BUILD direction.** The same sentence has now cost two rounds as a checker
+  > bug and one as a builder bug. And the fix's own comment must not spell the tag either:
+  > writing it as a literal reopens the hole. `tests/merge.js` check 9 is the gate — every
+  > style element opened once, closed once, holding only CSS, no bare `-->` inside one.
+
 - **`pageparity.js` and `cssparity.js` share one model, in `tests/rmxfixture.js`.** They have
   to: cssparity's guarantee is that any difference it finds is a *cascade* difference, and that
   holds only while both sides render identical markup. Two copies would drift.

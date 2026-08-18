@@ -1629,12 +1629,24 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
    Merging the two is chunk 16, and only against real captures: the deck's
    output is a picture nobody can restyle afterwards, so "these look the same"
    is not the standard. If you change a slide table in §A3, change it here.
+
+   THE FOUR LINES THAT USED TO SIT HERE WERE NOT A COMMENT. Deck_Styles.html
+   explains itself in an HTML comment whose prose names a style element by its
+   tag, and the chunk-10 builder split that file on the FIRST such token — which
+   was the one inside the sentence, not the element. So this block opened with
+   the tail of that sentence, a bare --> and a second opening tag, all of it
+   inside a live style element. CSS error recovery reads garbage before the
+   first { as a selector prelude and discards the rule that follows, so §B
+   parsed as 85 rules rather than 86 and .slide-bare .tbl-card was silently
+   gone. It had no visible effect only because §A3 declares the same padding,
+   and after the merge both are in one document.
+
+   Deck_Styles.html itself was always fine — an HTML comment is stripped before
+   a tag inside it can become an element. This is PLAN.md's "a checker must not
+   read prose as code", in the build direction; and writing the tag as a literal
+   in THIS comment would have reopened the same hole, which is why it is named
+   rather than spelled. tests/merge.js check 9 is the gate.
    ========================================================================== */
- changes that page's cascade order, and these
-     pages are in daily use. If you restyle a slide table on a report page,
-     change it here too — the deck is the other consumer.
-     ======================================================================== -->
-<style>
 /* ---------------------------------------------------------------------------
    AGG Price & Volume  ·  mirrors Page_PriceVolume.html
    The compact export padding is the one that matters most: without it the

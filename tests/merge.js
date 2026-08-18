@@ -31,6 +31,10 @@
  *      bare `aside{}` with body[data-page="x"] also raises its specificity by
  *      an attribute selector, so it starts winning cascades the original lost.
  *      Ready-Mix shipped both halves of that — see the check for what broke.
+ *   9. Every style element is opened once, closed once, and holds only CSS.
+ *      A style element's content is text until its closing tag, so anything
+ *      that leaks in is parsed as CSS — and CSS error recovery eats the rule
+ *      after it without a word. §B shipped that way; see the check.
  *
  * Run:  node tests/merge.js
  * Exit: 0 all good, 1 on the first category that fails (all failures printed).
@@ -444,6 +448,74 @@ const scopedPage = sel => {
                         (skipped ? ` (${skipped} skipped: unsupported selector)` : ''));
     }
   }
+}
+
+/* ------------------------------------------ 9. the style elements are sound */
+{
+  /* WHY: §B shipped malformed and nothing noticed for three chunks.
+   *
+   * Deck_Styles.html explains itself in an HTML comment whose prose names a
+   * style element by its tag. The chunk-10 builder split that file on the first
+   * such token — the one inside the sentence — so §B opened with the tail of
+   * that prose, a bare `-->`, and a second opening tag, all of it inside a live
+   * style element. A style element's content is TEXT until its closing tag, so
+   * none of that was markup; it was CSS. And CSS error recovery treats garbage
+   * before the first `{` as a selector prelude and throws away the rule that
+   * follows, so §B parsed as 85 rules where the file has 86 and
+   * `.slide-bare .tbl-card` was silently gone.
+   *
+   * It had no visible effect only by luck — §A3 declares the same padding. The
+   * next rule to land at the top of a block would not be so lucky.
+   *
+   * This scans RAW source, comments included, because that is where it started:
+   * a tag written as a literal inside a comment is exactly what got copied. */
+  const OPEN = /<style(?:\s[^>]*)?>/gi;
+  const CLOSE = /<\/style\s*>/gi;
+  const opens = [...SRC.matchAll(OPEN)].map(m => m.index);
+  const closes = [...SRC.matchAll(CLOSE)].map(m => m.index);
+  let bad = 0;
+
+  if (opens.length !== closes.length) {
+    bad++;
+    fail('style-blocks',
+         `${opens.length} opening style tags and ${closes.length} closing ones. ` +
+         `An unclosed one swallows everything after it as CSS.`);
+  }
+
+  /* Every open must be followed by its own close before the next open. */
+  for (let i = 0; i < opens.length; i++) {
+    const close = closes.find(c => c > opens[i]);
+    const nextOpen = opens[i + 1];
+    if (close === undefined) {
+      bad++;
+      fail('style-blocks', `the style element at offset ${opens[i]} is never closed`);
+      continue;
+    }
+    if (nextOpen !== undefined && nextOpen < close) {
+      const line = SRC.slice(0, nextOpen).split('\n').length;
+      bad++;
+      fail('style-blocks',
+           `a second opening style tag at line ${line} sits INSIDE the element ` +
+           `opened at line ${SRC.slice(0, opens[i]).split('\n').length}. It is not ` +
+           `markup there — it is CSS text, and the rule after it is discarded.`);
+    }
+  }
+
+  /* And nothing that is plainly not CSS may sit at the top of a block. A stray
+     `-->` is the tell the real one left: it means an HTML comment was spliced
+     in without its opener. */
+  for (const m of SRC.matchAll(/<style(?:\s[^>]*)?>([\s\S]*?)<\/style\s*>/gi)) {
+    const body = m[1].replace(/\/\*[\s\S]*?\*\//g, '');
+    if (/-->/.test(body)) {
+      bad++;
+      fail('style-blocks',
+           `a style element at line ${SRC.slice(0, m.index).split('\n').length} contains ` +
+           `a bare "-->" outside a CSS comment — an HTML comment was spliced in without ` +
+           `its opener, and everything up to the next { is being eaten as a selector.`);
+    }
+  }
+
+  if (!bad) pass('style-blocks', `${opens.length} style elements, each opened once and holding only CSS`);
 }
 
 console.log(failures ? `\n${failures} failure(s)` : '\nmerge.js: all checks passed');
