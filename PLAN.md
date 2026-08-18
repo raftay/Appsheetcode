@@ -1,6 +1,6 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: in progress on `merging-files`. Chunks 0–3 done — `app.html` holds the runtime, the shared modules the fuel pages need, and three of the eleven pages. The 16 `.gs` files are untouched and stay that way until chunk 12.**
+**Status: in progress on `merging-files`. Chunks 0–5 done — `app.html` is ~459 KB and holds the runtime, nine shared modules and five of the eleven pages (Landing, Inventory Report, both Fuel Recovery pages, AGG Price & Volume). All 17 test harnesses run and are green. The 16 `.gs` files are untouched and stay that way until chunk 12.**
 
 > ## Read this file before doing anything. Every session, every agent.
 >
@@ -554,8 +554,8 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 |---|---|---|---|---|
 | 3 | **AGG Fuel Recovery** | `Page_FuelSurcharge` + `Deck_Fuel`. First real port, chosen because `tests/regress.js` already proves this page byte-identical — the method gets validated where there is a gate on it. §E gains `AmrProgress`, `AmrBoot`, `AmrFresh`, `AmrSlide`, `AmrFuelExec`; §A3 gains the slide frame, the load screen and the fuel tables. **No §A4 block at all** — see [§8's chunk 3 notes](#what-chunk-3-settled). Plus `tests/pageparity.js` and `tests/modparity.js`. `Code.gs` needed no change. | `tests/merge.js`, `tests/modparity.js`, `tests/pageparity.js`, `OLD_DIR=… tests/regress.js` — all green | ✅ |
 | 4 | **RMX Fuel Recovery** | `Page_RmxFuel`, reusing the `AmrFuelExec` and components chunk 3 promoted. **It added zero CSS and zero modules** — §A3 is byte-for-byte the same 385 lines it was after chunk 3, which is the promotion test paying out. Settled the duplicate-id question ([§3](#3-how-the-pages-live-inside-one-html-file)) and hardened the mount. | `tests/merge.js`, `tests/pageparity.js` (90 comparisons, both fuel pages), `OLD_DIR=… tests/regress.js` — all green | ✅ |
-| 5 | **AGG Price & Volume** | `Page_PriceVolume` + `Deck_PV` + `SlideExport` + `KpiShared` + `Cube`. The heaviest module load and the only page needing all three libraries. | `tests/pvcheck.js`, `tests/pvlookup.js`, `tests/slidefit.js` | ☐ |
-| 6 | **Ready-Mix** | `Page_Rmx` + `Deck_RMX`. Drop the dead `include('Deck_RMX')` here. | `tests/rmxcost.js` + the page | ☐ |
+| 5 | **AGG Price & Volume** | `Page_PriceVolume` + `Deck_PV` + `KpiShared` + `Cube`; `SlideExport` had already come in chunk 3. 1,800 lines of page JS, all three libraries, and all 54 id-scoped declarations converted — **and it needed exactly ONE §A4 rule.** §E gains `AmrCache`, `AmrKpi`, `AmrCube`, `AmrPvSlide`. | `merge.js`, `modparity.js`, `pageparity.js` (126 comparisons), `pvcheck.js`, `pvlookup.js`, `slidefit.js` — and the whole suite, all 17 harnesses, green | ✅ |
+| 6 | **Ready-Mix** | `Page_Rmx` + `Deck_RMX`. Drop the dead `include('Deck_RMX')` here. **Its mapping check and add-row dialog are already in §A3** — chunk 5 promoted Price & Volume's copy and 27 of the 33 shared selectors were byte-identical, so delete Ready-Mix's rather than port it. Its 70 id-styled rules are the other half of [§1a](#1a-chunk-1-results--the-three-audits)'s audit. Mind the DOMContentLoaded rule in chunk 5's notes. | `tests/rmxcost.js`, `tests/pageparity.js` + the page | ☐ |
 | 7 | **Product Segment** | `Page_Segment` + `Deck_SEG`. | `tests/segboot.js`, `tests/deckstatic.js` | ☐ |
 | 8 | **Overview, part 1 — shell and cube** | `Page_Overview`'s markup, its CSS (26 of the 65 `:root`/`body` hazards live here), the period model (`STATE`, `PICK_SERVER`, `windowPeriod`) and the `AmrCube` wiring. No panel painters yet. | `tests/ovperiod.js` + the page's four period buttons | ☐ |
 | 9 | **Overview, part 2 — the panels** | The painters, the fifteen chart registries, `hidePanel` / `resetPanels` / `pcatFits`. Split from chunk 8 because 6,022 lines is a quarter of all client code and reviewing it in one commit is not reviewing it. | `tests/freshness.js` + every panel, all four periods | ☐ |
@@ -640,6 +640,73 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   global. *(The id check was replaced in chunk 4 — see [§3](#3-how-the-pages-live-inside-one-html-file).
   Ids repeat across pages on purpose; what is checked now is that none repeats within one page
   and that the mount empties `#appRoot`.)*
+
+### What chunk 5 settled
+
+- **The whole test suite runs now.** `slidefit`, `segboot`, `ovperiod`, `bgrender` and
+  `deckpath` needed Playwright and Chart.js, which were simply not installed —
+  `npm install playwright chart.js jsdom` (all three at once; `--no-save` prunes the others
+  if you do them one at a time) plus the pre-installed Chromium at `/opt/pw-browsers`. Nothing
+  was wrong with those harnesses. **17 harnesses, all green**, and chunk 5 is the first chunk
+  whose gates were all actually run rather than reported as unavailable.
+- **One §A4 rule for the largest page in the merge.** `body[data-page="pricevolume"] .shell`
+  — a narrower rail and a narrower page. Everything else in its 162-line style block was
+  shared: **27 of the 33 selectors it has in common with Ready-Mix are byte-identical once
+  whitespace is normalised**, so the mapping check, the add-row dialog, the customer table,
+  the view tabs and the export-compact variant all went to §A3. §A3 is 310 rules now.
+- **The 54 id-scoped declarations are gone, and the win was not tidiness.** `#mapHost …` and
+  `#pvSugHost …` became `.mapHost` / `.sugHost` — ids kept as JS hooks, appearance on the
+  class, exactly as [§3](#3-how-the-pages-live-inside-one-html-file) requires. The point is
+  what it unlocked: **Ready-Mix has a near-identical copy of both blocks, and chunk 6 now
+  deletes its copy instead of porting it.** That is [§1a](#1a-chunk-1-results--the-three-audits)'s
+  audit paying out — the id-styling problem was concentrated in two pages, and this was the
+  first of them.
+- **`var AMR` — dead, and it would have broken the runtime.** The page declared
+  `var AMR = CONFIG.colors.palette.slice()`. One occurrence in the entire repo, its own
+  declaration; `CONFIG.colors.palette` fed nothing else either, so both are deleted. But it
+  was not merely dead: inside a registration IIFE `var AMR` **shadows `window.AMR` for every
+  line below it**, so `AMR.log` would have been an array of hex strings. `merge.js` has a
+  seventh check now — no page may declare a name the runtime owns — and it fails with the
+  page and the name when the line is put back.
+- **`syncKpiName()` deleted.** No caller anywhere, and the `#kpiName` input it wrote to
+  exists in no file in the repo. The leftover of a removed "rename this sheet" control.
+- **A DOMContentLoaded handler cannot just be invoked where it stood.** This is the sharpest
+  thing chunk 5 learned and it will bite chunks 6–11. The event fired *after the whole script
+  had been evaluated*, so the handler could read `var DIMS`, `var KPI_INPUT` and everything
+  else declared **below** it. Inlining the body in place hoists those names but not their
+  values, and boot died on `DIMS.forEach` before the page drew anything.
+
+  > **Rule: a page's DOMContentLoaded body becomes a named function and is CALLED AT THE END
+  > of `boot()`** — in registration order where there is more than one. That is the position
+  > the event actually gave it. Chunks 3 and 4 got away with inlining only because their
+  > handler was already the last thing in the file.
+- **`AMR.start()` logs the stack now.** The bug above surfaced as one line —
+  `TypeError: Cannot read properties of undefined (reading 'forEach')` — with no location, in
+  a 9,000-line file. `boot threw` carries `err.stack` from here on; that single change is what
+  turned it into a two-minute fix.
+- **`AmrKpiStore` has no caller anywhere.** Grepped across every `.html` and `.gs`: the only
+  hits are its own definition in `Shell.html` and two comments. It is **not** ported — see the
+  legacy hit-list. `AmrTick` has no caller on any page ported so far either; the Overview
+  (chunks 8–9) is where to check it.
+- **The `.ghost`-on-white bug is on a third page.** Price & Volume's guide upload buttons had
+  it too. Fixed here; `Page_Segment`, `Page_TP01` and `Landing` still need checking as their
+  chunks land.
+- **`pageparity.js` is page-driven now.** A case says which host holds the payload, which
+  controls to read, and how to click a view; the fuel pages and PV share the machinery.
+  Two things it taught this chunk:
+  - **Chart.js has to be stubbed.** Neither side gets the real one — jsdom fetches nothing —
+    so without a stub *both* pages throw inside `renderCharts` and stop before their tables,
+    and the diff calls that a match. The stub records and draws nothing.
+  - **Read something the change actually moves.** Breaking `switchView()` passed clean at
+    first, because `#tables` belongs to the Markets view and does not change when Customers
+    is shown. The case reads `#custHost`, `#viewNav` and `#custMeta` now, and the same
+    mutation fails three comparisons. **Check your case fails before trusting that it passes.**
+- **Staging recipes, so nobody re-derives them.** `regress.js` wants `6400026`; `pvcheck.js`
+  wants `b713df9^` — the parent of the commit that added `Deck_PV.html`:
+  ```bash
+  git show b713df9^:Page_PriceVolume.html > /tmp/old/old_pv.html
+  OLD_DIR=/tmp/old node tests/pvcheck.js      # 11 comparisons, 0 failed
+  ```
 
 ### What chunk 4 settled
 
@@ -883,6 +950,19 @@ not prove it** — read the next box before deleting anything.
   shipped on every Ready-Mix page load to do nothing. The module stays; the Deck Builder needs it.
 - **Six of the seven QlikView guide copies** *(chunk 2)*. ~720 lines.
 - **The six debug functions** *(chunk 12)* — see [§7](#7-logging-and-the-debug-functions-it-replaces).
+- **`Page_PriceVolume`'s `var AMR` and `CONFIG.colors.palette`** *(chunk 5, done)*. One
+  occurrence of `AMR` in the whole repo — its own declaration — and the palette fed nothing
+  else. It also shadowed the runtime; `merge.js`'s no-shadow check now guards that.
+- **`Page_PriceVolume`'s `syncKpiName()`** *(chunk 5, done)*. No caller, and the `#kpiName`
+  input it wrote to exists in no file.
+- **`AmrKpiStore` in `Shell.html`** *(decide by chunk 13)*. **Zero callers anywhere** —
+  grepped every `.html` and `.gs`; the only other hits are two comments. Client-side modules
+  are the one place grep IS conclusive (§11's box: no dynamic dispatch, and a browser module
+  cannot be reached by a trigger or the Run menu). It was deliberately NOT ported in chunk 5.
+  If no page chunk claims it by chunk 13, it goes.
+- **`AmrTick` in `Shell.html`** *(decide by chunk 9)*. No caller on any page ported so far.
+  `tests/bgrender.js` exercises the behaviour it exists for, so check the Overview before
+  concluding anything.
 
 ### The QlikView sync is trigger-only, and stays that way
 
@@ -948,8 +1028,11 @@ from a page:
     `google.script.run` stubbed, DOM diffed. **Add your page's case to it before you touch
     the page**, so you find out on the first run rather than the last.
   - `tests/modparity.js` *(chunk 3, retires at chunk 13)* — every §E module is byte-for-byte
-    the file it came from, which is what makes `regress.js`, `slidefit.js` and `deckpath.js`
-    cover `app.html` too.
+    the file it came from, which is what makes `regress.js`, `slidefit.js`, `pvcheck.js` and
+    `deckpath.js` cover `app.html` too.
+- **Install the harness dependencies once, together.** `npm install playwright chart.js jsdom`
+  — Chromium is already at `/opt/pw-browsers`. Five harnesses were being reported as
+  "unavailable" for two chunks because nobody had run that line.
 - **A harness that has never failed has not been tested.** Both gates written so far were
   mutation-tested before being trusted — unscoping one rule for `merge.js`, renaming a column
   header and disabling a click handler for `pageparity.js`. `pageparity.js` passed clean on

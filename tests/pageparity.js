@@ -42,7 +42,7 @@
 'use strict';
 const fs   = require('fs');
 const path = require('path');
-const { JSDOM } = require('jsdom');
+const { JSDOM, VirtualConsole } = require('jsdom');
 
 const ROOT = path.join(__dirname, '..');
 const URL_BASE = 'https://script.google.com/macros/s/TEST/exec';
@@ -118,6 +118,37 @@ function rmxFuelModel() {
   return m;
 }
 
+/* Price & Volume. The report is one payload per (period, filter) selection;
+   the harness only needs one, because what it is proving is that the same
+   payload renders the same DOM on both sides. Row fields are the eight
+   AmrPvSlide.tableInnerHtml reads, plus the totals row it re-derives. */
+function pvModel() {
+  const row = (label, cyVol, pyVol, cyAsp, pyAsp, ppi) => ({
+    label, cyVol, pyVol, volPct: pyVol ? cyVol / pyVol - 1 : 0,
+    cyAsp, pyAsp, aspPct: pyAsp ? cyAsp / pyAsp - 1 : 0, ppi,
+  });
+  const rows = [
+    row('Aggregates', 1282643, 1390172, 14.62, 13.81, 0.0412),
+    row('Asphalt',     675623,  692108, 21.07, 20.44, 0.0188),
+    row('Other',        99001,  141871,  9.55,  9.90, -0.0212),
+  ];
+  const total = row('Grand total', 2057267, 2224151, 15.94, 15.12, 0.0331);
+  const table = dimension => ({ dimension, volMix: 0.0114, rows, total });
+  return {
+    period: 'MTD', filterField: 'market', filterValue: '__ALL__',
+    refineValue: '__ALL__', refineOptions: [],
+    filterOptions: ['GTA', 'Southwest', 'Manitoba'],
+    rowCount: 48213,
+    tables: [table('Submarket'), table('Plant Type')],
+    /* the two waterfalls AmrPvSlide.renderCharts draws */
+    revenueBridge: { pyRev: 33_640_000, volImpact: -2_180_000, priceImpact: 2_960_000, cyRev: 34_420_000 },
+    priceBridge: { ppi: 0.0331, totalAsp: 0.0542,
+                   items: [{ label: 'Mix', value: 0.0114 }, { label: 'Price', value: 0.0097 }] },
+    latestMonth: 7,
+    months: [1, 2, 7],
+  };
+}
+
 /* Server replies, by function name. A page asking for anything not listed here
    is a finding, not something to paper over — the runner reports it. */
 function serverStubs(model) {
@@ -126,6 +157,14 @@ function serverStubs(model) {
     getRmxFuelData:  () => model,
     getFscDataFromUpload:     () => model,
     getRmxFuelDataFromUpload: () => model,
+    /* Price & Volume */
+    getReport:         () => model,
+    getCustomerReport: () => ({ MTD: { rows: [], total: null }, YTD: { rows: [], total: null } }),
+    getPvMonths:       () => ({ months: model.months || [], latest: model.latestMonth || 0, defaultMonth: 0 }),
+    getPvUnmapped:     () => ({ ok: true, sections: [] }),
+    getPvLookupForm:   () => ({ ok: true, rows: [], columns: [] }),
+    getKpiValues:      () => null,
+    CUBE_getManifest:  () => ({ ok: false, blocks: [] }),
     getLogo:         () => '',
     getGuideImages:  ids => (ids || []).map(() => ''),
     getDataVersion:  () => ({ generation: 'test-gen-1' }),
@@ -165,11 +204,37 @@ function boot(html, label, model, pageId) {
   const stubs = serverStubs(model);
   const errors = [];
 
+  /* jsdom has no canvas, so every chart logs a "getContext not implemented"
+     jsdomError. Both sides get it equally and neither is compared on pixels;
+     forwarding the rest keeps real page errors visible. */
+  const vc = new VirtualConsole();
+  vc.on('jsdomError', e => {
+    if (/getContext/.test(String(e && e.message))) return;
+    errors.push(`${label}: ${e && e.message}`);
+  });
+  ['log', 'info', 'warn', 'error'].forEach(m => vc.on(m, () => {}));
+
   const dom = new JSDOM(html, {
+    virtualConsole: vc,
     url: URL_BASE + '?page=' + pageId,
     runScripts: 'dangerously',
     pretendToBeVisual: true,
     beforeParse(window) {
+      /* Chart.js. Neither side gets the real one — jsdom fetches no scripts,
+         and the legacy page's <script src> is as dead as the merged page's
+         injected one — so without a stub BOTH pages throw inside renderCharts
+         and stop before their tables, which a diff would happily call a match.
+         The stub records what it was asked to draw and nothing more: a canvas
+         cannot be diffed, and what this harness is for is the DOM around it. */
+      window.Chart = function (ctx, cfg) {
+        this.config = cfg; this.data = cfg && cfg.data;
+        this.update = function () {}; this.destroy = function () {};
+        this.resize = function () {}; this.toBase64Image = function () { return ''; };
+        this.getDatasetMeta = function () { return { data: [] }; };
+      };
+      window.Chart.register = function () {};
+      window.Chart.defaults = { font: {}, plugins: { legend: {}, tooltip: {} }, scale: {} };
+
       /* CDN libraries: jsdom fetches nothing, so an injected <script src> would
          leave AmrLib's promise pending forever and boot() would never run. */
       const create = window.document.createElement.bind(window.document);
@@ -236,8 +301,15 @@ const PAGES = [
     id: 'fuelsurcharge',
     legacy: 'Page_FuelSurcharge.html',
     model: fscModel,
-    /* Views to walk, by the data-v the rail's segmented control carries. */
+    /* Views to walk, by the data-v the rail's segmented control carries, and
+       how to read this page: which host holds the payload that must be
+       byte-identical, and which controls the data fills in. */
     views: ['EXEC', 'EXEC_MTD', 'MTD', 'YTD', 'BYMONTH'],
+    viewButton: v => `#viewSeg button[data-v="${v}"]`,
+    payload:   { host: 'tablesHost', inner: '.card' },
+    readHtml:  { markets: 'mktList', months: 'fscMonthSel' },
+    readValue: { title: 'titleIn' },
+    readText:  { status: 'loadStat' },
     /* the fixture puts an unmatched customer in the Saskatchewan sheet, so the
        notice above the tables must appear on both sides */
     expectNotice: 'Saskatchewan increase',
@@ -259,6 +331,42 @@ const PAGES = [
     },
   },
   {
+    /* The heaviest page, and the only one whose payload is a LIST of cards —
+       one per selected dimension — rather than a single table. */
+    id: 'pricevolume',
+    legacy: 'Page_PriceVolume.html',
+    model: pvModel,
+    views: ['markets', 'customers'],
+    viewButton: v => `#viewNav button[data-view="${v}"]`,
+    payload:   { host: 'tables' },
+    /* custHost and viewNav are here because without them switching views was
+       unobservable: #tables belongs to the Markets view and does not change
+       when Customers is shown, so breaking switchView() passed clean. */
+    readHtml:  { months: 'monthSel', filterValue: 'filterValue', dims: 'dimChips',
+                 custHost: 'custHost', nav: 'viewNav' },
+    readText:  { bridgeMeta: 'bridgeMeta', tableMeta: 'tableMeta', scope: 'scopeLabel',
+                 custMeta: 'custMeta' },
+    chrome: {
+      guideSteps: 2,
+      guideExtra: 'upRaw',
+      hint: 'Combined Data CPI Raw',
+      /* A sample of the 133 names that were top-level on this page. `AMR` is
+         in the list for a reason: the page declared `var AMR` (a dead colour
+         alias) which would have shadowed the runtime for every line inside
+         the IIFE. It is deleted, and this is what keeps it deleted. */
+      /* `AMR` is deliberately NOT in this list — it is the runtime's own
+         global and is always present. That the page's dead `var AMR` is gone
+         is checked by merge.js's no-shadow rule instead, which can see the
+         source rather than only the window. */
+      noGlobals: ['CONFIG', 'STATE', 'KPI', 'DIMS', 'charts', 'load',
+                  'onData', 'renderTables', 'renderCharts', 'renderCustomers',
+                  'loadCustomers', 'switchView', 'esc', 'fInt', 'syncData',
+                  'wirePvCube', 'pvCtx', 'slideTitle', 'kpiInit', 'syncKpiName'],
+      modules: ['AMR', 'AmrSlide', 'AmrCache', 'AmrKpi', 'AmrCube', 'AmrPvSlide',
+                'AmrProgress', 'AmrBoot', 'AmrFresh', 'AmrHint', 'AmrQlikGuide'],
+    },
+  },
+  {
     /* The Ready-Mix twin. It shares 21 ids with the case above ON PURPOSE
        (PLAN.md §3) — that is not a mistake to be fixed, and the two cases
        being nearly identical is the point. */
@@ -266,6 +374,11 @@ const PAGES = [
     legacy: 'Page_RmxFuel.html',
     model: rmxFuelModel,
     views: ['EXEC', 'EXEC_MTD', 'MTD', 'YTD', 'BYMONTH'],
+    viewButton: v => `#viewSeg button[data-v="${v}"]`,
+    payload:   { host: 'tablesHost', inner: '.card' },
+    readHtml:  { markets: 'mktList', months: 'fscMonthSel' },
+    readValue: { title: 'titleIn' },
+    readText:  { status: 'loadStat' },
     /* no expectNotice: Ready-Mix has no Saskatchewan section */
     chrome: {
       guideSteps: 2,
@@ -339,29 +452,34 @@ function checkChrome(win, spec, id, ok, fail) {
    numbers still have to match even when the markup carrying them does not.
    (Chunk 3 is exactly that case: the Saskatchewan notice's inline hex became
    the §A3 .notice component. Same sentence, different wrapper.) */
-function snapshot(win) {
+function snapshot(win, page) {
   const doc = win.document;
   const txt = id => { const e = doc.getElementById(id); return e ? e.innerHTML : '(missing #' + id + ')'; };
   const val = id => { const e = doc.getElementById(id); return e ? e.value : '(missing #' + id + ')'; };
 
-  const host = doc.getElementById('tablesHost');
-  const card = host && host.querySelector('.card');
-  const aside = [].filter.call(host ? host.children : [],
-                               el => !el.classList.contains('card'));
+  const host = doc.getElementById(page.payload.host);
+  const card = host && (page.payload.inner ? host.querySelector(page.payload.inner) : host);
+  const aside = page.payload.inner
+    ? [].filter.call(host ? host.children : [], el => !el.matches(page.payload.inner))
+    : [];
 
-  return {
-    tables:  card ? card.innerHTML : '(no .card in #tablesHost)',
-    notice:  aside.map(el => el.textContent.replace(/\s+/g, ' ').trim()).join(' | '),
-    markets: txt('mktList'),
-    months:  txt('fscMonthSel'),
-    title:   val('titleIn'),
-    status:  (doc.getElementById('loadStat') || {}).textContent,
+  const out = {
+    tables: card ? card.innerHTML
+                 : `(no ${page.payload.inner || 'element'} in #${page.payload.host})`,
+    notice: aside.map(el => el.textContent.replace(/\s+/g, ' ').trim()).join(' | '),
   };
+  for (const [key, id] of Object.entries(page.readHtml || {})) out[key] = txt(id);
+  for (const [key, id] of Object.entries(page.readValue || {})) out[key] = val(id);
+  for (const [key, id] of Object.entries(page.readText || {})) {
+    const e = doc.getElementById(id);
+    out[key] = e ? e.textContent : '(missing #' + id + ')';
+  }
+  return out;
 }
 
-function clickView(win, view) {
-  const b = win.document.querySelector(`#viewSeg button[data-v="${view}"]`);
-  if (!b) throw new Error(`no view button [data-v="${view}"]`);
+function clickView(win, view, page) {
+  const b = win.document.querySelector(page.viewButton(view));
+  if (!b) throw new Error(`no view button ${page.viewButton(view)}`);
   b.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
 }
 
@@ -385,7 +503,7 @@ function clickView(win, view) {
        fixture carries an unmatched Saskatchewan customer for the same reason:
        a notice that silently stopped rendering would otherwise read as a match. */
     for (const [name, side] of [['legacy', A], ['merged', B]]) {
-      const snap = snapshot(side.window);
+      const snap = snapshot(side.window, page);
       checks++;
       if (snap.tables && snap.tables.includes('<table')) ok(`${page.id} · ${name} rendered a table`);
       else fail(`${page.id} · ${name} rendered no table — got ${JSON.stringify(String(snap.tables).slice(0, 120))}`);
@@ -399,8 +517,10 @@ function clickView(win, view) {
     if (page.chrome) checks += checkChrome(B.window, page.chrome, page.id, ok, fail);
 
     for (const view of page.views) {
-      if (view !== 'EXEC') { clickView(A.window, view); clickView(B.window, view); await settle(30); }
-      const a = snapshot(A.window), b = snapshot(B.window);
+      if (view !== page.views[0]) {
+        clickView(A.window, view, page); clickView(B.window, view, page); await settle(60);
+      }
+      const a = snapshot(A.window, page), b = snapshot(B.window, page);
       for (const key of Object.keys(a)) {
         checks++;
         if (a[key] === b[key]) { ok(`${page.id} · ${view} · ${key}`); continue; }

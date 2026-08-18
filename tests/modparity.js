@@ -33,7 +33,11 @@ const MODULES = [
   { name: 'AmrBoot',      open: 'window.AmrBoot = (function(){',     from: 'Shell.html' },
   { name: 'AmrFresh',     open: 'window.AmrFresh = (function(){',    from: 'Shell.html' },
   { name: 'AmrSlide',     open: 'var AmrSlide = (function(){',       from: 'SlideExport.html' },
-  { name: 'AmrFuelExec',  open: 'var AmrFuelExec = (function(){',    from: 'Deck_Fuel.html' }
+  { name: 'AmrFuelExec',  open: 'var AmrFuelExec = (function(){',    from: 'Deck_Fuel.html' },
+  { name: 'AmrCache',     open: 'window.AmrCache = (function(){',    from: 'Shell.html' },
+  { name: 'AmrKpi',       open: 'window.AmrKpi = (function(){',      from: 'KpiShared.html' },
+  { name: 'AmrCube',      open: 'window.AmrCube = (function(){',     from: 'Cube.html' },
+  { name: 'AmrPvSlide',   open: 'var AmrPvSlide = (function(){',     from: 'Deck_PV.html' }
 ];
 
 const blocksOf = src => [...src.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);

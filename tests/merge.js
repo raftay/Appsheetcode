@@ -19,6 +19,9 @@
  *      An unscoped rule there leaks onto every other page.
  *   6. No page's boot() leaks a global: no bare assignment to window.* beyond
  *      the short allow-list the runtime itself sets.
+ *   7. No page declares a local that SHADOWS one of the runtime's globals.
+ *      Price & Volume carried `var AMR = …palette.slice()`; inside a
+ *      registration IIFE that hides window.AMR from every line below it.
  *
  * Run:  node tests/merge.js
  * Exit: 0 all good, 1 on the first category that fails (all failures printed).
@@ -259,6 +262,28 @@ const SHARED_IDS = new Set([
     }
   }
   if (!bad) pass('no-leaks', 'no page registration leaks a global');
+}
+
+/* -------------------------------------------- 7. nothing shadows the runtime */
+{
+  /* A page keeps its own names — that is the whole point of the registry — but
+     not these. A local `var AMR` hides the runtime from every line below it in
+     the same IIFE, and the failure is silent: AMR.log is suddenly an array.
+     Price & Volume really did declare one (a dead colour alias); chunk 5
+     deleted it, and this is what keeps it deleted. */
+  const RUNTIME = ['AMR', 'AmrHint', 'AmrQlikGuide', 'AmrCache', 'AmrProgress',
+                   'AmrBoot', 'AmrFresh', 'AmrSlide', 'AmrKpi', 'AmrCube',
+                   'AmrFuelExec', 'AmrPvSlide'];
+  let bad = 0;
+  for (const [name, p] of Object.entries(PAGES)) {
+    for (const m of p.js.matchAll(/(?:^|[;{}\s])(?:var|let|const|function)\s+(\w+)/g)) {
+      if (RUNTIME.includes(m[1])) {
+        bad++;
+        fail('no-shadow', `${name} declares ${m[1]}, which shadows the runtime global of that name`);
+      }
+    }
+  }
+  if (!bad) pass('no-shadow', 'no page shadows a runtime global');
 }
 
 console.log(failures ? `\n${failures} failure(s)` : '\nmerge.js: all checks passed');

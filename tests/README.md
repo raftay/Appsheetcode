@@ -56,9 +56,13 @@ Boots the legacy page and `app.html`'s port of it **side by side** under jsdom, 
 same model through a stubbed `google.script.run`, and diffs the DOM across every view.
 
 ```bash
-npm install jsdom     # not vendored
+npm install playwright chart.js jsdom     # none are vendored
 node tests/pageparity.js
 ```
+
+Install all three at once. `--no-save` prunes whatever is not on the command line, so doing
+them one at a time leaves you with only the last. Chromium is already on the box at
+`/opt/pw-browsers`, so `npx playwright install` is not needed.
 
 **Add your page's case to `PAGES` before you touch the page**, not after. A case is the legacy
 filename, a model fixture, the views to walk, the shared chrome to assert, and — if the page
