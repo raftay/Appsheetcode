@@ -704,10 +704,17 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | # | Chunk | What lands | | |
 |---|---|---|---|---|
 | 14 | **Page switching without reload** *(reviewed, and four bugs fixed — see below)* | The nav mounts a page instead of reloading — the switcher, Home, and every `data-page-link` card, all through one `AMR.nav.go()`. **All of it is §D**: no page and no §E module was touched, so `pageparity` / `cssparity` / `modparity` all survive. Teardown is automatic rather than per-page — the runtime records what a mounted page registers and removes it — because eleven `document`/`window` listeners across the ten registrations would otherwise stack, and **48 listeners leak per lap** without it, measured. `tests/pageswitch.js` is the gate. | `pageswitch.js` (two laps of all ten pages, mutation-tested three ways) + the whole suite, 20 green | ✅ |
-| 15 | **The three drifted helpers** | Diff `toNum_` / `norm_` / `gk_` across the three namespaces, write down what each difference *does*, then unify only what is provably equivalent. | ☐ |
+| 15 | **The three drifted helpers** | Diffed all of them — **six `toNum_`, six `norm_`, two `gk_` across SEVEN namespaces, not three** — and the verdict is **do not unify**: neither dialect is a superset, each is right exactly where the other is wrong. `tests/helpers.js` pins all fourteen definitions to a table of inputs instead, and two latent bugs fell out. | ✅ |
 | 16 | **Collapse `Deck_Styles`** | Fold the `.slide-bare` mirror into the component layer, proven against real captures. | ☐ |
 | 17 | **Device cache on both fuel pages** | Wire `AmrCache` into AGG Fuel Recovery and RMX Fuel Recovery, so a repeat visit paints from `localStorage` instead of waiting on the sheet. **Requested; new behaviour, not a port** — see [§10](#10-four-things-this-merge-does-not-touch). | ☐ |
 | 18 | **`APP_log` at the server entry points** | Chunk 12 wrote the helper and left the 10,889 moved lines alone, on purpose — see its notes. This wires it in, and the order is the order of the payoff: **`APP_cachePut_`'s `n > 250` bail first** (that silent `skip` is the whole reason the `cache` field exists, and README §6 is what it costs), then `APP_cacheGet_`'s hit/miss, then the entry points a harness already covers so each line lands with a gate on it — `getFscData`, `getPvUnmapped`, `qlikSyncCheck`, `RMX_prepare`. Never inside a per-row loop. **Do the `catch (e) {}` pass in the same chunk**: [§7](#7-logging-and-the-debug-functions-it-replaces) says silent is right for an optional cache read and wrong for everything else, and chunk 12 carried all of them across undecided because deciding them is an edit, not a move. | ☐ |
+| 20 | **`PV.toNum_` drops accounting negatives** | Found by chunk 15. `PV.toNum_('(1,234)')` is `0` where every other copy in the suite gives `-1234`: the strip leaves the parentheses, `parseFloat` gives `NaN`, and `NaN` becomes `0`. The figure is **dropped, not mis-signed**, which is why nothing looks wrong. **Whether it bites cannot be answered off-platform** — it depends on whether the Price & Volume source ever writes a negative that way. Check the sheet first; only then decide. | ☐ |
+| 21 | **`PVLOOK.gk_` ignores `SCHEMA_`** | Found by chunk 15. `PV.gk_` mixes `SCHEMA_` into its cache key and `PVLOOK.gk_` does not, so a schema bump invalidates one Price & Volume cache and leaves the other serving rows shaped the old way. Fixing it changes every existing `PVLOOK` cache key — which is harmless (a miss, then a rebuild) but should be stated rather than discovered. `tests/helpers.js` fails if either changes. | ☐ |
+
+### Still open, and not part of the merge
+
+| # | Chunk | What lands | | |
+|---|---|---|---|---|
 | 19 | **The unwired Saskatchewan rates readout** | `getSaskRatesStatus` says in its own comment that it exists "so the Settings screen can check the sheet without loading a whole page", and no `.html` has ever called it. Either wire it into Settings or delete it and the sentence — but not inside a merge. See [§1a](#1a-chunk-1-results--the-three-audits). | ☐ |
 
 ### What the chunk-14 REVIEW found — four bugs, all shipped, all now gated
@@ -776,6 +783,77 @@ and re-added them each switch; the third binds to `#amrSetList`, a `<body>`-leve
 that teardown leaves alone, so it stacked one duplicate per switch — six identical handlers
 means one click on *Save* sends six writes and schedules six reloads. They wire the permanent
 shell, so they are installed once in `start()`, **before** `MOUNTED` goes true.
+
+### What chunk 15 settled
+
+**The census was wrong, and being wrong about it is what made "just unify them" sound cheap.**
+[§10](#10-four-things-this-merge-does-not-touch) said "three namespaces each define their own
+private version". It is **seven** — `QLIKSYNC`, `PV`, `PVLOOK`, `FSC`, `SASKRATES`, `RMX`,
+`RFSC` — holding **six `toNum_`, six `norm_` and two `gk_`**, in **four genuinely different
+dialects** of each, under **62 / 71 / 11** call sites.
+
+**The verdict is DO NOT UNIFY, and the reason is one sentence: neither dialect is a superset
+of the other — each is right exactly where the other is wrong.**
+
+| | `PV` · `PVLOOK` | `FSC` · `RFSC` · `RMX` · `SASKRATES` |
+|---|---|---|
+| the text `"5%"` | **0.05** — right | **5** — wrong by 100× |
+| the text `"(1,234)"` | **0** — wrong, and *dropped* rather than mis-signed | **−1234** — right |
+
+Both readings matter. A percent-**formatted** cell already arrives from Apps Script as `0.05`,
+so a `"5%"` that reaches `toNum_` is text and genuinely means five percent — PV is correct
+there. And `(1,234)` is how an accounting export writes a negative — the others are correct
+there. So "unify them" has no safe direction: picking PV's rule multiplies nothing and breaks
+every parenthesised negative in Fuel Recovery and Ready-Mix; picking the others multiplies
+every text percentage in Price & Volume by a hundred. **Both changes would be silent, both
+would land under 144 call sites, and neither would have failed a single harness that existed
+before this chunk.**
+
+Against that, what unification actually buys is **three function definitions, about twelve
+lines**, all of which would have to be hoisted into a new top-level name shared across
+namespaces that currently cannot affect each other. That is a worse file, not a better one.
+
+The smaller differences, each written down because "small" is how they got here:
+
+- **`SASKRATES.toNum_` alone does not strip `%`**, so `"%12"` is `0` where every other copy
+  gives `12` (and PV gives `0.12` — it tests for a `%` *anywhere*, not a trailing one).
+- **`RFSC.toNum_` alone guards a non-finite number argument.** Everywhere else `toNum_(NaN)`
+  hands `NaN` straight back, and it then propagates through every sum it lands in.
+- **`PV`/`PVLOOK`'s `norm_` is not a whitespace normaliser at all** — it replaces *runs of*
+  `[\s_.\[\]()%#/-]` with a single space, so `Ready-Mix` becomes `ready mix` and
+  `Rev (CY) [%]` becomes `rev cy`. The other four leave every one of those characters alone.
+  A key normalised by one family and looked up by the other cannot match, which is worth
+  knowing before anyone moves a lookup between sections.
+- **`RMX.norm_` is the strictest in the suite**, and deliberately: zero-width characters, a
+  BOM, the leading apostrophe Sheets uses to mark a cell as text, and curly quotes. Ready-Mix
+  keys come from hand-maintained mapping tabs, which is exactly where those turn up.
+- **`QLIKSYNC.norm_` ≡ `FSC.norm_` ≡ `RFSC.norm_`** — provably, for every input, despite three
+  different spellings and orderings. This is the *only* group where unification would be safe,
+  and it is three one-line functions in three namespaces.
+
+**Two latent bugs fell out of the diff, and neither is fixed here** — fixing one inside a
+cleanup is the exact move this chunk exists to prevent. Both are written up as chunks 20 and
+21:
+
+- **`PV.toNum_` reads an accounting negative as zero.** Not mis-signed — *dropped*, which is
+  why nothing has ever looked wrong. Whether it matters depends on whether the Price & Volume
+  source carries parenthesised negatives at all, and that cannot be answered off-platform.
+- **`PVLOOK.gk_` omits `SCHEMA_` from its cache key** where `PV.gk_` includes it. A schema bump
+  therefore invalidates one Price & Volume cache and leaves the other serving rows shaped the
+  old way.
+
+**What landed instead of a merge: `tests/helpers.js`.** It reads all fourteen definitions out
+of `app.gs` by namespace and runs each against a table of inputs, recording *what the suite
+does today* rather than what it ought to do. Change one on purpose and it fails with the input
+that moved. Mutation-tested by doing the forbidden tidy — giving `FSC.toNum_` PV's percent rule
+— which fails naming `"5%"` and `"-12.5%"`.
+
+> **The harness corrected the author twice on its first run.** Two cells of the expected table
+> were written from reading the code and were wrong: `PV.toNum_('%12')` is `0.12`, not `0`
+> (the `%` test is not anchored), and `RMX.norm_('‘Quoted’')` is `quoted'`, not `'quoted'`
+> (the leading-apostrophe strip runs *before* the curly-quote straightening, so the opening
+> quote is removed outright). If reading six small helpers carefully still produces two wrong
+> answers, "they look the same to me" was never going to be good enough.
 
 ### What chunk 14 settled
 
@@ -1721,12 +1799,14 @@ the merge is done. But it changes how navigation works, and if a page then misbe
 merge broke it" and "the new navigation broke it" look identical. So: merge first, keeping
 navigation exactly as it is, then do this as its own change. Chunk 14.
 
-**2. The three copies of `toNum_` / `norm_` / `gk_`.** Three namespaces each define their own
-private version of these small helpers. They started identical and **have since drifted** —
-so "tidying" them into one shared copy silently changes what at least two of them return, and
-those helpers sit under every number the business reconciles against Qlik. This is the one
-piece of duplication in the codebase that is safer left alone until someone diffs the three
-implementations and proves what the differences actually do. Chunk 15 does exactly that.
+**2. The copies of `toNum_` / `norm_` / `gk_`.** ~~Three namespaces~~ — **seven**, holding
+fourteen definitions in four dialects each; the count in this paragraph was wrong until chunk
+15 measured it. They started identical and **have since drifted**, and they sit under every
+number the business reconciles against Qlik. **Chunk 15 diffed all of them and the answer is
+that they stay.** Neither dialect is a superset: PV scales a text percentage and drops an
+accounting negative, everyone else does the reverse, so there is no direction to unify in that
+does not silently break the other half. `tests/helpers.js` pins every one of them instead.
+See [what chunk 15 settled](#what-chunk-15-settled).
 
 **3. Caching the two fuel pages on the device.** Asked for during chunk 3, and it belongs
 here rather than in chunk 3 or 4 for the usual reason: **neither fuel page has ever had a
@@ -1948,6 +2028,10 @@ you can `Ctrl+F` is the substitute for the reference that cannot exist.
     the same commit. Also checks no top-level name is declared twice, and that the name set
     moved by exactly the declared deletions — **that last check is the one that caught a cut
     silently deleting `RMX_whoWins` while every syntax check still passed.**
+  - `tests/helpers.js` *(chunk 15)* — the six `toNum_`, six `norm_` and two `gk_` pinned to a
+    table of inputs. A **characterisation** test: it records what each dialect answers today,
+    not what it ought to. It is what makes "do not unify these" enforceable rather than a
+    comment somebody will eventually disagree with.
   - `tests/appgs.js` *(chunk 12)* — not a harness; the shared slicer the seven `.gs`-reading
     harnesses use to read **one region** of `app.gs`. Read its header before repointing
     anything else: several of those harnesses assert on source text, and running those regexes

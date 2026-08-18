@@ -268,6 +268,33 @@ it to render the *same* ones: cssparity's whole guarantee — any difference is 
 difference — holds only while both sides are looking at identical markup. Two copies of the
 model would drift and the guarantee would quietly stop being true.
 
+## `helpers.js` — the drifted helpers, pinned as they are
+
+`toNum_`, `norm_` and `gk_` are duplicated across seven namespaces and have drifted. Chunk 15
+diffed all fourteen definitions and decided they **stay** — the full reasoning is in `PLAN.md`,
+and the one line of it is: **neither dialect is a superset. Each is right exactly where the
+other is wrong.** PV reads the text `"5%"` as `0.05` and `"(1,234)"` as `0`; the other four
+read them as `5` and `-1234`. Both readings are defensible, so unifying has no safe direction,
+and the change would be silent under 144 call sites.
+
+This is a **characterisation** test, not a correctness one. It reads each definition out of
+`app.gs` by namespace, runs it against a shared table of inputs, and asserts the answer is what
+the suite gives today — nothing more. Change one on purpose and it fails naming the input that
+moved.
+
+It also holds three things that would otherwise be invisible: that each helper is still
+**pure** (it is evaluated in a bare scope, so a copy that starts reading its namespace's state
+throws rather than silently picking up a global), that the **census** is still 6 / 6 / 2 across
+seven namespaces, and that `PV.gk_` still mixes `SCHEMA_` into its cache key where `PVLOOK.gk_`
+does not.
+
+Mutation-tested by performing the forbidden tidy — giving `FSC.toNum_` PV's percent rule — which
+fails naming `"5%"` and `"-12.5%"`.
+
+```bash
+node tests/helpers.js
+```
+
 ## `gsparity.js` — `app.gs` holds verbatim copies of the 16 `.gs`
 
 Chunk 12 merged 10,889 lines of working backend into one file. The argument that made it safe

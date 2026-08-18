@@ -42,9 +42,24 @@
  *    service, add its scope by hand — nothing warns you, the call just throws
  *    for every user. §4 is how you find that out in one run.
  *
- * 4. THE THREE COPIES OF toNum_ / norm_ / gk_ HAVE DRIFTED. §6, §7 and §8 each
- *    have their own. Do not unify them on sight; PLAN.md chunk 15 is where they
- *    get diffed and only the provably-equivalent parts merged.
+ * 4. toNum_ / norm_ / gk_ HAVE DRIFTED, AND CHUNK 15 SETTLED THAT THEY STAY
+ *    THAT WAY. Not three copies — SIX toNum_, SIX norm_ and two gk_, across
+ *    SEVEN namespaces (QLIKSYNC, PV, PVLOOK, FSC, SASKRATES, RMX, RFSC), and
+ *    four genuinely different dialects of each. The reason there is no safe
+ *    direction to unify them in is that NEITHER DIALECT IS A SUPERSET:
+ *
+ *      · PV reads the text "5%" as 0.05; FSC/RFSC/RMX/SASK read it as 5.
+ *        PV is right — a percent-FORMATTED cell already arrives as 0.05, so a
+ *        "5%" that reaches toNum_ is text and means five percent.
+ *      · FSC/RFSC/RMX/SASK read "(1,234)" as -1234; PV reads it as ZERO.
+ *        They are right — that is how an accounting export writes a negative,
+ *        and PV drops the figure rather than mis-signing it.
+ *
+ *    Pick either and you silently break the other, under 144 call sites, with
+ *    nothing failing. So: DO NOT UNIFY THEM. tests/helpers.js pins all fourteen
+ *    definitions to a table of inputs, so a future tidy fails there with the
+ *    input that moved. PLAN.md chunk 15 has the full diff and the two latent
+ *    bugs it turned up.
  *
  * LINE ENDINGS: LF throughout, per PLAN.md §12. Most of the files this was
  * merged from were CRLF; do not let an editor flip it back.
@@ -2398,11 +2413,22 @@ var QLIKSYNC = (function () {
  * Price & Volume, its mapping check, AGG Fuel Recovery, and the Saskatchewan
  * rate table Fuel Recovery reads through PV.
  *
- * PV_Lookup, FSC and SASKRATES each keep their own private toNum_ / norm_ / gk_.
- * Those have drifted from the copies in §7 and unifying them is NOT part of this
- * merge — it is a behaviour change wearing a cleanup's clothes, and it sits under
- * every number the business reconciles against Qlik. PLAN.md chunk 15 diffs them
- * properly.
+ * PV, PV_Lookup, FSC and SASKRATES each keep their own private toNum_ / norm_ /
+ * gk_, and so do §5's QLIKSYNC and §7's RMX and RFSC. They have drifted, chunk 15
+ * diffed all fourteen definitions, and the verdict was DO NOT UNIFY — see the
+ * file header, item 4. Two things found here specifically, both recorded as
+ * findings rather than fixed inside a cleanup:
+ *
+ *   · PV.toNum_ reads an accounting negative "(1,234)" as ZERO. Its strip leaves
+ *     the parentheses, parseFloat gives NaN, and NaN becomes 0. Every other copy
+ *     in the suite reads -1234. If the Price & Volume source ever carries
+ *     parenthesised negatives, they are being silently dropped — not mis-signed,
+ *     dropped, which is why nothing looks wrong.
+ *   · PVLOOK.gk_ builds its cache key from the generation alone; PV.gk_ also
+ *     mixes in SCHEMA_. So bumping the schema invalidates one cache and leaves
+ *     the other serving rows shaped the old way.
+ *
+ * tests/helpers.js is the gate on all of it.
  * ============================================================================ */
 
 /* ---- PV_Backend.gs -----------------------------------------------------------
@@ -5145,6 +5171,14 @@ function getSaskRatesStatus() { return SASKRATES.status(); }
  * capture stays: removing it is a refactor with no gate, not part of a move.
  * And getRmxCrossReport is not called getCrossReport because that top-level name
  * already belongs to §6.
+ *
+ * RMX's norm_ IS THE STRICTEST IN THE SUITE and that is deliberate: it alone
+ * strips zero-width characters and a BOM, drops the leading apostrophe Sheets
+ * uses to mark a cell as text, and straightens curly quotes. Ready-Mix keys come
+ * from hand-maintained mapping tabs, which is where all four of those actually
+ * turn up. Do not "simplify" it to match §6's — see the file header, item 4, and
+ * tests/helpers.js, which pins every one of those characters to an expected
+ * answer.
  * ============================================================================ */
 
 /* ---- RMX_Backend.gs ----------------------------------------------------------
