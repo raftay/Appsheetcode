@@ -61,8 +61,11 @@ node tests/pageparity.js
 ```
 
 **Add your page's case to `PAGES` before you touch the page**, not after. A case is the legacy
-filename, a model fixture, the views to walk, and — if the page renders a notice above its
-tables — the words that must survive.
+filename, a model fixture, the views to walk, the shared chrome to assert, and — if the page
+renders a notice above its tables — the words that must survive. Two cases live there now, and
+they are nearly identical because the two fuel pages are: that is the point, not duplication to
+be factored out. Give each fixture the things its page does *differently* (the RMX one carries
+`cyYear` and no `sask` section) or those paths are never exercised.
 
 Three things it does deliberately, each of which took a wrong answer to find:
 

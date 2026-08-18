@@ -99,12 +99,33 @@ function fscModel() {
   };
 }
 
+/* The RMX twin. Same shape — AmrFuelExec is shared — with the two real
+   differences the page has: the years travel in the payload as cyYear, and
+   there is no Saskatchewan section because that is an Aggregates concern. */
+function rmxFuelModel() {
+  const m = fscModel();
+  delete m.sask;
+  m.cyYear = 2026;
+  m.markets = ['Innocon', 'Dufferin', 'Hamilton Dock'];
+  const ren = { 'GTA AGG': 'Innocon', 'SW Ontario': 'Dufferin', 'Manitoba': 'Hamilton Dock' };
+  const fix = rows => rows.map(r => r.isTotal ? r : Object.assign({}, r, { market: ren[r.market] || r.market }));
+  for (const p of ['MTD', 'YTD']) {
+    m.exec[p] = { all: fix(m.exec[p].all), applied: fix(m.exec[p].applied) };
+    m.summary[p] = fix(m.summary[p]);
+  }
+  m.byMonth = { 'Innocon': m.byMonth['GTA AGG'], 'Dufferin': m.byMonth['SW Ontario'],
+                'Hamilton Dock': m.byMonth['Manitoba'] };
+  return m;
+}
+
 /* Server replies, by function name. A page asking for anything not listed here
    is a finding, not something to paper over — the runner reports it. */
 function serverStubs(model) {
   return {
     getFscData:      () => model,
     getRmxFuelData:  () => model,
+    getFscDataFromUpload:     () => model,
+    getRmxFuelDataFromUpload: () => model,
     getLogo:         () => '',
     getGuideImages:  ids => (ids || []).map(() => ''),
     getDataVersion:  () => ({ generation: 'test-gen-1' }),
@@ -116,7 +137,7 @@ function serverStubs(model) {
 /* ------------------------------------------------------------ page sources */
 /* Resolve a legacy page the way HtmlService would: splice in every include()
    and fill the three template variables doGet sets. */
-function legacySource(file) {
+function legacySource(file, pageId) {
   let src = fs.readFileSync(path.join(ROOT, file), 'utf8');
   const missing = [];
   src = src.replace(/<\?!?=\s*include\('([\w-]+)'\)\s*\?>/g, (_, name) => {
@@ -125,7 +146,7 @@ function legacySource(file) {
     return fs.readFileSync(p, 'utf8');
   });
   if (missing.length) throw new Error(`${file}: include() names no file: ${missing.join(', ')}`);
-  return fillVars(src, { page: 'fuelsurcharge', appUrl: URL_BASE, appMode: 'false' });
+  return fillVars(src, { page: pageId, appUrl: URL_BASE, appMode: 'false' });
 }
 
 function mergedSource(pageId) {
@@ -139,13 +160,13 @@ function fillVars(src, vars) {
 }
 
 /* --------------------------------------------------------------- the runner */
-function boot(html, label, model) {
+function boot(html, label, model, pageId) {
   const asked = [];
   const stubs = serverStubs(model);
   const errors = [];
 
   const dom = new JSDOM(html, {
-    url: URL_BASE + '?page=fuelsurcharge',
+    url: URL_BASE + '?page=' + pageId,
     runScripts: 'dangerously',
     pretendToBeVisual: true,
     beforeParse(window) {
@@ -233,6 +254,26 @@ const PAGES = [
       noGlobals: ['DATA', 'STATE', 'NUM_OV', 'TXT_OV', 'DERIVED', 'loadData',
                   'renderAll', 'computeAll', 'esc', 'fInt', 'applyView',
                   'buildContent', 'currentViewHTML', 'patchDerived'],
+      modules: ['AMR', 'AmrSlide', 'AmrFuelExec', 'AmrProgress', 'AmrBoot',
+                'AmrFresh', 'AmrHint', 'AmrQlikGuide'],
+    },
+  },
+  {
+    /* The Ready-Mix twin. It shares 21 ids with the case above ON PURPOSE
+       (PLAN.md §3) — that is not a mistake to be fixed, and the two cases
+       being nearly identical is the point. */
+    id: 'rmxfuel',
+    legacy: 'Page_RmxFuel.html',
+    model: rmxFuelModel,
+    views: ['EXEC', 'EXEC_MTD', 'MTD', 'YTD', 'BYMONTH'],
+    /* no expectNotice: Ready-Mix has no Saskatchewan section */
+    chrome: {
+      guideSteps: 2,
+      guideExtra: 'upMain',      // the one export, where AGG needs two
+      hint: 'Bill Month carries the year',
+      noGlobals: ['DATA', 'STATE', 'NUM_OV', 'TXT_OV', 'DERIVED', 'loadData',
+                  'renderAll', 'computeAll', 'esc', 'fInt', 'applyView',
+                  'buildContent', 'currentViewHTML', 'patchDerived', 'cyY', 'pyY'],
       modules: ['AMR', 'AmrSlide', 'AmrFuelExec', 'AmrProgress', 'AmrBoot',
                 'AmrFresh', 'AmrHint', 'AmrQlikGuide'],
     },
@@ -332,8 +373,8 @@ function clickView(win, view) {
 
   for (const page of PAGES) {
     const model = page.model();
-    const A = boot(legacySource(page.legacy), 'legacy', model);
-    const B = boot(mergedSource(page.id), 'merged', model);
+    const A = boot(legacySource(page.legacy, page.id), 'legacy', model, page.id);
+    const B = boot(mergedSource(page.id), 'merged', model, page.id);
 
     await settle(300);
 

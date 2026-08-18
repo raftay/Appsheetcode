@@ -1226,7 +1226,21 @@ window.AMR = (function(){
     }
 
     var t0 = Date.now();
-    document.getElementById('appRoot').appendChild(tpl.content.cloneNode(true));
+    /* EMPTY IT FIRST. This one line is what makes it safe for two pages to
+       share an id — and the twin pages do, deliberately: AGG Fuel Recovery and
+       RMX Fuel Recovery are the same screen on different numbers, so they use
+       the same #syncBtn, #tablesHost, #titleIn and eighteen more. That only
+       holds while exactly ONE page is ever in the document.
+
+       So the rule for chunk 14, written here rather than in a commit message:
+       a client-side page switch MUST replace the mounted page, never add a
+       second one beside it. Keeping pages mounted for speed would put two
+       #tablesHost in one document and every getElementById would start
+       answering for whichever page happened to be first.
+       tests/merge.js checks for this line. */
+    var mount = document.getElementById('appRoot');
+    mount.innerHTML = '';
+    mount.appendChild(tpl.content.cloneNode(true));
     if (spec.title) document.title = spec.title;
     if (spec.help)  window.HELP_HTML = spec.help;
 
@@ -2613,7 +2627,7 @@ AMR.page('landing', {
   <!-- The guide's page-specific panel. It is markup, so it lives in the page
        template where merge.js can see its ids; AmrQlikGuide moves the node into
        the aside on mount. -->
-  <div id="fscGuideExtra">
+  <div id="guideExtra">
     <p class="eyebrow" style="margin:0 0 8px">Replace raw data <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)">&middot; using a downloaded CPI export</span></p>
     <div class="field"><label class="lbl" for="upComb">Combined CPI export (.xlsx)</label>
       <input type="file" id="upComb" accept=".xlsx,.xls,.xlsm" style="width:100%;font:500 12px Inter"></div>
@@ -3339,7 +3353,7 @@ AMR.page('fuelsurcharge', {
     AmrQlikGuide.mount({
       title: 'Download from QlikView',
       fabLabel: '&#128229; QlikView Guide',
-      extra: document.getElementById('fscGuideExtra'),
+      extra: document.getElementById('guideExtra'),
       steps: [
         { text: 'Step 1 — Select the displayed fields and selections in QlikView and export to Excel (Combined CPI export: Plant, Year, Month, "#### Volume", CY/PY Rev exWorks, New Fuel Surcharge).',
           img: 'https://drive.google.com/file/d/14XZB09ERtQ9YWOHY-egjjlQjcRoNQN4u/view' },
@@ -3349,6 +3363,857 @@ AMR.page('fuelsurcharge', {
     });
   } catch (err) {
     AMR.log('error', 'FSC.boot', 'setup threw', { error: String(err) });
+    showProblem('Part of the page didn’t start correctly ('+err.message+'). '
+      +'The data will still try to load — refresh the page if anything looks off.');
+  }
+
+  loadData();
+  }
+});
+</script>
+
+<!-- ===================== §P rmxfuel ===================== -->
+<!-- The Ready-Mix twin of §P fuelsurcharge: same screen, same ids, same
+     classes, m³ instead of tonnes. Ids are shared with it ON PURPOSE
+     (PLAN.md §3) — only #upMain differs, because AGG needs two exports
+     and Ready-Mix needs one. Keep the two templates diffable. -->
+<template id="tpl-rmxfuel">
+  <header class="bar">
+    <div class="brand">
+      <span class="mark">AMRIZE</span>
+      <span>
+        <span class="title">RMX &middot; Fuel Recovery</span>
+        <span class="sub">Ready-Mix &middot; executive view &middot; editable &rarr; slide PNG</span>
+      </span>
+    </div>
+    <button class="ghost" data-act="home" title="Back to the suite home">&#8962; Home</button>
+    <button class="ghost" data-act="help" title="How to use this page">? Help</button>
+    <button class="ghost" data-act="settings" title="Change the Google Sheet this app reads from">&#9881; Data sheet</button>
+    <div class="spacer"></div>
+    <button class="ghost" id="syncBtn" title="Re-read the Google Sheet and rebuild this page">&#8635; Update from source</button>
+    <button class="ghost primary" id="exportBtn">Download slide PNG</button>
+    <button class="ghost" id="viewBtn" title="Show the slide full screen — no download needed">Expand slide</button>
+  </header>
+
+  <div class="shell">
+    <aside class="rail">
+
+      <div class="panel">
+        <p class="eyebrow">View</p>
+        <div class="seg full" id="viewSeg">
+          <button data-v="EXEC" aria-pressed="true">Exec &middot; Both</button>
+          <button data-v="EXEC_MTD">Exec &middot; MTD</button>
+          <button data-v="EXEC_YTD">Exec &middot; YTD</button>
+          <button data-v="MTD">Summary &middot; MTD</button>
+          <button data-v="YTD">Summary &middot; YTD</button>
+          <button data-v="BYMONTH">By Month</button>
+        </div>
+
+        <div class="field" style="margin-top:12px">
+          <label class="lbl" for="fscMonthSel">Report month</label>
+          <select id="fscMonthSel"></select>
+          <p class="hint" style="margin:6px 0 0">MTD is this month on its own; YTD is January
+            through it. Defaults to <b>last calendar month</b> &mdash; the running month is only
+            part-billed.</p>
+        </div>
+
+        <div class="field" id="bymonthField" style="margin-top:12px; display:none">
+          <label class="lbl" for="bmMarket">Market (by month)</label>
+          <select id="bmMarket"></select>
+        </div>
+
+        <div id="marketsField" style="margin-top:12px">
+          <label class="lbl">Show markets</label>
+          <div class="mkt-list" id="mktList"><span class="hint">Data loads first, then you can pick markets.</span></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <p class="eyebrow">Slide titles</p>
+        <div class="field"><label class="lbl" for="titleIn">Title</label><input type="text" id="titleIn" placeholder="Fuel Recovery"></div>
+        <div class="field"><label class="lbl" for="subIn">Subtitle</label><input type="text" id="subIn" value="Per applied m&sup3; &middot; $CAD"></div>
+      </div>
+
+      <div class="panel">
+        <p class="eyebrow">Blank space (for comments)</p>
+        <div id="fscWs"></div>
+        <p class="hint">Reserves empty bands around the table so reviewers can add commentary on the slide.</p>
+      </div>
+
+      <div class="panel">
+        <p class="eyebrow">Logo</p>
+        <button class="lk full" id="logoBtn">Upload logo</button>
+        <input type="file" id="logoFile" accept="image/*" style="display:none">
+        <button class="lk full" id="logoClear" style="margin-top:8px">Clear logo</button>
+        <p class="logoName" id="logoName">The Amrize logo loads automatically.</p>
+      </div>
+
+      <div class="panel">
+        <div class="btnrow">
+          <button class="ghost primary" id="reloadBtn" style="flex:1">Reload from sheet</button>
+          <button class="lk" id="clearEditsBtn" title="Discard all manual cell edits">Clear edits</button>
+        </div>
+        <div class="dzstat" id="loadStat" style="margin-top:10px">Loading data from the Google Sheet&hellip;</div>
+        <p class="hint" style="margin-bottom:0">Reads the Ready-Mix <b>Main Raw Data</b> tab
+          <button type="button" class="amr-qm" data-amr-hint="rfsc_data" title="Source layout for Main Raw Data">?</button>.
+          The <b>raw numbers</b> (m&sup3; and fuel recovery&nbsp;$) are editable &mdash; click a cell and type.
+          Per-m&sup3;, %, YOY and the total rows <b>recalculate automatically</b>.</p>
+      </div>
+
+    </aside>
+
+    <main class="main">
+      <div class="section-head">
+        <h2>Tables</h2>
+        <span class="meta">type over any raw number &middot; calculated columns &amp; totals update by themselves</span>
+      </div>
+      <div id="tablesHost"><div class="card"><div class="empty">Loading data from the Google Sheet&hellip;</div></div></div>
+
+      <div class="section-head" style="margin-top:18px">
+        <h2>Slide PNG preview</h2>
+        <span class="meta">16:9 &middot; final export &middot; adjust margins on the left</span>
+      </div>
+      <div class="previewCard"><div class="previewHost" id="previewHost"><div class="empty">Loading data from the Google Sheet&hellip;</div></div></div>
+    </main>
+  </div>
+
+  <!-- The guide's page-specific panel. It is markup, so it lives in the page
+       template where merge.js can see its ids; AmrQlikGuide moves the node into
+       the aside on mount. -->
+  <div id="guideExtra">
+    <p class="eyebrow" style="margin:0 0 8px">Replace raw data <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)">&middot; using a downloaded RMX PPI export</span></p>
+    <div class="field"><label class="lbl" for="upMain">RMX PPI export (.xlsx)</label>
+      <input type="file" id="upMain" accept=".xlsx,.xls,.xlsm" style="width:100%;font:500 12px Inter"></div>
+    <button class="lk full" id="upGo">Use uploaded data</button>
+    <div id="upStatus" style="display:none;margin-top:8px;font:600 12px Inter;color:var(--blue-100)">
+      &#10003; Using uploaded data<br><button class="lk full" id="upReset" style="margin-top:6px">Back to sheet data</button>
+    </div>
+    <p class="hint">One file. Unlike the Aggregates page, the Ready-Mix export carries
+      <b>CY / PY Fuel Surcharge</b> as real columns, so there is no second file to spread
+      anything from &mdash; the surcharge is read straight off the row it was charged on.
+      The first sheet in the workbook is read, and plants are mapped to markets from the
+      PLANT LOOKUP tab of the connected sheet. Session only; nothing is written back.</p>
+  </div>
+</template>
+
+<script>
+/* ---- §P rmxfuel — registration ---------------------------------------------
+   Ported from Page_RmxFuel.html, which is the Ready-Mix twin of the AGG Fuel
+   Recovery page above: same views, same editable cells, same slide export, m³
+   instead of tonnes. Read the two registrations side by side — they are meant
+   to stay diffable, and everything that differs is listed here:
+
+     · cyY() / pyY() — the years travel in the payload rather than being
+       written into the strings, so a year roll needs no edit on this page
+     · AmrFuelExec is asked for the 'rmx' units descriptor, not 'agg'
+     · getRmxFuelData / getRmxFuelDataFromUpload, and ONE uploaded workbook
+       (#upMain) instead of AGG's two — Ready-Mix exports CY/PY Fuel Surcharge
+       as real columns, so there is nothing to spread from a second file
+     · no Saskatchewan notice: that is an Aggregates concern (README §7)
+     · its own help, its own source hint, its own auto-titles
+
+   Everything else — STATE, the compute layer, the summary and by-month
+   builders, the edit capture, the logo panel, the guide — is the same code as
+   the page above, and a change to one is a change owed to the other.
+
+   The exec tables are NOT here and must not come back: AmrFuelExec (§E) owns
+   the compute and the markup for them, and tests/regress.js is the gate that
+   proves the two pages and the deck agree.                                   */
+AMR.page('rmxfuel', {
+  title: 'Amrize · RMX Fuel Recovery',
+  libs: ['html2canvas', 'xlsx'],
+  help:
+    '<h3>What this page does</h3>' +
+    '<p>Builds the executive <b>Ready-Mix Fuel Recovery</b> slide as a PNG. It reads the Ready-Mix workbook’s ' +
+    '<b>Main Raw Data</b> tab and computes the <b>Exec Summary</b> (4 tables: MTD/YTD on an all-m³ and an ' +
+    'applied-m³ basis), the Summary (MTD &amp; YTD) and a market’s month-by-month FSC/m³. ' +
+    'The <b>Tables</b> section shows the current view full-size. It is the same page as AGG — Fuel Recovery, ' +
+    'on Ready-Mix numbers.</p>' +
+    '<h3>Editing the numbers</h3>' +
+    '<p>The <b>raw inputs are editable</b> — m³ and fuel recovery dollars (they highlight when you hover). ' +
+    'Type over one (e.g. a market that just started charging) and everything calculated from it — ' +
+    '<b>Per m³, %, YOY and the Grand Total / TOTAL rows</b> — recalculates instantly, in the table and on ' +
+    'the slide preview. Calculated cells can’t be typed over, so the slide always stays internally consistent. ' +
+    'Leaving a cell blank restores the sheet’s value; <i>Clear edits</i> reverts everything.</p>' +
+    '<h3>How to use it</h3>' +
+    '<p>1. Set the data sheet (⚙ <b>Data sheet</b> at the top) — it needs the Ready-Mix workbook. ' +
+    '2. Pick a <b>View</b>. 3. Tick which markets to show. ' +
+    '4. Type over any raw number in the Tables section if you need to. ' +
+    '5. Adjust the blank comment bands (they only affect the slide). 6. <b>Download slide PNG</b>, or ' +
+    '<b>Expand slide</b> to show it full screen without downloading anything.</p>' +
+    '<h3>How the numbers are computed</h3>' +
+    '<p><b>Per m³ = Fuel Recovery ÷ m³</b> and <b>YOY $/m³ = this year − last year</b>. ' +
+    '“Over all m³” uses every row; “on applied m³ only” uses the rows that actually ' +
+    'carried a surcharge — Ready-Mix has no applied-volume column, so a line that was charged contributes its ' +
+    'own m³. The recovery <b>dollars are the same on both bases</b>; only the m³ change. MTD is the latest ' +
+    'month; YTD is January through it. The Grand Total sums the components, then re-derives the ratios (a market ' +
+    'with no prior-year charge simply contributes $0).</p>' +
+    '<p><b>Summary views:</b> <b>FSC/m³ = Total FSC ÷ Applied Volume</b>; the % columns only count the ' +
+    'months a market actually has applied m³; YOY compares this year against the same months last year. ' +
+    'The year comes from <b>Bill Month</b>, never from a column header, so nothing needs editing when the year rolls.</p>' +
+    '<p>A plant missing from <b>PLANT LOOKUP</b> is not dropped — its m³ and dollars are counted ' +
+    'under “Unmapped plants” rather than vanishing from the totals. A market that nets to nothing ' +
+    '(a posting and its reversal, say) is left out entirely rather than shown as a row of zeroes.</p>',
+  boot: function(root){
+
+  /* ======================= STATE ======================= */
+  var DATA = null;                    // model from getFscData()
+  var NUM_OV = {};                    // cellKey -> user-typed NUMBER (raw inputs only)
+  var TXT_OV = {};                    // cellKey -> user-typed TEXT   (labels only)
+  var DERIVED = {};                   // cellKey -> {txt, cls} for every calculated cell
+  /* month: 0 = last closed month (the backend decides), 1-12 pins it. It rides
+     in every read, so the whole payload - MTD, YTD and the by-month table - is
+     for the month the picker names. */
+  var STATE = { view:'EXEC', month:0, byMonthMarket:'', hidden:{},
+                title:'', titleDirty:false, sub:'Per applied m³ · $CAD', logo:'', logoSVG:'' };
+
+  /* The backend names its slots 26/25 so this page can be a straight clone of
+     the Aggregates one, but they mean CY and PY — the real years travel with
+     the payload, so a year roll needs no edit here either. */
+  function cyY(){ return (DATA && DATA.cyYear) || new Date().getFullYear(); }
+  function pyY(){ return cyY()-1; }
+
+  /* ======================= helpers ======================= */
+  /* NOT AMR.esc: this one also escapes the double quote, and every cell key
+     is written into a data-k="…" attribute. Kept as the page had it. */
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+  function fInt(n){ return Math.round(Number(n)||0).toLocaleString('en-US'); }
+  function fMoney(n){ var v=Math.round(Number(n)||0); return (v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US'); }
+  function fRate(n){ var v=Number(n)||0; return (v<0?'-$':'$')+Math.abs(v).toFixed(2); }
+  function fPct(n){ return Math.round((Number(n)||0)*100)+'%'; }
+  function fYoy(v){ var x=Number(v)||0; return (x>=0?'+$':'-$')+Math.abs(x).toFixed(2); }
+  function sgn(v){ var x=Number(v)||0; return x>0?'pos':(x<0?'neg':''); }
+  var FMT = { i:fInt, m:fMoney, r:fRate };   // formatter ids stored on input cells
+
+  /* "2,150" · "$1,287,666" · "(300)" · "12.5" → number; anything else → NaN */
+  function parseNum(s){
+    s = String(s==null?'':s).replace(/[$,%\s\u00A0]/g,'').replace(/^\((.*)\)$/,'-$1');
+    if(s==='' || s==='-' || s==='+') return NaN;
+    var n = parseFloat(s);
+    return isFinite(n) ? n : NaN;
+  }
+  /* effective value of an input cell: the user's number if they typed one, else the sheet's */
+  function effN(key, base){ return (key in NUM_OV) ? NUM_OV[key] : (Number(base)||0); }
+
+  /* Show a problem in plain English, in both the status line and the Tables area. */
+  function showProblem(msg){
+    AMR.log('error', 'RFSC.page', msg);
+    var st=document.getElementById('loadStat');
+    if(st){ st.className='dzstat err'; st.textContent=msg; }
+    var host=document.getElementById('tablesHost');
+    if(host) host.innerHTML='<div class="card"><div class="empty">'+esc(msg)+'</div></div>';
+  }
+
+  /* ---------- cell renderers ---------- */
+  /* EDITABLE raw number. f = 'i' (integer) | 'm' (money) | 'r' (rate, sign-coloured) */
+  function inCell(key, base, f){
+    var v = effN(key, base);
+    var cls = (f==='r') ? (sgn(v)?' '+sgn(v):'') : '';
+    return '<td contenteditable="true" class="fsc-cell fsc-in'+cls+'" data-k="'+esc(key)
+         + '" data-f="'+f+'" data-b="'+(Number(base)||0)+'">'+esc(FMT[f](v))+'</td>';
+  }
+  /* EDITABLE label (text only — doesn't affect the math) */
+  function lbCell(key, text){
+    var shown = (key in TXT_OV) ? TXT_OV[key] : text;
+    return '<td contenteditable="true" class="fsc-cell fsc-in lft" data-k="'+esc(key)+'" data-t="1">'+esc(shown)+'</td>';
+  }
+  /* CALCULATED cell — value comes from the DERIVED map, updated on every edit */
+  function dCell(key){
+    var m = DERIVED[key] || { txt:'', cls:'' };
+    return '<td class="fsc-calc'+(m.cls?' '+m.cls:'')+'" data-d="'+esc(key)+'">'+esc(m.txt)+'</td>';
+  }
+
+  /* ======================= CALCULATION LAYER =======================
+     Recomputes every derived cell from (sheet value ⊕ user override).
+     Same math as the backend / Excel:
+       Per m³ = FSC ÷ m³ · YOY = CY $/m³ − PY $/m³
+       Totals sum the raw components, then re-derive the ratios.        */
+  function sk(p,mk){  return 'SUM|'+p+'|'+mk+'|'; }
+  function bk(mk,mo){ return 'BM|'+mk+'|'+mo+'|'; }
+
+  /* The exec compute + markup live in AmrFuelExec (§E), shared with the AGG
+     Fuel Recovery page and the Deck Builder. This page keeps the function names, the
+     signatures and all of its own state; only the body moved.
+     fscCtx() hands the module this page's live state — the user's typed
+     overrides, which markets are unticked, and the DERIVED map to fill. */
+  function fscCtx(){
+    return { numOv:NUM_OV, txtOv:TXT_OV, hidden:STATE.hidden, derived:DERIVED };
+  }
+  function computeExec(period, basis){
+    AmrFuelExec.computeExec(DATA, period, basis, fscCtx(), DERIVED);
+  }
+
+  function computeSummary(period){
+    var base = (DATA.summary && DATA.summary[period]) || [];
+    var T = { tvol:0, tfsc:0, avol:0, ans:0, wv:0, wn:0, av25:0, f25c:0 };
+    base.forEach(function(r){
+      if(r.isTotal) return;
+      var P = sk(period, r.market);
+      // raw components the % / total maths need. Newer backends send them;
+      // older ones fall back to re-deriving what they can from the ratios.
+      var wV   = (r.wVol   != null) ? r.wVol   : (r.pctVolApplied ? r.appliedVol/r.pctVolApplied : 0);
+      var wN   = (r.wNS    != null) ? r.wNS    : (r.pctNSApplied  ? r.appliedNS /r.pctNSApplied  : 0);
+      var av25 = (r.av25   != null) ? r.av25   : 0;
+      var f25c = (r.fsc25c != null) ? r.fsc25c : (Number(r.fscT2025)||0) * av25;
+
+      var tvol = effN(P+'tvol', r.totalVol),   tfsc = effN(P+'tfsc', r.totalFSC);
+      var avol = effN(P+'avol', r.appliedVol), ans  = effN(P+'ans',  r.appliedNS);
+      var f25  = effN(P+'f25',  r.fscT2025);   // the prior-year rate is an input (its parts aren't shown)
+      var pvol = wV ? avol/wV : 0, pns = wN ? ans/wN : 0;
+      var f26  = avol ? tfsc/avol : 0;
+      DERIVED[P+'pvol'] = { txt:fPct(pvol) };
+      DERIVED[P+'pns']  = { txt:fPct(pns) };
+      DERIVED[P+'f26']  = { txt:fRate(f26),     cls:sgn(f26) };
+      DERIVED[P+'yoy']  = { txt:fYoy(f26-f25),  cls:sgn(f26-f25) };
+
+      T.tvol+=tvol; T.tfsc+=tfsc; T.avol+=avol; T.ans+=ans; T.wv+=wV; T.wn+=wN;
+      T.av25+=av25;
+      // if the user overrode a market's prior-year rate, its Total contribution becomes rate × PY applied vol
+      T.f25c += (P+'f25' in NUM_OV) ? f25*av25 : f25c;
+    });
+    var G = sk(period, '__total');
+    var tf26 = T.avol ? T.tfsc/T.avol : 0;
+    var tf25 = T.av25 ? T.f25c/T.av25 : 0;
+    DERIVED[G+'tvol'] = { txt:fInt(T.tvol) };   DERIVED[G+'tfsc'] = { txt:fMoney(T.tfsc) };
+    DERIVED[G+'avol'] = { txt:fInt(T.avol) };   DERIVED[G+'ans']  = { txt:fMoney(T.ans) };
+    DERIVED[G+'pvol'] = { txt:fPct(T.wv ? T.avol/T.wv : 0) };
+    DERIVED[G+'pns']  = { txt:fPct(T.wn ? T.ans /T.wn : 0) };
+    DERIVED[G+'f26']  = { txt:fRate(tf26),      cls:sgn(tf26) };
+    DERIVED[G+'f25']  = { txt:fRate(tf25),      cls:sgn(tf25) };
+    DERIVED[G+'yoy']  = { txt:fYoy(tf26-tf25),  cls:sgn(tf26-tf25) };
+  }
+
+  function computeByMonth(mk){
+    var bm = DATA.byMonth && DATA.byMonth[mk]; if(!bm) return;
+    var T = { f25:0, v25:0, f26:0, v26:0 };
+    bm.rows.forEach(function(r){
+      var P = bk(mk, r.month);
+      var f25 = effN(P+'d25', r.fsc25), v25 = effN(P+'v25', r.vol25);
+      var f26 = effN(P+'d26', r.fsc26), v26 = effN(P+'v26', r.vol26);
+      var t25 = v25 ? f25/v25 : 0, t26 = v26 ? f26/v26 : 0;
+      DERIVED[P+'t25'] = { txt:fRate(t25), cls:sgn(t25) };
+      DERIVED[P+'t26'] = { txt:fRate(t26), cls:sgn(t26) };
+      DERIVED[P+'yoy'] = { txt:fYoy(t26-t25), cls:sgn(t26-t25) };
+      T.f25+=f25; T.v25+=v25; T.f26+=f26; T.v26+=v26;
+    });
+    var G = bk(mk, '__avg');
+    var a25 = T.v25 ? T.f25/T.v25 : 0, a26 = T.v26 ? T.f26/T.v26 : 0;
+    DERIVED[G+'t25'] = { txt:fRate(a25), cls:sgn(a25) };
+    DERIVED[G+'d25'] = { txt:fMoney(T.f25) };  DERIVED[G+'v25'] = { txt:fInt(T.v25) };
+    DERIVED[G+'t26'] = { txt:fRate(a26), cls:sgn(a26) };
+    DERIVED[G+'d26'] = { txt:fMoney(T.f26) };  DERIVED[G+'v26'] = { txt:fInt(T.v26) };
+    DERIVED[G+'yoy'] = { txt:fYoy(a26-a25), cls:sgn(a26-a25) };
+  }
+  /* one pass computes everything, for every view — the datasets are tiny */
+  function computeAll(){
+    DERIVED = {};
+    if(!DATA) return;
+    ['MTD','YTD'].forEach(function(p){
+      computeExec(p,'all'); computeExec(p,'applied'); computeSummary(p);
+    });
+    (DATA.markets||[]).forEach(computeByMonth);
+  }
+
+  /* ======================= table builders ======================= */
+  function buildSummaryTable(period){
+    var rows = (DATA.summary && DATA.summary[period]) || [];
+    var head = '<thead><tr>'
+      +'<th>Market</th><th>Total Vol (m³)</th><th>Total FSC ($)</th><th>Applied Vol (m³)</th>'
+      +'<th>% Vol</th><th>Applied Net Sales ($)</th><th>% NS</th>'
+      +'<th>FSC/m³ '+cyY()+'</th><th>FSC/m³ '+pyY()+'</th><th>YOY $/m³</th></tr></thead>';
+    var body = '';
+    rows.forEach(function(r){
+      if(r.isTotal) return;                       // TOTAL is rebuilt from the components below
+      if(STATE.hidden[r.market]) return;
+      var P = sk(period, r.market);
+      body += '<tr>'
+        + lbCell(P+'mkt', r.market)
+        + inCell(P+'tvol', r.totalVol,   'i')
+        + inCell(P+'tfsc', r.totalFSC,   'm')
+        + inCell(P+'avol', r.appliedVol, 'i')
+        + dCell(P+'pvol')
+        + inCell(P+'ans',  r.appliedNS,  'm')
+        + dCell(P+'pns')
+        + dCell(P+'f26')
+        + inCell(P+'f25',  r.fscT2025,   'r')
+        + dCell(P+'yoy')
+        + '</tr>';
+    });
+    var G = sk(period, '__total');
+    body += '<tr class="totrow"><td class="lft fsc-calc">TOTAL</td>'
+      + dCell(G+'tvol') + dCell(G+'tfsc') + dCell(G+'avol') + dCell(G+'pvol')
+      + dCell(G+'ans')  + dCell(G+'pns')  + dCell(G+'f26')  + dCell(G+'f25') + dCell(G+'yoy')
+      + '</tr>';
+    return '<table class="fsc-t">'+head+'<tbody>'+body+'</tbody></table>';
+  }
+
+  function buildByMonthTable(mk){
+    var bm = DATA.byMonth && DATA.byMonth[mk];
+    if(!bm) return '<div class="empty">No data for '+esc(mk)+'.</div>';
+    var head = '<thead>'
+      +'<tr><th rowspan="2">Month</th><th colspan="3">'+pyY()+'</th><th colspan="3">'+cyY()+'</th><th rowspan="2">YOY</th></tr>'
+      +'<tr><th>FSC/m³</th><th>FSC $</th><th>Volume</th><th>FSC/m³</th><th>FSC $</th><th>Volume</th></tr></thead>';
+    var body = '';
+    bm.rows.forEach(function(r){
+      var P = bk(mk, r.month);
+      body += '<tr>'
+        + lbCell(P+'m', r.month)
+        + dCell(P+'t25') + inCell(P+'d25', r.fsc25, 'm') + inCell(P+'v25', r.vol25, 'i')
+        + dCell(P+'t26') + inCell(P+'d26', r.fsc26, 'm') + inCell(P+'v26', r.vol26, 'i')
+        + dCell(P+'yoy')
+        + '</tr>';
+    });
+    var G = bk(mk, '__avg');
+    body += '<tr class="totrow"><td class="lft fsc-calc">YTD Avg</td>'
+      + dCell(G+'t25') + dCell(G+'d25') + dCell(G+'v25')
+      + dCell(G+'t26') + dCell(G+'d26') + dCell(G+'v26') + dCell(G+'yoy')
+      + '</tr>';
+    return '<table class="fsc-t">'+head+'<tbody>'+body+'</tbody></table>';
+  }
+
+  /* Executive view: one of the four Excel-replica tables. This page, the AGG
+     Fuel Recovery page and the deck render them from one copy of the code. The
+     'rmx' units descriptor in AmrFuelExec carries the m³ column headings and
+     the YOY $/m³ label — that is the whole of the difference. */
+  function buildExecTables(period){
+    return AmrFuelExec.execTables(DATA, period, fscCtx(), 'rmx');
+  }
+
+  /* Which exec period a view means. '' for the non-exec views. */
+  function execPeriodOf(view){
+    if(view==='EXEC_MTD') return 'MTD';
+    if(view==='EXEC_YTD') return 'YTD';
+    return '';
+  }
+  function isExecView(view){ return view==='EXEC' || view==='EXEC_MTD' || view==='EXEC_YTD'; }
+
+  /* the HTML for the current view (shared by the Tables section + the slide) */
+  function currentViewHTML(){
+    if(!DATA) return '<div class="empty">Loading…</div>';
+    computeAll();
+    if(STATE.view==='BYMONTH') return buildByMonthTable(STATE.byMonthMarket);
+    if(isExecView(STATE.view))  return buildExecTables(execPeriodOf(STATE.view));
+    return buildSummaryTable(STATE.view);
+  }
+
+  /* the content that goes on the slide — same tables, but read-only so the
+     preview / PNG never shows edit highlights */
+  function buildContent(){
+    var wrap = document.createElement('div'); wrap.className='fsc-wrap';
+    wrap.innerHTML = currentViewHTML();
+    wrap.querySelectorAll('[contenteditable]').forEach(function(el){ el.removeAttribute('contenteditable'); });
+    return wrap;
+  }
+
+  function fscFit(box){ return AmrFuelExec.fitSlide(box); }
+
+  function slideOpts(){
+    return { title:STATE.title, subtitle:STATE.sub, logo:STATE.logo, logoSVG:STATE.logoSVG,
+             margins:AmrSlide.margins(), fit:fscFit };
+  }
+
+  /* ======================= rendering ======================= */
+  function renderTables(){
+    var host = document.getElementById('tablesHost'); if(!host) return;
+    if(!DATA) return;
+    /* No Saskatchewan notice here: the mid-year price increase is an
+       Aggregates concern (README §7) and never reaches Ready-Mix. */
+    host.innerHTML = '<div class="card" style="padding:14px">'+currentViewHTML()+'</div>';
+  }
+
+  function renderPreview(){
+    if(!DATA) return;
+    AmrSlide.previewInto(document.getElementById('previewHost'), buildContent(), slideOpts());
+  }
+
+  /* Edits re-render only the preview (debounced) so the caret in the tables
+     section is never disturbed. */
+  var pvTimer = null;
+  function schedulePreview(){ clearTimeout(pvTimer); pvTimer = setTimeout(renderPreview, 250); }
+
+  function renderAll(){ renderTables(); renderPreview(); }
+
+  /* After an edit: recompute and rewrite ONLY the calculated cells in place.
+     The cell being typed in is never touched, so the caret stays put. */
+  function patchDerived(){
+    computeAll();
+    var host = document.getElementById('tablesHost'); if(!host) return;
+    host.querySelectorAll('[data-d]').forEach(function(td){
+      var m = DERIVED[td.getAttribute('data-d')]; if(!m) return;
+      td.textContent = m.txt;
+      td.classList.remove('pos','neg');
+      if(m.cls) td.classList.add(m.cls);
+    });
+  }
+
+  function exportPNG(){
+    var o = slideOpts(); o.button='exportBtn';
+    o.filename = 'amrize_rmx_fsc_'+STATE.view+(STATE.view==='BYMONTH'?'_'+STATE.byMonthMarket:'');
+    AMR.log('info', 'RFSC.exportPNG', 'capturing', { view: STATE.view });
+    AmrSlide.exportSlide(buildContent(), o);
+  }
+
+  /* Same slide, shown full screen instead of downloaded. */
+  function viewFullScreen(){ AmrSlide.viewSlide(buildContent(), slideOpts()); }
+
+  /* ======================= data loading ======================= */
+  function loadData(){
+    var st  = document.getElementById('loadStat');
+    var btn = document.getElementById('reloadBtn');
+
+    if(!AMR.live){
+      showProblem('This page can’t reach the server. Please open it from the app link '
+        +'(the address ending in /exec?page=rmxfuel) and refresh.');
+      return;
+    }
+
+    /* Any explicit (re)load re-derives the presets from the new data, so the title
+       picks up the new latest month without needing a browser refresh. */
+    STATE.titleDirty = false;
+    if(st){ st.className='dzstat'; st.textContent='Loading data from the Google Sheet…'; }
+    if(btn) btn.disabled = true;
+    /* The header's ↻ Update from source used to give no sign at all that it had
+       done anything — no spinner, no overlay, just a status line buried in the
+       left rail. It now spins and drives the same screen as every other page. */
+    var sync = document.getElementById('syncBtn');
+    if(sync) sync.classList.add('busy');
+    /* ONE screen for the whole opening: AmrBoot holds it until every step it was
+       told to wait for has landed. After boot this is an ordinary AmrProgress job,
+       and AmrProgress waits out a grace period before painting — so the button
+       re-reading a sheet in under half a second shows nothing at all. */
+    if(!AmrBoot.finished()) AmrBoot.need('data');
+    else AmrProgress.set('sheet', { text:'Pulling from Google Sheets…', order:5 });
+    function loadDone(ok){
+      if(sync) sync.classList.remove('busy');
+      if(!AmrBoot.finished()){
+        if(ok) AmrBoot.done('data'); else AmrBoot.fail('Could not read the sheet');
+        return;
+      }
+      if(ok) AmrProgress.clear('sheet');            // no tick: a flash is the flicker
+      else   AmrProgress.fail('sheet', 'Could not read the sheet');
+    }
+
+    var t0 = Date.now();
+    AMR.log('info', 'RFSC.getRmxFuelData', 'reading', { month: STATE.month });
+    google.script.run
+      .withSuccessHandler(function(data){
+        if(btn) btn.disabled = false;
+        if(!data || !data.markets){
+          loadDone(false);
+          showProblem('The server replied but sent no data. Click Reload from sheet to try again.');
+          return;
+        }
+        loadDone(true);
+        DATA = data;
+        AMR.log('info', 'RFSC.getRmxFuelData', 'ok', { ms: Date.now() - t0,
+                markets: DATA.markets.length, latest: DATA.latestMonth || '?' });
+        buildMonthPicker();
+        buildMarketControls();
+        autoTitle();
+        if(st){ st.className='dzstat ok';
+          st.textContent='✓ Loaded · '+DATA.markets.length+' markets · through '+(DATA.latestMonth||'?')+' '+cyY(); }
+        renderAll();
+      })
+      .withFailureHandler(function(err){
+        if(btn) btn.disabled = false;
+        loadDone(false);
+        AMR.log('error', 'RFSC.getRmxFuelData', 'failed', { ms: Date.now() - t0,
+                month: STATE.month, error: String(err && err.message || err) });
+        var msg = (err && err.message) ? err.message : 'Something went wrong loading the data.';
+        showProblem(msg + ' — If the sheet looks right, try Reload from sheet. '
+          + 'To point at a different sheet, use ⚙ Data sheet at the top.');
+      })
+      .getRmxFuelData({ month: STATE.month });
+  }
+
+  /* Fill the Report-month picker from the months the sheet actually holds.
+     Only current-year months with volume are offered - the export carries every
+     month of the year, and the ones past the reporting point hold last year's
+     figures against nothing, so picking one would only ever read -100%. The
+     first option is last calendar month and moves on its own as months turn.
+     Same picker, same wording, as the AGG Fuel Recovery page. */
+  function buildMonthPicker(){
+    var sel = document.getElementById('fscMonthSel'); if (!sel) return;
+    var names = (DATA && DATA.monthNames) || [];
+    var list  = (DATA && DATA.months) || [];
+    var def   = (DATA && DATA.defaultMonth) || 0;
+
+    var defTxt = (def && names[def-1]) ? ' (' + names[def-1] + ')' : '';
+    var html = ['<option value="0"' + (STATE.month ? '' : ' selected') + '>Last closed month'
+                + defTxt + '</option>'];
+    list.forEach(function(m){
+      var nm = names[m-1] || ('Month ' + m);
+      html.push('<option value="' + m + '"' + (STATE.month === m ? ' selected' : '') + '>'
+                + nm + '</option>');
+    });
+    sel.innerHTML = html.join('');
+
+    if (!sel.getAttribute('data-wired')){
+      sel.setAttribute('data-wired', '1');
+      sel.addEventListener('change', function(){
+        STATE.month = parseInt(this.value, 10) || 0;
+        /* Typed-in edits belong to the month they were made on - carrying a
+           July override onto May's numbers would be silently wrong. */
+        NUM_OV = {}; TXT_OV = {}; DERIVED = {};
+        loadData();
+      });
+    }
+  }
+
+  /* ======================= UI wiring ======================= */
+  function buildMarketControls(){
+    var markets = (DATA && DATA.markets) || [];
+
+    var list=document.getElementById('mktList');
+    list.innerHTML = markets.map(function(m){
+      return '<label class="mkt-row"><input type="checkbox" data-mkt="'+esc(m)+'"'+(STATE.hidden[m]?'':' checked')+'>'+esc(m)+'</label>';
+    }).join('') || '<span class="hint">No markets found in the Data tab.</span>';
+    list.querySelectorAll('input[type=checkbox]').forEach(function(cb){
+      cb.addEventListener('change', function(){ STATE.hidden[this.dataset.mkt] = !this.checked; renderAll(); });
+    });
+
+    var sel=document.getElementById('bmMarket');
+    sel.innerHTML = markets.map(function(m){ return '<option value="'+esc(m)+'">'+esc(m)+'</option>'; }).join('');
+    if(!STATE.byMonthMarket || markets.indexOf(STATE.byMonthMarket)<0){
+      STATE.byMonthMarket = (markets.indexOf('Innocon')>=0) ? 'Innocon' : (markets[0]||'');
+    }
+    sel.value = STATE.byMonthMarket;
+  }
+
+  function autoTitle(){
+    /* The preset follows the latest month present in the sheet (DATA.latestMonth,
+       the newest current-year month with volume). Once the user types their own title we
+       stop overwriting it — clearing the box brings the automatic one back. */
+    if(STATE.titleDirty) return;
+    var lm = DATA ? DATA.latestMonth : '';
+    if(STATE.view==='EXEC')         STATE.title = lm+' '+cyY()+' — RMX Fuel Recovery Analysis';
+    else if(STATE.view==='EXEC_MTD') STATE.title = 'RMX - Fuel Recovery MTD ('+lm+' '+cyY()+')';
+    else if(STATE.view==='EXEC_YTD') STATE.title = 'RMX - Fuel Recovery YTD (through '+lm+' '+cyY()+')';
+    else if(STATE.view==='MTD') STATE.title = 'RMX Fuel Recovery — MTD ('+lm+' '+cyY()+')';
+    else if(STATE.view==='YTD') STATE.title = 'RMX Fuel Recovery — YTD (through '+lm+' '+cyY()+')';
+    else                        STATE.title = STATE.byMonthMarket+' — RMX Fuel Recovery by Month ('+pyY()+' vs '+cyY()+')';
+    var ti=document.getElementById('titleIn'); if(ti) ti.value=STATE.title;
+  }
+
+  function applyView(v){
+    STATE.view = v;
+    [].forEach.call(root.querySelectorAll('#viewSeg button'), function(b){
+      b.setAttribute('aria-pressed', b.dataset.v===v);
+    });
+    document.getElementById('bymonthField').style.display = (v==='BYMONTH') ? '' : 'none';
+    document.getElementById('marketsField').style.display = (v==='BYMONTH') ? 'none' : '';
+    autoTitle();
+    renderAll();
+  }
+
+  function fetchAmrizeLogo(){
+    if(!AMR.live) return;
+    google.script.run.withSuccessHandler(function(uri){
+      if(STATE.logo || STATE.logoSVG) return;
+      if(uri){ STATE.logo=uri; document.getElementById('logoName').textContent='Amrize logo loaded.'; renderPreview(); }
+    }).withFailureHandler(function(){}).getLogo();
+  }
+
+  /* ---------- run on uploaded QlikView files (session only) ---------- */
+  var MON3=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function sane(rows){                 // google.script.run can't carry Date objects
+    for (var r=0;r<rows.length;r++) for (var c=0;c<rows[r].length;c++){
+      var v=rows[r][c];
+      if (v instanceof Date) rows[r][c]=MON3[v.getMonth()]+'-'+String(v.getFullYear()).slice(2);
+    }
+    return rows;
+  }
+  function readWb(file){
+    return new Promise(function(res, rej){
+      var rd=new FileReader();
+      rd.onload=function(e){ try{
+        var wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
+        res(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:''}));
+      }catch(err){ rej(err); } };
+      rd.onerror=function(){ rej(new Error('Could not read '+file.name)); };
+      rd.readAsArrayBuffer(file);
+    });
+  }
+  function stat(msg, cls){
+    var st=document.getElementById('loadStat');
+    if(st){ st.className='dzstat'+(cls?' '+cls:''); st.textContent=msg; }
+  }
+  function upOff(){
+    document.getElementById('upStatus').style.display='none';
+    document.getElementById('upGo').style.display='';
+    var el=document.getElementById('upMain'); if(el) el.value='';
+  }
+  function runUpload(){
+    var go = document.getElementById('upGo');
+    var f=document.getElementById('upMain').files[0];
+    if(!f){ stat('Choose the RMX PPI export first.','err'); return; }
+    if(!AMR.live){ stat('Uploads only work in the live web app.','err'); return; }
+    go.disabled=true; stat('Reading the Excel file…');
+    var t0 = Date.now();
+    readWb(f).then(function(grid){
+      stat('Computing…');
+      AMR.log('info', 'RFSC.getRmxFuelDataFromUpload', 'sending', { month: STATE.month,
+              rows: grid.length });
+      google.script.run.withSuccessHandler(function(data){
+        go.disabled=false;
+        if(!data || !data.markets){ stat('The server replied but sent no data.','err'); return; }
+        DATA=data;
+        AMR.log('info', 'RFSC.getRmxFuelDataFromUpload', 'ok', { ms: Date.now() - t0,
+                markets: data.markets.length });
+        buildMarketControls(); autoTitle(); renderAll();
+        stat('✓ Using the uploaded file · '+data.markets.length+' markets · through '+(data.latestMonth||'?'),'ok');
+        document.getElementById('upStatus').style.display='block'; go.style.display='none';
+      }).withFailureHandler(function(e){
+        go.disabled=false;
+        AMR.log('error', 'RFSC.getRmxFuelDataFromUpload', 'failed', { ms: Date.now() - t0, error: String(e) });
+        stat((e&&e.message)||String(e),'err');
+      }).getRmxFuelDataFromUpload({ main:sane(grid), month:STATE.month });
+    }).catch(function(e){
+      go.disabled=false;
+      AMR.log('error', 'RFSC.readWb', 'could not read the workbook', { error: String(e) });
+      stat('Could not read the Excel file: '+(e&&e.message||e),'err');
+    });
+  }
+
+  /* ======================= start ======================= */
+  /* Everything below is setup. If any single piece fails, we still load the
+     data — a broken slider should never leave the page stuck on "Loading…" */
+  try {
+    AmrHint.register('rfsc_data',
+      '<h3>Source tab — <code>Main Raw Data</code></h3>'
+      +'<p>The Ready-Mix workbook’s own raw tab — one row per plant / product mix / bill month. '
+      +'Header names matter, column order can vary, and the header row does not have to be the first row.</p>'
+      +'<div class="amr-scroll"><table><tr>'
+      +'<th>Plant</th><th>Product Mix</th><th>Major Project Segment</th><th>Bill Month</th>'
+      +'<th>2026 Vol</th><th>2026 Net Sales Ex VA (CAD)</th><th>CY Fuel Surcharge</th><th>PY Fuel Surcharge</th></tr>'
+      +'<tr><td>4Q00-HAMILTON DOCK READY MIX</td><td>RMPX…</td><td>Specialty</td><td>Jul-26</td>'
+      +'<td>1,240</td><td>248,900</td><td>9,610</td><td>0</td></tr></table></div>'
+      +'<p><b>Bill Month carries the year</b>, and that is what picks the pair of year columns a row uses — '
+      +'nothing here reads a header to decide a row’s year, so a year roll needs no edit. A row counts as '
+      +'<b>applied</b> when its surcharge is not zero, and then its own m³ are the applied m³. '
+      +'Markets come from the <b>PLANT LOOKUP</b> tab; a plant missing from it is reported rather than dropped.</p>');
+
+    /* The header's Home / Help / Data sheet buttons were inline on*= handlers;
+       one delegated listener on the mounted page replaces all three. */
+    root.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!b) return;
+      switch (b.getAttribute('data-act')){
+        case 'home':     AMR.nav.home();      break;
+        case 'help':     AMR.openHelp();      break;
+        case 'settings': AMR.openSettings();  break;
+      }
+    });
+
+    document.getElementById('viewSeg').addEventListener('click', function(e){
+      var b=e.target.closest('button'); if(!b) return; applyView(b.dataset.v);
+    });
+    document.getElementById('bmMarket').addEventListener('change', function(){
+      STATE.byMonthMarket=this.value; autoTitle(); renderAll();
+    });
+
+    document.getElementById('titleIn').addEventListener('input', function(){
+      STATE.title=this.value;
+      STATE.titleDirty = (this.value.trim()!=='');   // empty box → back to the automatic title
+      if(!STATE.titleDirty) autoTitle();
+      schedulePreview();
+    });
+    document.getElementById('subIn').addEventListener('input',  function(){ STATE.sub=this.value;  schedulePreview(); });
+    STATE.sub=document.getElementById('subIn').value;
+
+    // comment-band sliders (shared engine) — bands only affect the slide
+    AmrSlide.mountControls('fscWs', { left:140, right:140, top:40, bottom:40, maxLR:650, maxTB:320,
+      onChange:function(){ renderPreview(); } });
+
+    // capture edits from the Tables section:
+    //  · label cells  → text override only
+    //  · number cells → parse the number, recompute every calculated cell in place
+    document.getElementById('tablesHost').addEventListener('input', function(e){
+      var td = e.target.closest && e.target.closest('.fsc-in'); if(!td) return;
+      var k = td.getAttribute('data-k');
+      if(td.hasAttribute('data-t')){ TXT_OV[k] = td.textContent; schedulePreview(); return; }
+      var n = parseNum(td.textContent);
+      if(isFinite(n)) NUM_OV[k] = n;
+      else delete NUM_OV[k];            // emptied / not a number → back to the sheet's value
+      patchDerived();
+      schedulePreview();
+    });
+
+    // when the user clicks away from a number cell, tidy it back into the
+    // standard format (and restore the sheet's value if they left it blank)
+    document.getElementById('tablesHost').addEventListener('focusout', function(e){
+      var td = e.target.closest && e.target.closest('.fsc-in');
+      if(!td || td.hasAttribute('data-t')) return;
+      var k = td.getAttribute('data-k'), f = td.getAttribute('data-f');
+      var v = effN(k, parseFloat(td.getAttribute('data-b'))||0);
+      td.textContent = FMT[f] ? FMT[f](v) : String(v);
+      td.classList.remove('pos','neg');
+      if(f==='r' && sgn(v)) td.classList.add(sgn(v));
+    });
+
+    document.getElementById('clearEditsBtn').addEventListener('click', function(){
+      if(!Object.keys(NUM_OV).length && !Object.keys(TXT_OV).length) return;
+      NUM_OV={}; TXT_OV={}; renderAll();
+    });
+
+    // logo upload / clear
+    var lf=document.getElementById('logoFile');
+    document.getElementById('logoBtn').addEventListener('click', function(){ lf.click(); });
+    lf.addEventListener('change', function(){
+      var f=this.files&&this.files[0]; if(!f) return;
+      var rd=new FileReader();
+      rd.onload=function(){ STATE.logo=rd.result; STATE.logoSVG='';
+        document.getElementById('logoName').textContent=f.name; renderPreview(); };
+      rd.readAsDataURL(f);
+    });
+    document.getElementById('logoClear').addEventListener('click', function(){
+      STATE.logo=''; STATE.logoSVG=''; lf.value='';
+      document.getElementById('logoName').textContent='No logo — top-right corner stays blank.'; renderPreview();
+    });
+    fetchAmrizeLogo();
+
+    document.getElementById('exportBtn').addEventListener('click', exportPNG);
+    document.getElementById('viewBtn').addEventListener('click', viewFullScreen);
+
+    /* Reload from sheet also leaves upload mode. */
+    document.getElementById('reloadBtn').addEventListener('click', function(){ upOff(); loadData(); });
+
+    /* Header ↻ Update from source: same as the rail's Reload from sheet —
+       drop out of upload mode and re-read the Google Sheet. */
+    document.getElementById('syncBtn').addEventListener('click', function(){
+      upOff();
+      /* Ask first: an untouched sheet means there is nothing to re-read. */
+      AmrFresh.ifChanged(function(changed){ if(changed) loadData(); });
+    });
+
+    document.getElementById('upGo').addEventListener('click', runUpload);
+    document.getElementById('upReset').addEventListener('click', function(){ upOff(); loadData(); });
+
+    /* The ⚙ Data sheet modal calls this after it is pointed somewhere new.
+       Without it the page kept showing the old sheet's numbers until a manual
+       reload (PV, RMX and Segment implement the same hook). */
+    window.amrReloadData = function(){ try{ upOff(); }catch(e){} loadData(); };
+
+    window.addEventListener('resize', function(){ schedulePreview(); });
+
+    /* The QlikView guide — one component now, where there were seven copies.
+       The upload panel is this page's own markup, so it rides in from the
+       template rather than being built by the guide. */
+    AmrQlikGuide.mount({
+      title: 'Download from QlikView',
+      fabLabel: '&#128229; QlikView Guide',
+      extra: document.getElementById('guideExtra'),
+      /* Both steps carry img:'' — no screenshots have been taken for this page
+         yet, and the guide renders a dashed placeholder for an empty img. */
+      steps: [
+        { text: 'Step 1 — In QlikView, set the Central Canada Ready-Mix PPI selections and export the main view to Excel (Plant, Product Mix, Major Project Segment, Bill Month, "#### Vol", "#### Net Sales Ex VA (CAD)", CY / PY Fuel Surcharge).',
+          img: '' },
+        { text: 'Step 2 — Upload that one file below. Bill Month carries the year, so the current and prior year both come out of the same export and nothing here has to be told which year it is.',
+          img: '' }
+      ]
+    });
+  } catch (err) {
+    AMR.log('error', 'RFSC.boot', 'setup threw', { error: String(err) });
     showProblem('Part of the page didn’t start correctly ('+err.message+'). '
       +'The data will still try to load — refresh the page if anything looks off.');
   }

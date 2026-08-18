@@ -45,7 +45,7 @@
 7. [Logging, and the debug functions it replaces](#7-logging-and-the-debug-functions-it-replaces)
 8. [The chunks](#8-the-chunks)
 9. [What this costs](#9-what-this-costs)
-10. [Three things this merge does not touch](#10-three-things-this-merge-does-not-touch)
+10. [Four things this merge does not touch](#10-four-things-this-merge-does-not-touch)
 11. [Legacy hit-list](#11-legacy-hit-list)
 12. [Rules for whoever does the work](#12-rules-for-whoever-does-the-work)
 13. [What this plan measured](#13-what-this-plan-measured)
@@ -185,6 +185,33 @@ exactly as it does today.
 > 2–7 literal `</script>` tokens each, so any markup that ever picked one up would terminate
 > the block early and silently. `<template>` has no such escaping hazard.
 
+**Shared ids are the point, not a compromise.** *(Settled in chunk 4.)* 37 ids are declared by
+more than one page, and the two fuel pages share 21 of their 21 — they are the same screen on
+different numbers. Chunk 2's `merge.js` forbade that outright, to keep chunk 14 safe. That was
+the wrong trade: it would have forced a rename pass on nearly every remaining page chunk
+(Ready-Mix × Segment share 15 ids, Price & Volume × Ready-Mix 12) and left the twins no longer
+diffable against each other, all to buy a guarantee the mount already provides.
+
+So the rule is the one the design always implied:
+
+> **Where two pages do the same thing, they use the same id and the same class. Where they
+> differ, they differ.** `#syncBtn` is the update button on both fuel pages; RMX Fuel's single
+> upload is `#upMain` because AGG's two are `#upComb` and `#upOther`, and that is a real
+> difference rather than a naming one.
+
+What actually keeps it safe is **exactly one page in the document**, and that is now enforced
+rather than assumed:
+
+- `AMR.start()` **empties `#appRoot` before mounting**, and `tests/merge.js` fails if that line
+  goes.
+- `merge.js` checks the invariant that does matter — **no id declared twice inside one page's
+  template** — instead of the one that does not.
+- **Chunk 14 must replace the mounted page, never add a second beside it.** Caching mounted
+  pages for speed is the one implementation that breaks this, so it is ruled out here in
+  advance. The note is in `AMR.start()` too, where somebody writing that code will see it.
+- The QlikView guide and its FAB are appended to `<body>`, outside `#appRoot`, so **chunk 14
+  needs a teardown for them** whatever it does about ids.
+
 ### Duplicate JS globals
 
 Every page declares its own top-level `state`, `fmt`, `boot`, `render`. Concatenated, they
@@ -269,7 +296,7 @@ adding a lot, the promotion test above is not being applied.
 
 Today a page switch is a full page load at `?page=rmx`. That stays true: `doGet` reads
 `?page=`, `app.html` mounts that one page, done. **We are not building a single-page app.**
-Client-side page switching is a real follow-up ([§10](#10-three-things-this-merge-does-not-touch)) but
+Client-side page switching is a real follow-up ([§10](#10-four-things-this-merge-does-not-touch)) but
 not part of this merge — doing both at once would make any regression ambiguous between "the
 merge broke it" and "the new router broke it".
 
@@ -526,7 +553,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | # | Chunk | What lands | Review by | |
 |---|---|---|---|---|
 | 3 | **AGG Fuel Recovery** | `Page_FuelSurcharge` + `Deck_Fuel`. First real port, chosen because `tests/regress.js` already proves this page byte-identical — the method gets validated where there is a gate on it. §E gains `AmrProgress`, `AmrBoot`, `AmrFresh`, `AmrSlide`, `AmrFuelExec`; §A3 gains the slide frame, the load screen and the fuel tables. **No §A4 block at all** — see [§8's chunk 3 notes](#what-chunk-3-settled). Plus `tests/pageparity.js` and `tests/modparity.js`. `Code.gs` needed no change. | `tests/merge.js`, `tests/modparity.js`, `tests/pageparity.js`, `OLD_DIR=… tests/regress.js` — all green | ✅ |
-| 4 | **RMX Fuel Recovery** | `Page_RmxFuel`, reusing the `AmrFuelExec` and components chunk 3 promoted. Should be visibly smaller than chunk 3; if it is not, the promotion test is not being applied. Everything it needs is already in `app.html`: the module, `.fsc-*`, `.seg.full`, `.mkt-list`, `.previewCard`, `.notice`, the slide frame. Add a case to `tests/pageparity.js` **before** touching the page. | `tests/pageparity.js`, `tests/regress.js` + the page | ☐ |
+| 4 | **RMX Fuel Recovery** | `Page_RmxFuel`, reusing the `AmrFuelExec` and components chunk 3 promoted. **It added zero CSS and zero modules** — §A3 is byte-for-byte the same 385 lines it was after chunk 3, which is the promotion test paying out. Settled the duplicate-id question ([§3](#3-how-the-pages-live-inside-one-html-file)) and hardened the mount. | `tests/merge.js`, `tests/pageparity.js` (90 comparisons, both fuel pages), `OLD_DIR=… tests/regress.js` — all green | ✅ |
 | 5 | **AGG Price & Volume** | `Page_PriceVolume` + `Deck_PV` + `SlideExport` + `KpiShared` + `Cube`. The heaviest module load and the only page needing all three libraries. | `tests/pvcheck.js`, `tests/pvlookup.js`, `tests/slidefit.js` | ☐ |
 | 6 | **Ready-Mix** | `Page_Rmx` + `Deck_RMX`. Drop the dead `include('Deck_RMX')` here. | `tests/rmxcost.js` + the page | ☐ |
 | 7 | **Product Segment** | `Page_Segment` + `Deck_SEG`. | `tests/segboot.js`, `tests/deckstatic.js` | ☐ |
@@ -542,13 +569,14 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 12 | **`app.gs`** | All 16 `.gs` merged in the [§5](#5-the-shape-of-appgs) order, sectioned and commented. `APP_log()`, `APP_verifyPermissions()`, `oauthScopes` added to `appsscript.json`. The six debug functions deleted and `qlikStamps` decided. Old `.gs` deleted **in this same commit** — they cannot coexist ([§2](#2-the-thing-that-would-have-broken-it)). | `tests/configcheck.js`, `tests/qliksync.js`, `node --check`, then `APP_verifyPermissions()` in the editor | ☐ |
 | 13 | **Cutover** | `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; `README.md` and `CLAUDE.md` rewritten around two files. **Delete `tests/modparity.js`** and repoint `regress.js` / `pageparity.js` / `slidefit.js` / `deckpath.js` at `app.html` — they compare against files that no longer exist after this commit. | the whole suite, every route | ☐ |
 
-### After the merge is proven — see [§10](#10-three-things-this-merge-does-not-touch)
+### After the merge is proven — see [§10](#10-four-things-this-merge-does-not-touch)
 
 | # | Chunk | What lands | | |
 |---|---|---|---|---|
-| 14 | **Page switching without reload** | The nav mounts a page instead of reloading. Removes the whole per-load cost in [§9](#9-what-this-costs). | ☐ |
+| 14 | **Page switching without reload** | The nav mounts a page instead of reloading. Removes the whole per-load cost in [§9](#9-what-this-costs). **Must REPLACE the mounted page, never keep two** — pages share ids on purpose ([§3](#3-how-the-pages-live-inside-one-html-file)). Also needs a teardown for the guide aside and FAB, which live outside `#appRoot`. | ☐ |
 | 15 | **The three drifted helpers** | Diff `toNum_` / `norm_` / `gk_` across the three namespaces, write down what each difference *does*, then unify only what is provably equivalent. | ☐ |
 | 16 | **Collapse `Deck_Styles`** | Fold the `.slide-bare` mirror into the component layer, proven against real captures. | ☐ |
+| 17 | **Device cache on both fuel pages** | Wire `AmrCache` into AGG Fuel Recovery and RMX Fuel Recovery, so a repeat visit paints from `localStorage` instead of waiting on the sheet. **Requested; new behaviour, not a port** — see [§10](#10-four-things-this-merge-does-not-touch). | ☐ |
 
 ### What chunk 2 settled
 
@@ -609,7 +637,45 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   file, and unscoping one `.land-hero` rule made it fail with that selector named. It checks
   six invariants — script syntax, template↔registration pairing, every `getElementById`
   target existing, no id declared by two pages, every §A4 rule scoped, and no page leaking a
-  global.
+  global. *(The id check was replaced in chunk 4 — see [§3](#3-how-the-pages-live-inside-one-html-file).
+  Ids repeat across pages on purpose; what is checked now is that none repeats within one page
+  and that the mount empties `#appRoot`.)*
+
+### What chunk 4 settled
+
+- **It added nothing.** No CSS, no modules, no `§A4` block — §A3 is byte-for-byte the same 385
+  lines chunk 3 left it at, and the whole commit is one `<template>`, one registration and the
+  id decision below. Chunk 3's style blocks were byte-identical between the two pages to begin
+  with, so promoting instead of scoping there is what made this chunk free. **That is the bar
+  for chunks 5–9:** whatever a page adds to §A3 is what the *next* page will not have to.
+- **Duplicate ids are the design, and `merge.js` was changed to match.** Written up in
+  [§3](#3-how-the-pages-live-inside-one-html-file). Short version: the two fuel pages share all
+  21 of their markup ids because they are the same screen on different numbers; chunk 2's
+  across-pages uniqueness check would have forced a rename pass on nearly every remaining
+  chunk to buy a guarantee the mount already gives. So `AMR.start()` now **empties `#appRoot`
+  before mounting**, `merge.js` checks that line and checks no id is declared twice *within* a
+  page, and chunk 14 is on the record as having to replace the mounted page rather than keep
+  two. The check moved from one that was easy to enforce to the one that is actually true.
+- **The port was derived, not retyped.** `tpl_rmxfuel` and its registration were generated from
+  the AGG ones by a script of declared substitutions, each asserting it matched exactly once.
+  Two reasons, both worth keeping for chunk 6 (Ready-Mix × Segment share 15 ids and a lot of
+  shape): a substitution that stops matching is a *loud* failure, where a hand-retype drops a
+  branch silently; and the two registrations stay diffable, which is the only thing that will
+  keep them in step when someone fixes a bug in one of them.
+- **The real differences, all of them.** Everything else is the same code:
+  `cyY()` / `pyY()` (the years ride in the payload, so no year-roll edit), the `'rmx'` units
+  descriptor, `getRmxFuelData` / `getRmxFuelDataFromUpload`, **one** uploaded workbook
+  (`#upMain`) where AGG needs two (`#upComb` + `#upOther`) because the Ready-Mix export carries
+  CY/PY Fuel Surcharge as real columns, no Saskatchewan notice, and its own help, hint,
+  auto-titles and `Innocon` default.
+- **`#fscGuideExtra` became `#guideExtra` on both pages.** It is "this page's own panel inside
+  the guide", not an Aggregates thing, and the twin needed the same slot. Renamed rather than
+  duplicated under two names.
+- **`tests/pageparity.js` now covers both pages — 90 comparisons, all identical.** The RMX case
+  was mutation-tested too: asking `AmrFuelExec` for the `'agg'` units fails two views, and
+  making `pyY()` return the current year fails four comparisons including the by-month title.
+  Its fixture deliberately carries `cyYear` and **no** `sask` section, so the two things this
+  page does differently are actually exercised rather than assumed.
 
 ### What chunk 3 settled
 
@@ -710,14 +776,14 @@ Stated up front so nobody is surprised later:
   whole file. HtmlService gzips, so expect roughly 200 KB on the wire against ~25 KB now. The
   extra is markup the browser parses into inert fragments and CSS it discards on a `data-page`
   mismatch — not extra JS to run, since each page's code is one registration IIFE that only
-  executes its body on mount. [§10](#10-three-things-this-merge-does-not-touch) removes this cost
+  executes its body on mount. [§10](#10-four-things-this-merge-does-not-touch) removes this cost
   entirely if it ever stops being acceptable.
 - **Two pages get faster.** Landing and the Inventory Report load no CDN libraries at all once
   `AmrLib` is lazy.
 
 ---
 
-## 10. Three things this merge does not touch
+## 10. Four things this merge does not touch
 
 Each of these is a change worth making. None of them belongs *inside* the merge, and the
 reason is the same every time: **if two changes land together and something breaks, you
@@ -739,7 +805,37 @@ those helpers sit under every number the business reconciles against Qlik. This 
 piece of duplication in the codebase that is safer left alone until someone diffs the three
 implementations and proves what the differences actually do. Chunk 15 does exactly that.
 
-**3. `Deck_Styles` duplicating page CSS.** The deck photographs slide content built by the
+**3. Caching the two fuel pages on the device.** Asked for during chunk 3, and it belongs
+here rather than in chunk 3 or 4 for the usual reason: **neither fuel page has ever had a
+device cache, so adding one is a new feature wearing a port's clothes.** If the merged page
+then painted a stale figure, "the merge broke it" and "the new cache broke it" would look
+identical — and the whole point of chunks 3 and 4 is that their output is provably the same
+as the old pages'. Chunk 17.
+
+What already exists, so nobody rebuilds it:
+
+- **The server side is done.** `FSC_Backend.gs` and `RFSC_Backend.gs` cache their sheet read
+  *and* their finished result (added 2026-08-17; `tests/fscheader.js` proves one sheet read
+  serves two identical calls). Only the per-device layer is missing.
+- **`AmrCache` is the mechanism, unchanged.** `boot()` asks `getDataVersion(page)`, wipes this
+  page's `localStorage` entries if the version moved, then `get`/`set` serve the payload.
+- **`AmrFresh` is already wired on both pages**, so a version that moves while the page is
+  open already greys it out. A cache does not change that, and must not be built to.
+
+What the chunk has to decide, and must not guess:
+
+- **The uploaded-workbook path must never be cached.** Both pages can run on a file the user
+  dropped in. That is session-only by design and is not what the sheet holds; `upOff()` is
+  the boundary.
+- **The month is part of the key.** Both pages send `{month}` with every read and the payload
+  differs per month. A cache keyed on the page alone would serve July's figures for May.
+- **A typed-over cell is not data.** `NUM_OV` / `TXT_OV` are the user's edits, and the month
+  picker already clears them for exactly this reason. Restoring a cached model must not
+  resurrect them.
+- **`AmrCache` arrives in chunk 5** with Price & Volume, the first page that calls it. This
+  chunk is the second caller, not the first — do not port the module here.
+
+**4. `Deck_Styles` duplicating page CSS.** The deck photographs slide content built by the
 shared modules, but *without* the pages those modules normally live on — so it carries its own
 mirror of the CSS those slides need, scoped under `.slide-bare`. It looks like pure
 duplication. It is not, today: the pages and the deck are separate documents. After the merge

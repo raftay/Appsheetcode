@@ -10,9 +10,11 @@
  *   2. Every <template id="tpl-X"> has exactly one AMR.page('X') and vice versa.
  *   3. Every id a page's boot() looks up exists in that page's own template
  *      (or is one of the shared modal ids that live outside #appRoot).
- *   4. No page template declares an id that another page's template also
- *      declares — they are never in the document together today, but a future
- *      client-side page switch (chunk 14) would put them there.
+ *   4. No page template declares the same id TWICE, and the runtime empties
+ *      #appRoot before mounting. Ids ARE shared between pages on purpose —
+ *      the twin pages are the same screen on different numbers and reuse each
+ *      other's — which is only safe while exactly one page is in the document.
+ *      That is the invariant checked here; see PLAN.md §3.
  *   5. Every rule in the §A4 page block is scoped to body[data-page="…"].
  *      An unscoped rule there leaks onto every other page.
  *   6. No page's boot() leaks a global: no bare assignment to window.* beyond
@@ -171,18 +173,48 @@ const SHARED_IDS = new Set([
   if (!bad) pass('ids-resolve', 'every getElementById target exists');
 }
 
-/* --------------------------------------------------- 4. ids unique per page */
+/* ------------------------------- 4. one id once per page, one page mounted */
 {
-  const owner = new Map();
+  /* Ids repeat ACROSS pages by design. AGG Fuel Recovery and RMX Fuel Recovery
+     are the same screen on different numbers, so they share #syncBtn,
+     #tablesHost, #titleIn and eighteen more; forcing one of them to invent
+     rfSyncBtn would make the twins stop being diffable to buy nothing. What
+     must never happen is the same id twice in ONE page, or two pages in the
+     document at once — so those are what is checked. */
   let bad = 0;
   for (const [name, p] of Object.entries(PAGES)) {
-    for (const id of p.ids) {
-      if (owner.has(id)) {
-        bad++; fail('ids-unique', `#${id} declared in both tpl-${owner.get(id)} and tpl-${name}`);
-      } else owner.set(id, name);
+    const seen = new Map();
+    for (const m of p.tpl.matchAll(/id="([\w-]+)"/g)) {
+      seen.set(m[1], (seen.get(m[1]) || 0) + 1);
+    }
+    for (const [id, n] of seen) {
+      if (n > 1) { bad++; fail('ids-unique', `tpl-${name} declares #${id} ${n} times`); }
     }
   }
-  if (!bad) pass('ids-unique', `${owner.size} ids, no collisions across pages`);
+  if (!bad) {
+    const shared = new Map();
+    for (const [name, p] of Object.entries(PAGES)) {
+      for (const id of p.ids) shared.set(id, (shared.get(id) || 0) + 1);
+    }
+    const reused = [...shared.values()].filter(n => n > 1).length;
+    pass('ids-unique', `${shared.size} ids, none declared twice in one page` +
+                       (reused ? ` (${reused} deliberately shared between pages)` : ''));
+  }
+}
+
+/* ------------------------------------------------- 4b. one page at a time */
+{
+  /* The check above is only sound because AMR.start() empties #appRoot before
+     it mounts. Without that line a second mount would put two #tablesHost in
+     one document and getElementById would answer for whichever came first —
+     which is exactly what chunk 14 will be tempted to do for speed. */
+  const start = NO_COMMENTS.slice(NO_COMMENTS.indexOf('function start()'));
+  const body = start.slice(0, start.indexOf('\n  }'));
+  const clears = /getElementById\('appRoot'\)[\s\S]{0,200}?\.innerHTML\s*=\s*''/.test(body);
+  if (clears) pass('single-mount', 'AMR.start() empties #appRoot before mounting');
+  else fail('single-mount',
+            'AMR.start() does not clear #appRoot before appending — two mounted pages ' +
+            'would share ids. See PLAN.md §3.');
 }
 
 /* ------------------------------------------------------- 5. §A4 is scoped */
