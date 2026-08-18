@@ -705,7 +705,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 |---|---|---|---|---|
 | 14 | **Page switching without reload** *(reviewed, and four bugs fixed — see below)* | The nav mounts a page instead of reloading — the switcher, Home, and every `data-page-link` card, all through one `AMR.nav.go()`. **All of it is §D**: no page and no §E module was touched, so `pageparity` / `cssparity` / `modparity` all survive. Teardown is automatic rather than per-page — the runtime records what a mounted page registers and removes it — because eleven `document`/`window` listeners across the ten registrations would otherwise stack, and **48 listeners leak per lap** without it, measured. `tests/pageswitch.js` is the gate. | `pageswitch.js` (two laps of all ten pages, mutation-tested three ways) + the whole suite, 20 green | ✅ |
 | 15 | **The three drifted helpers** | Diffed all of them — **six `toNum_`, six `norm_`, two `gk_` across SEVEN namespaces, not three** — and the verdict is **do not unify**: neither dialect is a superset, each is right exactly where the other is wrong. `tests/helpers.js` pins all fourteen definitions to a table of inputs instead, and two latent bugs fell out. | ✅ |
-| 16 | **Collapse `Deck_Styles`** | Fold the `.slide-bare` mirror into the component layer, proven against real captures. | ☐ |
+| 16 | **Collapse `Deck_Styles`** | **§B is 7 rules where it was 86.** 79 of them restated something §A1–§A3 already say, which was true the moment the merge made the deck and the pages one document. Proven, not eyeballed: `tests/slidecss.js` blanks one rule at a time under all ten pages, iterated to a fixpoint because §B's rules masked each other, and the deletion was checked end to end at **784,380 computed values across 880 specimens — all identical.** | ✅ |
 | 17 | **Device cache on both fuel pages** | Wire `AmrCache` into AGG Fuel Recovery and RMX Fuel Recovery, so a repeat visit paints from `localStorage` instead of waiting on the sheet. **Requested; new behaviour, not a port** — see [§10](#10-four-things-this-merge-does-not-touch). | ☐ |
 | 18 | **`APP_log` at the server entry points** | Chunk 12 wrote the helper and left the 10,889 moved lines alone, on purpose — see its notes. This wires it in, and the order is the order of the payoff: **`APP_cachePut_`'s `n > 250` bail first** (that silent `skip` is the whole reason the `cache` field exists, and README §6 is what it costs), then `APP_cacheGet_`'s hit/miss, then the entry points a harness already covers so each line lands with a gate on it — `getFscData`, `getPvUnmapped`, `qlikSyncCheck`, `RMX_prepare`. Never inside a per-row loop. **Do the `catch (e) {}` pass in the same chunk**: [§7](#7-logging-and-the-debug-functions-it-replaces) says silent is right for an optional cache read and wrong for everything else, and chunk 12 carried all of them across undecided because deciding them is an edit, not a move. | ☐ |
 | 20 | **`PV.toNum_` drops accounting negatives** | Found by chunk 15. `PV.toNum_('(1,234)')` is `0` where every other copy in the suite gives `-1234`: the strip leaves the parentheses, `parseFloat` gives `NaN`, and `NaN` becomes `0`. The figure is **dropped, not mis-signed**, which is why nothing looks wrong. **Whether it bites cannot be answered off-platform** — it depends on whether the Price & Volume source ever writes a negative that way. Check the sheet first; only then decide. | ☐ |
@@ -783,6 +783,63 @@ and re-added them each switch; the third binds to `#amrSetList`, a `<body>`-leve
 that teardown leaves alone, so it stacked one duplicate per switch — six identical handlers
 means one click on *Save* sends six writes and schedules six reloads. They wire the permanent
 shell, so they are installed once in `start()`, **before** `MOUNTED` goes true.
+
+### What chunk 16 settled
+
+**§B went from 86 rules to 7, and nothing on any slide moved.**
+
+- **The collapse was always going to be most of the block; the surprise is what
+  survived.** `Deck_Styles.html` existed because the Deck Builder loaded the slide modules
+  **without** the report pages those modules live on, so every rule their markup needed had to
+  be restated. The merge made that untrue — §A1–§A3 are in the document when
+  `captureBare` attaches its box to `<body>` — and 79 rules were restating rules that were
+  already speaking.
+
+- **The seven survivors all have ONE cause, and it is the durable rule:**
+
+  > **Every one of them mirrors a rule that lives behind a page-only ancestor** — §A4's
+  > `body[data-page="…"]` scope, or a page host class like `.tbl-stack`. The capture box is a
+  > child of `<body>` on whatever page the Deck Builder is, so it is inside **neither**.
+
+  Ready-Mix's group accents (`th.gB`/`gA`/`gV`), its subtotal band and section header are
+  styled by §A3 only under `table.gt thead` or `table.rtbl`, and by §A4 under
+  `:where(body[data-page="rmx"])` — and the deck photographs Ready-Mix tables on the **Deck
+  Builder** page. `.tbl-scroll`'s padding comes from `.tbl-stack` or the rmx block, never from
+  §A3. Segment's compact `table.gt` sizing lives on `.tbl-stack table.gt`.
+
+  **So the maintenance rule has changed, in a useful direction.** Change a slide table in §A3
+  and there is no longer a copy here to keep in step. Put a rule a *slide* needs into §A4 or
+  behind a page host class and the deck silently loses it.
+
+- **§B's rules masked each other, and one pass would have got this wrong.** Blanking one rule
+  and finding the value unchanged proves that rule is redundant *given the others*. Delete a
+  batch and the remaining ones sit against a different cascade: after the first 59 went,
+  **19 more of the 27 "keepers" turned out to be restatements too**, and one more after that.
+  It took three passes to reach a fixpoint. A single pass would have left 20 dead rules behind
+  and a comment claiming they earned their place.
+
+- **The proof is a before/after computed-style diff, not the harness's own verdict.** The
+  per-rule test decides what to delete; it cannot prove a *set* of deletions is safe, for
+  exactly the masking reason above. So the whole reduction was measured against the original
+  block: one specimen per selector §B ever had (880 of them, since a selector list builds one
+  each), every computed property Chromium exposes, the fitter's `--tpy`/`--tpx`/`--thf`/`--px`/
+  `--py` both unset **and** set, under all ten `data-page` values. **784,380 values, zero
+  differences.**
+
+- **Two traps this chunk walked into, both worth the warning:**
+  - **The first deletion pass removed 60 rules when 59 were selected**, because it matched on
+    selector text and **§B declares `.slide-bare table.gt` twice**. Deleting by CSSOM index
+    fixed it. A selector is not a key.
+  - **The first cut was done with a regex over the block and left a dangling prelude** — which
+    is §B's own historical failure, in the same file, for the third time. It is scanned now:
+    comments and rules are separate items and only whole items are dropped, so nothing can be
+    half-removed.
+
+- **The custom properties nearly produced a false verdict.** A §B rule reading `var(--tpy,4px)`
+  and a §A3 rule reading the same var compute identically whether the variable is set or not —
+  but a §B rule reading a var against a §A3 rule with a **literal** differs only *once the
+  fitter sets it*, which is never true at rest and always true when the deck captures. The
+  harness sets every custom property either side mentions and reads again.
 
 ### What chunk 15 settled
 
@@ -1838,13 +1895,14 @@ What the chunk has to decide, and must not guess:
 - **`AmrCache` arrives in chunk 5** with Price & Volume, the first page that calls it. This
   chunk is the second caller, not the first — do not port the module here.
 
-**4. `Deck_Styles` duplicating page CSS.** The deck photographs slide content built by the
-shared modules, but *without* the pages those modules normally live on — so it carries its own
-mirror of the CSS those slides need, scoped under `.slide-bare`. It looks like pure
-duplication. It is not, today: the pages and the deck are separate documents. After the merge
-they are one document, and the mirror probably *can* collapse into the component layer — but
-"probably" is not good enough for the deck's output, which is a picture nobody can restyle
-after the fact. It comes across as-is, and any dedup is proven against real captures. Chunk 16.
+**4. `Deck_Styles` duplicating page CSS.** ~~It looks like pure duplication. It is not,
+today.~~ **Chunk 16 measured it: 79 of the 86 rules were pure duplication the moment the merge
+made the deck and the pages one document, and §B is 7 rules now.** The seven that stayed all
+mirror a rule living behind a page-only ancestor — §A4's `body[data-page]` scope or a host
+class like `.tbl-stack` — which a capture box hanging off `<body>` is not inside. "Probably" was
+indeed not good enough: the reduction is proved at 784,380 computed values across 880
+specimens and ten pages, and `tests/slidecss.js` keeps every remaining rule honest.
+See [what chunk 16 settled](#what-chunk-16-settled).
 
 ---
 
@@ -2028,6 +2086,11 @@ you can `Ctrl+F` is the substitute for the reference that cannot exist.
     the same commit. Also checks no top-level name is declared twice, and that the name set
     moved by exactly the declared deletions — **that last check is the one that caught a cut
     silently deleting `RMX_whoWins` while every syntax check still passed.**
+  - `tests/slidecss.js` *(chunk 16)* — every rule in §B still does something §A1–§A3 do not.
+    It blanks one rule at a time, in the real document, under all ten `data-page` values, and
+    fails on any rule that changes no computed value. That is the standing form of chunk 16's
+    result: §B is now only what a bare capture cannot inherit, so a rule that stops mattering
+    means §A3 moved under it.
   - `tests/helpers.js` *(chunk 15)* — the six `toNum_`, six `norm_` and two `gk_` pinned to a
     table of inputs. A **characterisation** test: it records what each dialect answers today,
     not what it ought to. It is what makes "do not unify these" enforceable rather than a

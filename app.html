@@ -1664,174 +1664,92 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
 
 <style>
 /* ============================================================================
-   §B  SLIDE CSS — .slide-bare capture styles
+   §B  SLIDE CSS — what a bare capture cannot inherit  (chunk 16)
    ----------------------------------------------------------------------------
-   Was Deck_Styles.html. Every one of its 86 rules is scoped under .slide-bare,
-   the wrapper AmrSlide.captureBare puts around content it is about to
-   photograph, so this block cannot reach a page — checked, not assumed.
+   Was Deck_Styles.html, and it was 86 rules. It is 7.
 
-   It is a MIRROR of rules that also live in §A3, and it stays one for now.
-   Merging the two is chunk 16, and only against real captures: the deck's
-   output is a picture nobody can restyle afterwards, so "these look the same"
-   is not the standard. If you change a slide table in §A3, change it here.
+   WHY IT WAS 86. AmrSlide.captureBare wraps content in .slide-bare and
+   photographs it. That content is built by the shared slide modules, and the
+   Deck Builder loads those modules WITHOUT the report pages they normally live
+   on — so when the deck and the pages were separate documents, every rule the
+   markup depended on had to be restated here. The July 2026 deck published 43
+   slides with their styling missing, which is what put this file here.
 
-   THE FOUR LINES THAT USED TO SIT HERE WERE NOT A COMMENT. Deck_Styles.html
-   explains itself in an HTML comment whose prose names a style element by its
-   tag, and the chunk-10 builder split that file on the FIRST such token — which
-   was the one inside the sentence, not the element. So this block opened with
-   the tail of that sentence, a bare --> and a second opening tag, all of it
-   inside a live style element. CSS error recovery reads garbage before the
-   first { as a selector prelude and discards the rule that follows, so §B
-   parsed as 85 rules rather than 86 and .slide-bare .tbl-card was silently
-   gone. It had no visible effect only because §A3 declares the same padding,
-   and after the merge both are in one document.
+   WHY IT IS 7. After the merge there is one document. §A1–§A3 are already
+   loaded when the capture box is attached to <body>, so a rule that merely
+   restates a component rule is now saying something the cascade already says.
+   Chunk 16 measured it rather than eyeballing it — see below — and 79 of the 86
+   were doing exactly nothing.
 
-   Deck_Styles.html itself was always fine — an HTML comment is stripped before
-   a tag inside it can become an element. This is PLAN.md's "a checker must not
-   read prose as code", in the build direction; and writing the tag as a literal
-   in THIS comment would have reopened the same hole, which is why it is named
-   rather than spelled. tests/merge.js check 9 is the gate.
+   WHAT THE SURVIVORS HAVE IN COMMON, which is the rule to carry forward:
+
+     > EVERY ONE OF THEM MIRRORS A RULE THAT LIVES BEHIND A PAGE-ONLY ANCESTOR.
+     > Either §A4's body[data-page="…"] scope, or a page host class such as
+     > .tbl-stack. The capture box is a child of <body> on whatever page the
+     > Deck Builder is — it is inside NEITHER — so those rules cannot reach it.
+
+   So the maintenance rule has changed, and in a useful direction. Change a
+   slide table in §A3 and there is no longer a copy here to keep in step. But
+   put a rule a SLIDE needs into §A4 or behind a page host class and the deck
+   silently loses it — restate it here, under .slide-bare, and let
+   tests/slidecss.js tell you whether it was needed.
+
+   HOW THE 79 WERE PROVED DEAD, because "these look the same" is not the
+   standard for output nobody can restyle afterwards. tests/slidecss.js builds
+   the DOM each selector requires, in the real document with the real
+   stylesheet, and blanks ONE rule at a time under all ten data-page values —
+   the question that decides a deletion being "if this rule went, would any
+   computed value move". It had to be iterated to a fixpoint: §B's rules masked
+   each other, so a rule could look load-bearing only because a second redundant
+   rule was standing behind it, and three passes were needed before nothing was
+   left that changed nothing. The deletion itself was then proved end to end
+   against the original block: 880 specimens covering every selector §B ever
+   had, every computed property the engine exposes, the fitter's variables both
+   set and unset, ten pages — 784,380 values, all identical.
+
+   THE FOUR LINES THAT USED TO SIT AT THE TOP OF THIS BLOCK WERE NOT A COMMENT.
+   Deck_Styles.html explains itself in an HTML comment whose prose names a style
+   element by its tag, and the chunk-10 builder split that file on the FIRST such
+   token — the one inside the sentence, not the element. So this block opened
+   with the tail of that sentence, a bare --> and a second opening tag, all of it
+   inside a live style element. CSS error recovery reads garbage before the first
+   { as a selector prelude and discards the rule that follows, so §B parsed as 85
+   rules where the file had 86 and .slide-bare .tbl-card was silently gone.
+   Writing the tag as a literal in THIS comment would reopen the same hole, which
+   is why it is named rather than spelled. tests/merge.js check 9 is the gate.
    ========================================================================== */
-/* ---------------------------------------------------------------------------
-   AGG Price & Volume  ·  mirrors Page_PriceVolume.html
-   The compact export padding is the one that matters most: without it the
-   tables overflow their card and get clipped.
-   ------------------------------------------------------------------------ */
-.slide-bare .tbl-card{padding-bottom:6px}
-.slide-bare .tbl-pad{padding:0 6px 8px}
-.slide-bare .tbl-card .card-head{padding-bottom:12px}
-.slide-bare .exp .tbl-card .card-head{padding:10px 14px 6px}
-.slide-bare .exp table th{white-space:nowrap; line-height:1.15}
-/* The fitter drives the cell padding and the header size off the table's own
-   font-size, so growing the numbers grows the whole table instead of cramming
-   bigger digits into cells sized for 13px. A `font:` shorthand pins the header
-   at 11px, which is why the header size is a variable of its own. */
-.slide-bare .exp table th, .slide-bare .exp table td{padding:var(--tpy,4px) var(--tpx,9px)}
-.slide-bare .exp table thead th{font-size:var(--thf,11px)}
-
-.slide-bare thead th.grp-asp{background:var(--blue-60)}
-.slide-bare thead th.grp-ppi{background:var(--blue-70)}
-.slide-bare .grp-vol{box-shadow:inset 3px 0 0 var(--blue-20)}
-.slide-bare .grp-asp{box-shadow:inset 3px 0 0 var(--blue-30)}
-.slide-bare .grp-fsc{box-shadow:inset 3px 0 0 var(--blue-40)}
-.slide-bare .grp-app{box-shadow:inset 3px 0 0 var(--blue-30)}
-.slide-bare .grp-ppi{box-shadow:inset 3px 0 0 var(--blue-60)}
-.slide-bare .grp-pt{box-shadow:inset 3px 0 0 var(--blue-40)}
-
-/* Top 10 Customers */
-.slide-bare .ctbl-wrap{overflow-x:auto; padding:0 40px}
-.slide-bare table.cust{min-width:880px}
-.slide-bare table.cust thead tr.grp th{background:var(--blue-100); color:#cfe0f6; font:700 9.5px Archivo;
-  letter-spacing:.12em; text-transform:uppercase; padding:8px 10px; text-align:left;
-  border-right:1px solid rgba(255,255,255,.12)}
-.slide-bare table.cust thead tr.grp th.sticky-l{background:var(--blue-100)}
-.slide-bare table.cust thead tr.col th{background:var(--blue-80); color:#fff; font:600 10.5px Inter;
-  letter-spacing:.02em; padding:8px 10px; text-align:left; white-space:nowrap}
-.slide-bare table.cust thead tr.col th:first-child{text-align:left}
-.slide-bare table.cust td{padding:8px 10px; text-align:right; white-space:nowrap;
-  border-bottom:1px solid var(--line); font-size:12.5px}
-.slide-bare table.cust td:first-child{text-align:left}
-.slide-bare table.cust tr.parent>td{font-weight:600; background:#fff}
-.slide-bare table.cust tr.child>td{background:var(--blue-10); color:var(--muted); font-size:12px}
-.slide-bare table.cust tr.child>td:first-child{padding-left:30px; font-weight:500; color:var(--ink)}
-.slide-bare table.cust tfoot td{background:#fff; font-weight:700; border-top:2px solid var(--blue-100);
-  padding:11px 10px}
-.slide-bare .chev{display:inline-block; width:14px; color:var(--blue-60); font-size:10px}
-.slide-bare .collapsed .chev{transform:rotate(-90deg)}
 
 /* ---------------------------------------------------------------------------
-   Ready-Mix Price & Volume  ·  mirrors Page_Rmx.html
-   .rmx-eb-title is the "By submarket" / "By extra type" heading and
-   .rmx-eb-badge's margin-left:auto is what pushes the mix badge to the right.
-   The rmx-yellow variants are deliberately not mirrored: the deck always
-   photographs on white.
+   Ready-Mix  ·  the group-header accents and the subtotal band
+   §A3 styles these only under `table.gt thead` (`th.gB` and friends) or under
+   `table.rtbl` (`tr.subtotal td`), and the page's own copies are in §A4 behind
+   :where(body[data-page="rmx"]). The deck photographs Ready-Mix tables on the
+   DECK BUILDER page, so neither ancestor is there and the accents would come
+   out flat white.
    ------------------------------------------------------------------------ */
-.slide-bare .tbl-scroll{overflow-x:auto; padding:0 6px 10px}
 .slide-bare th.gB{background:var(--blue-60)}
 .slide-bare th.gA{background:var(--blue-70)}
 .slide-bare th.gV{background:var(--blue-80)}
 .slide-bare tr.subtotal td{font-weight:700; background:#EEF3FB; border-top:1px solid var(--blue-40)}
 .slide-bare td.section{font:800 11px Inter; letter-spacing:.04em; color:#fff; background:var(--blue-70);
   text-align:center; vertical-align:middle; white-space:normal}
-.slide-bare table.rtbl th, .slide-bare table.rtbl td{padding:6px 9px}
-.slide-bare table.rtbl th.tlbl, .slide-bare table.rtbl td.tlbl{text-align:left}
-.slide-bare table.rtbl td.tlbl{font-weight:600}
-.slide-bare table.rtbl thead th{font-size:1em}
-.slide-bare table.rtbl tr.subtotal td{background:#EEF3FB; font-weight:700; border-top:1px solid var(--blue-40)}
-.slide-bare table.rtbl tfoot td{background:#D3E3F6; color:var(--blue-100); font-weight:800;
-  border-top:2px solid var(--blue-100)}
-
-.slide-bare .rmx-export-block{width:100%}
-.slide-bare .rmx-export-block .rmx-eb-head{display:flex; align-items:center; margin-bottom:8px}
-.slide-bare .rmx-eb-title{font:700 20px Archivo; color:var(--blue-100)}
-.slide-bare .rmx-eb-badge{margin-left:auto; font:800 20px Inter}
-.slide-bare .rmx-eb-badge.pos{color:var(--pos)}
-.slide-bare .rmx-eb-badge.neg{color:var(--neg)}
-.slide-bare .rmx-export-block table{min-width:0}
-.slide-bare .rmx-export-block thead th{font-size:1em}
-.slide-bare .rmx-export-block thead th small{font-size:.82em}
 
 /* ---------------------------------------------------------------------------
-   Commercial Product Segment  ·  mirrors Page_Segment.html
-   The page sizes table.gt under #tablesHost; the deck scrapes the table out of
-   that host, so the same sizing is restated on the capture wrapper instead.
+   The scroll host's breathing room
+   §A3's .tbl-scroll sets overflow only; the padding is added by .tbl-stack or
+   by the rmx page block, and a capture is inside neither. Without it the last
+   row sits hard against the edge of the picture.
    ------------------------------------------------------------------------ */
-.slide-bare .crow{display:flex; gap:12px; align-items:flex-start}
-.slide-bare .ccell{flex:1 1 0%; min-width:0; overflow:hidden}
-.slide-bare .ccap{font:700 10.5px Archivo; letter-spacing:.16em; text-transform:uppercase;
-  color:var(--blue-70); margin:0 0 5px}
-.slide-bare table.gt{--px:9px; --py:5px; width:100%; border-collapse:collapse; font-size:13px;
-  table-layout:auto}
-/* An explicit font-size inside a `font:` shorthand beats inheritance, so the
-   header would stay 11px while the fitter grew the values past 20px. */
-.slide-bare table.gt thead th{background:var(--blue-100); color:#fff; font-weight:700; font-size:1em;
-  text-align:right; white-space:nowrap; padding:calc(var(--py) + 3px) var(--px); line-height:1.2;
-  vertical-align:middle; border-right:1px solid rgba(255,255,255,.10)}
-.slide-bare table.gt thead th.gB{background:var(--blue-60)}
-.slide-bare table.gt thead th.gA{background:var(--blue-70)}
-.slide-bare table.gt thead th.gV{background:var(--blue-80)}
-.slide-bare table.gt tbody td{padding:var(--py) var(--px); text-align:right; white-space:nowrap;
-  color:var(--ink); border-bottom:1px solid #EEF3F9}
-.slide-bare table.gt thead th.tlbl, .slide-bare table.gt tbody td.tlbl{text-align:left}
-.slide-bare table.gt tbody td.tlbl{font-weight:600}
-.slide-bare table.gt td.section{background:var(--blue-70); color:#fff; font-weight:800; letter-spacing:.04em;
-  text-align:center; vertical-align:middle; white-space:normal; font-size:.88em}
-.slide-bare table.gt tbody tr.subtot td{background:#EEF3FB; font-weight:700; border-top:1px solid var(--blue-40)}
-.slide-bare table.gt tbody tr.grand td{background:#D3E3F6; color:var(--blue-100); font-weight:800;
-  border-top:2px solid var(--blue-100)}
-.slide-bare table.gt td.pos{color:var(--pos)}
-.slide-bare table.gt td.neg{color:var(--neg)}
-.slide-bare table.gt.wrapText thead th{white-space:normal}
-.slide-bare table.gt.wrapText tbody td.tlbl{white-space:normal}
+.slide-bare .tbl-scroll{overflow-x:auto; padding:0 6px 10px}
+
+/* ---------------------------------------------------------------------------
+   Commercial Product Segment  ·  the compact table
+   The page sizes table.gt under .tbl-stack — tighter cells, smaller type, a
+   floor on the width. The deck scrapes the table out of that host, so the same
+   sizing is restated on the capture wrapper. --px / --py are what the fitter
+   reads, so this has to be the variables, not the padding they feed.
+   ------------------------------------------------------------------------ */
 .slide-bare table.gt{--px:10px; --py:6px; font-size:12.5px; min-width:560px}
-
-/* ---------------------------------------------------------------------------
-   Fuel Recovery, both pages  ·  mirrors Page_FuelSurcharge.html
-   (Page_RmxFuel.html carries the same block; the two are already identical.)
-   ------------------------------------------------------------------------ */
-.slide-bare .fsc-wrap{width:100%}
-.slide-bare table.fsc-t{width:100%; border-collapse:collapse; font-size:15px}
-.slide-bare table.fsc-t thead th{background:var(--blue-80); color:#fff; font:600 11px Inter;
-  letter-spacing:.02em; text-transform:uppercase; padding:7px 10px; text-align:right; white-space:nowrap;
-  border-right:1px solid rgba(255,255,255,.10)}
-.slide-bare table.fsc-t thead th:first-child{text-align:left}
-.slide-bare table.fsc-t tbody td{padding:5px 10px; text-align:right; white-space:nowrap;
-  border-bottom:1px solid var(--line)}
-.slide-bare table.fsc-t tbody td.lft{text-align:left; font-weight:600; color:var(--ink)}
-.slide-bare table.fsc-t tbody tr.totrow td{background:var(--blue-10); font-weight:700; color:var(--blue-100);
-  border-top:2px solid var(--blue-100)}
-.slide-bare table.fsc-t tbody tr td.pos, .slide-bare table.fsc-t tbody tr.totrow td.pos{color:var(--pos); font-weight:600}
-.slide-bare table.fsc-t tbody tr td.neg, .slide-bare table.fsc-t tbody tr.totrow td.neg{color:var(--neg); font-weight:600}
-.slide-bare .fsc-exec{display:flex; flex-direction:column; gap:.6em; font-size:14px}
-.slide-bare .fsc-period{background:var(--blue-100); color:#fff; font:700 .95em Archivo; letter-spacing:.05em;
-  text-transform:uppercase; padding:.5em .95em}
-.slide-bare .fsc-secbar{background:var(--blue-80); color:#fff; font:700 .85em Inter; letter-spacing:.03em;
-  text-transform:uppercase; padding:.45em 1.1em; margin-top:.15em}
-.slide-bare table.fsc-t.exec{font-size:1em}
-.slide-bare table.fsc-t.exec thead th{font:600 .8em Inter; padding:.5em .95em}
-.slide-bare table.fsc-t.exec thead th.grp{text-align:center; border-bottom:1px solid rgba(255,255,255,.25)}
-.slide-bare table.fsc-t.exec thead th.mid{vertical-align:middle}
-.slide-bare table.fsc-t.exec tbody td{padding:.34em .75em}
 </style>
 </head>
 

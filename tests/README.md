@@ -268,6 +268,43 @@ it to render the *same* ones: cssparity's whole guarantee — any difference is 
 difference — holds only while both sides are looking at identical markup. Two copies of the
 model would drift and the guarantee would quietly stop being true.
 
+## `slidecss.js` — §B is only what a capture cannot inherit
+
+`Deck_Styles.html` was 86 rules because the Deck Builder loaded the slide modules **without**
+the report pages those modules live on, so every rule their markup needed had to be restated
+under `.slide-bare`. The merge ended that: `captureBare` attaches its box to `<body>` in a
+document where §A1–§A3 are already loaded. Chunk 16 cut §B to **7 rules**, and this is what
+holds it there.
+
+For each rule it builds the DOM that rule's own selector requires, in the real document with
+the real stylesheet, and blanks **that one rule** under all ten `data-page` values. A rule that
+changes no computed value is restating the component layer and fails the run.
+
+Three things it had to learn, each of which would otherwise have given a wrong answer:
+
+- **One rule at a time, not the whole block.** §B's rules masked each other — its `table.gt`
+  override moves `--px`, so everything downstream looked load-bearing. Whole-block toggling
+  reported 11 keepers where per-rule reported 27, and after the redundant ones went, 19 of
+  those 27 turned out to be restatements as well. Deleting to a fixpoint took three passes.
+- **Custom properties, set as well as unset.** A §B rule reading `var(--tpy,4px)` against a §A3
+  rule reading the same var is identical at rest and identical when set. Against a §A3 rule
+  with a *literal* it differs **only once the fitter sets it** — which is exactly when the deck
+  captures. Every custom property a rule mentions is set to a distinctive value and read again.
+- **Every page, because scoping raises specificity.** §A4 is scoped on `body[data-page]`, and a
+  §B rule can be the thing beating a page rule. A rule is redundant only if it is redundant
+  under all ten.
+
+The reduction itself was proved separately and end to end — 880 specimens, every computed
+property, ten pages, **784,380 values, all identical** — because a per-rule test decides what
+to delete and cannot prove a *set* of deletions is safe.
+
+Mutation-tested by adding a rule that restates §A3, which fails naming it.
+
+```bash
+node tests/slidecss.js
+SLIDECSS_LIST=1 node tests/slidecss.js     # what each rule is worth
+```
+
 ## `helpers.js` — the drifted helpers, pinned as they are
 
 `toNum_`, `norm_` and `gk_` are duplicated across seven namespaces and have drifted. Chunk 15
