@@ -12,6 +12,11 @@
  * means every one of those gates covers app.html for free, and a merge that
  * "tidied" a module on the way in fails here with the module named.
  *
+ * A module changed ON PURPOSE since the port is declared in EDITS below and
+ * applied to the source side before comparing — gsparity.js's mechanism, for
+ * gsparity.js's reason. Two lines of fix is not worth losing the proof over the
+ * rest. Retire this when that list stops being short enough to read.
+ *
  * IT SURVIVED CHUNK 13, and the plan said it would not. The chunk-13 note read
  * "retire this — once the old .html are deleted there is no second copy". There
  * is: they are in git, and gsparity.js had already established that reading a
@@ -44,6 +49,80 @@ const APP  = fs.readFileSync(path.join(ROOT, 'app.html'), 'utf8');
    is what makes this a match on code rather than on a banner comment someone
    could copy without the body. */
 
+/* ---------------------------------------------------------------- EDITS
+ * Changes made to a module ON PURPOSE since it was ported, declared here and
+ * applied to the SOURCE side before comparing — exactly the mechanism
+ * gsparity.js uses for app.gs, and for the same reason.
+ *
+ * A module that has been deliberately changed is no longer a verbatim copy, and
+ * the honest options are to declare the change or to retire the harness. Two
+ * lines of fix is not worth losing the proof over the other 130 KB, so: declare
+ * it, keep everything else exact, and retire this when the list stops being
+ * short enough to read.
+ *
+ * Anything not declared here must still be byte-for-byte what it was.
+ */
+const EDITS = {
+  AmrFresh: [
+    { kind: 'insert',
+      why: 'BOTH RELOADS IN THIS MODULE RELOADED THE SANDBOX IFRAME. The page runs inside an ' +
+           'Apps Script sandbox iframe whose URL is a one-shot googleusercontent.com content ' +
+           'URL, so window.location.reload() re-requests that, gets nothing back, and leaves a ' +
+           'blank page the user has to reload by hand. Reported as "Update from source turns ' +
+           'the page white"; it predates the merge — Shell.html had the same two lines. §D\'s ' +
+           'navTop is the only correct way to navigate out of the sandbox.',
+      before: '  function show(){',
+      text: `  /* RELOAD THE TOP WINDOW, NEVER THIS ONE. The page runs inside an Apps Script
+     sandbox iframe whose URL is a one-shot googleusercontent.com content URL:
+     window.location.reload() re-requests THAT, gets nothing back, and leaves a
+     blank page the user has to reload by hand. Both reloads in this module did
+     that — it is the "Update from source turns the page white" report, and it
+     predates the merge. §D's navTop is the only correct way to navigate, and
+     AMR.nav.reload() is it pointed at the current page. */
+  function reloadTop(){
+    try {
+      if (window.AMR && AMR.nav && AMR.nav.reload) { AMR.nav.reload(); return; }
+      if (window.amrNavTop && window.APP_URL) {
+        var p = window.APP_PAGE;
+        var href = (p && p !== 'landing') ? (window.APP_URL + '?page=' + p) : window.APP_URL;
+        window.amrNavTop(href + (href.indexOf('?') === -1 ? '?' : '&') + 'r=' + Date.now());
+        return;
+      }
+    } catch (e) {}
+    /* Last resort. Wrong inside the sandbox, but better than doing nothing on a
+       page that somehow has no runtime. */
+    window.location.reload();
+  }
+
+` },
+    { kind: 'replace',
+      why: 'the no-chrome fallback, same reason.',
+      from: '    if (!el) { window.location.reload(); return; }   /* no chrome: just refresh */',
+      to:   '    if (!el) { reloadTop(); return; }               /* no chrome: just refresh */' },
+    { kind: 'replace',
+      why: 'the stale dialog\'s own button — the one the report was about.',
+      from: `      b.textContent = 'Loading the new figures\\u2026';
+      window.location.reload();`,
+      to:   `      b.textContent = 'Loading the new figures\\u2026';
+      reloadTop();` },
+  ],
+};
+
+function applyEdits(name, src) {
+  for (const op of (EDITS[name] || [])) {
+    if (op.kind === 'insert') {
+      if (src.split(op.before).length !== 2)
+        throw new Error(name + ': insert anchor is not unique — ' + JSON.stringify(op.before));
+      src = src.replace(op.before, op.text + op.before);
+    } else {
+      if (src.split(op.from).length !== 2)
+        throw new Error(name + ': replace block is not unique — ' + JSON.stringify(op.from.slice(0, 50)));
+      src = src.replace(op.from, op.to);
+    }
+  }
+  return src;
+}
+
 const blocksOf = src => [...src.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
 
 let failures = 0;
@@ -72,9 +151,14 @@ for (const m of MODULES) {
      the code. */
   const norm = s => s.slice(s.indexOf(m.open)).replace(/\r\n/g, '\n').trim();
   const a = norm(mine[0]);
-  const b = norm(their[0]);
+  const b = applyEdits(m.name, norm(their[0]));
+  const edits = (EDITS[m.name] || []).length;
 
-  if (a === b) { console.log(`  ✓ ${m.name}: verbatim from ${m.from} (${a.length} chars)`); continue; }
+  if (a === b) {
+    console.log(`  ✓ ${m.name}: ${edits ? `${edits} declared edit(s), otherwise verbatim from` : 'verbatim from'}` +
+                ` ${m.from} (${a.length} chars)`);
+    continue;
+  }
 
   let i = 0;
   while (i < a.length && i < b.length && a[i] === b[i]) i++;

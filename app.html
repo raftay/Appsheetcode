@@ -155,23 +155,68 @@ label.lbl,.lbl{display:block; font:600 12px Inter; color:var(--muted); margin-bo
 @media (prefers-reduced-motion:reduce){ .spinner{animation-duration:2.4s} }
 
 /* ---- top bar + brand ---- */
+/* THE HEADER IS ONE ROW UNTIL IT CANNOT BE, and what it must never do is either
+   of the two things it used to. Measured across widths before this block:
+   Ready-Mix's bar was 77px tall at 1600 and **256px at 980**, because a flex
+   container with no wrap SHRINKS its items and the button labels wrapped inside
+   them — three lines of "↻ Update from source" is what made it fat. And below
+   980 it also overflowed the viewport by up to 572px, so the buttons on the
+   right were not merely ugly, they were unreachable.
+
+   `flex-wrap` fixes the second, `white-space:nowrap` the first, and they have to
+   arrive together: nowrap alone would widen the overflow. Below --bp-mid the
+   brand subtitle goes too — it is a description, not a control, and it is the
+   one thing on the bar nobody needs at 900px. */
 header.bar{position:sticky; top:0; z-index:20; background:var(--blue-100); color:#fff;
-  display:flex; align-items:center; gap:18px; padding:14px 24px;
+  display:flex; align-items:center; flex-wrap:wrap; gap:12px; row-gap:8px; padding:14px 24px;
   box-shadow:0 1px 0 rgba(255,255,255,.06), 0 6px 20px rgba(1,30,106,.18)}
-.brand{display:flex; align-items:baseline; gap:12px}
+.brand{display:flex; align-items:baseline; gap:12px; min-width:0}
 .brand .mark{font-family:Archivo; font-weight:800; letter-spacing:.22em; font-size:15px;
-  color:var(--accent-light); padding-right:12px; border-right:1px solid rgba(255,255,255,.18)}
-.brand .title{font-family:Archivo; font-weight:700; font-size:16px; letter-spacing:.01em}
-.brand .sub{font-size:12px; color:#A9C3E8; margin-left:2px}
+  color:var(--accent-light); padding-right:12px; border-right:1px solid rgba(255,255,255,.18);
+  white-space:nowrap}
+.brand .title{font-family:Archivo; font-weight:700; font-size:16px; letter-spacing:.01em;
+  white-space:nowrap}
+/* CAPPED AND ELLIPSISED, and the cap is what keeps the bar one row. A wrapping
+   flex container breaks the line BEFORE it shrinks anything, so an uncapped
+   subtitle — Ready-Mix's is 59 characters — made .brand 685px wide and pushed
+   the last control onto a second row at 1600px. Truncation is the right
+   trade for a description sitting next to nine controls. */
+.brand .sub{font-size:12px; color:#A9C3E8; margin-left:2px;
+  display:inline-block; max-width:26ch; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; vertical-align:bottom}
 header .spacer{flex:1}
+
+@media (max-width:980px){          /* --bp-mid */
+  header.bar{gap:10px; row-gap:7px; padding:10px 16px}
+  /* the description, which is what the bar can afford to lose first */
+  .brand .sub{display:none}
+  /* the spacer would otherwise hold a whole empty row open once things wrap */
+  header .spacer{flex:1 1 0; min-width:0}
+}
+@media (max-width:760px){          /* --bp-narrow */
+  /* Nine controls cannot be one row on a phone, so the bar is several — and a
+     sticky bar several rows tall eats a quarter of the viewport permanently.
+     Let it scroll away instead; the page switcher goes with it, which is the
+     same trade every one of these tools already makes with its sidebar. */
+  header.bar{position:static; padding:9px 12px; gap:8px}
+  .brand{gap:8px}
+  .brand .mark{padding-right:8px; font-size:13px; letter-spacing:.16em}
+  .brand .title{font-size:14px}
+}
 
 /* ---- buttons ---- */
 /* .ghost lives on the navy header → outline + white text. */
+/* nowrap is the whole fix for a fat header: a shrunken button wraps its LABEL,
+   and three lines of "↻ Update from source" is what made the bar 256px tall. */
 .ghost{border:1px solid rgba(255,255,255,.28); background:transparent; color:#fff;
-  font:600 12.5px Inter; padding:8px 14px; border-radius:var(--r-sm); cursor:pointer; transition:.15s}
+  font:600 12.5px Inter; padding:8px 14px; border-radius:var(--r-sm); cursor:pointer;
+  transition:.15s; white-space:nowrap}
 .ghost:hover{background:rgba(255,255,255,.12)}
 .ghost.primary{background:#fff; color:var(--blue-100); border-color:#fff}
-.ghost+.ghost{margin-left:8px}
+/* The bar is a flex container with a gap; this margin was stacking ON TOP of it,
+   so every pair of buttons sat 26px apart and a nine-control header ran out of
+   row. Kept for .ghost pairs OUTSIDE the bar, which have no gap of their own. */
+:not(header) > .ghost + .ghost{margin-left:8px}
 /* white button inside light cards */
 .dl,.lk{border:1px solid var(--line); background:#fff; color:var(--blue-80); cursor:pointer;
   font:600 11.5px Inter; padding:6px 10px; border-radius:9px; transition:.14s}
@@ -2004,6 +2049,12 @@ window.AMR = (function(){
     return pageKey === 'landing' ? URL_BASE : (URL_BASE + '?page=' + pageKey);
   }
 
+  /* Navigate the TOP window. The page runs inside an Apps Script sandbox
+     iframe served from googleusercontent.com, so a normal location change
+     reloads THAT — a one-shot content URL which does not re-serve, and comes
+     back blank. An anchor with target="_top" is what actually re-requests the
+     web app. Nothing in this file may navigate any other way; the two places
+     that did are noted in AmrFresh. */
   function navTop(href){
     var a = document.createElement('a');
     a.href = href; a.target = '_top';
@@ -5542,12 +5593,34 @@ window.AmrFresh = (function(){
 
   function page(){ return window.APP_PAGE || ''; }
 
+  /* RELOAD THE TOP WINDOW, NEVER THIS ONE. The page runs inside an Apps Script
+     sandbox iframe whose URL is a one-shot googleusercontent.com content URL:
+     window.location.reload() re-requests THAT, gets nothing back, and leaves a
+     blank page the user has to reload by hand. Both reloads in this module did
+     that — it is the "Update from source turns the page white" report, and it
+     predates the merge. §D's navTop is the only correct way to navigate, and
+     AMR.nav.reload() is it pointed at the current page. */
+  function reloadTop(){
+    try {
+      if (window.AMR && AMR.nav && AMR.nav.reload) { AMR.nav.reload(); return; }
+      if (window.amrNavTop && window.APP_URL) {
+        var p = window.APP_PAGE;
+        var href = (p && p !== 'landing') ? (window.APP_URL + '?page=' + p) : window.APP_URL;
+        window.amrNavTop(href + (href.indexOf('?') === -1 ? '?' : '&') + 'r=' + Date.now());
+        return;
+      }
+    } catch (e) {}
+    /* Last resort. Wrong inside the sandbox, but better than doing nothing on a
+       page that somehow has no runtime. */
+    window.location.reload();
+  }
+
   function show(){
     if (shown) return;
     shown = true;
     if (timer) clearTimeout(timer);
     var el = document.getElementById('amrStale');
-    if (!el) { window.location.reload(); return; }   /* no chrome: just refresh */
+    if (!el) { reloadTop(); return; }               /* no chrome: just refresh */
     el.classList.add('amr-open');
   }
 
@@ -5570,7 +5643,7 @@ window.AmrFresh = (function(){
     if (b) b.onclick = function(){
       b.disabled = true;
       b.textContent = 'Loading the new figures\u2026';
-      window.location.reload();
+      reloadTop();
     };
   });
 
