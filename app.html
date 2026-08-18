@@ -906,8 +906,23 @@ body[data-page="rmx"] .stamp{font:500 11px Inter; color:#A9C4E6; margin-right:10
    shared .shell grid. Left as it was; unifying the two layouts is a design
    change, not a move. */
 body[data-page="rmx"] .wrap{display:flex; gap:18px; padding:18px 22px; align-items:flex-start}
-body[data-page="rmx"] aside{width:248px; flex:none; display:flex; flex-direction:column; gap:14px}
-body[data-page="rmx"] main{flex:1; min-width:0; display:flex; flex-direction:column; gap:16px}
+/* Both of these are anchored on .wrap, and that is not tidiness. The page's own
+   aside and main are the only ones inside .wrap; unanchored, the selectors also
+   reach two elements the legacy page's bare `aside{}` / `main{}` could never
+   have hit at this weight:
+     · #appRoot IS a <main>, so `… main` restyled the mount itself — every page
+       element picked up a 16px flex gap that was never in the design.
+     · AmrQlikGuide appends its aside to <body>, so `… aside` outranked
+       .qlikGuide{display:none} — (0,1,2) against (0,1,0) — and the guide opened
+       on load and would not close. Legacy's `aside{}` was (0,0,1) and lost to
+       the class, which is exactly why nobody saw this before the merge.
+   Scoping a BARE ELEMENT selector to body[data-page="…"] raises its specificity
+   by an attribute selector. It does not only narrow — it can also start winning
+   cascades the original lost. */
+body[data-page="rmx"] .wrap > aside{width:248px; flex:none; display:flex;
+  flex-direction:column; gap:14px}
+body[data-page="rmx"] .wrap > main{flex:1; min-width:0; display:flex;
+  flex-direction:column; gap:16px}
 
 /* the period / N-A / theme controls are §A3's .seg.full, but pressed is navy here */
 body[data-page="rmx"] .seg button[aria-pressed="true"]{background:var(--blue-100)}
@@ -1545,6 +1560,15 @@ body[data-page="tp01"] .tpfoot{font:500 11px Inter; color:var(--muted); text-ali
 body[data-page="inventoryreport"],
 html:has(body[data-page="inventoryreport"]){height:100%}
 body[data-page="inventoryreport"]{display:flex; flex-direction:column}
+
+/* #appRoot is the link in that chain the legacy page never needed. There
+   .irwrap was a direct child of <body>; here the mount sits between them, and
+   `flex:1` on a child of a BLOCK box does nothing at all. .irwrap collapsed to
+   its content, so .ir-frame-wrap's own flex:1 resolved against zero free space
+   and the iframe rendered 0px tall — the page painted its toolbar and then
+   nothing. Any page that wants the viewport has to re-state the chain here. */
+body[data-page="inventoryreport"] #appRoot{flex:1; min-height:0;
+  display:flex; flex-direction:column}
 
 body[data-page="inventoryreport"] .irwrap{flex:1; display:flex; flex-direction:column;
   max-width:1560px; width:100%; margin:0 auto; padding:14px 20px 18px; min-height:0}

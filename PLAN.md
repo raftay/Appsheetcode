@@ -2,7 +2,7 @@
 
 **Status: in progress on `merging-files`. Chunks 0–12 done — both files now exist.** `app.html` is ~1.13 MB and holds the runtime, thirteen shared modules and all ten pages; §A3 is 363 rules and §A4 is 441. **`app.gs` is 542 KB / 11,388 lines in eleven sections, and the 16 `.gs` files are gone** — deleted in the same commit that added it, because they cannot coexist ([§2](#2-the-thing-that-would-have-broken-it)). All **18** harnesses run and are green: `tests/ovperiod.js` and `tests/bgrender.js` drive `app.html` through a real browser alongside their legacy side, `tests/pageparity.js` covers eight of the ten pages, and the new `tests/gsparity.js` proves every region of `app.gs` is still byte-for-byte the file it came from.
 
-**Chunk 13, the cutover, is the next thing to do** — and it is now the only thing between here and two files. Two owed items carry into it, both listed under [chunk 12's notes](#what-chunk-12-settled): two user-facing sentences in `app.html` that chunk 12 made untrue, and `APP_verifyPermissions()`, which has never been run because nothing off-platform can run it.
+**Chunk 13, the cutover, is the next thing to do** — and it is now the only thing between here and two files. Three owed items carry into it: two user-facing sentences in `app.html` that chunk 12 made untrue and `APP_verifyPermissions()`, which has never been run because nothing off-platform can run it (both under [chunk 12's notes](#what-chunk-12-settled)); plus the **Ready-Mix bare-element specificity audit**, which has to happen *before* the file it is diffed against is deleted — see [the notes on the gap after chunk 12](#what-the-gap-after-chunk-12-settled).
 
 > **Note on the chunk numbers.** They are a way of splitting the work, not a structure the
 > code should carry. Nothing in `app.html` is arranged around them and nothing should be: a
@@ -50,7 +50,7 @@
 5. [The shape of `app.gs`](#5-the-shape-of-appgs)
 6. [The permissions self-check](#6-the-permissions-self-check)
 7. [Logging, and the debug functions it replaces](#7-logging-and-the-debug-functions-it-replaces)
-8. [The chunks](#8-the-chunks)
+8. [The chunks](#8-the-chunks) — including [what the gap after chunk 12 settled](#what-the-gap-after-chunk-12-settled)
 9. [What this costs](#9-what-this-costs)
 10. [Four things this merge does not touch](#10-four-things-this-merge-does-not-touch)
 11. [Legacy hit-list](#11-legacy-hit-list)
@@ -301,6 +301,22 @@ what belongs to them:**
   in §A3 or §A4 is a token that has not been created yet.
 - **Three breakpoints, named.** Every `@media` maps onto one of them. A page needing a fourth
   needs a reason written next to it.
+- **`body[data-page="x"] ` is not only a narrowing prefix — it also RAISES SPECIFICITY.** A
+  bare `aside{}` is (0,0,1) and loses to any class. Prefixed, it is (0,1,2) and beats one. On
+  Ready-Mix that turned `.qlikGuide{display:none}` into a rule that no longer applied, and the
+  QlikView guide opened on load and would not close — on that page and no other. **Anchor a
+  bare element selector on the page's own container** (`… .wrap > aside`), never on the body
+  scope alone.
+- **The page is not the document any more, and `#appRoot` is a `<main>`.** Two consequences
+  that both shipped: `body[data-page="rmx"] main{}` matched the mount itself, and
+  `AmrQlikGuide` appends its aside to `<body>`, *outside* `#appRoot`, where a page rule can
+  still reach it. If a rule is meant for the mount, **name `#appRoot`** — `tests/merge.js`
+  check 8 fails a selector that restyles it silently.
+- **A page that wants the viewport has to re-state the height chain through `#appRoot`.**
+  Legacy pages were direct children of `<body>`, so `body{display:flex}` + `.thing{flex:1}`
+  worked. Now the mount is in between, and **`flex:1` on a child of a block box does nothing**
+  — the child collapses to its content and anything sized `flex:1` inside it resolves against
+  zero free space. The Inventory Report's PDF frame rendered 0px tall for exactly this reason.
 
 ### What this costs, and how it is checked
 
@@ -659,7 +675,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | # | Chunk | What lands | Review by | |
 |---|---|---|---|---|
 | 12 | **`app.gs`** | All 16 `.gs` merged in the [§5](#5-the-shape-of-appgs) order — **542 KB, 11,388 lines, eleven sections, zero top-level collisions.** `APP_log()` + `APP_CONFIG.LOG_LEVEL`, `APP_verifyPermissions()`, and seven explicit `oauthScopes` in `appsscript.json`. Six debug functions deleted, plus `CUBE_historyStatus` and `syncSlideData`; `qlikStamps` and `getSaskRatesStatus` kept, with reasons. Old `.gs` deleted **in this same commit** ([§2](#2-the-thing-that-would-have-broken-it)). The seven harnesses that read a `.gs` now read a **region** of `app.gs` through the new `tests/appgs.js`, and `tests/gsparity.js` proves every region is still byte-for-byte its source. | `tests/gsparity.js` (mutation-tested four ways), `configcheck`, `qliksync`, `fscheader`, `pvlookup`, `rmxcost`, `freshness`, `deckstatic`, `node --check` **on a `.js` copy** — plus the whole 18-harness suite, all green. **`APP_verifyPermissions()` in the editor is still owed**: nothing off-platform can run it | ✅ |
-| 13 | **Cutover** | `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; `README.md` and `CLAUDE.md` rewritten around two files. **Delete `tests/modparity.js`** and repoint `regress.js` / `pageparity.js` / `slidefit.js` / `deckpath.js` at `app.html` — they compare against files that no longer exist after this commit. **`tests/gsparity.js` retires here too, for the same reason its header gives.** Also: `AmrKpiStore` goes ([§11](#11-legacy-hit-list)), and **two user-facing sentences in `app.html` that chunk 12 made untrue** — see [chunk 12's notes](#what-chunk-12-settled). | the whole suite, every route | ☐ |
+| 13 | **Cutover** | **Also owed here: the Ready-Mix bare-element specificity audit** — see [the chunk-12→13 notes](#what-the-gap-after-chunk-12-settled). `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; `README.md` and `CLAUDE.md` rewritten around two files. **Delete `tests/modparity.js`** and repoint `regress.js` / `pageparity.js` / `slidefit.js` / `deckpath.js` at `app.html` — they compare against files that no longer exist after this commit. **`tests/gsparity.js` retires here too, for the same reason its header gives.** Also: `AmrKpiStore` goes ([§11](#11-legacy-hit-list)), and **two user-facing sentences in `app.html` that chunk 12 made untrue** — see [chunk 12's notes](#what-chunk-12-settled). | the whole suite, every route | ☐ |
 
 ### After the merge is proven — see [§10](#10-four-things-this-merge-does-not-touch)
 
@@ -671,6 +687,60 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 17 | **Device cache on both fuel pages** | Wire `AmrCache` into AGG Fuel Recovery and RMX Fuel Recovery, so a repeat visit paints from `localStorage` instead of waiting on the sheet. **Requested; new behaviour, not a port** — see [§10](#10-four-things-this-merge-does-not-touch). | ☐ |
 | 18 | **`APP_log` at the server entry points** | Chunk 12 wrote the helper and left the 10,889 moved lines alone, on purpose — see its notes. This wires it in, and the order is the order of the payoff: **`APP_cachePut_`'s `n > 250` bail first** (that silent `skip` is the whole reason the `cache` field exists, and README §6 is what it costs), then `APP_cacheGet_`'s hit/miss, then the entry points a harness already covers so each line lands with a gate on it — `getFscData`, `getPvUnmapped`, `qlikSyncCheck`, `RMX_prepare`. Never inside a per-row loop. **Do the `catch (e) {}` pass in the same chunk**: [§7](#7-logging-and-the-debug-functions-it-replaces) says silent is right for an optional cache read and wrong for everything else, and chunk 12 carried all of them across undecided because deciding them is an edit, not a move. | ☐ |
 | 19 | **The unwired Saskatchewan rates readout** | `getSaskRatesStatus` says in its own comment that it exists "so the Settings screen can check the sheet without loading a whole page", and no `.html` has ever called it. Either wire it into Settings or delete it and the sentence — but not inside a merge. See [§1a](#1a-chunk-1-results--the-three-audits). | ☐ |
+
+### What the gap after chunk 12 settled
+
+Not a chunk — three bugs found from one screenshot ("the app version of Inventory doesn't
+show the actual file") and the gate that now covers the class they belong to. All three are
+the same cause: **the merge changed the CSS context, and scoping a page's style block is not
+a neutral transformation of it.**
+
+- **The Inventory Report painted its toolbar and then nothing.** `.irwrap` was a direct child
+  of `<body>` on the legacy page; in `app.html` `#appRoot` is between them, and `flex:1` on a
+  child of a **block** box does nothing at all. `.irwrap` collapsed to its content, so
+  `.ir-frame-wrap`'s own `flex:1` had zero free space to claim and the PDF iframe rendered
+  **0px tall**. Nothing errored, nothing was missing, and the toolbar above it looked right —
+  which is why it reads as "the file won't load" rather than as a layout bug. One rule
+  (`body[data-page="inventoryreport"] #appRoot`) restores the chain. Measured in Chromium
+  either side of the fix: the frame goes **1520×2 → 1520×455**.
+
+- **`#appRoot` is a `<main>`, and Ready-Mix's `body[data-page="rmx"] main{}` was hitting it.**
+  The mount picked up `display:flex; gap:16px`, so every one of the page's own elements got
+  16px of space that was designed for one column of cards.
+
+- **The QlikView guide was stuck open on Ready-Mix, and only there.** `AmrQlikGuide` appends
+  its `<aside>` to `document.body` — outside `#appRoot`, and therefore still inside the reach
+  of `body[data-page="rmx"] aside{}`. That selector is **(0,1,2)**; `.qlikGuide{display:none}`
+  is **(0,1,0)**. The page rule won and the guide showed on load, and the Close button
+  (which removes `.open`) fell back to `display:flex` rather than to `none`. The legacy page
+  carried the identical declarations as a bare `aside{}` at **(0,0,1)**, which lost to the
+  class — so this could not have existed before the merge, and no amount of comparing the two
+  files would have shown it.
+
+  > **The rule this gives you: scoping raises specificity.** `body[data-page="x"] ` adds an
+  > attribute selector's worth of weight to everything behind it, so a prefixed bare element
+  > rule starts winning cascades the original lost. Anchor it on the page's own container.
+
+- **`tests/merge.js` check 8 (`css-reach`) is what would have caught all three of the reach
+  half.** It builds the real document — the shared shells taken from the file, the guide aside
+  and FAB that `AmrQlikGuide` appends at runtime, and the page mounted in `#appRoot` — and
+  asks each §A4 selector what it *matches*, rather than what it looks like. A match outside
+  `#appRoot` fails; a match on `#appRoot` fails unless the selector names it, because a rule
+  meant for the mount should say so. Mutation-tested three ways (un-anchor the aside,
+  un-anchor the main, point a page rule at `.amr-card`); each is caught with the selector
+  named. 454 selectors checked; the 2 skipped are `::-moz-range-thumb` / `::-moz-range-track`,
+  both anchored on `.ov-win-track` and unable to escape.
+
+- **What `css-reach` does NOT cover, and is owed at chunk 13.** It proves no §A4 rule escapes
+  the page. It cannot see the other half of the same trap: a raised-specificity rule beating a
+  shared `.class` rule *inside* the page. Ready-Mix still styles bare `table`, `th`, `td`,
+  `thead th`, `tfoot td` and `tr.subtotal td` that way. Proving those needs a **booted** page
+  and a computed-style diff against `Page_Rmx.html` — so it wants doing **before** chunk 13
+  deletes the file that is the only thing left to compare against.
+
+- **Ten of the seventeen harnesses read a legacy `.html`**, so "delete the old files" is a
+  harness job, not an `rm`: `bgrender`, `deckpath`, `deckstatic`, `freshness`, `modparity`,
+  `ovperiod`, `pageparity`, `regress`, `segboot`, `slidefit`.
 
 ### What chunk 12 settled
 
@@ -1613,13 +1683,23 @@ you can `Ctrl+F` is the substitute for the reference that cannot exist.
   verdict on anything that reads a cache. See [§7](#7-logging-and-the-debug-functions-it-replaces).
 - **Do not carry a `catch (e) {}` across without deciding what it is.** Silent is right for an
   optional cache read and wrong for everything else.
+- **Scoping a CSS rule is not a neutral transformation of it.** `body[data-page="x"] ` narrows
+  what a selector matches AND raises its specificity by an attribute selector, so a prefixed
+  bare `aside{}` / `main{}` / `table{}` can start beating the shared class rules the original
+  lost to. And the page is no longer the document: `#appRoot` is a `<main>` between `<body>`
+  and the page, `AmrQlikGuide` appends outside it, and a `flex:1` chain that used to start at
+  `<body>` now has a block box in the middle of it. `tests/merge.js` check 8 covers the reach
+  half; the specificity half still needs a computed-style diff. See [§3](#3-how-the-pages-live-inside-one-html-file).
 - **Comment as you merge, not after.** Every section gets its banner and its "why" note while
   the context is fresh. A 20,000-line file with no signposts is worse than 37 files.
 - **Run the harnesses in `tests/` before and after each chunk.** They are the only proof
   available off-platform that a page still renders what it rendered. Three of them are about
   `app.html` itself, and all three now exist:
   - `tests/merge.js` *(chunk 2)* — every id a page's JS references exists in that page's
-    `<template>`; every page CSS block is scoped; no page IIFE leaks a global.
+    `<template>`; every page CSS block is scoped; no page IIFE leaks a global. **Check 8
+    (`css-reach`) also asks each §A4 selector what it MATCHES**, against a real document with
+    the shared shells and the runtime-appended guide aside in it — scoped and harmless are not
+    the same thing, and three shipped bugs are the evidence.
   - `tests/pageparity.js` *(chunk 3)* — old page against new page under jsdom with
     `google.script.run` stubbed, DOM diffed. **Add your page's case to it before you touch
     the page**, so you find out on the first run rather than the last.

@@ -22,6 +22,11 @@
  *   7. No page declares a local that SHADOWS one of the runtime's globals.
  *      Price & Volume carried `var AMR = …palette.slice()`; inside a
  *      registration IIFE that hides window.AMR from every line below it.
+ *   8. No §A4 rule REACHES OUTSIDE its own page's markup, and none restyles
+ *      #appRoot without naming it. Scoping is not only narrowing: prefixing a
+ *      bare `aside{}` with body[data-page="x"] also raises its specificity by
+ *      an attribute selector, so it starts winning cascades the original lost.
+ *      Ready-Mix shipped both halves of that — see the check for what broke.
  *
  * Run:  node tests/merge.js
  * Exit: 0 all good, 1 on the first category that fails (all failures printed).
@@ -306,6 +311,117 @@ const SHARED_IDS = new Set([
     }
   }
   if (!bad) pass('no-shadow', 'no page shadows a runtime global');
+}
+
+/* ------------------------------- 8. §A4 stays inside its own page's markup */
+{
+  /* WHY THIS EXISTS — two live bugs, one cause, neither visible in a diff.
+   *
+   * Every page used to BE the document: its markup were children of <body>,
+   * and its style block could say `aside{…}` or `main{…}` and mean its own.
+   * In app.html the page is mounted inside <main id="appRoot">, and two things
+   * changed that a straight prefix does not account for:
+   *
+   *   · #appRoot IS a <main>. `body[data-page="rmx"] main{…}` matched the mount
+   *     as well as the page's own <main>, so the whole page inherited a flex
+   *     container and a 16px gap that were meant for one column.
+   *   · AmrQlikGuide appends its <aside> to document.body, OUTSIDE #appRoot.
+   *     `body[data-page="rmx"] aside{…}` is (0,1,2); .qlikGuide{display:none}
+   *     is (0,1,0). The page rule won, and the guide opened on load and could
+   *     not be closed. Legacy's bare `aside{}` was (0,0,1) and lost to the
+   *     class — which is why this could only appear after the merge.
+   *
+   * So the invariant is not "is it scoped" (check 5) but "what does it REACH".
+   * Build the real document — shared shells, the runtime-appended guide, the
+   * page mounted in #appRoot — and ask the selector itself. */
+  let jsdom = null;
+  try { ({ JSDOM: jsdom } = require('jsdom')); } catch (e) { /* handled below */ }
+
+  if (!jsdom) {
+    console.log('  – css-reach: skipped, jsdom is not installed ' +
+                '(npm install jsdom --prefix ' + ROOT + ')');
+  } else {
+    /* The shared shell is app.html's body with every <template> and <script>
+       removed — what is left is #appRoot and the modal shells that live beside
+       it. Taking it from the file rather than hard-coding it means a new shell
+       element is covered the day it lands. */
+    const SHELL = BODY
+      .replace(/<template[\s\S]*?<\/template>/g, '')
+      .replace(/<script[\s\S]*?<\/script>/g, '')
+      .replace(/<\?[\s\S]*?\?>/g, '');
+
+    /* What AmrQlikGuide.mount() appends to <body> at runtime. It is not in the
+       file, so nothing static could see it — and it is exactly what got hit. */
+    const RUNTIME_APPENDED =
+      '<aside class="qlikGuide" id="qlikGuide"><div id="qlikGuideSteps"></div>' +
+      '<button class="qgHide" id="qgHide">Close guide</button></aside>' +
+      '<button class="qgFab" id="qgFab">Guide</button>' +
+      '<div class="qgLightbox"><img alt=""></div>';
+
+    const a4 = [...NO_COMMENTS.matchAll(/<style>([\s\S]*?)<\/style>/g)]
+      .map(m => m[1]).find(b => /§A4\s+PAGE CSS/.test(b)) || '';
+    const css = a4.replace(/\/\*[\s\S]*?\*\//g, '').replace(/@media[^{]*\{/g, '');
+
+    /* selector → the one page it is scoped to, from the attribute value itself */
+    const rules = [];
+    for (const rule of css.matchAll(/(^|\})\s*([^{}@]+)\{/g)) {
+      for (const part of rule[2].split(',')) {
+        const sel = part.trim();
+        if (!sel) continue;
+        const m = sel.match(/^body\[data-page="([\w-]+)"\]/);
+        if (m) rules.push({ sel, page: m[1] });
+      }
+    }
+
+    let bad = 0, skipped = 0, checked = 0;
+    for (const name of templates) {
+      const mine = rules.filter(r => r.page === name);
+      if (!mine.length) continue;
+      const tpl = PAGES[name].tpl.replace(/^<template[^>]*>/, '');
+      const dom = new jsdom(
+        '<!doctype html><html><body data-page="' + name + '"></body></html>');
+      const d = dom.window.document;
+      d.body.innerHTML = SHELL + RUNTIME_APPENDED;
+      const root = d.getElementById('appRoot');
+      if (!root) { fail('css-reach', 'the shared shell has no #appRoot'); break; }
+      root.innerHTML = tpl;
+
+      for (const { sel } of mine) {
+        let hits;
+        try { hits = [...d.querySelectorAll(sel)]; }
+        catch (e) { skipped++; continue; }   /* :has() and friends */
+        checked++;
+        for (const el of hits) {
+          if (el === d.body || el === d.documentElement) continue;
+          if (el === root) {
+            /* Allowed, but only on purpose. A rule that means the mount says so. */
+            if (!/#appRoot/.test(sel)) {
+              bad++;
+              fail('css-reach',
+                   `${sel.slice(0, 60)} restyles #appRoot itself — the mount is a ` +
+                   `<main>, so a bare element selector reaches it. Name #appRoot ` +
+                   `if that is meant, or anchor the selector inside the page.`);
+            }
+            continue;
+          }
+          if (!root.contains(el)) {
+            bad++;
+            fail('css-reach',
+                 `${sel.slice(0, 60)} reaches <${el.tagName.toLowerCase()}` +
+                 (el.id ? '#' + el.id : '') +
+                 (el.className ? '.' + String(el.className).split(/\s+/)[0] : '') +
+                 `> which is OUTSIDE #appRoot — and at a higher specificity than ` +
+                 `the shared rule that styles it. Anchor the selector on the ` +
+                 `page's own container.`);
+          }
+        }
+      }
+    }
+    if (!bad) {
+      pass('css-reach', `${checked} §A4 selectors stay inside their page` +
+                        (skipped ? ` (${skipped} skipped: unsupported selector)` : ''));
+    }
+  }
 }
 
 console.log(failures ? `\n${failures} failure(s)` : '\nmerge.js: all checks passed');
