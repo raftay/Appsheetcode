@@ -686,6 +686,47 @@ function extractSpreadsheetId_(input){
  * wrong. A line carrying ms and bytes would have shown a flat 15–24 s against a
  * varying question on the first read of the transcript.
  *
+ * ---------------------------------------------------------------------------
+ * THE SILENT-CATCH CENSUS  (chunk 18) — 36 of them, every one decided.
+ * ---------------------------------------------------------------------------
+ * §7's rule is that silent is right for an OPTIONAL CACHE READ and wrong for
+ * everything else. Applying it gave two groups, and the group a catch is in is
+ * the whole of the decision.
+ *
+ * COUNT THEM WITH `catch\s*\([a-z0-9]+\)\s*\{\s*\}`, NOT `catch (e) {}`.
+ * The obvious grep says 31 and the real number is 36: five of them are nested
+ * and bind e2 or e3, and every one of those five turned out to be in the group
+ * that has to speak — including a fallback chain in PVLOOK.applyRows whose
+ * FALLBACK was also silent, so both ways of invalidating the cache could fail
+ * with the rows already written and nothing said.
+ *
+ *   12 STAY SILENT. All of them are a cache handle, read or write whose failure
+ *      costs speed and nothing else — getLogo's copy, APP_oneStamp_'s three,
+ *      APP_forgetStamp_'s handle, the permissions probe cleaning up after
+ *      itself, the logo invalidation in PV.clearCache, and the two cPut_
+ *      wrappers (which now delegate to an APP_cachePut_ that logs and cannot
+ *      throw). Plus two that ARE reported by their own return value:
+ *      qlikStamps prints "(never)" / "unreadable" in the answer a human is
+ *      reading, and APP_permAnySheetId_'s inner loop, where a page with no
+ *      sheet configured is an expected miss rather than a failure.
+ *
+ *   24 NOW SPEAK, and they fall into one shape: AN INVALIDATION THAT FAILED
+ *      SILENTLY LOOKS EXACTLY LIKE NOTHING HAVING HAPPENED. syncAll's three
+ *      clears, APP_forgetStamp_'s remove, both bumpGeneration_ stamp drops, the
+ *      history-cube token, and — the one that is logged at ERROR rather than
+ *      warn — QLIKSYNC.run's syncAll, where the pipeline SUCCEEDS, the sheets
+ *      hold new numbers, and every page keeps serving the old ones out of cache
+ *      while the run reports ok. Nothing else in the system notices that.
+ *      The rest change an answer or leave state behind: two unreleased locks,
+ *      two untrashed Drive files, the segment year fallback, four QlikView
+ *      stamp reads whose failure silently re-syncs an export, and the two
+ *      cache-key generation fallbacks — where '0' is not "no cache", it is a
+ *      key EVERY generation shares, so an entry written under it outlives the
+ *      data it describes. And getLogo's outer catch, which is the first place a
+ *      missing script.external_request scope would ever show itself.
+ *
+ * Anything added here later gets the same question, and it is not a style one.
+ *
  * WHERE TO LOG. At entry points and phase boundaries. NEVER inside a per-row
  * loop: the Ready-Mix bundle is 40,000 rows, so a line per row would cost more
  * than the work it describes and would bury the line that matters. One line when
@@ -919,7 +960,14 @@ function getLogo() {
       try { CacheService.getScriptCache().put(KEY, uri, 21600); } catch (e2) {}
       return uri;
     }
-  } catch (e3) {}
+  } catch (e3) {
+    /* Not silent (§7). Returning '' renders every page with no logo and no
+       reason given — and this is also the first place a missing
+       script.external_request scope shows up, which §6 warns nothing else will
+       tell you about. */
+    APP_log('warn', 'APP.getLogo', 'could not fetch the logo — pages will render without it',
+            { error: String(e3) });
+  }
   return '';
 }
 
@@ -1015,7 +1063,16 @@ function APP_forgetStamp_(page){
   try { c = CacheService.getScriptCache(); } catch (e) {}
   ids.forEach(function(id){
     delete APP_STAMP_MEMO[id];
-    if (c) { try { c.remove(APP_stampKey_(id)); } catch (e) {} }
+    if (c) {
+    try { c.remove(APP_stampKey_(id)); }
+    catch (e) {
+      /* NOT AN OPTIONAL READ — an invalidation (§7). Failing here means the
+         stale stamp is served for the rest of its TTL, so ↻ Update from source
+         answers "already up to date" about a sheet that has changed. */
+      APP_log('warn', 'APP.forgetStamp', 'could not drop the cached stamp — the page may be told nothing changed',
+              { page: id, error: String(e) });
+    }
+  }
   });
 }
 
@@ -1061,24 +1118,76 @@ function getDataVersions(pages) {
 
 /* chunked CacheService helpers (6 h TTL) used by the Slide data below */
 function APP_cachePut_(key, obj) {
+  var t0 = Date.now();
   try {
     var s = JSON.stringify(obj), CH = 90000, n = Math.ceil(s.length / CH);
-    if (n > 250) return;                          // too big to cache; will recompute
+    if (n > 250) {
+      /* THE SILENT BAIL THIS WHOLE FIELD EXISTS FOR. Above the chunk ceiling
+         nothing is stored, so every later request recomputes — and from the
+         outside that is indistinguishable from a cache that is simply never
+         warm. README §6 is what that costs: every Ready-Mix entry point pulled
+         a 14 MB bundle through CacheService to produce a 72 KB answer, for a
+         long time, because nothing about it looked wrong. A flat elapsed time
+         against a varying question is the tell, and it needs a line to be read
+         off. warn, not debug: this is a cache that is not working. */
+      APP_log('warn', 'APP.cachePut', 'too big to cache — every read will recompute',
+              { cache: 'skip', bytes: s.length, chunks: n, limit: 250,
+                ms: Date.now() - t0, key: key });
+      return;
+    }
     var m = {}; m[key + '__meta'] = String(n);
     for (var i = 0; i < n; i++) m[key + '__' + i] = s.substring(i * CH, (i + 1) * CH);
     CacheService.getScriptCache().putAll(m, 21600);
-  } catch (e) {}
+    APP_log('debug', 'APP.cachePut', 'stored',
+            { cache: 'put', bytes: s.length, chunks: n, ms: Date.now() - t0, key: key });
+  } catch (e) {
+    /* NOT SILENT. §7's rule is that silent is right for an optional cache READ
+       and wrong for everything else — a write that throws means every later
+       request recomputes, which is the same outcome as the bail above and just
+       as invisible. */
+    APP_log('warn', 'APP.cachePut', 'write failed — every read will recompute',
+            { cache: 'skip', ms: Date.now() - t0, key: key, error: String(e) });
+  }
 }
 function APP_cacheGet_(key) {
+  var t0 = Date.now();
   try {
     var c = CacheService.getScriptCache(), meta = c.get(key + '__meta');
-    if (!meta) return null;
+    if (!meta) {
+      APP_log('debug', 'APP.cacheGet', 'miss', { cache: 'miss', ms: Date.now() - t0, key: key });
+      return null;
+    }
     var n = parseInt(meta, 10), ids = [];
     for (var i = 0; i < n; i++) ids.push(key + '__' + i);
     var got = c.getAll(ids), parts = [];
-    for (var j = 0; j < n; j++) { var p = got[key + '__' + j]; if (p == null) return null; parts.push(p); }
-    return JSON.parse(parts.join(''));
-  } catch (e) { return null; }
+    for (var j = 0; j < n; j++) {
+      var p = got[key + '__' + j];
+      if (p == null) {
+        /* A PARTIAL IS NOT A MISS, and telling them apart matters. The meta
+           key says n chunks and one of them has gone, so the whole entry is
+           unusable — but something WAS stored, recently, and it was big enough
+           to be worth storing. Reported as a miss to the caller, because that
+           is what it is, and logged as its own thing because a run of these is
+           an entry too big to survive its own TTL rather than a cold cache. */
+        APP_log('warn', 'APP.cacheGet', 'partial — one chunk expired, the entry is unusable',
+                { cache: 'miss', chunks: n, missingAt: j, ms: Date.now() - t0, key: key });
+        return null;
+      }
+      parts.push(p);
+    }
+    var raw = parts.join('');
+    var out = JSON.parse(raw);
+    APP_log('debug', 'APP.cacheGet', 'hit',
+            { cache: 'hit', bytes: raw.length, chunks: n, ms: Date.now() - t0, key: key });
+    return out;
+  } catch (e) {
+    /* A read is the one case §7 says may be silent — but "may" is about not
+       breaking the caller, and it still returns null and recomputes. Saying so
+       at warn costs nothing and a run of them is a real signal. */
+    APP_log('warn', 'APP.cacheGet', 'read failed — recomputing',
+            { cache: 'miss', ms: Date.now() - t0, key: key, error: String(e) });
+    return null;
+  }
 }
 
 
@@ -1090,9 +1199,15 @@ function syncAll() {
      just changed the data moved it already. All this has to do is stop us
      answering from the half-minute copy of that time. */
   APP_forgetStamp_(null);
-  try { PV.clearCache();          } catch (e) {}
-  try { RMX_NS.bumpGeneration();  } catch (e) {}
-  try { CacheService.getScriptCache().remove('amrize_logo_datauri'); } catch (e) {}
+  try { PV.clearCache();          }
+  catch (e) { APP_log('warn', 'APP.syncAll', 'could not clear PV.clearCache — Price & Volume keeps serving the report it built before the sync',
+                      { error: String(e) }); }
+  try { RMX_NS.bumpGeneration();  }
+  catch (e) { APP_log('warn', 'APP.syncAll', 'could not clear RMX.bumpGeneration — every Ready-Mix cache key still points at the pre-sync generation',
+                      { error: String(e) }); }
+  try { CacheService.getScriptCache().remove('amrize_logo_datauri'); }
+  catch (e) { APP_log('warn', 'APP.syncAll', 'could not clear logo — the logo stays as it was, which is cosmetic and the only one of the three that is',
+                      { error: String(e) }); }
   return { ok: true, at: new Date().toISOString() };
 }
 
@@ -1481,9 +1596,12 @@ function APP_permAnySheetId_() {
       try {
         var id = getSpreadsheetIdForPage_(pages[i]);
         if (id) return id;
-      } catch (e) {}
+      } catch (e) {}      /* a page with no sheet configured is an expected miss */
     }
-  } catch (e) {}
+  } catch (e) {
+    APP_log('warn', 'APP.permAnySheetId', 'no sheet to probe with — the SpreadsheetApp check ' +
+            'below cannot prove anything', { error: String(e) });
+  }
   return '';
 }
 
@@ -1804,7 +1922,9 @@ var QLIKSYNC = (function () {
   }
 
   function trashFile_(fileId) {
-    try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e) {}
+    try { DriveApp.getFileById(fileId).setTrashed(true); }
+  catch (e) { APP_log('warn', 'APP.trashFile', 'could not trash the file — it stays in the folder',
+                      { fileId: fileId, error: String(e) }); }
   }
 
   /* Every tab of one export, as { name, hdr:[normalised], raw:[…], rows:[…] } */
@@ -2344,7 +2464,14 @@ var QLIKSYNC = (function () {
               try {
                 PropertiesService.getScriptProperties().setProperty(
                   'QLIK_REPORT_MONTH', res.reportMonth.y + '-' + res.reportMonth.m);
-              } catch (e2) {}
+              } catch (e2) {
+                /* The Overview reads this back as the year on its segment
+                   columns. Silent here is the cause of a missing year there,
+                   two sections away and with nothing connecting them. */
+                APP_log('warn', 'QLIKSYNC.run', 'could not record the report month — the ' +
+                        'Overview will show its segment columns without a year',
+                        { tab: spec.tab, error: String(e2) });
+              }
             }
             done.push(res);
             ends[norm_(spec.tab)] = sh.getMaxRows();
@@ -2381,7 +2508,14 @@ var QLIKSYNC = (function () {
       });
 
       /* --- every cached copy, everywhere, is now stale --- */
-      try { syncAll(); } catch (e) {}
+      try { syncAll(); }
+  catch (e) {
+    /* The sync WORKED and the caches were not cleared, so every page will keep
+       serving pre-sync numbers while reporting success. There is nothing else
+       in the system that notices this. */
+    APP_log('error', 'QLIKSYNC.run', 'data synced but the caches were NOT cleared — pages will serve stale figures',
+            { error: String(e && e.message || e) });
+  }
 
       return {
         ok: failed.length === 0,
@@ -2397,7 +2531,9 @@ var QLIKSYNC = (function () {
       return { ok: false, scope: want, error: e.message, files: [],
                done: done, skipped: skipped, failed: failed };
     } finally {
-      try { lock.releaseLock(); } catch (e2) {}
+      try { lock.releaseLock(); }
+      catch (e2) { APP_log('warn', 'QLIKSYNC.run', 'the sync lock was not released — the next ' +
+                           'hourly run will wait it out', { error: String(e2) }); }
     }
   }
 
@@ -2552,7 +2688,9 @@ function generation_() {
    Forget the copy we are holding so the next read sees it. */
 function bumpGeneration_() {
   _GEN = null;
-  try { APP_forgetStamp_('pricevolume'); } catch (e) {}
+  try { APP_forgetStamp_('pricevolume'); }
+  catch (e) { APP_log('warn', 'PV.bumpGeneration', 'generation moved but the source stamp did not — ' +
+                      'freshness checks will disagree with the cache', { error: String(e) }); }
   return generation_();
 }
 var SCHEMA_ = 'v5';   // bump when a COMPUTED pivot column changes meaning, or when a CACHED SHAPE does (v5: readTab_ locates the header row, so rows start lower; pivots carry a month)
@@ -4177,14 +4315,26 @@ function applyRows(payload){
         copied = true;
       }
       SpreadsheetApp.flush();
-      try { PV.clearCache(); } catch (e){ try { APP_bumpGen_('pricevolume'); } catch (e2){} }
+      try { PV.clearCache(); }
+      catch (e){
+        try { APP_bumpGen_('pricevolume'); }
+        catch (e2){
+          /* Both ways of invalidating failed and the rows are already written,
+             so the Mapping check will keep reporting the values just mapped. */
+          APP_log('warn', 'PVLOOK.applyRows', 'rows written but NO cache was invalidated — ' +
+                  'the mapping check will still show them as unmapped',
+                  { error: String(e), fallback: String(e2) });
+        }
+      }
     }
 
     return { ok: true, added: out.length, skipped: skipped.length, skippedValues: skipped,
              formulasCopied: copied, generation: APP_getGen_('pricevolume') };
 
   } finally {
-    try { lock.releaseLock(); } catch (e){}
+    try { lock.releaseLock(); }
+    catch (e) { APP_log('warn', 'PVLOOK.applyRows', 'the lock was not released — the next writer will wait it out',
+                        { error: String(e) }); }
   }
 }
 
@@ -4193,7 +4343,29 @@ return { getUnmapped: getUnmapped, getForm: getForm, applyRows: applyRows };
 })();
 
 /* ---- top-level wrappers for google.script.run ---- */
-function getPvUnmapped(opts)   { return PVLOOK.getUnmapped(opts); }
+function getPvUnmapped(opts) {
+  var t0 = Date.now();
+  APP_log('info', 'PVLOOK.getUnmapped', 'reading',
+          { upload: !!(opts && opts.upload), force: !!(opts && opts.force) });
+  try {
+    var out = PVLOOK.getUnmapped(opts);
+    /* The three lists ARE the answer — one row per distinct unmapped value —
+       so their sizes are the size §7 asks for, not the bytes behind them. */
+    APP_log('info', 'PVLOOK.getUnmapped', 'ok',
+            { ms: Date.now() - t0,
+              rows: ((out && out.product) || []).length + ((out && out.extras) || []).length +
+                    ((out && out.flag) || []).length,
+              product: ((out && out.product) || []).length,
+              extras:  ((out && out.extras)  || []).length,
+              flag:    ((out && out.flag)    || []).length });
+    return out;
+  } catch (err) {
+    APP_log('error', 'PVLOOK.getUnmapped', 'failed',
+            { ms: Date.now() - t0, upload: !!(opts && opts.upload),
+              error: String(err && err.message ? err.message : err) });
+    throw err;
+  }
+}
 function getPvLookupForm()     { return PVLOOK.getForm(); }
 function applyPvLookupRows(p)  { return PVLOOK.applyRows(p); }
 
@@ -4841,7 +5013,13 @@ var FSC = (function () {
   ------------------------------------------------------------------- */
   function gkFsc_(key){
     var gen = '0';
-    try { gen = APP_getGen_('pricevolume') || '0'; } catch (e) {}
+    try { gen = APP_getGen_('pricevolume') || '0'; }
+    catch (e) {
+      /* '0' is not "no cache" — it is a key every generation shares, so an
+         entry written under it outlives the data it describes. */
+      APP_log('warn', 'APP.cacheKey', 'no data generation — every generation will share one cache key',
+              { page: 'pricevolume', error: String(e) });
+    }
     return 'fsc|g' + gen + '|' + key;
   }
   /* The chunked cache helpers live in Code.gs. Every .gs file shares one global
@@ -4888,13 +5066,21 @@ var FSC = (function () {
 /* Top-level wrappers the page calls via google.script.run.
    Logged so the Executions page always shows whether the call arrived. */
 function getFscData(opts){
+  var t0 = Date.now();
+  APP_log('info', 'FSC.getFscData', 'reading', { month: (opts && opts.month) || 0 });
   try {
-    console.log('[FSC] getFscData: start');
     var out = FSC.getFscData(opts);
-    console.log('[FSC] getFscData: ok \u00b7 ' + out.markets.length + ' markets \u00b7 latest ' + out.latestMonth);
+    APP_log('info', 'FSC.getFscData', 'ok',
+            { ms: Date.now() - t0, rows: out.markets.length,
+              month: (opts && opts.month) || 0, latest: out.latestMonth });
     return out;
   } catch (err) {
-    console.error('[FSC] getFscData failed: ' + (err && err.message ? err.message : err));
+    /* §7: an error logs the CONTEXT, not just the message — the month is what
+       selects the data, so a failure that only happens on one of them is
+       readable off the line rather than reproduced. */
+    APP_log('error', 'FSC.getFscData', 'failed',
+            { ms: Date.now() - t0, month: (opts && opts.month) || 0,
+              error: String(err && err.message ? err.message : err) });
     throw err;
   }
 }
@@ -5329,7 +5515,9 @@ function generation_() {
    Forget the copy we are holding so the next read sees it. */
 function bumpGeneration_() {
   _GEN = null;
-  try { APP_forgetStamp_('rmx'); } catch (e) {}
+  try { APP_forgetStamp_('rmx'); }
+  catch (e) { APP_log('warn', 'RMX.bumpGeneration', 'generation moved but the source stamp did not — ' +
+                      'freshness checks will disagree with the cache', { error: String(e) }); }
   return generation_();
 }
 function cacheKey_(parts){ return CONFIG.CACHE_VER + '|g' + generation_() + '|' + parts.join('|'); }
@@ -7001,7 +7189,32 @@ function RMX_whoWins(){
  * through the ambient `RMX`.
  * ======================================================================== */
 function RMX_getMarkets(opts)     { return RMX_NS.getMarkets(opts); }
-function RMX_prepare(opts)        { return RMX_NS.prepareAll(opts); }
+function RMX_prepare(opts) {
+  var t0 = Date.now();
+  APP_log('info', 'RMX.prepareAll', 'reading',
+          { market: (opts && opts.market) || '', month: (opts && opts.month) || 0,
+            want: (opts && opts.want) || 'all', upload: !!(opts && opts.upload),
+            force: !!(opts && opts.force) });
+  try {
+    var out = RMX_NS.prepareAll(opts);
+    /* ELAPSED MS IS THE FIELD THAT EARNS ITS PLACE HERE. README §6: every RMX
+       entry point used to pull a 14 MB bundle through CacheService to produce a
+       72 KB answer, and it hid for a long time because nothing about it looked
+       wrong. A flat 15-24 s against a varying question is what a reader would
+       have seen on the first line of the transcript. */
+    APP_log('info', 'RMX.prepareAll', 'ok',
+            { ms: Date.now() - t0, rows: ((out && out.markets) || []).length,
+              month: out && out.month, latest: out && out.latestMonth,
+              warmed: out && out.warmed, want: out && out.want });
+    return out;
+  } catch (err) {
+    APP_log('error', 'RMX.prepareAll', 'failed',
+            { ms: Date.now() - t0, market: (opts && opts.market) || '',
+              month: (opts && opts.month) || 0,
+              error: String(err && err.message ? err.message : err) });
+    throw err;
+  }
+}
 function RMX_getKeys(opts)        { return RMX_NS.getKeys(opts); }
 function RMX_getExtras(opts)      { return RMX_NS.getExtras(opts); }
 function RMX_getSlideTables(opts) { return RMX_NS.getSlideTables(opts); }
@@ -7588,7 +7801,9 @@ function applyRows(payload){
     return { ok: true, added: out.length, skipped: skipped.length, skippedValues: skipped };
 
   } finally {
-    try { lock.releaseLock(); } catch (e){}
+    try { lock.releaseLock(); }
+    catch (e) { APP_log('warn', 'RMXSUGGEST.applyRows', 'the lock was not released — the next writer will wait it out',
+                        { error: String(e) }); }
   }
 }
 
@@ -8441,7 +8656,13 @@ var RFSC = (function () {
   ------------------------------------------------------------------- */
   function gkFsc_(key){
     var gen = '0';
-    try { gen = APP_getGen_('rmx') || '0'; } catch (e) {}
+    try { gen = APP_getGen_('rmx') || '0'; }
+    catch (e) {
+      /* '0' is not "no cache" — it is a key every generation shares, so an
+         entry written under it outlives the data it describes. */
+      APP_log('warn', 'APP.cacheKey', 'no data generation — every generation will share one cache key',
+              { page: 'rmx', error: String(e) });
+    }
     return 'rfsc|g' + gen + '|' + key;
   }
   /* The chunked cache helpers live in Code.gs. Every .gs file shares one global
@@ -8879,7 +9100,10 @@ function ovSegment_(grid, period, markets){
       var st = String(PropertiesService.getScriptProperties().getProperty('QLIK_REPORT_MONTH') || '');
       var mt = st.match(/^(\d{4})-(\d{1,2})$/);
       if (mt) cyYear = +mt[1];
-    } catch (e) {}
+    } catch (e) {
+      APP_log('warn', 'OV.segNorm', 'could not read QLIK_REPORT_MONTH — the year on the ' +
+              'segment columns will be missing', { error: String(e) });
+    }
   }
 
   return { ok:true, monthIdx: monthIdx, cyYear: cyYear, markets: mkts, unmatched: Object.keys(unmatched) };
@@ -9937,7 +10161,12 @@ function CUBE_rebuildHistory(opts){
   try {
     PropertiesService.getScriptProperties()
       .setProperty(OVCUBE_TOK_PROP_, String(parseInt(ovcHistTok_(), 10) + 1));
-  } catch (e) {}
+  } catch (e) {
+    /* The rebuilt history is already written. Without the token bump no client
+       is told to go and get it, so the work is done and invisible. */
+    APP_log('warn', 'CUBE.rebuildHistory', 'history rebuilt but the token did not move — ' +
+            'clients will keep the cube they have', { line: line, era: era.id, error: String(e) });
+  }
   var s = {}; cube.rows.forEach(function(r){ s[r[0]] = true; });
   var ym = Object.keys(s).map(Number).sort(function(a, b){ return a - b; });
   return { ok:true, line:line, era:era.id, label:era.label || era.id,
@@ -10970,7 +11199,12 @@ var KPI = (function () {
       'Config.gs, and that the folder is shared with you.'); }
   }
 
-  function trash_(id) { if (id) { try { DriveApp.getFileById(id).setTrashed(true); } catch (e) {} } }
+  function trash_(id) {
+  if (!id) return;
+  try { DriveApp.getFileById(id).setTrashed(true); }
+  catch (e) { APP_log('warn', 'DECK.trash', 'could not trash the file — it stays in the deck folder',
+                      { fileId: id, error: String(e) }); }
+}
 
   /* ok:false means the file EXISTS but this account couldn't read it
      (folder not shared with them) — treated differently from "nothing
@@ -11324,13 +11558,32 @@ var QLIK_STAMP_KEY = 'QLIK_FILE_STAMPS';
 /* Each export is checked on its own, so a re-exported Aggregates file costs an
    Aggregates sync and nothing else. */
 function qlikSyncCheck() {
+  /* THE TRIGGER TARGET. Nothing in the repo points at it (there is not one
+     ScriptApp.newTrigger in the codebase — see §11's banner), it runs hourly
+     with nobody watching, and every page's data depends on it. The log line is
+     the only account of a run that will ever exist, which is why the entry is
+     logged before anything can throw. */
+  var t0 = Date.now();
+  APP_log('info', 'QLIKSYNC.check', 'trigger fired');
   var props = PropertiesService.getScriptProperties();
   var seen = {};
-  try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); } catch (e) { seen = {}; }
+  try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); }
+  catch (e) {
+    /* NOT SILENT (§7). A corrupt stamp property means every source looks
+       changed, so the next line re-syncs all of them — minutes of Drive work
+       that reads as a normal busy run. */
+    APP_log('warn', 'QLIKSYNC.check', 'stamps unreadable — every source will look changed',
+            { error: String(e) });
+    seen = {};
+  }
 
   var sources;
   try { sources = QLIKSYNC.sources(); }
-  catch (e) { Logger.log('QlikView check failed: ' + e.message); return { ok: false, error: e.message }; }
+  catch (e) {
+    APP_log('error', 'QLIKSYNC.check', 'could not list the sources — the pipeline did not run',
+            { ms: Date.now() - t0, error: String(e && e.message || e) });
+    return { ok: false, error: e.message };
+  }
 
   var out = { ok: true, changed: [], unchanged: [], failed: [] };
 
@@ -11359,13 +11612,19 @@ function qlikSyncCheck() {
       out.changed.push(src.label);
       if (!res.ok) {
         out.failed.push(src.label + ': ' + JSON.stringify(res.failed));
-        Logger.log('QlikView ' + src.label + ' synced with bad tabs: ' + JSON.stringify(res.failed));
+        /* A run that FINISHED but wrote a bad tab is deliberately not retried
+           (see above), so this line is the only record that it happened. */
+        APP_log('warn', 'QLIKSYNC.check', 'synced, but some tabs did not write',
+                { source: src.label, failed: res.failed });
       }
     }
   });
 
   props.setProperty(QLIK_STAMP_KEY, JSON.stringify(seen));
-  if (out.failed.length) Logger.log('QlikView check: ' + out.failed.join(' | '));
+  APP_log(out.failed.length ? 'error' : 'info', 'QLIKSYNC.check', 'done',
+          { ms: Date.now() - t0, changed: out.changed.length,
+            unchanged: out.unchanged.length, failed: out.failed.length,
+            detail: out.failed.length ? out.failed.join(' | ') : '' });
   return out;
 }
 
@@ -11379,7 +11638,10 @@ function qlikMarkCurrent() {
   var seen = {};
   QLIKSYNC.sources().forEach(function (src) {
     try { seen[src.key] = String(DriveApp.getFileById(src.id).getLastUpdated().getTime()); }
-    catch (e) {}
+    catch (e) {
+      APP_log('warn', 'QLIKSYNC.markCurrent', 'no stamp for this source — it will look changed ' +
+              'on the next check and be re-synced', { source: src.key, error: String(e) });
+    }
   });
   PropertiesService.getScriptProperties().setProperty(QLIK_STAMP_KEY, JSON.stringify(seen));
   return 'Marked ' + Object.keys(seen).length + ' export(s) as already synced.';
@@ -11405,11 +11667,23 @@ function qlikSyncNow(scope) {
   var res  = QLIKSYNC.run(want);
   if (!res.error) {
     var props = PropertiesService.getScriptProperties(), seen = {};
-    try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); } catch (e) {}
+    try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); }
+    catch (e) {
+      /* Not silent (§7). Starting from {} means only the sources this run
+         covered get written back and every OTHER stamp is wiped, so the next
+         hourly check re-syncs the lot — which is the one thing this function
+         says it exists to prevent. */
+      APP_log('warn', 'QLIKSYNC.syncNow', 'stamps unreadable — the other sources will be ' +
+              're-synced on the next check', { scope: want, error: String(e) });
+      seen = {};
+    }
     QLIKSYNC.sources().forEach(function (src) {
       if (want !== 'all' && src.scope !== want) return;
       try { seen[src.key] = String(DriveApp.getFileById(src.id).getLastUpdated().getTime()); }
-      catch (e) {}
+      catch (e) {
+        APP_log('warn', 'QLIKSYNC.syncNow', 'no stamp for this source — it will be re-synced ' +
+                'on the next check', { source: src.key, error: String(e) });
+      }
     });
     props.setProperty(QLIK_STAMP_KEY, JSON.stringify(seen));
   }

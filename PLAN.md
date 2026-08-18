@@ -707,7 +707,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 15 | **The three drifted helpers** | Diffed all of them — **six `toNum_`, six `norm_`, two `gk_` across SEVEN namespaces, not three** — and the verdict is **do not unify**: neither dialect is a superset, each is right exactly where the other is wrong. `tests/helpers.js` pins all fourteen definitions to a table of inputs instead, and two latent bugs fell out. | ✅ |
 | 16 | **Collapse `Deck_Styles`** | **§B is 7 rules where it was 86.** 79 of them restated something §A1–§A3 already say, which was true the moment the merge made the deck and the pages one document. Proven, not eyeballed: `tests/slidecss.js` blanks one rule at a time under all ten pages, iterated to a fixpoint because §B's rules masked each other, and the deletion was checked end to end at **784,380 computed values across 880 specimens — all identical.** | ✅ |
 | 17 | **Device cache on both fuel pages** | Wired. A repeat visit paints from `localStorage` with **no sheet read**. All three things [§10](#10-four-things-this-merge-does-not-touch) said must not be guessed at are checks in `tests/fuelcache.js`, on both pages, each mutation-tested: the uploaded workbook is never cached, the month is part of the key, and a typed-over cell never reaches the store. `AmrFresh` now watches these two pages as well, which it never did before. | ✅ |
-| 18 | **`APP_log` at the server entry points** | Chunk 12 wrote the helper and left the 10,889 moved lines alone, on purpose — see its notes. This wires it in, and the order is the order of the payoff: **`APP_cachePut_`'s `n > 250` bail first** (that silent `skip` is the whole reason the `cache` field exists, and README §6 is what it costs), then `APP_cacheGet_`'s hit/miss, then the entry points a harness already covers so each line lands with a gate on it — `getFscData`, `getPvUnmapped`, `qlikSyncCheck`, `RMX_prepare`. Never inside a per-row loop. **Do the `catch (e) {}` pass in the same chunk**: [§7](#7-logging-and-the-debug-functions-it-replaces) says silent is right for an optional cache read and wrong for everything else, and chunk 12 carried all of them across undecided because deciding them is an edit, not a move. | ☐ |
+| 18 | **`APP_log` at the server entry points** | Wired, in the order the payoff is in: `APP_cachePut_`'s `n > 250` bail, `APP_cacheGet_`'s hit/miss (**and its partial**), then `getFscData`, `getPvUnmapped`, `qlikSyncCheck` and `RMX_prepare`. **All 36 silent catches decided — not 31; five bind `e2`/`e3` and every one of those had to speak.** 24 now log, 12 stay silent with a reason. `tests/logging.js` is the gate. | ✅ |
 | 20 | **`PV.toNum_` drops accounting negatives** | Found by chunk 15. `PV.toNum_('(1,234)')` is `0` where every other copy in the suite gives `-1234`: the strip leaves the parentheses, `parseFloat` gives `NaN`, and `NaN` becomes `0`. The figure is **dropped, not mis-signed**, which is why nothing looks wrong. **Whether it bites cannot be answered off-platform** — it depends on whether the Price & Volume source ever writes a negative that way. Check the sheet first; only then decide. | ☐ |
 | 21 | **`PVLOOK.gk_` ignores `SCHEMA_`** | Found by chunk 15. `PV.gk_` mixes `SCHEMA_` into its cache key and `PVLOOK.gk_` does not, so a schema bump invalidates one Price & Volume cache and leaves the other serving rows shaped the old way. Fixing it changes every existing `PVLOOK` cache key — which is harmless (a miss, then a rebuild) but should be stated rather than discovered. `tests/helpers.js` fails if either changes. | ☐ |
 
@@ -783,6 +783,74 @@ and re-added them each switch; the third binds to `#amrSetList`, a `<body>`-leve
 that teardown leaves alone, so it stacked one duplicate per switch — six identical handlers
 means one click on *Save* sends six writes and schedules six reloads. They wire the permanent
 shell, so they are installed once in `start()`, **before** `MOUNTED` goes true.
+
+### What chunk 18 settled
+
+- **There were 36 silent catches, not 31, and the five the obvious grep missed were the five
+  that mattered most.** `catch (e) {}` finds 31; five more bind `e2` or `e3` because they are
+  nested — and **every one of those five turned out to belong in the group that has to speak.**
+  The sharpest is `PVLOOK.applyRows`: it catches a failed `PV.clearCache()` and falls back to
+  bumping the generation, which is the right design — and the **fallback's own catch was also
+  silent**, so both ways of invalidating could fail with the rows already written to the sheet
+  and nothing said at all. Count them with `catch\s*\([a-z0-9]+\)\s*\{\s*\}`.
+
+- **Applying §7's rule sorted all 36 into two groups, and one shape covers most of the second:**
+
+  > **An invalidation that fails silently looks exactly like nothing having happened.**
+
+  `syncAll`'s three clears, `APP_forgetStamp_`'s remove, both `bumpGeneration_` stamp drops,
+  the history-cube token bump — in every one of them the work succeeded and the thing that
+  makes the work *visible* did not. **One is logged at `error` rather than `warn`:**
+  `QLIKSYNC.run`'s `syncAll()`. The pipeline succeeds, the sheets hold new numbers, every page
+  keeps serving the old ones out of cache, and the run reports `ok`. Nothing else in the system
+  notices that.
+
+- **`'0'` is not "no cache".** Both fuel backends fall back to a generation of `'0'` when
+  `APP_getGen_` throws, and it reads like a safe default. It is not: the generation is part of
+  the cache key, so `'0'` is a key **every** generation shares, and an entry written under it
+  outlives the data it describes. That is the one failure a generation exists to prevent.
+
+- **12 stay silent and each has its reason written down** — a cache handle, a cache read, a
+  cache write, the permissions probe removing its own test key, and two that are already
+  reported through the value the function returns (`qlikStamps` prints `(never)` in its own
+  answer; `APP_permAnySheetId_`'s inner loop, where a page with no sheet configured is an
+  expected miss). The census lives in `app.gs` §2, beside the helper, not in a commit message.
+
+- **A harness that slices one region out of `app.gs` was modelling the scope wrongly, and this
+  is the chunk where that stopped being theoretical.** Apps Script evaluates every `.gs` into
+  **one** global scope — the entire premise of the file — so `APP_log` in §2 is reachable from
+  §6 at run time. Three harnesses build a `vm` context from a single region, and the moment a
+  moved backend gained a log line they died on *"APP_log is not defined"*: a failure that reads
+  like a broken build and is a missing global. `tests/appgs.js` installs it now, through `load()`
+  and through an exported `attach()` for harnesses that build their own context — and it
+  **records** rather than discarding, so a harness that wants to assert on what was logged can
+  read `ctx.__log` without arranging anything.
+
+- **`tests/logging.js` is the gate, and the check that earns its place is the census.** A
+  `catch (e) {}` is one keystroke and invisible in review — which is how 36 accumulated. Every
+  silent catch left is listed by the function that holds it, so a new one fails with *"decide
+  it"* rather than sliding in behind a green run. It also holds the four named entry points to
+  logging their arrival, their answer, their failure **and elapsed ms**, holds the cache helpers
+  to reporting all three verdicts, and fails on any `APP_log` inside a loop — with an allowlist
+  for the ones that iterate a handful of *named things* (six QlikView sources, ten page names,
+  one `CHECKS` array) rather than rows. Mutation-tested three ways.
+
+- **27 of the 29 edits are declared to `gsparity.js`, and it is still green.** Two are not,
+  because §2 and §4 are new sections written in chunk 12 rather than merged sources — there is
+  no git copy to compare them against. So ~10,800 lines are still proved byte-for-byte, which is
+  the point: chunk 18 touches 29 places in a 542 KB file and the proof that it touched nothing
+  else is worth more than the tidiness of a shorter list.
+
+  > **Two declarations were filed under the wrong file and gsparity said so immediately.**
+  > `trashFile_` is in `QlikSync.gs`, not `Code.gs`; `trash_` is in `Kpi_Backend.gs`, not
+  > `Deck_Recipe.gs`. Both were guessed from what the function *does* rather than checked. The
+  > harness named the file that no longer matched, which is exactly the failure it is for.
+
+- **The other 7 `Logger.log` and 23 `console.log` calls are still there, deliberately.** §7 says
+  *every function you write or rewrite* logs — moving is neither, and chunk 12 made the same
+  reading. The ones chunk 18 replaced are the four entry points it names plus the two inside
+  `qlikSyncCheck`, which is the trigger target: nobody is watching when it runs, so a level is
+  the difference between a failed pipeline and a routine one in Cloud Logging.
 
 ### What chunk 17 settled
 
@@ -2139,6 +2207,10 @@ you can `Ctrl+F` is the substitute for the reference that cannot exist.
     the same commit. Also checks no top-level name is declared twice, and that the name set
     moved by exactly the declared deletions — **that last check is the one that caught a cut
     silently deleting `RMX_whoWins` while every syntax check still passed.**
+  - `tests/logging.js` *(chunk 18)* — the silent-catch census and the entry points. Every
+    `catch (…) {}` left in `app.gs` is listed with its reason, so a new one fails with "decide
+    it"; the four named entry points must log arrival, answer, failure and elapsed ms; the cache
+    helpers must report all three verdicts; and no `APP_log` may sit inside a per-row loop.
   - `tests/fuelcache.js` *(chunk 17)* — the fuel pages cache the sheet and only the sheet.
     Cold visit reads once and stores one entry, warm visit reads nothing, each month is its own
     entry, an uploaded workbook writes nothing, a typed-over cell never reaches the store, and a

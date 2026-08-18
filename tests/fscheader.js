@@ -21,7 +21,7 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 
-const { region } = require('./appgs.js');
+const { region, attach } = require('./appgs.js');
 /* Was FSC_Backend.gs; it is app.gs §6 now. tests/gsparity.js proves the region
    is still byte-for-byte that file, which is what keeps this harness a proof
    about the code that actually runs. */
@@ -78,6 +78,12 @@ function load(cpi) {
   ctx.APP_cacheGet_ = function(k){ return Object.prototype.hasOwnProperty.call(ctx.__cache, k)
     ? JSON.parse(ctx.__cache[k]) : null; };
   ctx.APP_cachePut_ = function(k, v){ ctx.__cache[k] = JSON.stringify(v); };
+  /* APP_log lives in §2 and this harness loads only §6's FSC region. Apps Script
+     puts every .gs in ONE global scope, so the helper really is reachable from
+     here at run time — chunk 18 added a log line to getFscData and this harness
+     died on "APP_log is not defined", which reads like a broken build and is a
+     missing global. attach() records the calls on ctx.__log. */
+  attach(ctx);
   vm.createContext(ctx);
   vm.runInContext(SRC, ctx, { filename: 'app.gs (FSC_Backend.gs)' });
   return ctx;

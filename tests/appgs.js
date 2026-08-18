@@ -88,12 +88,40 @@ function region(file, which) {
   return use.map(s => APP.slice(s.start, s.end)).join('\n').replace(/\s+$/, '') + '\n';
 }
 
-/* Evaluate one or more regions into a vm context, in the order given. */
+/* Evaluate one or more regions into a vm context, in the order given.
+ *
+ * APP_log IS INSTALLED FIRST, AND THAT IS MODELLING RATHER THAN CONVENIENCE.
+ * Apps Script evaluates every .gs into ONE global scope — the whole reason this
+ * file exists — so app.gs §2's helper is reachable from every other section at
+ * run time. A harness that slices out one region and does not provide it is
+ * modelling the scope wrongly, and chunk 18 is where that stopped being
+ * theoretical: the moment a moved backend gained a log line, three harnesses
+ * died on "APP_log is not defined" — a failure that reads like a broken build
+ * and is a missing global.
+ *
+ * It RECORDS rather than discarding, so a harness that wants to assert on what
+ * was logged can read ctx.__log without arranging anything. Nothing is printed:
+ * a harness's output should be its own checks.
+ */
 function load(ctx, ...files) {
+  attach(ctx);
   for (const f of files) vm.runInContext(region(f), ctx, { filename: 'app.gs (' + f + ')' });
+  return ctx;
+}
+
+/* For harnesses that build and run their own context rather than going through
+   load(). Call it before vm.createContext. */
+function attach(ctx) {
+  if (!ctx.APP_log) {
+    ctx.__log = [];
+    ctx.APP_log = function (level, where, msg, data) {
+      ctx.__log.push({ level: level, where: where, msg: msg, data: data || {} });
+    };
+  }
   return ctx;
 }
 
 const whole = () => APP;
 
-module.exports = { region, load, whole, ORDER, REPO, APP_PATH: path.join(REPO, 'app.gs') };
+module.exports = { region, load, attach, whole, ORDER, REPO,
+                   APP_PATH: path.join(REPO, 'app.gs') };
