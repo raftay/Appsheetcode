@@ -652,10 +652,21 @@ Nothing else was deleted under this heading. A diagnostic with a real caller, or
 Deck Builder's ✓ *Check template* button runs, stays — and chunk 12 found two that look like
 debug functions and are not:
 
-- **`RMX_whoWins` stays, and very nearly did not.** It has no caller a grep can find, but
-  `Page_Rmx.html` names it *in its own error banner*, telling the user to go and run it. The
-  first build of `app.gs` deleted it by accident and every syntax and structural check still
-  passed — see [chunk 12's notes](#what-chunk-12-settled).
+- ~~**`RMX_whoWins` stays, and very nearly did not.**~~ **Deleted after chunk 19**, and not
+  because the logging replaced it. It answered *"is a second `.gs` in this project also defining
+  `RMX` and winning"* — by comparing `RMX` with `RMX_NS`, printing the live source of `getKeys`,
+  and forcing a throw so the stack names the FILE that owns the winning copy. **Since chunk 12
+  there is one `.gs` and there cannot be a second**, so three of those four are impossible by
+  construction and every stack names `app.gs`. The fourth, the backend build stamp, already
+  rides in every payload and was printed at the end of the very banner that told the user to go
+  and run this. A diagnostic that can no longer observe anything is not superseded — it is
+  unreachable. The banner no longer names it, and `RMX_NS.build` went with it (`BUILD` itself
+  stays: it is in the payload).
+
+  It is still worth reading [chunk 12's notes](#what-chunk-12-settled) on it: the first build of
+  `app.gs` deleted this function **by accident**, and every syntax and structural check passed.
+  The deletion above was made with the same symbol-table diff that caught it — asserted to
+  remove exactly one name.
 - **`qlikStamps` stays.** [§11](#11-legacy-hit-list) listed it as a candidate on the grounds
   that deleting it only costs a diagnostic. It costs more than that: `tests/qliksync.js`
   exercises it in three checks, so deleting it fails a green harness.
@@ -2097,7 +2108,9 @@ not prove it** — read the next box before deleting anything.
   had been live.
 - **All seven QlikView guide copies** *(six in chunk 2, TP01's in chunk 11)*. ~817 lines,
   now one `AmrQlikGuide.mount()` per page with that page's own steps.
-- **The six debug functions** *(chunk 12, done)* — see [§7](#7-logging-and-the-debug-functions-it-replaces).
+- **All seven debug functions** — six in chunk 12, and `RMX_whoWins` after chunk 19. There are
+  none left: a repo-wide audit of all 404 top-level declarations found seven with no caller
+  anywhere, and not one of them is a diagnostic. See [§7](#7-logging-and-the-debug-functions-it-replaces).
   Both required pre-deletion checks were run and passed. With `RMX_debugMonths` went the three
   IIFE exports that existed only to feed it — `cacheVer`, `generation`, `bundleOk`, one caller
   each, all inside it. **`build` stayed**, because `RMX_whoWins` reads it.

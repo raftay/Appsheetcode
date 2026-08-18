@@ -7132,8 +7132,6 @@ function getCrossReport(opts){
        the sheet itself and adds nothing to any page load. Read-only. */
     dataBundle:     function(){ return loadDataCached_(false); },
     lookups:        function(){ return getLookupsCached_(false); },
-    /* read-only, for RMX_whoWins */
-    build:          function(){ return BUILD; }
   };
 })();
 
@@ -7152,34 +7150,6 @@ function getCrossReport(opts){
  * entry point below, and every other file in the suite, goes through RMX_NS.
  * ======================================================================== */
 var RMX_NS = RMX;
-
-/* ==========================================================================
- * RMX_whoWins - run this if the page ever claims the backend is old again.
- * --------------------------------------------------------------------------
- * Prints which object the global name `RMX` currently resolves to, and forces
- * a throw inside it so the Apps Script stack trace names the FILE that owns
- * the winning copy. If that file is not RMX_Backend.gs, delete it.
- * ======================================================================== */
-function RMX_whoWins(){
-  var log = [];
-  function ok(v){ return (typeof v === 'function') ? 'function' : String(typeof v); }
-
-  log.push('RMX_NS keys : ' + Object.keys(RMX_NS).join(', '));
-  log.push('RMX    keys : ' + Object.keys(RMX).join(', '));
-  log.push('RMX === RMX_NS ? ' + (RMX === RMX_NS ? 'yes - only one copy in the project'
-                                                 : 'NO - a second file is defining RMX'));
-  log.push('typeof RMX.build = ' + ok(RMX.build) + '    typeof RMX_NS.build = ' + ok(RMX_NS.build));
-  log.push('this file BUILD  = ' + RMX_NS.build());
-  log.push('--- live top-level getKeys ---\n' + String(getKeys));
-  log.push('--- live RMX.getKeys (head) ---\n' + String(RMX.getKeys).slice(0, 600));
-
-  try { RMX.getKeys({ upload: '__probe__', period: 'YTD' }); }
-  catch (e){ log.push('--- stack (names the winning FILE) ---\n' + (e.stack || e.message || e)); }
-
-  var s = log.join('\n\n');
-  Logger.log(s);
-  return s;
-}
 
 /* ==========================================================================
  * Top-level wrappers for google.script.run.
@@ -11529,8 +11499,14 @@ function IR_saveSource(input, label)  { return IR.saveSource(input, label); }
  *
  * The other functions in this file that are run by hand rather than called are
  * signposted where they live, because they belong with the code they report on:
- * APP_verifyPermissions (§4), clearRetiredOverrides (§1), getSaskRatesStatus (§6),
- * RMX_whoWins (§7) and the six DECK_* wrappers (§9).
+ * APP_verifyPermissions (§4), clearRetiredOverrides (§1), getSaskRatesStatus (§6)
+ * and the six DECK_* wrappers (§9).
+ *
+ * RMX_whoWins used to be on that list and is gone. It answered "is a second .gs
+ * in this project also defining RMX and winning" — a question that stopped
+ * having an answer the moment there was one .gs. THAT is why it went, not
+ * because §2's logging replaced it: a diagnostic that can no longer observe
+ * anything is not superseded, it is unreachable.
  *
  * THIS IS WHY THE SECTION EXISTS. There is not one ScriptApp.newTrigger in the
  * codebase — the trigger is configured by hand in the Apps Script UI, so nothing

@@ -12436,15 +12436,18 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
     if (!list.length){
       sel.innerHTML = '<option value="0">\u2014 unavailable \u2014</option>';
       sel.disabled = true;
-      /* The "a SECOND file is also defining RMX and winning" half of this sentence
-         went at the cutover: there is one server file now and there cannot be a
-         second. RMX_whoWins still works and is still worth running — it reports
-         which build is actually live — so it is still named here, just for what
-         it can now tell you. */
+      /* THE SENTENCE HAS NOW LOST BOTH ITS ORIGINAL HALVES, and each for the
+         same reason. "A SECOND file is also defining RMX and winning" went at
+         the cutover — there is one server file and there cannot be a second.
+         "Run RMX_whoWins() to see which build is live" went with the function
+         itself: three of the four things it reported had become impossible for
+         exactly that reason, and the fourth — the build stamp — is printed at
+         the end of this very banner. Telling somebody to go and run a tool to
+         learn something already on their screen is worse than saying nothing. */
       showBanner('The server sent no month list, so nothing is being filtered by month and '
         + 'every figure below covers the WHOLE year, which means app.gs is out of date. '
-        + 'Run RMX_whoWins() in the editor to see which build is live, paste the current '
-        + 'app.gs in, save, then press \u21bb Update from source. '
+        + 'Paste the current app.gs into the Apps Script editor, save, then press '
+        + '\u21bb Update from source. '
         + 'Backend build: ' + (STATE.build || 'older than 2026-08-11'));
       return;
     }

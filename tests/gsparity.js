@@ -337,6 +337,53 @@ function doGet(e) {
 
   'RMX_Backend.gs': [
 
+  /* ---- THE LAST DEBUG FUNCTION ----------------------------------------------
+     Chunk 12 deleted six; RMX_whoWins was kept because the Ready-Mix page names it
+     in an error banner. It goes now, and the reason is not that chunk 18 gave us
+     logging — it is that three of the four things it reports became IMPOSSIBLE the
+     moment there was one .gs file. */
+    { kind: 'replace', gone: ['RMX_whoWins'],
+      why: 'RMX_whoWins GOES. It is the last debug function in the suite, and the reason is not ' +
+           'that chunk 18 gave us logging — it is that THREE OF THE FOUR THINGS IT REPORTS ARE ' +
+           'NOW IMPOSSIBLE. It exists to answer \'is a second .gs in this project also defining ' +
+           'RMX and winning\', by comparing RMX with RMX_NS, by printing the live source of ' +
+           'getKeys, and by forcing a throw so the stack names the FILE that owns the winning ' +
+           'copy. Since chunk 12 there is ONE .gs and there cannot be a second: RMX === RMX_NS ' +
+           'by construction, and every stack names app.gs. The fourth thing, the backend build ' +
+           'stamp, already rides in every payload as `build` and is printed in the very banner ' +
+           'that used to tell the user to run this. So it is not a diagnostic that has been ' +
+           'superseded — it is one that can no longer observe anything. ',
+      from: `/* ==========================================================================
+ * RMX_whoWins - run this if the page ever claims the backend is old again.
+ * --------------------------------------------------------------------------
+ * Prints which object the global name \`RMX\` currently resolves to, and forces
+ * a throw inside it so the Apps Script stack trace names the FILE that owns
+ * the winning copy. If that file is not RMX_Backend.gs, delete it.
+ * ======================================================================== */
+function RMX_whoWins(){
+  var log = [];
+  function ok(v){ return (typeof v === 'function') ? 'function' : String(typeof v); }
+
+  log.push('RMX_NS keys : ' + Object.keys(RMX_NS).join(', '));
+  log.push('RMX    keys : ' + Object.keys(RMX).join(', '));
+  log.push('RMX === RMX_NS ? ' + (RMX === RMX_NS ? 'yes - only one copy in the project'
+                                                 : 'NO - a second file is defining RMX'));
+  log.push('typeof RMX.build = ' + ok(RMX.build) + '    typeof RMX_NS.build = ' + ok(RMX_NS.build));
+  log.push('this file BUILD  = ' + RMX_NS.build());
+  log.push('--- live top-level getKeys ---\\n' + String(getKeys));
+  log.push('--- live RMX.getKeys (head) ---\\n' + String(RMX.getKeys).slice(0, 600));
+
+  try { RMX.getKeys({ upload: '__probe__', period: 'YTD' }); }
+  catch (e){ log.push('--- stack (names the winning FILE) ---\\n' + (e.stack || e.message || e)); }
+
+  var s = log.join('\\n\\n');
+  Logger.log(s);
+  return s;
+}
+
+/* ==========================================================================`,
+      to:   `/* ==========================================================================` },
+
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
      app.gs §2 carries the census and the rule each one was decided by. */
@@ -404,18 +451,19 @@ function doGet(e) {
 
     { kind: 'replace',
       why: 'cacheVer / generation / bundleOk existed only for RMX_debugMonths — one caller ' +
-           'each, all inside it. build STAYS: RMX_whoWins reads it, and the Ready-Mix page ' +
-           'banner tells users to run RMX_whoWins() by name. Comment repointed at the caller ' +
-           'that is left.',
+           'each, all inside it. AND NOW build TOO: chunk 12 kept it because RMX_whoWins read ' +
+           'it and the Ready-Mix banner told users to run that by name, and both of those went ' +
+           'when RMX_whoWins did. BUILD itself stays — it rides in every payload as `build` and ' +
+           'the page displays it; what goes is the namespace export nothing reads any more. ' +
+           'Amended here rather than declared as a second edit, because a declaration should ' +
+           'say what the net difference from the source IS, not how it got there.',
       from: `    /* read-only, for RMX_debugMonths */
     build:          function(){ return BUILD; },
     cacheVer:       function(){ return CONFIG.CACHE_VER; },
     generation:     function(){ return generation_(); },
     bundleOk:       function(b){ return bundleOk_(b); }
   };`,
-      to: `    /* read-only, for RMX_whoWins */
-    build:          function(){ return BUILD; }
-  };` },
+      to: `  };` },
 
     { kind: 'cut', gone: ['RMX_debugMonths'],
       why: 'PLAN §7 debug function. Editor-run month diagnostic, no caller. The end anchor is ' +
