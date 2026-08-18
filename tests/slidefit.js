@@ -71,7 +71,8 @@ function browserPath() {
   return null;                       // let Playwright use its own
 }
 
-const read = f => fs.readFileSync(path.join(REPO, f), 'utf8');
+/* app.html off disk, the deleted legacy files out of git — see apphtml.js. */
+const read = require('./apphtml.js').source;
 const strip = s => s.replace(/<\?!?=?[\s\S]*?\?>/g, '');      // <?!= include(...) ?>
 const styleOf = f => (read(f).match(/<style>([\s\S]*?)<\/style>/) || [, ''])[1];
 

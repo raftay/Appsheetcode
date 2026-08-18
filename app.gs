@@ -836,45 +836,40 @@ function APP_logTimed(where, msg, fn, data) {
 /* ========================================================================
  * ROUTER
  * ====================================================================== */
+/* Every route serves app.html. There is one client file and it mounts ONE page,
+   chosen by <body data-page> — so doGet's whole job is to decide which page name
+   to hand it, and there is no file to pick any more.
+
+   ?page= is unchanged from the nine-file era on purpose: the same nine values
+   reach the same nine screens, so a bookmark, a shared link or a browser history
+   entry from before the merge still lands where it did. The ?page=app scaffold
+   that carried the merged client while it was built is gone with the files it
+   was hiding from; so is its &view=.
+
+   AN UNKNOWN ?page= FALLS BACK TO THE LANDING PAGE rather than mounting nothing.
+   app.html mounts by looking up data-page in its registry, and a name with no
+   registration leaves #appRoot empty with no error — a blank screen, which reads
+   as an outage rather than as a typo. PAGES is the same list app.html's §D
+   switcher carries; the two are checked against each other by tests/merge.js. */
+var APP_PAGES = ['landing', 'overview', 'pricevolume', 'rmx', 'segment',
+                 'fuelsurcharge', 'rmxfuel', 'tp01', 'inventoryreport', 'deckbuilder'];
+
 function doGet(e) {
-  var page = (e && e.parameter && e.parameter.page ? String(e.parameter.page) : '').toLowerCase();
-
-  // Map the ?page= value to the HTML file that should be served.
-  var file;
-  if      (page === 'pricevolume')  file = 'Page_PriceVolume';
-  else if (page === 'rmx')          file = 'Page_Rmx';
-  else if (page === 'segment')      file = 'Page_Segment';
-  else if (page === 'fuelsurcharge')file = 'Page_FuelSurcharge';
-  else if (page === 'rmxfuel')      file = 'Page_RmxFuel';
-  else if (page === 'tp01')         file = 'Page_TP01';
-  else if (page === 'inventoryreport') file = 'Page_InventoryReport';
-  else if (page === 'overview')     file = 'Page_Overview';
-  else if (page === 'deckbuilder')  file = 'Page_DeckBuilder';
-  /* The merged single-file client, behind its own route while it is built.
-     It calls these same backends unchanged, so every legacy page above keeps
-     working untouched. Delete this line to revert. See PLAN.md §2.
-        ?page=app            the landing page
-        ?page=app&view=rmx   any other page, for side-by-side comparison   */
-  else if (page === 'app')          file = 'app';
-  else                              file = 'Landing';
-
-  // We render through a template so each page can inject the web-app URL
-  // (used to build the Home / page-switch links) without hard-coding it.
-  var t = HtmlService.createTemplateFromFile(file);
-  t.appUrl  = getAppUrl_();   // available inside the HTML as <?= appUrl ?>
-  t.page    = page || 'landing';
-  /* app.html mounts ONE page, chosen by <body data-page>. While it is behind
-     ?page=app, &view= is what picks which one; after the cutover ?page= does
-     it directly and this falls away. */
-  t.appMode = false;
-  if (page === 'app') {
-    var view = (e && e.parameter && e.parameter.view) ? String(e.parameter.view).toLowerCase() : '';
-    t.page    = view || 'landing';
-    /* Tells app.html to keep its own links inside the scaffold, so clicking a
-       landing card lands on the NEW page and not the legacy one. After the
-       cutover this is always false and the links become plain ?page=. */
-    t.appMode = true;
+  var asked = (e && e.parameter && e.parameter.page ? String(e.parameter.page) : '').toLowerCase();
+  var page  = APP_PAGES.indexOf(asked) === -1 ? 'landing' : asked;
+  if (asked && page !== asked) {
+    APP_log('warn', 'doGet', 'unknown page, serving the landing page', { asked: asked });
   }
+
+  /* Rendered through a template for one reason now: the deployed /exec URL. The
+     client cannot derive it — a relative href inside the Apps Script sandbox
+     iframe resolves against googleusercontent.com, not the web app — and it is
+     read from a <body> data attribute rather than printed into JavaScript,
+     because the printing scriptlet HTML-escapes and would break the script
+     block. PLAN.md §8, chunk 2. */
+  var t = HtmlService.createTemplateFromFile('app');
+  t.appUrl = getAppUrl_();
+  t.page   = page;
 
   return t.evaluate()
     .setTitle('Amrize Commercial Suite')
@@ -887,11 +882,11 @@ function getAppUrl_() {
   try { return ScriptApp.getService().getUrl() || ''; } catch (e) { return ''; }
 }
 
-/* Pull a shared HTML partial (Styles / Shell) into a page.
- * Used in the HTML like:  <?!= include('Styles') ?>                       */
-function include(name) {
-  return HtmlService.createHtmlOutputFromFile(name).getContent();
-}
+/* `include(name)` stood here and is gone at the cutover. It spliced one HTML
+   partial into another, and every one of its 47 call sites was in a file this
+   commit deletes — app.html's only mention of the name is a comment about a
+   partial that had already been dropped. It cannot come back either: there is
+   one client file now, so there is no second file to splice. */
 
 
 /* ========================================================================

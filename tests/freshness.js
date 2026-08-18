@@ -18,6 +18,12 @@
 const fs = require('fs'), vm = require('vm'), path = require('path');
 const { region, load: loadRegions } = require('./appgs.js');   // this file has its own load()
 const REPO = path.resolve(__dirname, '..');
+const APPHTML = require('./apphtml.js');
+/* the legacy filenames these checks were written against, and the app.html page
+   ids they became. Kept as a map so the check reads the same as it always did. */
+const PAGE_ID = { Page_PriceVolume:'pricevolume', Page_Rmx:'rmx', Page_Segment:'segment',
+                  Page_Overview:'overview', Page_FuelSurcharge:'fuelsurcharge',
+                  Page_RmxFuel:'rmxfuel' };
 
 let fails = 0;
 function check(name, got, want) {
@@ -277,13 +283,16 @@ console.log('\nPrice & Volume and Ready-Mix read the same stamp:');
 
 console.log('\nthe loading screen is full-screen, not a corner pill:');
 {
-  const shell = fs.readFileSync(`${REPO}/Shell.html`, 'utf8');
-  const styles = fs.readFileSync(`${REPO}/Styles.html`, 'utf8');
+  /* Shell.html and Styles.html were deleted at the cutover; these assertions are
+     about the code they became, so they read app.html's §E and §A3 instead. */
+  const shell = APPHTML.module('AmrProgress');
+  const styles = APPHTML.styleBlock('A3');
   checkThat('AmrProgress builds the big one', /class = 'amr-load'|className = 'amr-load'/.test(shell));
   /* Every page with the button must ask before rebuilding for everyone. */
   ['Page_PriceVolume', 'Page_Rmx', 'Page_Segment', 'Page_Overview',
    'Page_FuelSurcharge', 'Page_RmxFuel'].forEach(function(f){
-    const src = fs.readFileSync(`${REPO}/${f}.html`, 'utf8');
+    /* the page is a region of app.html now, not a file */
+    const src = APPHTML.pageOf(PAGE_ID[f]).tpl + APPHTML.pageOf(PAGE_ID[f]).js;
     if (!/id="syncBtn"/.test(src)) return;
     checkThat(f + ' asks before rebuilding', /AmrFresh\.ifChanged\(/.test(src),
       'the button rebuilds unconditionally');

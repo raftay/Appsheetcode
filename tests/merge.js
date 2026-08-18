@@ -31,6 +31,8 @@
  *      bare `aside{}` with body[data-page="x"] also raises its specificity by
  *      an attribute selector, so it starts winning cascades the original lost.
  *      Ready-Mix shipped both halves of that — see the check for what broke.
+ *  10. app.gs's APP_PAGES, §D's switcher list and §P's templates name the same
+ *      pages. Nothing else makes those three agree, and drift is silent.
  *   9. Every style element is opened once, closed once, and holds only CSS.
  *      A style element's content is text until its closing tag, so anything
  *      that leaks in is parsed as CSS — and CSS error recovery eats the rule
@@ -87,7 +89,7 @@ const BODY = NO_COMMENTS.slice(NO_COMMENTS.indexOf(BODY_TAG[0]));
      googleusercontent.com rather than the web app — the page loads and then
      navigates somewhere wrong. Shipped once; guarded now. */
   let ok = true;
-  for (const attr of ['data-app-url', 'data-app-mode', 'data-page']) {
+  for (const attr of ['data-app-url', 'data-page']) {
     if (!new RegExp(`\\b${attr}=`).test(BODY_TAG[0])) {
       ok = false; fail('server-values', `<body> does not carry ${attr}`);
     }
@@ -106,7 +108,10 @@ const BODY = NO_COMMENTS.slice(NO_COMMENTS.indexOf(BODY_TAG[0]));
      shipped. So: the file may only contain scriptlets over variables doGet
      actually sets on the template. Note this scans RAW source, comments and
      all — that is the whole point of the check. */
-  const TEMPLATE_VARS = ['page', 'appUrl', 'appMode'];
+  /* appMode went with the ?page=app scaffold at the cutover. A scriptlet over a
+     variable doGet no longer sets is not a stale comment — the render throws
+     ReferenceError before the page loads. */
+  const TEMPLATE_VARS = ['page', 'appUrl'];
   const scriptlets = [...SRC.matchAll(/<\?[-=!]?\s*([\s\S]*?)\s*\?>/g)];
   let bad = 0;
   for (const m of scriptlets) {
@@ -516,6 +521,44 @@ const scopedPage = sel => {
   }
 
   if (!bad) pass('style-blocks', `${opens.length} style elements, each opened once and holding only CSS`);
+}
+
+/* ------------------------------- 10. the routes and the switcher are one list */
+{
+  /* Two lists name the pages: APP_PAGES in app.gs, which decides what ?page=
+     serves, and AMR_PAGES in §D, which is the switcher in the header. They are
+     in different files and different languages, and nothing makes them agree.
+     Drift either way is silent and asymmetric:
+       · in app.gs only  — the switcher cannot reach a page that works
+       · in app.html only — the switcher offers a link that serves the landing
+                            page instead, which reads as the click being ignored
+     A page also needs a <template> and a registration, so all three are checked
+     against each other here rather than pairwise. */
+  const gs = fs.readFileSync(path.join(ROOT, 'app.gs'), 'utf8');
+  const m = gs.match(/var APP_PAGES = \[([\s\S]*?)\];/);
+  if (!m) {
+    fail('routes', 'app.gs has no APP_PAGES array — doGet decides routes some other way now');
+  } else {
+    const routes = [...m[1].matchAll(/'([\w-]+)'/g)].map(x => x[1]);
+    const swMatch = NO_COMMENTS.match(/var AMR_PAGES = \[([\s\S]*?)\];/);
+    const switcher = swMatch ? [...swMatch[1].matchAll(/p:\s*'([\w-]+)'/g)].map(x => x[1]) : null;
+    let bad = 0;
+    if (!switcher) { bad++; fail('routes', 'app.html has no AMR_PAGES switcher list'); }
+    else {
+      for (const p of routes) {
+        if (!switcher.includes(p)) { bad++; fail('routes', `app.gs routes ?page=${p} but the switcher never offers it`); }
+        if (!templates.includes(p)) { bad++; fail('routes', `app.gs routes ?page=${p} but there is no template tpl-${p}`); }
+      }
+      for (const p of switcher) {
+        if (!routes.includes(p)) {
+          bad++;
+          fail('routes', `the switcher offers ${p} but app.gs does not route it — ` +
+                         `doGet falls back to the landing page, so the click looks ignored`);
+        }
+      }
+    }
+    if (!bad) pass('routes', `${routes.length} pages, and app.gs, the switcher and §P all agree`);
+  }
 }
 
 console.log(failures ? `\n${failures} failure(s)` : '\nmerge.js: all checks passed');

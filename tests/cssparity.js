@@ -46,6 +46,7 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 const { rmxModel } = require('./rmxfixture');
+const { legacy: legacyFile } = require('./apphtml.js');
 
 const ROOT = path.join(__dirname, '..');
 const URL_BASE = 'https://script.google.com/macros/s/TEST/exec';
@@ -152,9 +153,12 @@ function fillVars(src, vars) {
   return src.replace(/<\?!?=\s*(\w+)\s*\?>/g, (all, name) =>
     Object.prototype.hasOwnProperty.call(vars, name) ? vars[name] : all);
 }
+/* Page_Rmx.html and its includes were deleted at the cutover and come out of
+   git — this harness IS the comparison, so it needs the side that is gone. See
+   apphtml.js for when the legacy half retires. */
 function legacySource() {
-  let src = read('Page_Rmx.html');
-  src = src.replace(/<\?!?=\s*include\('([\w-]+)'\)\s*\?>/g, (_, name) => read(name + '.html'));
+  let src = legacyFile('Page_Rmx.html');
+  src = src.replace(/<\?!?=\s*include\('([\w-]+)'\)\s*\?>/g, (_, name) => legacyFile(name + '.html'));
   return fillVars(src, { page: 'rmx', appUrl: URL_BASE, appMode: 'false' });
 }
 function mergedSource() {

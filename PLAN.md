@@ -1,10 +1,17 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: in progress on `merging-files`. Chunks 0–12 done — both files now exist.** `app.html` is ~1.13 MB and holds the runtime, thirteen shared modules and all ten pages; §A3 is 363 rules and §A4 is 441. **`app.gs` is 542 KB / 11,388 lines in eleven sections, and the 16 `.gs` files are gone** — deleted in the same commit that added it, because they cannot coexist ([§2](#2-the-thing-that-would-have-broken-it)). All **19** harnesses run and are green: `tests/ovperiod.js` and `tests/bgrender.js` drive `app.html` through a real browser alongside their legacy side, `tests/pageparity.js` covers eight of the ten pages, `tests/gsparity.js` proves every region of `app.gs` is still byte-for-byte the file it came from, and `tests/cssparity.js` proves the merged Ready-Mix page does not merely emit the same HTML but RENDERS it the same — which it did not, until it was written.
+**Status: chunks 0–13 done on `merging-files`. THE MERGE IS COMPLETE — the script project is `app.gs`, `app.html` and `appsscript.json`, and nothing else.** 37 files became 3. `app.html` is ~1.13 MB and holds the runtime, thirteen shared modules and all ten pages; `app.gs` is 542 KB in eleven sections. All **19** harnesses run and are green.
 
-**Chunk 13, the cutover, is the next thing to do** — and it is now the only thing between here and two files. Two owed items carry into it, both under [chunk 12's notes](#what-chunk-12-settled): two user-facing sentences in `app.html` that chunk 12 made untrue, and `APP_verifyPermissions()`, which has never been run because nothing off-platform can run it.
+**Chunk 14 is next, and everything from here is [§10](#10-four-things-this-merge-does-not-touch) work** — behaviour changes that were deliberately kept out of the merge so a regression would have one possible cause instead of two. Take the first unticked chunk in [§8](#8-the-chunks).
 
-The Ready-Mix specificity audit that had to happen *before* the cutover deletes the file it diffs against is **done**. It found a **673-value rendering regression** in the merged Ready-Mix tables, fixed it, and left `tests/cssparity.js` holding the line — see [the notes on the gap after chunk 12](#what-the-gap-after-chunk-12-settled).
+Two items are still owed and neither is code: **`APP_verifyPermissions()` has never been run** (nothing off-platform can), and **no real deck has ever been built** against the live deployment. Both need somebody in the Apps Script editor.
+
+> **Read this before the first deliberate page change.** Three harnesses compare `app.html`
+> against the app it replaced, reading the deleted files out of git through
+> `tests/apphtml.js`: `pageparity.js`, `cssparity.js` and `modparity.js`. They are the proof
+> that 37 files became 3 without changing what anyone sees. **The moment a page or a §E module
+> is deliberately changed, that claim stops being true and they start failing for the right
+> reason — delete them then, do not weaken them.** Chunk 14 is the likely first one.
 
 > **Note on the chunk numbers.** They are a way of splitting the work, not a structure the
 > code should carry. Nothing in `app.html` is arranged around them and nothing should be: a
@@ -690,7 +697,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | # | Chunk | What lands | Review by | |
 |---|---|---|---|---|
 | 12 | **`app.gs`** | All 16 `.gs` merged in the [§5](#5-the-shape-of-appgs) order — **542 KB, 11,388 lines, eleven sections, zero top-level collisions.** `APP_log()` + `APP_CONFIG.LOG_LEVEL`, `APP_verifyPermissions()`, and seven explicit `oauthScopes` in `appsscript.json`. Six debug functions deleted, plus `CUBE_historyStatus` and `syncSlideData`; `qlikStamps` and `getSaskRatesStatus` kept, with reasons. Old `.gs` deleted **in this same commit** ([§2](#2-the-thing-that-would-have-broken-it)). The seven harnesses that read a `.gs` now read a **region** of `app.gs` through the new `tests/appgs.js`, and `tests/gsparity.js` proves every region is still byte-for-byte its source. | `tests/gsparity.js` (mutation-tested four ways), `configcheck`, `qliksync`, `fscheader`, `pvlookup`, `rmxcost`, `freshness`, `deckstatic`, `node --check` **on a `.js` copy** — plus the whole 18-harness suite, all green. **`APP_verifyPermissions()` in the editor is still owed**: nothing off-platform can run it | ✅ |
-| 13 | **Cutover** | **`cssparity.js` and `pageparity.js` both read `Page_Rmx.html` and must be repointed or retired with it** — and the Ready-Mix specificity audit they exist for is **done**, see [the chunk-12→13 notes](#what-the-gap-after-chunk-12-settled). `doGet` serves `app.html` for every route; the `?page=app` scaffold goes; all old `.html` deleted; `README.md` and `CLAUDE.md` rewritten around two files. **Delete `tests/modparity.js`** and repoint `regress.js` / `pageparity.js` / `slidefit.js` / `deckpath.js` at `app.html` — they compare against files that no longer exist after this commit. **`tests/gsparity.js` retires here too, for the same reason its header gives.** Also: `AmrKpiStore` goes ([§11](#11-legacy-hit-list)), and **two user-facing sentences in `app.html` that chunk 12 made untrue** — see [chunk 12's notes](#what-chunk-12-settled). | the whole suite, every route | ☐ |
+| 13 | **Cutover** | `doGet` validates `?page=` against the new `APP_PAGES` and serves `app.html` for every route; the `?page=app` scaffold and its `&view=` are gone, and so is `hrefFor`'s branch. **All 21 legacy `.html` deleted**, plus `include()` (47 call sites, every one in a deleted file) and `AmrKpiStore` (zero callers, went with `Shell.html`). The two untrue sentences fixed. `README.md` and `CLAUDE.md` rewritten around three files. **Ten harnesses repointed through the new `tests/apphtml.js`** rather than retired — see the notes below, the plan was wrong about three of them. `merge.js` gains check 10 (the three page lists agree). | the whole suite (19 green) + every route driven through `doGet` in a real browser, including the unknown-page fallback | ✅ |
 
 ### After the merge is proven — see [§10](#10-four-things-this-merge-does-not-touch)
 
@@ -702,6 +709,57 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 17 | **Device cache on both fuel pages** | Wire `AmrCache` into AGG Fuel Recovery and RMX Fuel Recovery, so a repeat visit paints from `localStorage` instead of waiting on the sheet. **Requested; new behaviour, not a port** — see [§10](#10-four-things-this-merge-does-not-touch). | ☐ |
 | 18 | **`APP_log` at the server entry points** | Chunk 12 wrote the helper and left the 10,889 moved lines alone, on purpose — see its notes. This wires it in, and the order is the order of the payoff: **`APP_cachePut_`'s `n > 250` bail first** (that silent `skip` is the whole reason the `cache` field exists, and README §6 is what it costs), then `APP_cacheGet_`'s hit/miss, then the entry points a harness already covers so each line lands with a gate on it — `getFscData`, `getPvUnmapped`, `qlikSyncCheck`, `RMX_prepare`. Never inside a per-row loop. **Do the `catch (e) {}` pass in the same chunk**: [§7](#7-logging-and-the-debug-functions-it-replaces) says silent is right for an optional cache read and wrong for everything else, and chunk 12 carried all of them across undecided because deciding them is an edit, not a move. | ☐ |
 | 19 | **The unwired Saskatchewan rates readout** | `getSaskRatesStatus` says in its own comment that it exists "so the Settings screen can check the sheet without loading a whole page", and no `.html` has ever called it. Either wire it into Settings or delete it and the sentence — but not inside a merge. See [§1a](#1a-chunk-1-results--the-three-audits). | ☐ |
+
+### What chunk 13 settled
+
+- **The plan said to delete `modparity.js` and retire `gsparity.js`. Both were wrong, and for
+  the same reason.** The chunk-13 row read "they compare against files that no longer exist
+  after this commit" — but gsparity had *already* solved that in chunk 12 by reading the 16
+  `.gs` out of **git**, and the same trick works for the 21 `.html`. Deleting the files does
+  not remove the comparison; it only moves where the other side is read from.
+
+  The retirement condition is not "the sources are gone", it is **"a legitimate change has
+  landed inside a moved region"** — which is what gsparity's own header always said. That is
+  still ahead of us, so both survive, and so do `pageparity.js` and `cssparity.js`.
+
+  > Deleting `modparity.js` would have been actively harmful. `tests/apphtml.js` — the thing
+  > written to replace the deleted-file reads — slices §E modules out of `app.html`, and that
+  > slicing is only trustworthy while §E is still a verbatim copy. modparity is what proves
+  > it. Removing it would have taken away the proof underneath its own replacement.
+
+- **`tests/apphtml.js` is the client-side twin of `appgs.js`,** and it draws the same
+  distinction that one does. A harness reading a MODULE wants `module('AmrFuelExec')` — §E is
+  the code that ships, and pointing it at a git copy of `Deck_Fuel.html` would leave it
+  testing a file nobody serves. A harness that IS a comparison wants `legacy('Page_Rmx.html')`
+  — it needs a second side and there is none on disk. Ten harnesses were repointed and every
+  one was proved green **twice**: once with the legacy files still present, then again with
+  them moved aside. Four failed that second run — `freshness`, `pvcheck`, `ovperiod` and
+  `bgrender` each had a read the first pass missed. **Hide before you delete.**
+
+- **`doGet` kept the same ten `?page=` values on purpose.** They are bookmarks, shared links
+  and browser history; there was no reason to break them and every reason not to. What is new
+  is that an unrecognised value serves the landing page instead of being passed through:
+  `app.html` mounts by looking up `data-page` in its registry, and a name with no registration
+  leaves `#appRoot` empty with no error at all — a blank screen, which reads as an outage
+  rather than as a typo.
+
+- **Three lists now have to name the same ten pages** — `APP_PAGES` in `app.gs`, `AMR_PAGES`
+  in §D, and the `§P` templates — and nothing made them agree. `merge.js` check 10 does.
+  Drift is silent and asymmetric: missing from `app.gs` and the switcher offers a link that
+  quietly serves the landing page, which reads as the click being ignored; missing from
+  `app.html` and a working route has no way to reach it.
+
+- **`include()` is gone, and it is the one deletion the merge could make without a judgement
+  call.** All 47 call sites were in the 21 files this chunk deletes, `app.html`'s only mention
+  of the name is a comment about a partial dropped in chunk 6, and it cannot come back: one
+  client file means there is no second file to splice into it. Declared to `gsparity.js` like
+  every other edit, which is what keeps the name-set check honest.
+
+- **`gsparity.js` needed a new edit kind.** `replace` swaps one exact string; a rewritten
+  function needs a span. `rewrite` takes a start anchor, an end anchor and the new text as a
+  **literal** — reading it back out of `app.gs` would make the check unable to fail. `doGet`
+  and `include()` are both declared that way, so the other 10,880 lines are still proved
+  verbatim.
 
 ### What the gap after chunk 12 settled
 

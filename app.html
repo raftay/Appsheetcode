@@ -1815,10 +1815,10 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
        data-app-url   the deployed /exec URL. Relative hrefs resolve against the
                       sandbox iframe, not the app, so nothing may be linked
                       without this.
-       data-app-mode  "true" while the merged client is behind ?page=app.
-                      Keeps links inside the scaffold during the transition.
+     data-app-mode is gone with the ?page=app scaffold it existed for: every
+     route serves this file now, so there is nothing to keep links inside.
      ========================================================================= -->
-<body data-page="<?= page ?>" data-app-url="<?= appUrl ?>" data-app-mode="<?= appMode ?>">
+<body data-page="<?= page ?>" data-app-url="<?= appUrl ?>">
 
 <!-- The one mounted page goes here. Each page template carries its own header:
      the landing page deliberately has no header.bar (its hero IS the header),
@@ -1985,26 +1985,21 @@ window.AMR = (function(){
   var BODY     = document.body;
   var URL_BASE = BODY.getAttribute('data-app-url') || '';
   var PAGE     = BODY.getAttribute('data-page') || 'landing';
-  var APP_MODE = BODY.getAttribute('data-app-mode') === 'true';
-
   /* Page code and anything ported from the old files still expects these.
      APP_PAGE is what AmrCache keys its per-device store on and what
      AmrFresh asks the server about, so it is not optional. */
   window.APP_URL  = URL_BASE;
   window.APP_PAGE = PAGE;
 
-  /* The URL of another page in the suite. ONE place knows the difference
-     between the scaffold and the real thing, so the cutover is a one-line
-     change here rather than an edit in every page that links somewhere. */
+  /* The URL of another page in the suite. ONE place builds them, which is what
+     made the cutover a change here rather than an edit in every page that links
+     somewhere: the ?page=app&view= scaffold used to branch in this function and
+     nowhere else, and removing it removed the branch. */
   function hrefFor(pageKey){
     if (!URL_BASE) {
       /* Better a visible failure than a silent navigation to the sandbox. */
       log('error', 'AMR.nav', 'APP_URL is empty — links cannot be built', { page: pageKey });
       return '#';
-    }
-    if (APP_MODE){
-      return pageKey === 'landing' ? (URL_BASE + '?page=app')
-                                   : (URL_BASE + '?page=app&view=' + pageKey);
     }
     return pageKey === 'landing' ? URL_BASE : (URL_BASE + '?page=' + pageKey);
   }
@@ -2469,9 +2464,9 @@ window.AMR = (function(){
 /* ============================================================================
    §E  SHARED MODULES
    ----------------------------------------------------------------------------
-   AmrCache, AmrProgress, AmrBoot, AmrKpiStore, AmrFresh, AmrTick, AmrCube,
-   AmrKpi, AmrSlide, AmrDeckSource, AmrFuelExec, AmrPvSlide, AmrSegSlide,
-   AmrRmxSlide.
+   AmrCache, AmrProgress, AmrBoot, AmrFresh, AmrTick, AmrCube, AmrKpi,
+   AmrSlide, AmrDeckSource, AmrFuelExec, AmrPvSlide, AmrSegSlide, AmrRmxSlide.
+   Thirteen — AmrKpiStore was the fourteenth and did not come across.
 
    These land in the chunk of the first page that exercises them, not here:
    porting a module blind, with no page to prove it against, is how a silent
@@ -2494,10 +2489,12 @@ window.AMR = (function(){
    list and no error at all. tests/bgrender.js checks the registry from a real
    browser for exactly that reason.
 
-   **AmrKpiStore has no caller ANYWHERE** — grepped across every .html and .gs,
-   the only hits are its own definition in Shell.html and two comments. Every
-   page is ported now, so nothing is going to claim it: it goes at chunk 13.
-   Do not port it to give it a home.
+   **AmrKpiStore is gone.** It had no caller anywhere — the only hits across every
+   .html and .gs were its own definition in Shell.html and two comments — and no
+   page claimed it while all ten were ported, so it went with Shell.html at the
+   cutover rather than being carried across. It is a per-device store for
+   uploaded workbook bytes; if something ever needs one, write it against what
+   that caller actually wants rather than restoring this.
    ========================================================================== */
 </script>
 
@@ -10221,9 +10218,12 @@ MB Submarket, plus Region&rarr;Country.<br>
     if (!list.length){
       sel.innerHTML = '<option value="0">\u2014 unavailable \u2014</option>';
       sel.disabled = true;
+      /* Named app.gs, not PV_Backend.gs: chunk 12 merged the 16 server files into
+         one and deleted them, so the file this sentence used to name no longer
+         exists to paste. */
       showBanner('The server sent no month list, so nothing is being filtered by month. '
         + 'If the sheet carries a full prior year, every YTD figure below is putting a part '
-        + 'year against a whole one. Paste the current PV_Backend.gs into the Apps Script '
+        + 'year against a whole one. Paste the current app.gs into the Apps Script '
         + 'editor, save, then press \u21bb Update from source. '
         + 'Backend build: ' + (STATE.build || 'older than 2026-08-11'));
       return;
@@ -11924,11 +11924,15 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
     if (!list.length){
       sel.innerHTML = '<option value="0">\u2014 unavailable \u2014</option>';
       sel.disabled = true;
+      /* The "a SECOND file is also defining RMX and winning" half of this sentence
+         went at the cutover: there is one server file now and there cannot be a
+         second. RMX_whoWins still works and is still worth running — it reports
+         which build is actually live — so it is still named here, just for what
+         it can now tell you. */
       showBanner('The server sent no month list, so nothing is being filtered by month and '
-        + 'every figure below covers the WHOLE year. Either RMX_Backend.gs is out of date, or '
-        + 'a SECOND file in the Apps Script project is also defining RMX and winning \u2014 run '
-        + 'RMX_whoWins() in the editor: it names the file that owns the copy actually running. '
-        + 'Fix that, save, then press \u21bb Update from source. '
+        + 'every figure below covers the WHOLE year, which means app.gs is out of date. '
+        + 'Run RMX_whoWins() in the editor to see which build is live, paste the current '
+        + 'app.gs in, save, then press \u21bb Update from source. '
         + 'Backend build: ' + (STATE.build || 'older than 2026-08-11'));
       return;
     }

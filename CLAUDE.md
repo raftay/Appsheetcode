@@ -5,10 +5,9 @@
 **[`PLAN.md`](PLAN.md) is required reading at the start of every session, for every agent.**
 
 Several agents work on this repo from different accounts with no shared memory. `PLAN.md` is
-the only context they have in common: it carries the current project (collapsing 37 Apps
-Script files into one `app.html` + one `app.gs`), the chunk each session should pick up, the
-rules that stop two agents undoing each other, and a legacy hit-list of things that look
-deletable and are not.
+the only context they have in common: it carries the current project, the chunk each session
+should pick up, the rules that stop two agents undoing each other, and a legacy hit-list of
+things that look deletable and are not.
 
 It also opens with a session-start and session-end protocol. Follow both. The end-of-session
 half matters as much as the start: **a half-finished chunk with no note beside it is the most
@@ -24,20 +23,23 @@ it since anyone last looked.
 
 ## What this repo is
 
-A flat mirror of one Google Apps Script project. Every `.gs` and `.html` at the root is one
-file in the script editor — no folders, no build step, no package manager. `appsscript.json`
-is the project manifest and is tracked; `tests/` is Node-only and is **not** part of the
-script project.
+A flat mirror of one Google Apps Script project. **The project is three files** — `app.gs`,
+`app.html` and `appsscript.json` — with no folders, no build step and no package manager.
+`tests/` is Node-only and is **not** part of the script project.
 
-**The server side is already one file.** Chunk 12 merged the 16 `.gs` into `app.gs` and
-deleted them in the same commit — they cannot coexist. Navigate it by section banner
-(`Ctrl+F "§7"`) or by the original filename, which each region carries as a
-`/* ---- RMX_Backend.gs ----` locator. The client side is mid-merge: `app.html` holds all ten
-pages and the old `.html` are still there until chunk 13 retires them.
+The merge that got here is finished. Chunk 12 collapsed 16 `.gs` into `app.gs`; chunk 13 was
+the cutover — `doGet` serves `app.html` for every route and the 21 legacy `.html` are gone.
+Navigate both files by section banner (`Ctrl+F "§7"` in `app.gs`, `"§P rmx"` in `app.html`),
+or by the original filename, which each region still carries as a `/* ---- RMX_Backend.gs ----`
+locator.
 
 - It is a standalone web app, not bound to a spreadsheet. Each page opens its own Google
   Sheet by id, resolved at call time.
-- `doGet(e)` maps `?page=` to an HTML file. Nine routes plus a landing page.
+- `doGet(e)` validates `?page=` against `APP_PAGES` and serves `app.html`, which mounts one
+  `<template>` into `#appRoot`. The ten route names are unchanged from the nine-file era, so
+  old bookmarks still work; an unknown one serves the landing page rather than mounting
+  nothing. **Three lists must name the same ten pages** — `APP_PAGES`, §D's `AMR_PAGES` and
+  the `§P` templates — and `tests/merge.js` check 10 is what holds them together.
 - Apps Script evaluates every `.gs` into **one** global scope — which is why there is now
   only one. Entry points are still prefixed (`RMX_`, `PV`, `DECK_`, `TP_`, `IR`) and
   everything real still lives inside a namespace IIFE; the reasons outlived the file count.
@@ -50,20 +52,31 @@ pages and the old `.html` are still there until chunk 13 retires them.
 
 ## Things that will bite you
 
-- **Do not flip a file's line endings.** The repo is mixed **three ways**: most `.html` are
-  CRLF, `Code.gs` was LF, and two files carried a lone `\r` as a line terminator. `app.gs` and
-  `app.html` are LF throughout — keep them that way. Scripted edits to the older files must
-  open with `newline=''` and write back what was already there, or a two-line change shows up
-  as a whole-file diff. Never anchor a test on a spelled-out `\r\n`.
+- **`app.gs` and `app.html` are LF throughout — keep them that way.** The deleted files were
+  mixed **three ways** (most `.html` CRLF, `Code.gs` LF, and two `.gs` carried a lone `\r` as
+  a line terminator), and three harnesses still read them out of git. Never anchor a test on
+  a spelled-out `\r\n`.
 - **Most of this cannot be tested off-platform.** Anything touching `SlidesApp`, `DriveApp`,
   `CacheService` or a spreadsheet needs the live deployment. What *can* be checked is the
   client-side compute and render layer — that is what `tests/` is for. Run the relevant
-  harnesses before and after touching a report page; see `tests/README.md`.
+  harnesses before and after touching a page; see `tests/README.md`.
 - **`node --check` does not accept `.gs`.** Copy to a `.js` path first.
 - **Apps Script runs every `<? … ?>` in an HTML file, comments included**, and its printing
   scriptlet HTML-escapes — so one written as an example in a comment breaks the render, and
   one printed into JavaScript can emit `&#39;` and kill the whole script block. Server values
   belong in a `<body>` data attribute. `node tests/merge.js` enforces both.
+- **A style element's content is text until its closing tag.** Anything that leaks in is
+  parsed as CSS, and CSS error recovery eats the rule after it without a word. §B shipped
+  that way for three chunks because a builder split a file on a `<style` written in *prose*
+  inside a comment. Same trap as the scriptlet one above, in the build direction — never
+  write either tag as a literal when you mean to name it. `merge.js` check 9 is the gate.
+- **Scoping a CSS rule is not a neutral transformation of it.** `body[data-page="x"] `
+  narrows what a selector matches AND raises its specificity by an attribute selector, so a
+  prefixed bare `th{}` can start beating shared `.class` rules the original lost to — that
+  cost 673 computed values on Ready-Mix. Use `:where(body[data-page="x"])`, which adds no
+  weight. And the page is not the document: `#appRoot` is a `<main>` between `<body>` and the
+  page, so a bare `main{}` restyles the mount. `merge.js` check 8 covers reach,
+  `tests/cssparity.js` covers weight.
 - **When you delete code by anchored text, diff the symbol table, not just the syntax.** A cut
   that takes one function too many is still valid JavaScript. Chunk 12 lost `RMX_whoWins` that
   way — the anchor matched *uniquely*, `node --check` passed, every structural check passed,

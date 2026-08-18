@@ -32,6 +32,7 @@
 const fs = require('fs');
 const path = require('path');
 const REPO = path.resolve(__dirname, '..');
+const { legacy } = require('./apphtml.js');
 
 let chromium;
 try { ({ chromium } = require('playwright')); }
@@ -54,7 +55,8 @@ function browserPath() {
   }
   return null;
 }
-const read = f => fs.readFileSync(path.join(REPO, f), 'utf8');
+/* app.html off disk, the deleted legacy files out of git — see apphtml.js. */
+const read = require('./apphtml.js').source;
 function expand(src, depth) {
   return src.replace(/<\?!?=\s*include\('([^']+)'\)\s*\?>/g,
       (m, name) => (depth > 3 ? '' : expand(read(name + '.html'), (depth || 0) + 1)))
@@ -94,9 +96,12 @@ window.html2canvas = function(){
 })();
 </script>`;
 
+/* The legacy side reads its two files out of GIT — they were deleted at the
+   cutover, and this side exists precisely to be the app they came from. See
+   apphtml.js for when the legacy half of a comparison retires. */
 const LEGACY = `<!doctype html><html><body>${STUB}
-${expand(read('SlideExport.html'), 0)}
-${expand(read('Shell.html'), 0)}
+${expand(legacy('SlideExport.html'), 0)}
+${expand(legacy('Shell.html'), 0)}
 </body></html>`;
 
 /* app.html on the Deck Builder route. The three template variables doGet sets

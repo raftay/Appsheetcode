@@ -12,9 +12,21 @@
  * means every one of those gates covers app.html for free, and a merge that
  * "tidied" a module on the way in fails here with the module named.
  *
- * RETIRE THIS AT CHUNK 13. Once the old .html files are deleted there is no
- * second copy to compare against, and the gates above have to be repointed at
- * app.html directly. PLAN.md §8 carries that note.
+ * IT SURVIVED CHUNK 13, and the plan said it would not. The chunk-13 note read
+ * "retire this — once the old .html are deleted there is no second copy". There
+ * is: they are in git, and gsparity.js had already established that reading a
+ * deleted file out of a commit is the same comparison. So this reads its source
+ * side through apphtml.legacy() now and keeps working.
+ *
+ * That matters more than it looks, because apphtml.js is what the repointed
+ * gates read app.html THROUGH, and its slicing is only trustworthy while §E is
+ * still a verbatim copy. Deleting this would have removed the proof underneath
+ * the thing built to replace it.
+ *
+ * RETIRE IT WHEN A §E MODULE IS DELIBERATELY CHANGED — not when the sources are
+ * deleted. Same end of life as gsparity.js, for the same reason its header
+ * gives: keep it while app.html is still provably those files, delete it rather
+ * than weaken it when it is not.
  *
  * Run:  node tests/modparity.js
  * ===========================================================================*/
@@ -22,27 +34,15 @@
 const fs   = require('fs');
 const path = require('path');
 
+const { legacy, MODULES, REF } = require('./apphtml.js');
+
 const ROOT = path.join(__dirname, '..');
 const APP  = fs.readFileSync(path.join(ROOT, 'app.html'), 'utf8');
 
-/* module marker -> the file it was ported from. The marker is the module's own
-   opening line, which is what makes this a match on code rather than on a
-   comment banner someone could copy without the body. */
-const MODULES = [
-  { name: 'AmrProgress',  open: 'window.AmrProgress = (function(){', from: 'Shell.html' },
-  { name: 'AmrBoot',      open: 'window.AmrBoot = (function(){',     from: 'Shell.html' },
-  { name: 'AmrFresh',     open: 'window.AmrFresh = (function(){',    from: 'Shell.html' },
-  { name: 'AmrSlide',     open: 'var AmrSlide = (function(){',       from: 'SlideExport.html' },
-  { name: 'AmrFuelExec',  open: 'var AmrFuelExec = (function(){',    from: 'Deck_Fuel.html' },
-  { name: 'AmrCache',     open: 'window.AmrCache = (function(){',    from: 'Shell.html' },
-  { name: 'AmrKpi',       open: 'window.AmrKpi = (function(){',      from: 'KpiShared.html' },
-  { name: 'AmrCube',      open: 'window.AmrCube = (function(){',     from: 'Cube.html' },
-  { name: 'AmrPvSlide',   open: 'var AmrPvSlide = (function(){',     from: 'Deck_PV.html' },
-  { name: 'AmrSegSlide',  open: 'var AmrSegSlide = (function(){',    from: 'Deck_SEG.html' },
-  { name: 'AmrTick',      open: 'window.AmrTick = (function(){',     from: 'Shell.html' },
-  { name: 'AmrDeckSource',open: 'var AmrDeckSource = (function(){',  from: 'Deck_Sources.html' },
-  { name: 'AmrRmxSlide',  open: 'var AmrRmxSlide = (function(){',    from: 'Deck_RMX.html' }
-];
+/* The module table lives in apphtml.js: two files need it, and one list cannot
+   drift from itself. Each entry's marker is the module's own opening line, which
+   is what makes this a match on code rather than on a banner comment someone
+   could copy without the body. */
 
 const blocksOf = src => [...src.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
 
@@ -53,7 +53,7 @@ const appBlocks = blocksOf(APP);
 const sources   = {};
 
 for (const m of MODULES) {
-  if (!sources[m.from]) sources[m.from] = blocksOf(fs.readFileSync(path.join(ROOT, m.from), 'utf8'));
+  if (!sources[m.from]) sources[m.from] = blocksOf(legacy(m.from));
 
   const mine  = appBlocks.filter(b => b.includes(m.open));
   const their = sources[m.from].filter(b => b.includes(m.open));
@@ -83,5 +83,6 @@ for (const m of MODULES) {
        `        ${m.from.padEnd(11)}: ${JSON.stringify(b.slice(i, i + 70))}`);
 }
 
-console.log(failures ? `\n${failures} failure(s)` : '\nmodparity.js: every §E module is a verbatim copy');
+console.log(failures ? `\n${failures} failure(s)`
+                     : `\nmodparity.js: every §E module is a verbatim copy (sources read at ${REF})`);
 process.exit(failures ? 1 : 0);

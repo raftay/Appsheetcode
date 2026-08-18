@@ -55,8 +55,11 @@ function model(cyYear) {
   return d;
 }
 
-/* ---- the NEW shared module, loaded once ---- */
-const modSrc = scriptOf(path.join(REPO, 'Deck_Fuel.html'));
+/* ---- the NEW shared module, loaded once ----
+   §E of app.html, not Deck_Fuel.html: that file was deleted at the cutover and,
+   more to the point, §E is the code that ships. tests/modparity.js is what makes
+   the swap a non-event — it proves the two were byte-identical. */
+const modSrc = require('./apphtml.js').module('AmrFuelExec');
 const modCtx = { window: {}, document: undefined, console };
 modCtx.global = modCtx;
 require('vm').createContext(modCtx);

@@ -31,8 +31,11 @@
 const fs = require('fs');
 const path = require('path');
 const REPO = path.resolve(__dirname, '..');
+/* .gs names resolve to a region of app.gs; .html names to app.html off disk or,
+   for the files the cutover deleted, to the commit before it. Both indirections
+   exist so the checks below keep reading what they always read. */
 const read = f => (f.endsWith('.gs') ? require('./appgs.js').region(f)
-                                    : fs.readFileSync(path.join(REPO, f), 'utf8'));
+                                    : require('./apphtml.js').source(f));
 
 let failed = 0;
 function check(label, ok, detail) {

@@ -10,11 +10,25 @@ Builder extraction work lives. These two harnesses are the regression gate for P
 Nothing here is uploaded to Apps Script. The repo root is a flat mirror of the script
 project; this folder is not part of it.
 
-**Since chunk 12 the server side is one `app.gs` and the 16 `.gs` files are gone.** The seven
-harnesses that used to read one by name — `configcheck`, `qliksync`, `fscheader`, `pvlookup`,
-`rmxcost`, `freshness`, `deckstatic` — read a **region** of `app.gs` through `appgs.js` now,
-and `gsparity.js` is what proves a region is still byte-for-byte the file it came from. Read
-both of those sections before pointing anything new at `app.gs`.
+**Since chunk 13 the whole script project is `app.gs`, `app.html` and `appsscript.json`.**
+Both merged files have a reader in front of them and a parity gate behind it, and the pattern
+is the same on each side:
+
+| | reader | parity gate | reads a deleted file out of |
+|---|---|---|---|
+| server | `appgs.js` — one **region** of `app.gs` | `gsparity.js` | git, at `4d8ee5d` |
+| client | `apphtml.js` — a **module / style layer / page** of `app.html`, or a deleted file whole | `modparity.js` | git, at `61b714c` |
+
+Read the reader's header before pointing anything new at either file. The distinction that
+matters is *which* of the two things a harness wants: the code that **ships** (a region of the
+merged file) or the app it **replaced** (the deleted file, out of git). `deckpath` walks the
+deck adapters, so it wants §E; `pageparity` is a comparison, so it wants the old page. Getting
+that backwards leaves a harness testing a file nobody serves.
+
+**The legacy half of a comparison does not retire when the files are deleted — it retires when
+a page or module is deliberately changed.** Until then `app.html` really is a port of those
+files and the comparison really does mean something. `pageparity.js`, `cssparity.js` and
+`modparity.js` are the three; delete them at that point rather than weakening them.
 
 Install everything at once: `npm install playwright chart.js jsdom`. `--no-save` prunes
 whatever is not on the command line, so doing them one at a time leaves you with only the last.
@@ -62,12 +76,18 @@ added. Twelve comparisons, all identical, as of chunk 3.
 
 ## `merge.js` — the structural gate for `app.html`
 
-Eight invariants that nothing enforces at runtime: every inline script parses, every
+Ten invariants that nothing enforces at runtime: every inline script parses, every
 `<template id="tpl-X">` has exactly one `AMR.page('X')`, every `getElementById` target exists
 in that page's own template, no id is declared by two pages, every §A4 rule is scoped, no
 page registration leaks a global, no page shadows a runtime global, and **no §A4 rule reaches
 outside its own page's markup** (check 8, `css-reach`). Plus the three Apps Script templating
 traps that have each shipped once — see `PLAN.md` §8.
+
+Check 9, `style-blocks`, is why §B stopped losing a rule: a style element's content is text
+until its closing tag, so anything that leaks in is parsed as CSS, and CSS error recovery eats
+the rule after it silently. Check 10, `routes`, holds `app.gs`'s `APP_PAGES`, §D's `AMR_PAGES`
+and the `§P` templates to the same ten page names — three lists in two languages that nothing
+else makes agree.
 
 `css-reach` is the one that needs explaining. It builds the real document — the shared modal
 shells, the guide aside and FAB `AmrQlikGuide` appends to `<body>` at runtime, and the page
@@ -185,6 +205,30 @@ instead of `body[data-page="x"]` narrows the rule without adding weight, so the 
 exactly what the unscoped legacy rule had. That is what "scoping a style block" was assumed to
 mean all along.
 
+## `apphtml.js` — not a harness; the reader in front of `app.html`
+
+The client-side twin of `appgs.js`, and it answers two different questions:
+
+```js
+const { module: mod, legacy, source, styleBlock, pageOf, pageCss } = require('./apphtml.js');
+mod('AmrSlide')             // the §E module's script block — the code that SHIPS
+styleBlock('A3')            // one style layer, by its banner
+pageOf('rmx')               // one page's <template>, its registration JS, and its §A4 rules
+legacy('Page_Rmx.html')     // the deleted file, out of git — the app it REPLACED
+source('Shell.html')        // app.html/app.gs off disk, anything else out of git
+```
+
+`source()` is the drop-in for a harness that splices pages together and needs `include('Shell')`
+to resolve: swap its one `read` helper and every check it had keeps working.
+
+`pageCss(id)` returns a page's §A4 rules **with the page scope stripped**, because that is what
+reading a legacy page's own style block used to give — leaving the scope on would mean none of
+them applied in a synthetic document. Both scoping forms are recognised, `:where()` included.
+
+What makes `mod()` trustworthy is `modparity.js`, which proves §E is still byte-for-byte the
+file it came from. That is why deleting modparity at the cutover — which the plan called for —
+would have removed the proof underneath the thing built to replace it.
+
 ## `rmxfixture.js` — not a harness; the Ready-Mix model both sides render
 
 `pageparity.js` and `cssparity.js` both need Ready-Mix to render its real tables, and they need
@@ -252,19 +296,33 @@ file wants.
 
 Three of the seven have a `load()` of their own, so import it as `loadRegions`.
 
-## `modparity.js` — §E holds verbatim copies
+## `modparity.js` — §E holds verbatim copies (and it did NOT retire at chunk 13)
 
 Every shared module inside `app.html`'s §E is byte-for-byte the file it was ported from. That
-is what lets `regress.js`, `slidefit.js` and `deckpath.js` — all of which point at the *old*
-files — count as proof about `app.html`. Line endings are normalised, because the repo is
+is what let `regress.js`, `slidefit.js` and `deckpath.js` count as proof about `app.html`
+while they still pointed at the *old* files, and what makes `apphtml.js`'s slicing trustworthy
+now that they point at §E. Line endings are normalised, because the repo is
 mixed and `app.html` is LF throughout by `PLAN.md` §12.
 
 ```bash
 node tests/modparity.js
 ```
 
-**Retire this at chunk 13.** Once the old `.html` files are deleted there is no second copy to
-compare against, and the harnesses above have to be repointed at `app.html` directly.
+**It did not retire at chunk 13, and deleting it would have been actively harmful.** The plan
+said "once the old `.html` are deleted there is no second copy" — there is, in git, which is
+the trick `gsparity.js` had already established for the 16 `.gs`. It reads its source side
+through `apphtml.legacy()` now.
+
+That matters because `apphtml.js` is what the repointed gates read `app.html` **through**, and
+its slicing is only trustworthy while §E is still a verbatim copy. This is the proof of that.
+Deleting it would have removed the ground under its own replacement.
+
+**Retire it when a §E module is deliberately changed** — not when the sources are deleted.
+Same end of life as `gsparity.js`, for the reason its header gives: keep it while `app.html`
+is provably those files, delete it rather than weaken it when it is not.
+
+`regress.js`, `slidefit.js`, `deckpath.js` and `pvcheck.js` no longer point at the old files —
+they read §E directly now, which is the code that ships.
 
 ## `deckpath.js` — the deck's own path
 

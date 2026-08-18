@@ -59,7 +59,8 @@ function browserPath() {
   }
   return null;
 }
-const read = f => fs.readFileSync(path.join(REPO, f), 'utf8');
+/* app.html off disk, the deleted legacy files out of git — see apphtml.js. */
+const read = require('./apphtml.js').source;
 function expand(src, depth) {
   return src.replace(/<\?!?=\s*include\('([^']+)'\)\s*\?>/g,
       (m, name) => (depth > 3 ? '' : expand(read(name + '.html'), (depth || 0) + 1)))
@@ -510,8 +511,12 @@ async function run(side, browser, allFails) {
   const browser = await chromium.launch(exe ? { executablePath: exe } : {});
   const fails = [];
   for (const side of SIDES) {
-    if (!fs.existsSync(path.join(REPO, side.file))) {
-      fails.push(side.name + ': ' + side.file + ' is missing');
+    /* `read` resolves app.html off disk and the deleted legacy pages out of git,
+       so existence is "can it be read", not "is it on disk". */
+    let ok = true;
+    try { read(side.file); } catch (e) { ok = false; }
+    if (!ok) {
+      fails.push(side.name + ': ' + side.file + ' could not be read (see apphtml.js — the legacy side comes out of git)');
       continue;
     }
     await run(side, browser, fails);

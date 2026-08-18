@@ -60,7 +60,9 @@ const modCtx = { console, document: { createElement: () => ({ style: {}, querySe
                  window: {}, localStorage: { getItem: () => null } };
 modCtx.window = modCtx;
 vm.createContext(modCtx);
-vm.runInContext(scriptsOf(`${REPO}/Deck_PV.html`), modCtx);
+/* the module is §E of app.html now — Deck_PV.html was deleted at the cutover,
+   and §E is the code that ships. tests/modparity.js proves the two identical. */
+vm.runInContext(require('./apphtml.js').module('AmrPvSlide'), modCtx);
 const M = modCtx.AmrPvSlide;
 
 /* ---- fixtures ---- */

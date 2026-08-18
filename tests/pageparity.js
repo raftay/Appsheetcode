@@ -47,6 +47,7 @@ const { JSDOM, VirtualConsole } = require('jsdom');
    same page from it, and that harness's whole guarantee — any difference is a
    CASCADE difference — holds only while both sides render identical markup. */
 const { RMX_MARKETS, rmxKeysPayload, rmxModel } = require('./rmxfixture');
+const { legacy: legacyFile } = require('./apphtml.js');
 
 const ROOT = path.join(__dirname, '..');
 const URL_BASE = 'https://script.google.com/macros/s/TEST/exec';
@@ -285,13 +286,16 @@ function serverStubs(model) {
 /* ------------------------------------------------------------ page sources */
 /* Resolve a legacy page the way HtmlService would: splice in every include()
    and fill the three template variables doGet sets. */
+/* The legacy pages were deleted at the cutover; they come out of git now. This
+   harness is a COMPARISON — it needs a second side, and there is no second side
+   on disk. See apphtml.js for when the legacy half retires (it is not "when the
+   files are gone", it is "when a page is deliberately changed"). */
 function legacySource(file, pageId) {
-  let src = fs.readFileSync(path.join(ROOT, file), 'utf8');
+  let src = legacyFile(file);
   const missing = [];
   src = src.replace(/<\?!?=\s*include\('([\w-]+)'\)\s*\?>/g, (_, name) => {
-    const p = path.join(ROOT, name + '.html');
-    if (!fs.existsSync(p)) { missing.push(name); return ''; }
-    return fs.readFileSync(p, 'utf8');
+    try { return legacyFile(name + '.html'); }
+    catch (e) { missing.push(name); return ''; }
   });
   if (missing.length) throw new Error(`${file}: include() names no file: ${missing.join(', ')}`);
   return fillVars(src, { page: pageId, appUrl: URL_BASE, appMode: 'false' });

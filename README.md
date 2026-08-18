@@ -5,10 +5,15 @@ Aggregates (AGG) and Ready-Mix Concrete (RMX). It reads QlikView exports that ha
 landed into Google Sheets and renders interactive dashboards, editable executive tables,
 and slide-ready PNG exports.
 
-This repository is a flat mirror of the Apps Script project. Every `.gs` and `.html` file
-here is one file in the script editor — there are no folders, no build step, and no
-package manager. Push the contents of this repo into the Apps Script project (or paste
-file by file) and it runs.
+This repository is a flat mirror of the Apps Script project, and since chunk 13 the project
+is **three files**: `app.gs`, `app.html` and `appsscript.json`. There are no folders, no build
+step and no package manager — paste those three into the script editor and it runs. `tests/`
+is Node-only and is **not** part of the script project.
+
+Both merged files are navigated by section banner rather than by scrolling: `Ctrl+F` for
+`§7` in `app.gs` or `§P rmx` in `app.html`. Each region also carries the name of the file it
+came from as a locator (`/* ---- RMX_Backend.gs ----`), which is what the commit history and
+the older parts of this document refer to.
 
 ---
 
@@ -43,15 +48,19 @@ not.** Small fixes go to `main` directly — a PR on a one-line change is a revi
 is waiting on. Anything that spans several files or several sessions gets a branch, so it can
 be reviewed in pieces and abandoned cheaply if it goes wrong. The merge described in
 [`PLAN.md`](PLAN.md) is on `merging-files` for exactly that reason — and belongs on that
-branch only.
+branch only. **It is done as of chunk 13: the script project is `app.gs`, `app.html` and
+`appsscript.json`, and nothing else.**
 
 Two things that will bite you if you skip them:
 
-- **Do not flip a file's line endings.** The repo is mixed: most `.html` files are CRLF,
-  some `.gs` files are LF. Scripted edits must open with `newline=''` and write back the
-  endings the file already had, or a two-line change shows up as a whole-file diff.
-- **Run the harnesses in `tests/` before and after touching a report page.** They are the
-  only way to prove an extraction did not change what a page renders — see `tests/README.md`.
+- **`app.gs` and `app.html` are LF throughout — keep them that way.** The deleted files were
+  mixed three ways (most `.html` CRLF, `Code.gs` LF, and two `.gs` carried a lone `\r` as a
+  line terminator), and they are still read out of git by three harnesses, so a scripted edit
+  that touches historical text must open with `newline=''` and write back what was there.
+- **Run the harnesses in `tests/` before and after touching a page.** They are the only way
+  to prove a change did not alter what a page renders — see `tests/README.md`. Two of them
+  compare against the pre-merge app, read out of git; `tests/apphtml.js` explains when that
+  comparison retires.
 
 ---
 
@@ -79,22 +88,33 @@ PDF), Gmail (TP01 only). Slides will be added for the Deck Builder.
 
 ## 2. Pages and routes
 
-| `?page=` | HTML file | Backend | Reads from |
+**Every route serves `app.html`.** `doGet` validates `?page=` against `APP_PAGES` and hands
+the name to the client, which mounts one `<template>` into `#appRoot`. The ten values are
+unchanged from the nine-file era on purpose, so a bookmark or a shared link from before the
+merge still lands where it did; an unrecognised one serves the landing page rather than
+mounting nothing, because a blank screen reads as an outage.
+
+| `?page=` | Mounts | Backend | Reads from |
 |---|---|---|---|
-| *(none)* | `Landing.html` | — | — |
-| `overview` | `Page_Overview.html` | `Ov_Backend.gs` | no sheet of its own — reuses PV / RMX / Segment + history books |
-| `pricevolume` | `Page_PriceVolume.html` | `PV_Backend.gs`, `PV_Lookup.gs` | `PAGES.pricevolume` |
-| `rmx` | `Page_Rmx.html` | `RMX_Backend.gs`, `RMX_Suggest.gs` | `PAGES.rmx` |
-| `segment` | `Page_Segment.html` | `RMX_Backend.gs` (`RMX_getSlideTables`) | `PAGES.rmx` |
-| `fuelsurcharge` | `Page_FuelSurcharge.html` | `FSC_Backend.gs`, `Sask_Backend.gs` | `PAGES.pricevolume` + `PAGES.saskrates` |
-| `rmxfuel` | `Page_RmxFuel.html` | `RFSC_Backend.gs` | `PAGES.rmx` |
-| `tp01` | `Page_TP01.html` | `TP01_Backend.gs` | `PAGES.pricevolume` |
-| `inventoryreport` | `Page_InventoryReport.html` | `IR_Backend.gs` | a Drive PDF (file ID in Script Properties) |
-| `deckbuilder` | `Page_DeckBuilder.html` | `Deck_Backend.gs`, `Deck_Recipe.gs` | the other pages |
+| *(none, or unknown)* | `tpl-landing` | — | — |
+| `overview` | `tpl-overview` | `Ov_Backend.gs` | no sheet of its own — reuses PV / RMX / Segment + history books |
+| `pricevolume` | `tpl-pricevolume` | `PV_Backend.gs`, `PV_Lookup.gs` | `PAGES.pricevolume` |
+| `rmx` | `tpl-rmx` | `RMX_Backend.gs`, `RMX_Suggest.gs` | `PAGES.rmx` |
+| `segment` | `tpl-segment` | `RMX_Backend.gs` (`RMX_getSlideTables`) | `PAGES.rmx` |
+| `fuelsurcharge` | `tpl-fuelsurcharge` | `FSC_Backend.gs`, `Sask_Backend.gs` | `PAGES.pricevolume` + `PAGES.saskrates` |
+| `rmxfuel` | `tpl-rmxfuel` | `RFSC_Backend.gs` | `PAGES.rmx` |
+| `tp01` | `tpl-tp01` | `TP01_Backend.gs` | `PAGES.pricevolume` |
+| `inventoryreport` | `tpl-inventoryreport` | `IR_Backend.gs` | a Drive PDF (file ID in Script Properties) |
+| `deckbuilder` | `tpl-deckbuilder` | `Deck_Backend.gs`, `Deck_Recipe.gs` | the other pages |
+
+Backend names are the section locators `app.gs` still carries, not files — see
+[§3](#3-file-map). Three lists have to name the same ten pages: `APP_PAGES` in `app.gs`,
+`AMR_PAGES` in §D, and the `§P` templates. `tests/merge.js` check 10 is what holds them
+together; drift is otherwise silent, and in one direction it reads as a click being ignored.
 
 > All 43 recipe rows have a content source. The six adapters — `fsc`, `rfsc`, `pv`, `cust`,
-> `seg`, `rmx` — are registered in `Deck_Fuel.html`, `Deck_PV.html`, `Deck_SEG.html` and
-> `Deck_RMX.html`. What has never run is a real end-to-end build against the live
+> `seg`, `rmx` — are registered by §E's `AmrFuelExec`, `AmrPvSlide`, `AmrSegSlide` and
+> `AmrRmxSlide`. What has never run is a real end-to-end build against the live
 > deployment: `DECK_create` / `addSlide` / `finish` and every html2canvas capture need
 > Google access. See [§8](#8-next-major-project--deck-builder).
 
@@ -122,7 +142,7 @@ region still carries as a `/* ---- RMX_Backend.gs ----` locator.
 |---|---|---|
 | §1 CONFIG | `Config.gs` | `APP_CONFIG` — every sheet ID, tab name, market list, cube constants — plus the Settings API and `LOG_LEVEL`. **First on purpose:** IIFEs run at evaluation time, so nothing that reads config while constructing itself can precede it |
 | §2 LOGGING | *new* | `APP_log(level, where, msg, data)`, same signature and output shape as `app.html`'s `AMR.log` |
-| §3 ROUTER + PLUMBING | `Code.gs` | Router (`doGet`), `include()`, `getLogo()`, data-generation helpers, chunked cache helpers, `syncAll()`, and the `SB` Slide-Builder sheet reader |
+| §3 ROUTER + PLUMBING | `Code.gs` | Router (`doGet` + `APP_PAGES`), `getLogo()`, data-generation helpers, chunked cache helpers, `syncAll()`, and the `SB` Slide-Builder sheet reader. `include()` went at the cutover — all 47 of its call sites were in the deleted `.html`, and one client file has nothing to splice into it |
 | §4 PERMISSIONS | *new* | `APP_verifyPermissions()` — run from the editor; one line per service. **Read its banner before adding a service:** `oauthScopes` is explicit now, so it replaces auto-detection |
 | §5 SYNC | `QlikSync.gs` | The engine that pulls QlikView exports out of Drive and replaces sheet tabs. Its entry points are §11 |
 | §6 AGG | `PV_Backend.gs` | AGG Price & Volume aggregation |
@@ -140,57 +160,74 @@ region still carries as a `/* ---- RMX_Backend.gs ----` locator.
 | | `IR_Backend.gs` | Inventory Report — stores/derives a Drive PDF file ID (never touches DriveApp) |
 | §11 TRIGGERS | `QlikSync.gs` | `qlikSyncCheck` (**the time-driven trigger — the whole data pipeline runs through it**), `qlikMarkCurrent`, `qlikStamps`, `qlikSyncNow`. Everything reached from outside the repo, in one place, because nothing in the repo can point at a hand-configured trigger |
 
-### Client (`.html`)
+### Client — one file, `app.html`
 
-Shared partials, pulled in with `<?!= include('Name') ?>`:
+**Since chunk 13 the client is a single `app.html`, and the script project is three files:
+`app.gs`, `app.html`, `appsscript.json`.** The 21 `.html` below were merged into it and
+deleted at the cutover. Navigate it by section banner — `Ctrl+F` for `§A3` or `§P rmx`.
 
-| File | Role |
-|---|---|
-| `Styles.html` | The one stylesheet — Amrize colour tokens (navy `#011E6A`), reset, every shared component. Goes in `<head>` |
-| `Shell.html` | Shared runtime: page switcher (`AMR_PAGES`), Help modal, ⚙ Settings modal, `AmrCache`, `AmrProgress`, `AmrBoot` |
-| `SlideExport.html` | `AmrSlide` — the 1600×900 slide frame, whitespace sliders, full-window viewer, html2canvas PNG export, and `captureBare` for the deck |
-| `KpiShared.html` | `AmrKpi` — upload/parse/share the EBITDA workbooks; used by three pages |
-| `Cube.html` | `AmrCube` — the month fact table in typed arrays, backed by IndexedDB |
-| `Deck_Sources.html` | `AmrDeckSource` — the content-source registry the Deck Builder asks for tables. Included **only** by the Deck Builder |
-| `Deck_Styles.html` | The slide CSS the deck's captures need — a mirror of the slide rules in each report page's own style block, every selector scoped under `.slide-bare`. Included **only** by the Deck Builder. See [§8](#the-css-the-deck-could-not-see) |
-| `Deck_Fuel.html` | `AmrFuelExec` — the Fuel Recovery exec tables, shared by **both** fuel pages and the deck. Also holds the `fsc` / `rfsc` adapters |
-| `Deck_SEG.html` | `AmrSegSlide` — RMX Product Segment slide content; holds the `seg` adapter |
-| `Deck_RMX.html` | `AmrRmxSlide` — RMX Price & Volume slide content and the `rmx` adapter. Carries its own compute and render layer because the deck scrapes rendered DOM. **Inert on `Page_Rmx`**: the page includes it but calls nothing in it, and the adapter registration no-ops without `AmrDeckSource`, which only the Deck Builder includes. On the legacy hit-list in `PLAN.md` |
-| `Deck_PV.html` | `AmrPvSlide` — the AGG Price & Volume slide content (KPI strip, dimension tables, waterfall charts) and the customer block. Shared by the PV page and the deck; holds the `pv` / `cust` adapters |
+| Section | Was | Role |
+|---|---|---|
+| §A1 TOKENS | `Styles.html` | `:root` — colour, type scale, spacing, radius, shadow, and the three named breakpoints. The only place a raw value belongs |
+| §A2 BASE | `Styles.html` | Reset, typography, form controls, focus states |
+| §A3 COMPONENTS | `Styles.html` + every page block | Everything used by more than one page: `.bar .shell .rail .panel .card .seg .chips .empty .previewCard .qlikGuide`, the slide frame, the shared modal shell, the Ready-Mix report table (`table.rtbl`) |
+| §A4 PAGE CSS | each page's own block | Only what is genuinely one page's, scoped to that page. Six of the ten pages have no block at all. **Ready-Mix scopes with `:where(body[data-page="rmx"])`** — see [`PLAN.md` §3](PLAN.md) for why that is not cosmetic |
+| §B SLIDE CSS | `Deck_Styles.html` | The `.slide-bare` capture styles, 86 rules, all scoped under the wrapper `AmrSlide.captureBare` puts around content it is about to photograph. Still a mirror of §A3; collapsing it is chunk 16 |
+| §D RUNTIME | `Shell.html` | `AMR.log`, `AMR.lib` (lazy CDN loading), `hrefFor` / nav, the page registry and `AMR.start()`, the page switcher (`AMR_PAGES`), Help and Settings modals, `AmrHint`, `AmrQlikGuide` |
+| §E SHARED MODULES | see below | The thirteen modules every page draws on |
+| §P PAGES | the nine page files + `Landing.html` | One `<template id="tpl-x">` and one `AMR.page('x')` registration each. `AMR.start()` empties `#appRoot` and mounts exactly one |
 
-Page files: `Landing.html`, `Page_Overview.html`, `Page_PriceVolume.html`, `Page_Rmx.html`,
-`Page_Segment.html`, `Page_FuelSurcharge.html`, `Page_RmxFuel.html`, `Page_TP01.html`,
-`Page_InventoryReport.html`. `Page_Overview.html` is by far the largest, at roughly a
-quarter of all the client code.
+The thirteen §E modules, and the files they came from:
+
+| Module | Was | Role |
+|---|---|---|
+| `AmrProgress` `AmrBoot` `AmrFresh` `AmrCache` `AmrTick` | `Shell.html` | The full-screen loading screen, the boot-step gate, the data-version staleness check, the per-device store, and a timer a background tab cannot throttle |
+| `AmrSlide` | `SlideExport.html` | The 1600×900 slide frame, whitespace sliders, full-window viewer, html2canvas PNG export, and `captureBare` for the deck |
+| `AmrKpi` | `KpiShared.html` | Upload/parse/share the EBITDA workbooks; used by three pages |
+| `AmrCube` | `Cube.html` | The month fact table in typed arrays, backed by IndexedDB |
+| `AmrDeckSource` | `Deck_Sources.html` | The content-source registry the Deck Builder asks for tables. **Must sit above the four modules that register into it** — each guards on `window.AmrDeckSource` and fails silently without it; `tests/bgrender.js` is the gate |
+| `AmrFuelExec` | `Deck_Fuel.html` | The Fuel Recovery exec tables, shared by both fuel pages and the deck; holds the `fsc` / `rfsc` adapters |
+| `AmrPvSlide` | `Deck_PV.html` | AGG Price & Volume slide content (KPI strip, dimension tables, waterfall charts) and the customer block; holds the `pv` / `cust` adapters |
+| `AmrSegSlide` | `Deck_SEG.html` | RMX Product Segment slide content; holds the `seg` adapter |
+| `AmrRmxSlide` | `Deck_RMX.html` | RMX Price & Volume slide content and the `rmx` adapter. Carries its own compute and render layer because the deck scrapes rendered DOM |
+
+`AmrKpiStore` was a fourteenth and did **not** come across: zero callers anywhere across every
+`.html` and `.gs`, and no page claimed it while all ten were ported.
+
+**The deleted files are still reachable, and two harnesses depend on that.** `tests/apphtml.js`
+reads them out of git at the cutover's parent, which is how `pageparity.js` and `cssparity.js`
+still have a second side to compare against, and how `modparity.js` still proves §E is verbatim.
+See `tests/README.md` for when that retires — it is *not* "when the files are gone".
 
 Line counts are deliberately not recorded in this file — they drift silently and a wrong
 number is worse than none. Run `wc -l`.
 
-Third-party libraries are loaded from CDN per page: Chart.js, SheetJS (XLSX),
-html2canvas.
+Third-party libraries are loaded from CDN on demand by `AMR.lib`, not per page:
+Chart.js, SheetJS (XLSX), html2canvas.
 
 ---
 
 ## 4. Shared runtime
 
-Everything below lives in `Shell.html` unless noted.
+Everything below is §D or §E of `app.html`; the file each came from is named where it helps.
 
-- **`AMR_PAGES`** — the page-switcher list. Adding a page means one line here, one line in
-  `doGet`, and (optionally) a card in `Landing.html`.
+- **`AMR_PAGES`** (§D) — the page-switcher list. Adding a page means one line here, one in
+  `APP_PAGES` in `app.gs`, a `<template>` + `AMR.page()` registration in §P, and (optionally)
+  a landing card. `tests/merge.js` check 10 fails if the first three disagree.
 - **`AmrCache`** — device-level report cache in `localStorage`, keyed by a data-generation
   token. No expiry: entries stay valid until the token moves.
 - **The QlikView sync is trigger-driven only.** No client file calls any of `QlikSync.gs`'s
-  four entry points (`qlikSyncCheck`, `qlikMarkCurrent`, `qlikStamps`, `qlikSyncNow`), and
-  there is no Pull-from-QlikView button on any page. What every page carries is ⇣ *Update
-  from source*, which is a different thing: it calls `updateFromSource()` in `Code.gs` and
-  only re-checks the data version.
+  four entry points (`qlikSyncCheck`, `qlikMarkCurrent`, `qlikStamps`, `qlikSyncNow`, all in
+  `app.gs` §11), and there is no Pull-from-QlikView button on any page. What every page
+  carries is ⇣ *Update from source*, which is a different thing: it calls
+  `updateFromSource()` (`app.gs` §3) and only re-checks the data version.
 - **`AmrProgress`** — the shared progress pill.
 - **The Region memory is keyed by VIEW, in one place.** `pvKpiViewMap` in `localStorage`,
   key = `MARKET:<market>` plus `:<refine>` when there is one. Southwest, Southwest·Land and
   Southwest·Docks are three views of one market and each remembers its own region sheet; the
   **period is deliberately not in the key**, so a view's MTD and YTD slides move together —
-  they read the same sheet in two places on it. `Page_PriceVolume.kpiViewKey` and
-  `Deck_PV.kpiViewKeyFor` must agree, or the deck reads a different slot from the one the
+  they read the same sheet in two places on it. The PV page's `kpiViewKey` and
+  `AmrPvSlide.kpiViewKeyFor` must agree, or the deck reads a different slot from the one the
   report page wrote. A view with nothing remembered falls back to its market's slot before
   the first sheet on the list. Nothing may pin `spec.kpiSheet` over this map: a pin outranks
   it and goes stale the moment the twin row is changed instead.
@@ -203,14 +240,14 @@ Everything below lives in `Shell.html` unless noted.
   clicked away. Both degrade to plain timers where a Worker cannot be created. Anything that
   waits before photographing the DOM, or paces a long job, uses these rather than the
   browser's own.
-- **`AmrKpi`** (`KpiShared.html`) — the two EBITDA workbooks, plus the on-page KPI strip:
+- **`AmrKpi`** (§E, was `KpiShared.html`) — the two EBITDA workbooks, plus the on-page KPI strip:
   `stripHtml(cards)` builds it, `fitStrip(row)` sizes it to the width it has, `stripPng`
   photographs it from an off-screen clone for *Download KPI PNG*.
-- **`AmrCube`** (`Cube.html`) — the browser-side month fact table. Reads its column layout
+- **`AmrCube`** (§E, was `Cube.html`) — the browser-side month fact table. Reads its column layout
   from the server's manifest (`man.dims` / `man.vals`), never hardcoded. Persisted to
   **IndexedDB**, not `localStorage` — the cube is a few MB and `localStorage` stores UTF-16,
   so a 5 MB payload occupies ~10 MB and gets evicted.
-- **`AmrSlide`** (`SlideExport.html`) — builds a fixed 1600×900 slide off-screen: a header
+- **`AmrSlide`** (§E, was `SlideExport.html`) — builds a fixed 1600×900 slide off-screen: a header
   with title/subtitle/logo, then the page's content node inside four adjustable blank
   bands (left/right default 120px, top/bottom 30px). `previewInto` renders a scaled live
   preview, `viewSlide` shows it full-window, `exportSlide` captures to PNG with
@@ -224,10 +261,20 @@ Everything below lives in `Shell.html` unless noted.
   (font-size), never by transform — a transform doesn't change `scrollHeight`, so the
   content would be scaled twice.
 
-**Boot order matters.** `APP_URL` must live in its own isolated `<script>` tag *before*
-the includes. Because `Shell.html` (which defines `AmrCache`) is included *after* a page's
-main script, page boot must be deferred to `DOMContentLoaded`. `loadData()` must be called
-unconditionally, outside any `try`/`catch`.
+**Boot order still matters, for different reasons.** The include ordering this section used
+to warn about is gone with the includes: §D and §E are both above §P, so a page registration
+can rely on every module existing. Two ordering rules survive the merge and one is new:
+
+- **`AmrDeckSource` must sit above the four modules that register into it.** Each ends with a
+  registration guarded on `window.AmrDeckSource` and returns quietly without it, so the wrong
+  order gives a Deck Builder with an empty source list and no error at all.
+  `tests/bgrender.js` checks the registry from a real browser for exactly that.
+- **Server values reach the client on the `<body>` tag, never printed into JavaScript.**
+  `data-page` and `data-app-url`. The printing scriptlet HTML-escapes, so a value printed into
+  a script block can render as `&#39;` and take the whole block down — silently, because the
+  server renders without complaint and only the browser sees it.
+- **Nothing touches the document before `AMR.start()`.** Registration is all that happens
+  above it; the mount is the single point where `#appRoot` is emptied and one page goes in.
 
 ---
 
@@ -307,7 +354,7 @@ re-syncing forever neither fixes it nor tells anybody.
 
 ### What the user sees
 
-`AmrFresh` in `Shell.html` asks every 5 minutes whether the version is still the one the page
+`AmrFresh` (§E) asks every 5 minutes whether the version is still the one the page
 loaded with. When it isn't, the page greys out and offers one button that reloads it.
 
 **↻ Update from source** asks before it acts, on every page that has the button — Price &
@@ -359,7 +406,7 @@ sit on stale figures with the button insisting there was nothing to do. The Deck
 the same case and is listed there too — its five sources reduce to four workbooks
 (`pricevolume`, `rmx`, `segment`, `saskrates`).
 
-**ONE loading screen, up until everything is ready.** `AmrBoot` (`Shell.html`) is a
+**ONE loading screen, up until everything is ready.** `AmrBoot` (§E) is a
 refcount over a single `AmrProgress` job. A page names what has to be true before it is worth
 looking at — `AmrBoot.need('data')`, `need('month history')` — and answers each with
 `AmrBoot.done(...)`; the screen goes up on the first `need()`, paints immediately (the page
@@ -399,7 +446,7 @@ defaulting — a blank id used to make RMX silently open the Price & Volume shee
 
 ### The Slide Segment tabs still matter
 
-`Page_Segment.html` no longer reads them: it calls `RMX_getSlideTables` and computes from
+The Segment page no longer reads them: it calls `RMX_getSlideTables` and computes from
 the Ready-Mix raw tabs. But `getSlideData()` in `Code.gs` — which reads
 `Slide Segment MTD/YTD` and the per-market `Slide Product` tabs — is **still live**, called
 by `Ov_Backend.gs` for the Overview's segment and product-category panels. Do not delete
@@ -668,13 +715,13 @@ cannot be re-sliced — whatever month the export was run for, both tabs are for
 
 ### Rendering traps
 
-- Chart instances are tracked in **per-section registries** — `CH` in `Page_Overview.html`
+- Chart instances are tracked in **per-section registries** — `CH` in §P `overview`
   holds fifteen arrays (`bd`, `dim`, `exp`, `bridge`, `cust`, `fsc`, `fscc`, `seg`, `pcat`,
   `ext`, `rdim`, `rasp`, `rtrend`, `atrend`, `rfuel`), not one global list. A single list
   means re-rendering one section destroys another section's canvases.
 - Grid children default to `min-width:auto`. Panels inside grid containers need
   `min-width:0`, and canvases need `max-width:100%`, or they overflow.
-- `Styles.html` sets `thead th` background to `--blue-80`. A page using a plain `<table>`
+- §A3 sets `thead th` background to `--blue-80`. A page using a plain `<table>`
   must set an explicit white background on `th`/`td` or it renders blue-on-blue.
 - Drive `/preview` embeds are cross-origin — custom zoom controls cannot coexist with
   Drive's native ones.
@@ -760,6 +807,12 @@ and `CAPTURE_MAX_PX = 2400` — `DECK_readTemplate` returns a suggested capture 
 so nobody has to guess.
 
 ### What exists today
+
+> Filenames in this table are **pre-merge locators**. The Deck Builder was built while the
+> project was 37 files; `Deck_Backend.gs` is `app.gs` §9, `Deck_Fuel.html` is §E's
+> `AmrFuelExec`, `Page_DeckBuilder.html` is §P `deckbuilder`, and so on. [§3](#3-file-map)
+> maps every one. The names are left as they were because they are what the commits and the
+> section banners say.
 
 | Piece | State |
 |---|---|
@@ -1177,5 +1230,10 @@ before assuming it is finished.**
 | 2026-08-18 | **`tests/cssparity.js`** — boots `Page_Rmx.html` and `app.html`'s Ready-Mix route in real Chromium off one shared model and diffs **computed styles**, 10,600 values a run, on a property list derived from the §A4 block rather than hard-coded (it fails on a shorthand it cannot expand). Mutation-tested five ways. **`tests/rmxfixture.js`** holds the one model both it and `pageparity.js` render, because the guarantee "any difference is a cascade difference" only holds while both sides render identical markup | ✅ done |
 | 2026-08-18 | **§B shipped malformed and had done since chunk 10 — one rule silently gone.** `Deck_Styles.html` explains itself in an HTML comment whose prose names a style element by its tag, and the chunk-10 builder split that file on the FIRST such token — the one inside the sentence. So §B opened with the tail of that prose, a bare `-->` and a second opening tag, all of it inside a live style element, where it is CSS text rather than markup. CSS error recovery eats garbage before the first `{` as a selector prelude and discards the rule after it: **§B parsed as 85 rules where the file has 86**, and `.slide-bare .tbl-card` was gone. No visible effect, but only by luck — §A3 declares the same padding. The source file was always fine; an HTML comment is stripped before a tag inside it can become an element | ✅ done |
 | 2026-08-18 | **`tests/merge.js` check 9, `style-blocks`** — every style element opened once, closed once, holding only CSS, and no bare `-->` inside one. Scans raw source, comments included, because that is where this started. Mutation-tested three ways, including against the real shipped defect, which it reports three separate ways | ✅ done |
+| 2026-08-18 | **Chunk 13, the cutover — the merge is done.** `doGet` validates `?page=` against the new `APP_PAGES` and serves `app.html` for every route; the `?page=app` scaffold, its `&view=` and `hrefFor`'s branch are gone. **All 21 legacy `.html` deleted**, plus `include()` (47 call sites, every one in a deleted file; `app.html`'s only mention is a comment) and `AmrKpiStore` (zero callers, went with `Shell.html`). The two untrue user-facing sentences fixed. Every route driven through the real `doGet` in a browser, including the unknown-page fallback. **37 files are now 3** | ✅ done |
+| 2026-08-18 | **Ten harnesses repointed through the new `tests/apphtml.js`, and the plan was wrong about three of them.** It said to delete `modparity.js` and retire `gsparity.js` because "they compare against files that no longer exist" — but gsparity had already solved that in chunk 12 by reading the 16 `.gs` out of **git**, and the same works for the 21 `.html`. Deleting `modparity.js` would have been actively harmful: `apphtml.js` slices §E out of `app.html`, and that slicing is only trustworthy while §E is a verbatim copy — modparity is the proof of it. The retirement condition is "a legitimate change lands inside a moved region", not "the sources are gone" | ✅ done |
+| 2026-08-18 | **Every repointed harness was proved green twice — once with the legacy files present, then again with them moved aside.** Four failed that second run (`freshness`, `pvcheck`, `ovperiod`, `bgrender`), each with a read the first pass had missed. **Hide before you delete** | ✅ done |
+| 2026-08-18 | **`merge.js` check 10, `routes`** — `APP_PAGES`, §D's `AMR_PAGES` and the `§P` templates must name the same ten pages. Three lists, two languages, nothing else making them agree; drift is silent and asymmetric — missing from `app.gs` and the switcher offers a link that quietly serves the landing page, which reads as the click being ignored. `gsparity.js` also gained a `rewrite` edit kind, because `replace` swaps one exact string and a rewritten function needs a span | ✅ done |
+| | **`APP_verifyPermissions()` has still never been run, and no real deck has ever been built.** Both need somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **Only Ready-Mix has been audited this way.** It is the only page whose §A4 block styles bare elements, so it is where the trap bites hardest — but every §A4 rule gained the same weight, and a page rule anchored on its own class can still outrank a shared `.class` rule it used to lose to. A second `cssparity` case is cheap now the harness exists; it needs that page's model and a host to pair inside | ☐ |
 | | **Chunk 13 is next: the cutover.** `doGet` serves `app.html` for every route, the `?page=app` scaffold goes, all old `.html` are deleted, and `README.md` + `CLAUDE.md` are rewritten around two files. **Ten of the seventeen harnesses read a legacy `.html`** — `bgrender`, `deckpath`, `deckstatic`, `freshness`, `modparity`, `ovperiod`, `pageparity`, `regress`, `segboot`, `slidefit` — so the deletion is a harness job, not an `rm` | ☐ |

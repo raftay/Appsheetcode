@@ -83,6 +83,72 @@ const EDITS = {
   ],
 
   'Code.gs': [
+    { kind: 'rewrite', gone: [], added: ['APP_PAGES'],
+      why: 'CHUNK 13, THE CUTOVER. doGet used to map nine ?page= values onto nine HTML files ' +
+           'and carry a tenth, ?page=app, for the merged client while it was being built. ' +
+           'There is one client file now, so there is nothing to pick: every route serves ' +
+           'app.html and doGet only decides which page name to hand it. ?page= keeps the same ' +
+           'nine values on purpose — a bookmark from before the merge still lands where it did ' +
+           '— and an unknown one falls back to the landing page rather than mounting nothing, ' +
+           'because app.html leaves #appRoot empty for a name it has no registration for and a ' +
+           'blank screen reads as an outage. APP_PAGES is the new top-level name; ' +
+           'tests/merge.js check 10 holds it and app.html\'s switcher to the same list.',
+      from: 'function doGet(e) {\n',
+      to: '    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);\n}',
+      text: `/* Every route serves app.html. There is one client file and it mounts ONE page,
+   chosen by <body data-page> — so doGet's whole job is to decide which page name
+   to hand it, and there is no file to pick any more.
+
+   ?page= is unchanged from the nine-file era on purpose: the same nine values
+   reach the same nine screens, so a bookmark, a shared link or a browser history
+   entry from before the merge still lands where it did. The ?page=app scaffold
+   that carried the merged client while it was built is gone with the files it
+   was hiding from; so is its &view=.
+
+   AN UNKNOWN ?page= FALLS BACK TO THE LANDING PAGE rather than mounting nothing.
+   app.html mounts by looking up data-page in its registry, and a name with no
+   registration leaves #appRoot empty with no error — a blank screen, which reads
+   as an outage rather than as a typo. PAGES is the same list app.html's §D
+   switcher carries; the two are checked against each other by tests/merge.js. */
+var APP_PAGES = ['landing', 'overview', 'pricevolume', 'rmx', 'segment',
+                 'fuelsurcharge', 'rmxfuel', 'tp01', 'inventoryreport', 'deckbuilder'];
+
+function doGet(e) {
+  var asked = (e && e.parameter && e.parameter.page ? String(e.parameter.page) : '').toLowerCase();
+  var page  = APP_PAGES.indexOf(asked) === -1 ? 'landing' : asked;
+  if (asked && page !== asked) {
+    APP_log('warn', 'doGet', 'unknown page, serving the landing page', { asked: asked });
+  }
+
+  /* Rendered through a template for one reason now: the deployed /exec URL. The
+     client cannot derive it — a relative href inside the Apps Script sandbox
+     iframe resolves against googleusercontent.com, not the web app — and it is
+     read from a <body> data attribute rather than printed into JavaScript,
+     because the printing scriptlet HTML-escapes and would break the script
+     block. PLAN.md §8, chunk 2. */
+  var t = HtmlService.createTemplateFromFile('app');
+  t.appUrl = getAppUrl_();
+  t.page   = page;
+
+  return t.evaluate()
+    .setTitle('Amrize Commercial Suite')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}` },
+
+    { kind: 'rewrite', gone: ['include'], added: [],
+      why: 'CHUNK 13. include(name) spliced one HTML partial into another, and all 47 of its ' +
+           'call sites were in the 21 .html files the cutover deletes — app.html has none, ' +
+           'its only mention of the name being a comment about a partial already dropped. It ' +
+           'cannot come back: one client file means there is no second file to splice into it.',
+      from: '/* Pull a shared HTML partial (Styles / Shell) into a page.\n',
+      to: '  return HtmlService.createHtmlOutputFromFile(name).getContent();\n}',
+      text: `/* \`include(name)\` stood here and is gone at the cutover. It spliced one HTML
+   partial into another, and every one of its 47 call sites was in a file this
+   commit deletes — app.html's only mention of the name is a comment about a
+   partial that had already been dropped. It cannot come back either: there is
+   one client file now, so there is no second file to splice. */` },
+
     { kind: 'cut', gone: ['syncSlideData'],
       why: 'DEAD. Zero references repo-wide. Its own comment claims the Segment page calls it; ' +
            'README §7 disproves that — the page moved to RMX_getSlideTables. getSlideData STAYS ' +
@@ -162,8 +228,13 @@ const EDITS = {
 };
 
 /* The nine names chunk 12 WROTE: §2 logging and §4 permissions. */
+/* Top-level names app.gs has that no source file did. The chunk-12 nine are the
+   logging switch and the permissions self-check; APP_PAGES is chunk 13's, the
+   route list doGet validates against. Anything else appearing here is a name the
+   merge invented without saying so. */
 const ADDED = ['APP_LOG_LEVELS_', 'APP_logLevel_', 'APP_logData_', 'APP_log', 'APP_logTimed',
-               'APP_verifyPermissions', 'APP_permAnySheetId_', 'APP_permErr_', 'APP_permPad_'];
+               'APP_verifyPermissions', 'APP_permAnySheetId_', 'APP_permErr_', 'APP_permPad_',
+               'APP_PAGES'];
 
 /* PLAN.md §5 order. QlikSync.gs is NOT in this list: it is the one file that
    lands in two places — the engine in §5, its trigger and editor entry points
@@ -188,6 +259,18 @@ function applyEdits(file, src) {
     if (op.kind === 'insert') {
       if (src.split(op.after).length !== 2) throw new Error(file + ': insert anchor not unique');
       src = src.replace(op.after, op.after + op.text);
+    } else if (op.kind === 'rewrite') {
+      /* A span of the source REPLACED by new text, rather than moved. `replace`
+         swaps one exact string; this swaps everything from `from` through the end
+         of `to`, which is what a rewritten function needs. The new text is a
+         literal here on purpose — reading it back out of app.gs would make the
+         check unable to fail. */
+      const i = src.indexOf(op.from);
+      if (i === -1 || src.indexOf(op.from, i + 1) !== -1)
+        throw new Error(file + ': rewrite start not found exactly once');
+      const j = src.indexOf(op.to, i);
+      if (j === -1) throw new Error(file + ': rewrite end not found after start');
+      src = src.slice(0, i) + op.text + src.slice(j + op.to.length);
     } else if (op.kind === 'replace') {
       if (src.split(op.from).length !== 2) throw new Error(file + ': replace block not unique');
       src = src.replace(op.from, op.to);
