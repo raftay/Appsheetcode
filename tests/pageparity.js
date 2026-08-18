@@ -178,6 +178,49 @@ function rmxKeysPayload(o) {
   };
 }
 
+/* Product Segment reads RMX_getSlideTables. Shape lifted from segboot.js's
+   slide() fixture, for the same reason as rmxKeysPayload above. */
+const SEG_ROWS = [
+  { label:'ICI',             cyVol:33341, cyShare:.40, pyVol:21718, pyShare:.30, volPct:.54,  aspCY:196.71, aspPY:190.97, aspPct:.030 },
+  { label:'Res - High Rise', cyVol:22940, cyShare:.28, pyVol:30004, pyShare:.41, volPct:-.24, aspCY:256.25, aspPY:259.21, aspPct:-.011 },
+  { label:'Civil',           cyVol:13989, cyShare:.17, pyVol:8356,  pyShare:.11, volPct:.67,  aspCY:312.62, aspPY:261.51, aspPct:.195 },
+];
+function segmentModel() {
+  const tot = t => ({ cyRev:t, pyRev:t*0.8, revPct:.25, aspCY:26.35, aspPY:19.28, aspChg:7.07 });
+  return {
+    ok: true, market: 'Innocon', period: 'MTD', month: 7, latestMonth: 7,
+    months: { all: [1, 2, 3, 4, 5, 6, 7], cy: [1, 2, 3, 4, 5, 6, 7] },
+    markets: RMX_MARKETS, allMarkets: '__ALL__', build: 'b1', generation: 'g1',
+    segment: { total: { cyVol:83324, pyVol:73398, volPct:.14, aspCY:229.07, aspPY:222.43, aspPct:.03 },
+               rows: SEG_ROWS },
+    extras: {
+      byTypeExtras: [Object.assign({ label:'Cooling' }, tot(2195484))],
+      byTypeExtrasTotal: tot(2195484),
+      byTypeVap: [Object.assign({ label:'Other VAP' }, tot(547078))],
+      byTypeVapTotal: tot(547078),
+      byTypeTotal: tot(2742562),
+      extras: [], vap: [],
+    },
+    rowCount: 1000,
+  };
+}
+
+/* The shared EBITDA workbook, as AmrKpi stores it after an upload:
+   { main|mbsk: { name, ts, headers[], rmx: { <marketKey>: { tab, MTD, YTD } } } }.
+   Without this the KPI strip renders empty on both sides and the comparison
+   proves nothing about it — which is how commenting out segKpiInit() passed. */
+function kpiValues() {
+  const fig = (u, r, c) => ({ units: u, rev: r, conc: c, raw: { EBITDA: r } });
+  const mkt = tab => ({ tab, MTD: fig(83324, 2742562, 229.07), YTD: fig(512004, 17420880, 231.44) });
+  return {
+    main: { name: 'AGG & RMX EBITDA Report.xlsx', ts: 1755300000000,
+            headers: ['Ontario', 'Quebec'],
+            rmx: { HNS_SW: mkt('HNS'), North: mkt('North'), Innocon: mkt('Innocon') },
+            plant: {} },
+    mbsk: null,
+  };
+}
+
 function rmxModel() {
   const man = Object.assign({}, rmxKeysPayload({}), { warmed: 26, want: 'keys', ms: 9000 });
   man.payloads = {};
@@ -202,7 +245,9 @@ function serverStubs(model) {
     getPvMonths:       () => ({ months: model.months || [], latest: model.latestMonth || 0, defaultMonth: 0 }),
     getPvUnmapped:     () => ({ ok: true, sections: [] }),
     getPvLookupForm:   () => ({ ok: true, rows: [], columns: [] }),
-    getKpiValues:      () => null,
+    /* the envelope AmrKpi.load expects, not the bare store: it reads
+       r.generation / r.cached / r.values and settles to null otherwise */
+    getKpiValues:      () => ({ generation: 'kpi-1', cached: false, values: kpiValues() }),
     CUBE_getManifest:  () => ({ ok: false, blocks: [] }),
     /* Ready-Mix */
     RMX_prepare:    () => model,
@@ -210,6 +255,8 @@ function serverStubs(model) {
     RMX_getExtras:  o => ({ ok: true, market: o && o.market, period: o && o.period,
                             byTypeExtras: [], byTypeVap: [], extras: [], vap: [] }),
     RMX_getUnmapped:    () => ({ ok: true, sections: [] }),
+    RMX_getSlideTables: () => model,
+    RMX_uploadData:     () => ({ ok: true, token: 'tok' }),
     RMX_getSuggestions: () => ({ ok: true, sections: [] }),
     getLogo:         () => '',
     getGuideImages:  ids => (ids || []).map(() => ''),
@@ -413,6 +460,37 @@ const PAGES = [
     },
   },
   {
+    /* Commercial Product Segment. One view; the case is really about the three
+       tables and the KPI strip, both of which AmrSegSlide also renders. */
+    id: 'segment',
+    legacy: 'Page_Segment.html',
+    model: segmentModel,
+    views: ['__mounted__'],
+    viewButton: () => '',
+    payload:   { host: 'tablesHost' },
+    readHtml:  { preview: 'previewHost', markets: 'marketSel', months: 'monthSel',
+                 kpi: 'segKpiStrip' },
+    readValue: { title: 'titleIn', sub: 'subIn' },
+    readText:  { status: 'loadStat' },
+    /* Pick a market that HAS a KPI row, so #segKpiStrip is actually compared. */
+    setup: win => {
+      const sel = win.document.getElementById('marketSel');
+      sel.value = 'Innocon';
+      sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+    },
+    chrome: {
+      guideSteps: 3,
+      guideExtra: 'upMain',
+      hint: 'Main Raw Data',
+      noGlobals: ['STATE', 'DATA', 'CACHE', 'esc', 'fInt', 'renderTables',
+                  'renderTable', 'renderPreview', 'loadTables', 'applyData',
+                  'segKpiInit', 'segPageInit', 'buildSlideContent', 'exportPNG',
+                  'updateFromSheets', 'autoTitle', 'fitTables'],
+      modules: ['AMR', 'AmrSlide', 'AmrCache', 'AmrKpi', 'AmrSegSlide',
+                'AmrProgress', 'AmrBoot', 'AmrFresh', 'AmrHint', 'AmrQlikGuide'],
+    },
+  },
+  {
     /* Ready-Mix. One view, so `views` is the single mount — what this case is
        really for is the breakdown chips and the period control, which rebuild
        the tables without going back to the server. */
@@ -594,6 +672,16 @@ function clickView(win, view, page) {
       }
     }
 
+    /* An optional per-case setup, run on BOTH sides before anything is
+       compared. Some state is only reachable by driving a control: Product
+       Segment opens on Central Canada, which has no KPI row, so its strip is
+       legitimately empty until a market with one is picked. Without this the
+       strip is compared empty-to-empty and proves nothing. */
+    if (page.setup) {
+      for (const side of [A, B]) await page.setup(side.window);
+      await settle(120);
+    }
+
     if (page.chrome) checks += checkChrome(B.window, page.chrome, page.id, ok, fail);
 
     for (const view of page.views) {
@@ -601,6 +689,13 @@ function clickView(win, view, page) {
         clickView(A.window, view, page); clickView(B.window, view, page); await settle(60);
       }
       const a = snapshot(A.window, page, 'legacy'), b = snapshot(B.window, page, 'merged');
+      /* DUMP=<page id> prints what this case actually compares. Worth running
+         when a mutation you expected to fail passes instead — usually the
+         reading is not looking at the thing you changed. */
+      if (process.env.DUMP === page.id) {
+        console.log('--- DUMP', page.id, view, '---');
+        for (const k of Object.keys(a)) console.log(k, '=', JSON.stringify(String(a[k]).slice(0, 400)));
+      }
       for (const key of Object.keys(a)) {
         checks++;
         if (a[key] === b[key]) { ok(`${page.id} · ${view} · ${key}`); continue; }

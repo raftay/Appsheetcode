@@ -1,6 +1,6 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: in progress on `merging-files`. Chunks 0–6 done — `app.html` is ~547 KB and holds the runtime, nine shared modules and six of the eleven pages (Landing, Inventory Report, both Fuel Recovery pages, AGG Price & Volume, Ready-Mix). §A3 is 338 rules; §A4 is 68, of which 27 are Ready-Mix's bare-element overrides. All 17 test harnesses run and are green. The 16 `.gs` files are untouched and stay that way until chunk 12.**
+**Status: in progress on `merging-files`. Chunks 0–7 done — `app.html` is ~652 KB and holds the runtime, ten shared modules and seven of the eleven pages (Landing, Inventory Report, both Fuel Recovery pages, AGG Price & Volume, Ready-Mix, Product Segment). §A3 is 362 rules; §A4 is 68 and did not grow in chunk 7. All 17 test harnesses run and are green. The 16 `.gs` files are untouched and stay that way until chunk 12.**
 
 > ## Read this file before doing anything. Every session, every agent.
 >
@@ -556,8 +556,8 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 4 | **RMX Fuel Recovery** | `Page_RmxFuel`, reusing the `AmrFuelExec` and components chunk 3 promoted. **It added zero CSS and zero modules** — §A3 is byte-for-byte the same 385 lines it was after chunk 3, which is the promotion test paying out. Settled the duplicate-id question ([§3](#3-how-the-pages-live-inside-one-html-file)) and hardened the mount. | `tests/merge.js`, `tests/pageparity.js` (90 comparisons, both fuel pages), `OLD_DIR=… tests/regress.js` — all green | ✅ |
 | 5 | **AGG Price & Volume** | `Page_PriceVolume` + `Deck_PV` + `KpiShared` + `Cube`; `SlideExport` had already come in chunk 3. 1,800 lines of page JS, all three libraries, and all 54 id-scoped declarations converted — **and it needed exactly ONE §A4 rule.** §E gains `AmrCache`, `AmrKpi`, `AmrCube`, `AmrPvSlide`. | `merge.js`, `modparity.js`, `pageparity.js` (126 comparisons), `pvcheck.js`, `pvlookup.js`, `slidefit.js` — and the whole suite, all 17 harnesses, green | ✅ |
 | 6 | **Ready-Mix** | `Page_Rmx` only — **`Deck_RMX` does NOT come here**, see below. 65 of its 67 id-scoped rules were deleted rather than ported, because chunk 5 had already promoted the same mapping check and dialog. **Two dead includes removed from the legacy page**: `Deck_RMX` and `Cube`, ~1,225 lines on every Ready-Mix load. The one page with a real §A4 block, and the reason is bare element selectors. | `tests/merge.js`, `tests/pageparity.js` (147 comparisons), `tests/rmxcost.js`, `tests/segboot.js` + the whole suite — all green | ✅ |
-| 7 | **Product Segment** | `Page_Segment` + `Deck_SEG`. | `tests/segboot.js`, `tests/deckstatic.js` | ☐ |
-| 8 | **Overview, part 1 — shell and cube** | `Page_Overview`'s markup, its CSS (26 of the 65 `:root`/`body` hazards live here), the period model (`STATE`, `PICK_SERVER`, `windowPeriod`) and the `AmrCube` wiring. No panel painters yet. | `tests/ovperiod.js` + the page's four period buttons | ☐ |
+| 7 | **Product Segment** | `Page_Segment` + `Deck_SEG`. §E gains `AmrSegSlide`; §A3 gains `table.gt` and the slide-body rows. **Zero §A4 rules** — six id-scoped rules became `.tbl-stack` / `.previewHost`, and everything else was already shared. | `tests/merge.js`, `tests/pageparity.js` (170 comparisons), `tests/segboot.js`, `tests/deckstatic.js` + the whole suite — all green | ✅ |
+| 8 | **Overview, part 1 — shell and cube** | `Page_Overview`'s markup, its CSS (26 of the 65 `:root`/`body` hazards live here), the period model (`STATE`, `PICK_SERVER`, `windowPeriod`) and the `AmrCube` wiring. No panel painters yet. **136 ids and by far the largest style block** — expect a real §A4 block, as Ready-Mix needed, wherever it styles bare elements. Use the literal-aware indenter and defer every DOMContentLoaded handler. | `tests/ovperiod.js`, `tests/pageparity.js` + the page's four period buttons | ☐ |
 | 9 | **Overview, part 2 — the panels** | The painters, the fifteen chart registries, `hidePanel` / `resetPanels` / `pcatFits`. Split from chunk 8 because 6,022 lines is a quarter of all client code and reviewing it in one commit is not reviewing it. | `tests/freshness.js` + every panel, all four periods | ☐ |
 | 10 | **Deck Builder** | `Page_DeckBuilder` + `Deck_Sources` + `Deck_Styles`. | `tests/deckpath.js`, `tests/bgrender.js` + a real deck build | ☐ |
 | 11 | **TP01** | `Page_TP01`. Mail sends as the deploying account. | a real send to a test recipient | ☐ |
@@ -640,6 +640,45 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   global. *(The id check was replaced in chunk 4 — see [§3](#3-how-the-pages-live-inside-one-html-file).
   Ids repeat across pages on purpose; what is checked now is that none repeats within one page
   and that the mount empties `#appRoot`.)*
+
+### What chunk 7 settled
+
+- **Zero §A4 rules.** Six id-scoped rules became classes (`#tablesHost` → `.tbl-stack`,
+  `#previewHost` → §A3's existing `.previewHost`), `table.gt` and the slide-body rows
+  (`.crow` / `.ccell` / `.ccap` / `.phold`) went to §A3 because `AmrSegSlide` emits the same
+  markup for the deck, and `.shell{max-width:1480px}` / `.logoName` / `.dzstat` /
+  `.previewCard` / `.empty` were all already there from chunk 3. §A4 is unchanged at 68 rules,
+  all of them Landing's, Ready-Mix's and the Inventory Report's.
+- **`.ghost` on white is NOT on this page.** Product Segment already used `.lk` for its two
+  guide buttons. Four of five ported pages had the bug; this one had the fix. `Page_TP01` and
+  `Landing` are what is left to check.
+- **THREE deferred inits, and the order is the contract.** `segKpiInit` was registered at line
+  638 with five hundred lines of declarations below it, the main handler at 1058, and the
+  guide's `wire()` in a tail IIFE. All three are called at the end of `boot()` **in the order
+  the events fired them** — `segKpiInit()`, `segPageInit()`, `wire()`. Chunk 5's rule again,
+  now applied to a page with three of them.
+- **Blanket-indenting a ported body CORRUPTS multi-line template literals.** Product Segment
+  carries its Amrize logo as a multi-line `` `<svg …>` `` literal, and two spaces per line
+  changed the string the page renders. `pageparity.js` caught it — 169 of 170 identical and
+  one inline SVG off by whitespace. The assembly step now uses an `indent_js()` that tracks
+  unescaped backticks and leaves literal interiors alone. **Chunks 5 and 6 were checked and
+  have no multi-line literals, so nothing is owed backwards** — but chunks 8–11 must use the
+  literal-aware indenter.
+- **`pageparity.js` grew two things this chunk, both because a mutation passed when it should
+  not have:**
+  - **`setup`** — an optional per-case hook run on both sides before anything is compared.
+    Some state is only reachable by driving a control: this page opens on *Central Canada*,
+    which legitimately has no KPI row, so `#segKpiStrip` was being compared empty-to-empty
+    and commenting out `segKpiInit()` passed clean. The case now picks Innocon first.
+  - **`DUMP=<page id>`** — prints what a case actually compares. That is how the two silent
+    mutations were diagnosed: the reading was not looking at the thing being changed.
+- **A stub has to match the ENVELOPE, not the payload.** `getKpiValues(known)` answers
+  `{ generation, cached, values }` and `AmrKpi.load` settles to `null` on anything else, so
+  a stub returning the bare store left the strip empty and looked like a fixture that did not
+  matter. Read the caller, not the function name.
+- **Reuse the fixtures that already exist, again.** Both new models in `pageparity.js` —
+  `segmentModel` and the `RMX_getSlideTables` reply — are lifted from `tests/segboot.js`,
+  which drives the real page through a browser.
 
 ### What chunk 6 settled
 

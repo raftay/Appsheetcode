@@ -83,6 +83,17 @@ Three things it does deliberately, each of which took a wrong answer to find:
 - **It stubs injected `<script src>` to resolve at once.** jsdom fetches nothing, so
   `AMR.lib.need()` would wait forever on a CDN library and `boot()` would never run. Nothing
   under test uses html2canvas or SheetJS at boot.
+- **`setup` reaches state a mount does not.** Some readings are only meaningful after a
+  control is driven — Product Segment opens on Central Canada, which has no KPI row, so its
+  strip compares empty-to-empty until the case picks a market that has one. A case's optional
+  `setup(win)` runs on both sides before anything is compared.
+- **`DUMP=<page id> node tests/pageparity.js`** prints what a case actually compares. Run it
+  when a mutation you expected to fail passes instead; usually the reading is not looking at
+  the thing you changed.
+- **Stub the ENVELOPE the caller reads, not the function name.** `getKpiValues` answers
+  `{generation, cached, values}` and `AmrKpi.load` settles to null on anything else — a stub
+  returning the bare store leaves the KPI strip empty and looks like a fixture that does not
+  matter.
 - **A renamed id is declared, not dropped.** When a port adopts a name the suite already uses
   for that role — Ready-Mix's `#rmxPreviewHost` became `#previewHost` — put it in the case's
   `legacyIds` map. The legacy side then reads the old id and the comparison still happens.

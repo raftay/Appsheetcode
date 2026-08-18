@@ -750,6 +750,75 @@ body.rmx-yellow .rmx-export-block tr.subtotal td{background:#EEF3FB}
 /* a row whose best guess is weak — tinted, with a red spine on the tick column */
 .sugHost tr.lowrow>td{box-shadow:inset 0 0 0 99px rgba(178,58,72,.035)}
 .sugHost tr.lowrow>td.tick{box-shadow:inset 3px 0 0 0 var(--neg), inset 0 0 0 99px rgba(178,58,72,.035)}
+/* ---- the slide-body rows ----
+   The computed tables the Product Segment slide is built from. Shared with
+   AmrSegSlide (§E), which lays out the same rows for a deck capture. */
+.crow{display:flex; gap:12px; align-items:flex-start}
+.ccell{flex:1 1 0%; min-width:0; overflow:hidden}
+.ccap{font:700 10.5px Archivo; letter-spacing:.16em; text-transform:uppercase; color:var(--blue-70); margin:0 0 5px}
+.phold{border:1px dashed var(--blue-30); border-radius:var(--r-xs); background:var(--blue-10); color:var(--muted);
+  font:600 13px Inter; padding:26px; text-align:center; min-height:120px;
+  display:flex; align-items:center; justify-content:center}
+
+/* ---- the grouped table (table.gt) ------------------------------------------
+   ONE stylesheet, used by the on-page cards AND by the slide, so the two can
+   no longer drift apart: both are `table.gt`, emitted by the same renderer from
+   the same descriptor. The only difference is FONT SIZE — the page card sits at
+   a fixed readable size, while the fit pass grows the slide's font as large as
+   the 16:9 frame will take. tests/deckstatic.js fails if a second copy appears.
+
+   ALIGNMENT: the label columns are left-aligned; everything after them is
+   right-aligned, header and value together.
+
+   COLUMN WIDTHS come from a <colgroup> the renderer writes: every value column
+   asks for the same share and the row-name column for a double share. Layout
+   stays `auto`, so a column that genuinely needs more than its share still
+   takes it — the shares only stop the spare width being handed out unevenly.
+   (An earlier attempt gave the row-name column width:100%; it took ALL the
+   slack and shoved every number to the right-hand edge.) */
+table.gt{--px:9px; --py:5px; width:100%; border-collapse:collapse; font-size:13px; table-layout:auto}
+/* font-size:1em is NOT redundant — §A3's `thead th{font:600 11px Inter}` sets
+   the size inside a shorthand, and an explicit size beats inheritance, so
+   without this the header stays 11px while the fit pass grows the values to
+   20px+. Header text, label text and values are all one size. */
+table.gt thead th{background:var(--blue-100); color:#fff; font-weight:700; font-size:1em;
+  text-align:right; white-space:nowrap; padding:calc(var(--py) + 3px) var(--px);
+  line-height:1.2; vertical-align:middle; border-right:1px solid rgba(255,255,255,.10)}
+table.gt thead th.gB{background:var(--blue-60)}     /* stepped group accents */
+table.gt thead th.gA{background:var(--blue-70)}
+table.gt thead th.gV{background:var(--blue-80)}
+table.gt tbody td{padding:var(--py) var(--px); text-align:right; white-space:nowrap;
+  color:var(--ink); border-bottom:1px solid #EEF3F9}
+/* the label columns. The class is `tlbl`, never `lbl`: §A2 owns a global
+   `.lbl` for form labels, and a table cell picking that up is what made
+   "Standard Fees" / "Other VAP" render grey, right-aligned and gapped. */
+table.gt thead th.tlbl, table.gt tbody td.tlbl{text-align:left}
+table.gt tbody td.tlbl{font-weight:600}
+/* the EXTRAS / VAP spine down the left of the two Extras tables */
+table.gt td.section{background:var(--blue-70); color:#fff; font-weight:800; letter-spacing:.04em;
+  text-align:center; vertical-align:middle; white-space:normal; font-size:.88em}
+/* TWO levels of total, the grand visibly the heavier */
+table.gt tbody tr.subtot td{background:#EEF3FB; font-weight:700; border-top:1px solid var(--blue-40)}
+table.gt tbody tr.grand td{background:#D3E3F6; color:var(--blue-100); font-weight:800;
+  border-top:2px solid var(--blue-100)}
+table.gt td.pos{color:var(--pos)}
+table.gt td.neg{color:var(--neg)}
+/* when the fit pass lifts a table to match another's value-font, its headers
+   and label cells wrap so it grows TALLER rather than wider. Numbers never wrap. */
+table.gt.wrapText thead th{white-space:normal}
+table.gt.wrapText tbody td.tlbl{white-space:normal}
+
+/* ---- a vertical stack of table cards ----
+   Was `#tablesHost …` on Product Segment. Ready-Mix builds the same shape with
+   an inline style on its own #tablesHost; the class is the shared form. Only
+   the scroll wrapper, the sticky header and the fixed font differ from the
+   slide's copy of table.gt. */
+.tbl-stack{display:flex; flex-direction:column; gap:16px}
+.tbl-stack .tbl-scroll{padding:0 6px 12px}
+.tbl-stack table.gt{--px:10px; --py:6px; font-size:12.5px; min-width:560px}
+.tbl-stack thead th{position:sticky; top:0}
+/* the tick that puts a table on the slide */
+.export-cb{margin-right:10px; width:16px; height:16px; accent-color:var(--blue-50); cursor:pointer}
 </style>
 
 <style>
@@ -1613,7 +1682,9 @@ window.AMR = (function(){
    that builds a slide. AmrCache / AmrKpi / AmrCube / AmrPvSlide arrived in
    chunk 5 with Price & Volume, which is the first caller of all four.
 
-   Still to come: AmrDeckSource (chunk 10), AmrSegSlide (7), AmrRmxSlide (6).
+   AmrSegSlide arrived in chunk 7 with Product Segment, the page that renders
+   its tables. Still to come: AmrDeckSource and AmrRmxSlide (both chunk 10 —
+   Ready-Mix calls nothing in AmrRmxSlide, so it is the Deck Builder's).
    AmrTick has no caller on any page ported so far. **AmrKpiStore has no caller
    ANYWHERE** — grepped across every .html and .gs, the only hits are its own
    definition in Shell.html and two comments. It is on the legacy hit-list
@@ -5184,6 +5255,687 @@ var AmrFuelExec = (function(){
      ==========================================================================
      One <template> + one AMR.page() per page, in the order of the switcher.
      ========================================================================== -->
+
+<script>
+/* ---- §E AmrSegSlide — the RMX Product Segment slide content -----------------
+   Was Deck_SEG.html. Renders the same table.gt markup the page shows, from the
+   same descriptor, so the card and the slide cannot drift; tests/deckstatic.js
+   fails if a second copy of that renderer appears. Its seg adapter registration
+   no-ops until AmrDeckSource (chunk 10).                                     */
+var AmrSegSlide = (function(){
+
+  var CTX = {};
+
+  function ctx_(c){
+    c = c || {};
+    return {
+      data:      c.data || null,
+      market:    c.market || '',
+      period:    c.period || 'MTD',
+      /* {} = "no explicit choice", so every table falls back to its default */
+      exportSel: c.exportSel || {},
+      kpi:       c.kpi || { vals:null, sheet:'', index:{}, sheets:[], map:{} }
+    };
+  }
+  function withCtx(ctx, fn){
+    var prev = CTX; CTX = ctx_(ctx);
+    try { return fn(); } finally { CTX = prev; }
+  }
+
+/* ---------------------------------------------------------------------------
+ * Lifted verbatim from Page_Segment.html. Keep it that way: fix bugs here and
+ * let the page delegate.
+ * ------------------------------------------------------------------------- */
+  var DASH = '\u2013';
+
+  var ALL_MKT = '__ALL__';
+
+  var CY_YEAR = 2026, PY_YEAR = 2025;
+
+  var MARKET_LABEL = { '__ALL__':'Central Canada', HNS_SW:'HNS', Innocon:'Innocon',
+                       Manitoba:'Manitoba', North:'North', Saskatchewan:'Saskatchewan' };
+
+  var EXPORT_DEFAULT_OFF = { 'seg:byType':1, 'seg:detail':1 };
+
+  var SEGKPI_FMT = {
+    units:{ v:function(n){return (n==null?0:n).toLocaleString('en-CA',{minimumFractionDigits:2,maximumFractionDigits:2});},
+            d:function(n){return Math.abs(n).toFixed(2);} },
+    krc:  { v:function(n){return Math.round(n==null?0:n).toLocaleString('en-CA');},
+            d:function(n){return Math.abs(n).toFixed(2);} }
+  };
+
+  var TABLES = [
+    { key:'seg:segment', eb:'Main Raw Data',  title:'Segment',              cap:'Segment',
+      build:function(d){ return segmentTable(d); } },
+    { key:'seg:byType',  eb:'Summary',        title:'By extra type',        cap:'By extra type',
+      build:function(d){ return extrasTypeTable(d); } },
+    { key:'seg:detail',  eb:'EXTRAS LOOKUP',  title:'Extras & VAP detail',  cap:'Extras & VAP detail',
+      build:function(d){ return extrasDetailTable(d); } }
+  ];
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  function fInt(n){ return (n==null)?DASH:Math.round(n).toLocaleString('en-CA'); }
+
+  function f$(n){ return (n==null)?DASH:'$'+Number(n).toLocaleString('en-CA',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+  function f$0(n){ return (n==null)?DASH:'$'+Math.round(n).toLocaleString('en-CA'); }
+
+  function f$S(n){ return (n==null)?'n/a':((n<0?'-$':'+$')+Math.abs(n).toFixed(2)); }
+
+  function pct0(n){ return (n==null)?'n/a':Math.round(n*100)+'%'; }
+
+  function pct1(n){ return (n==null)?'n/a':(n*100).toFixed(1)+'%'; }
+
+  function pctS(n){ if(n==null) return 'n/a'; var v=n*100; return (v>=0?'+':'-')+Math.abs(v).toFixed(1)+'%'; }
+
+  function cellSign(c){
+    var t=String(c==null?'':c).trim();
+    if(/^\(.*\)$/.test(t)) return -1;
+    var s=t.replace(/[$,%()\s]/g,'').replace(/[\u2013\u2014\u2212]/g,'-');
+    if(/^-?\d*\.?\d+$/.test(s)&&s!==''){ var v=parseFloat(s); return v<0?-1:(v>0?1:0); }
+    return 0;
+  }
+
+  function cellClasses(t, r, ci){
+    var lc = t.leftCols || 1, cls = [];
+    if(ci < lc){ cls.push('tlbl'); return cls; }
+    if(!r.total){
+      var sg = cellSign(r.cells[ci]);
+      if((t.signed||[]).indexOf(ci) !== -1){ if(sg>0) cls.push('pos'); else if(sg<0) cls.push('neg'); }
+      else if(sg < 0){ cls.push('neg'); }
+    }
+    return cls;
+  }
+
+  function marketLabel(m){ return MARKET_LABEL[m] || m || ''; }
+
+  function isOn(key){
+    var saved = CTX.exportSel[key];
+    return (saved === undefined) ? !EXPORT_DEFAULT_OFF[key] : saved;
+  }
+
+  function renderTable(t){
+    var lc = t.leftCols || 1;
+
+    /* Even columns: one share each, two for the row-name column. */
+    var wsum = 0, weights = t.header.map(function(_, i){
+      var w = (i === lc - 1) ? 2 : 1; wsum += w; return w; });
+    var cols = '<colgroup>' + weights.map(function(w){
+      return '<col style="width:' + (w * 100 / wsum).toFixed(3) + '%">'; }).join('') + '</colgroup>';
+
+    /* header - label columns left, everything after them right */
+    var thead = '<tr>' + t.header.map(function(h, i){
+      var c = [];
+      if(i < lc) c.push('tlbl');
+      var g = (t.groups || {})[i]; if(g) c.push(g);
+      return '<th' + (c.length ? ' class="' + c.join(' ') + '"' : '') + '>' + esc(h) + '</th>';
+    }).join('') + '</tr>';
+
+    /* the repeated first cell becomes one merged EXTRAS / VAP spine cell */
+    var spine = {}, run = null;
+    t.rows.forEach(function(r, i){
+      if(lc < 2 || r.total){ run = null; return; }
+      var v = r.cells[0];
+      if(v){ run = { n:1, label:v }; spine[i] = run; }
+      else if(run){ run.n++; }
+    });
+
+    var body = t.rows.map(function(r, ri){
+      var tds = '';
+      for(var ci = 0; ci < r.cells.length; ci++){
+        if(lc >= 2 && ci === 0){
+          /* spine cell, or nothing at all: on a total row the label below spans
+             both label columns, which is what closes the white notch that used
+             to sit under the spine. */
+          if(spine[ri]) tds += '<td class="section" rowspan="' + spine[ri].n + '">' + esc(spine[ri].label) + '</td>';
+          continue;
+        }
+        if(lc >= 2 && ci === 1 && r.total){
+          tds += '<td class="tlbl" colspan="2">' + esc(r.cells[ci]) + '</td>';
+          continue;
+        }
+        var cls = cellClasses(t, r, ci);
+        tds += '<td' + (cls.length ? ' class="' + cls.join(' ') + '"' : '') + '>' + esc(r.cells[ci]) + '</td>';
+      }
+      var rowCls = r.grand ? ' class="grand"' : (r.total ? ' class="subtot"' : '');
+      return '<tr' + rowCls + '>' + tds + '</tr>';
+    }).join('');
+
+    return '<table class="gt">' + cols + '<thead>' + thead + '</thead><tbody>' + body + '</tbody></table>';
+  }
+
+  function renderComputedTable(t){ return renderTable(t); }
+
+  function computedCard(cap, table, missing){
+    var wrap=document.createElement('div');
+    wrap.innerHTML='<p class="ccap">'+esc(cap)+'</p>'+(table? renderComputedTable(table)
+        : '<div class="phold">Waiting for '+esc(missing)+'</div>');
+    return wrap;
+  }
+
+  function segmentTable(d){
+    var S = d && d.segment;
+    if(!S || !S.rows || !S.rows.length) return null;
+    var t = S.total;
+    var header = ['Major Project Segment','CY Vol','CY Vol %','PY Vol','PY Vol %','\u0394 YOY %',
+                  'CY ASP Inc VA','PY ASP Inc VA','\u0394 ASP Inc VA'];
+    var out = [];
+    out.push({ total:true, grand:true, cells:['Total', fInt(t.cyVol), '100%', fInt(t.pyVol), '100%',
+      pct0(t.volPct), f$(t.aspCY), f$(t.aspPY), pct1(t.aspPct)] });
+    S.rows.forEach(function(r){
+      out.push({ cells:[ r.label, fInt(r.cyVol), pct0(r.cyShare), fInt(r.pyVol), pct0(r.pyShare),
+        pct0(r.volPct), f$(r.aspCY), f$(r.aspPY), pct1(r.aspPct) ] });
+    });
+    return { header:header, rows:out, leftCols:1, signed:[5,8],
+             groups:{ 6:'gB', 7:'gB', 8:'gB' } };
+  }
+
+  function extrasTypeTable(d){
+    var e = d && d.extras;
+    if(!e || (!(e.byTypeExtras||[]).length && !(e.byTypeVap||[]).length)) return null;
+    var header = ['Stream','Type', CY_YEAR+' Rev', PY_YEAR+' Rev','Rev % chg',
+                  CY_YEAR+' ASP/m\u00B3', PY_YEAR+' ASP/m\u00B3','ASP change'];
+    function cells(stream, r){
+      return [ stream, r.label, f$0(r.cyRev), f$0(r.pyRev), pctS(r.revPct),
+               f$(r.aspCY), f$(r.aspPY), f$S(r.aspChg) ];
+    }
+    var rows = [];
+    function block(list, tot, name){
+      if(!list || !list.length) return;
+      list.forEach(function(r,i){ rows.push({ cells:cells(i===0?name:'', r) }); });
+      if(tot) rows.push({ total:true, cells:cells('', { label:name+' Total', cyRev:tot.cyRev,
+        pyRev:tot.pyRev, revPct:tot.revPct, aspCY:tot.aspCY, aspPY:tot.aspPY, aspChg:tot.aspChg }) });
+    }
+    block(e.byTypeExtras, e.byTypeExtrasTotal, 'EXTRAS');
+    block(e.byTypeVap,    e.byTypeVapTotal,    'VAP');
+    if(e.byTypeTotal) rows.push({ total:true, grand:true, cells:cells('', { label:'Total',
+      cyRev:e.byTypeTotal.cyRev, pyRev:e.byTypeTotal.pyRev, revPct:e.byTypeTotal.revPct,
+      aspCY:e.byTypeTotal.aspCY, aspPY:e.byTypeTotal.aspPY, aspChg:e.byTypeTotal.aspChg }) });
+    return { header:header, rows:rows, leftCols:2, signed:[4,7],
+             groups:{ 2:'gA', 3:'gA', 4:'gA', 5:'gB', 6:'gB', 7:'gB' } };
+  }
+
+  function extrasDetailTable(d){
+    var e = d && d.extras;
+    if(!e || (!(e.extras||[]).length && !(e.vap||[]).length)) return null;
+    var header = ['Stream','Type',
+      CY_YEAR+' vol applied', CY_YEAR+' appl. rate',
+      PY_YEAR+' vol applied', PY_YEAR+' appl. rate','\u0394 appl. rate',
+      CY_YEAR+' Rev', PY_YEAR+' Rev','Rev % chg',
+      CY_YEAR+' Applied ASP', PY_YEAR+' Applied ASP','ASP change'];
+    function cells(stream, r){
+      return [ stream, r.label,
+        fInt(r.cyM3), pct1(r.rateCY), fInt(r.pyM3), pct1(r.ratePY), pctS(r.rateChg),
+        f$0(r.cyRev), f$0(r.pyRev), pctS(r.revPct),
+        f$(r.aspCY), f$(r.aspPY), f$S(r.aspChg) ];
+    }
+    /* NO TOTAL ROWS ON THIS TABLE - APPLIED VOLUME DOES NOT ADD UP.
+       One pour is counted once PER EXTRA TYPE: a m3 that took a standard fee, a
+       cooling charge and a fibre dose sits in all three rows. Summing the applied
+       volume counts the same concrete several times over, and everything priced
+       off it - applied rate, applied ASP, their deltas - inherits that (it is why
+       the old penetration total came out above 100%). Only revenue would have
+       totalled, and "By extra type" above already carries EXTRAS Total, VAP Total
+       and Total revenue - so there is nothing left for a total row here to say. */
+    var rows = [];
+    function block(list, name){
+      if(!list || !list.length) return;
+      list.forEach(function(r,i){ rows.push({ cells:cells(i===0?name:'', r) }); });
+    }
+    block(e.extras, 'EXTRAS');
+    block(e.vap,    'VAP');
+    return { header:header, rows:rows, leftCols:2, signed:[6,9,12],
+             groups:{ 2:'gV', 3:'gV', 4:'gV', 5:'gV', 6:'gV', 7:'gA', 8:'gA', 9:'gA', 10:'gB', 11:'gB', 12:'gB' } };
+  }
+
+  function segKpiExtract(market){
+    if(!window.AmrKpi) return null;
+    return AmrKpi.rmx(CTX.kpi.vals, market || CTX.market, CTX.period);
+  }
+
+  function segKpiCard(eyebrow, pill, m, fmt, sub, invert){
+    var dp=(m.dp==null)?((m.py&&m.cy!=null)?(m.cy-m.py)/m.py:0):m.dp;
+    var dn=(m.dn==null)?((m.cy||0)-(m.py||0)):m.dn;
+    var up=dp>=0, good=invert?!up:up;
+    var arrow=up?'\u25B2':'\u25BC', col=good?'var(--blue-80)':'var(--neg)';
+    var sign=up?'+':'\u2212';
+    return segKpiCardShell(eyebrow, pill,
+        '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:.8em;margin:.5em 0 .2em">'
+          +'<span style="font:800 2.4em Archivo,Arial;color:var(--blue-80);white-space:nowrap">'+fmt.v(m.cy)+'</span>'
+          +'<span style="font:700 1.1em Inter;color:'+col+';white-space:nowrap">'+arrow+' '+sign+fmt.d(dn)+' / '+sign+(Math.abs(dp)*100).toFixed(1)+'%</span>'
+        +'</div>'
+       +'<div style="font:500 1.05em Inter;color:var(--muted);white-space:nowrap">Prior Yr: '+fmt.v(m.py)+(sub?' \u00B7 '+sub:'')+'</div>');
+  }
+
+  /* Every size in a card is in em, against the ROW's font-size: 10px is the
+     card as it has always been, and fitSegKpiRow() raises that one number so
+     the strip grows with the slide instead of staying 24px type beside tables
+     the fitter takes past 20px. The page's own KPI strip sets 10px and keeps
+     exactly the size it had. */
+  function segKpiCardShell(eyebrow, pill, body){
+    return '<div style="flex:1 1 0;min-width:13em;overflow:hidden;background:#fff;border:1px solid var(--line);border-radius:1em;box-shadow:var(--shadow);padding:.8em 1.1em">'
+      +'<div style="display:flex;flex-direction:column;align-items:flex-start;gap:.4em">'
+        +'<span style="font:700 .95em Archivo,Arial;letter-spacing:.08em;text-transform:uppercase;color:var(--blue-100);white-space:nowrap">'+esc(eyebrow)+'</span>'
+        +'<span style="background:var(--blue-10);border:1px solid var(--blue-20);color:var(--blue-80);font:700 .8em Archivo,Arial;letter-spacing:.06em;text-transform:uppercase;border-radius:.5em;padding:.25em .75em;white-space:nowrap">'+esc(pill)+'</span>'
+      +'</div>'
+      + body + '</div>';
+  }
+
+  function segKpiMoneyCard(eyebrow, pill, m, invert){
+    var dp=(m.dp==null)?(((m.pyU||0)&&m.cyU!=null)?((m.cyU-m.pyU)/m.pyU):0):m.dp;
+    var dn=(m.dn==null)?((m.cyU||0)-(m.pyU||0)):m.dn;
+    var up=dp>=0, good=invert?!up:up;
+    var arrow=up?'\u25B2':'\u25BC', col=good?'var(--blue-80)':'var(--neg)';
+    var sign=up?'+':'\u2212';
+    var f=SEGKPI_FMT.krc;
+    return segKpiCardShell(eyebrow, pill,
+        '<div style="display:flex;align-items:baseline;justify-content:flex-start;gap:1.4em;margin:.5em 0 .2em;flex-wrap:nowrap">'
+          +'<span style="white-space:nowrap"><span style="font:800 2.4em Archivo,Arial;color:var(--blue-80)">'+f.v(m.cy)+'</span>'
+            +'<span style="font:700 .95em Archivo,Arial;letter-spacing:.04em;color:var(--muted);margin-left:.4em">kRC</span></span>'
+          +'<span style="white-space:nowrap"><span style="font:800 2em Archivo,Arial;color:var(--blue-100)">'+(m.cyU==null?'\u2013':m.cyU.toFixed(2))+'</span>'
+            +'<span style="font:700 .95em Archivo,Arial;letter-spacing:.04em;color:var(--muted);margin-left:.4em">RC/m\u00B3</span></span>'
+        +'</div>'
+       +'<div style="font:500 1.05em Inter;color:var(--muted);white-space:nowrap">Prior Yr: '+f.v(m.py)+' kRC \u00B7 '
+          +(m.pyU==null?'\u2013':m.pyU.toFixed(2))+' RC/m\u00B3'
+          +' \u00B7 <span style="font-weight:700;color:'+col+'">'+arrow+' '+sign+Math.abs(dn).toFixed(2)+' / '+sign+(Math.abs(dp)*100).toFixed(1)+'%</span>'
+        +'</div>');
+  }
+
+  function segKpiCardsHtml(){
+    var x=segKpiExtract(); if(!x) return '';
+    var h='';
+    if(x.units) h+=segKpiCard('Units Sold (Km\u00B3)',   'SAP / USGAAP', x.units, SEGKPI_FMT.units, '');
+    if(x.rev)   h+=segKpiMoneyCard('Total Revenue',      'SAP / USGAAP', x.rev);
+    if(x.conc)  h+=segKpiMoneyCard('Concrete Sales',     'SAP / USGAAP', x.conc);
+    if(x.raw)   h+=segKpiMoneyCard('Total Raw Materials','SAP / USGAAP', x.raw, true);
+    return h;
+  }
+
+  function buildSlideContent(){
+    var picked = TABLES.filter(function(T){ return isOn(T.key); });
+    if(!picked.length) return null;
+
+    var frag=document.createDocumentFragment();
+    var ml=marketLabel(CTX.market), p=CTX.period;
+    var kHtml=segKpiCardsHtml();
+    if(kHtml){
+      var krow=document.createElement('div');
+      krow.className='seg-kpi-row';
+      krow.style.cssText='display:flex;gap:1.1em;flex-wrap:nowrap;width:100%;flex:none;'
+        +'font-size:'+SEG_KPI_BASE+'px;margin:0 0 12px';
+      krow.innerHTML=kHtml;
+      frag.appendChild(krow);
+    }
+    function addRow(cards){
+      var rowEl=document.createElement('div'); rowEl.className='crow';
+      cards.forEach(function(card){ var cell=document.createElement('div'); cell.className='ccell'; cell.appendChild(card); rowEl.appendChild(cell); });
+      frag.appendChild(rowEl);
+    }
+    picked.forEach(function(T){
+      var t=null; try{ t=T.build(CTX.data); }catch(e){ t=null; }
+      addRow([ computedCard(T.cap+' \u00B7 '+p, t, 'Ready-Mix data for '+ml) ]);
+    });
+    return frag;
+  }
+
+  /* ===========================================================================
+   * THE FITTER
+   * ---------------------------------------------------------------------------
+   * The KPI strip across the top, then the tables, both sized from the frame's
+   * REAL height and width.
+   *
+   * WHAT IT IS FIXING. The old fitter grew each table by WIDTH ONLY, to a 30px
+   * cap, and left the height to somebody else. Nobody else wanted it: the two
+   * tables came out 1263px tall in a 1014px frame, so AmrSlide.build fell back
+   * to its last-resort clamp and scaled the WHOLE stack by 0.80 — 0.52 on the
+   * short, wide image box the deck actually uses. The KPI strip went down with
+   * it. Its own fitter had already handed its height back (that is what the
+   * give-back was for), so it was photographed at the 10px base and then scaled
+   * to an effective FIVE pixels: a grey smear above the tables, which is what
+   * the strip looks like on every Product Segment slide in the July deck.
+   *
+   * A second scale is also why the picture had white bands down both sides:
+   * transform-origin is top CENTRE, so shrinking the stack pulls it away from
+   * the edges the fitter had just filled.
+   *
+   * So the rule is the same one the Price & Volume slide already follows: fit
+   * to the frame, never past it. In order:
+   *   1. the KPI strip grows until the widest card would clip or it reaches its
+   *      share of the height — it is sized FIRST, so the tables are fitted into
+   *      what is left rather than the strip being squeezed by what they took;
+   *   2. the tables take the font that fills the remaining height, or the
+   *      width, whichever binds first — cell padding rides on the font (--px /
+   *      --py are em), so a bigger font is a bigger table, not bigger digits in
+   *      cells sized for a smaller one;
+   *   3. anything still short of the bottom goes back to the strip, and then to
+   *      row padding, rather than being left as white.
+   * ========================================================================= */
+  var SEG_FIT = {
+    kpiMin: 10, kpiMax: 20,      // the strip's font-size dial, px
+    kpiShare: 0.24,              // most of the body height the strip may take
+    tblMin: 8, tblMax: 30, tblBase: 13,
+    padYMin: 0.30, padYMax: 0.80 // table row padding, em of the cell font
+  };
+  /* The size the strip is BUILT at, before the fitter sees it. buildSlideContent
+     stamps it on the row so the block is measurable even if no fitter runs. */
+  var SEG_KPI_BASE = SEG_FIT.kpiMin;
+
+  /* Grow the strip until the widest card would clip, it outgrows maxH, or it
+     reaches the cap. Returns the size it settled on. */
+  function fitSegKpiRow(krow, availW, maxH, cap){
+    if(!krow || !availW) return 0;
+    var cards = [].slice.call(krow.children);
+    var best = SEG_FIT.kpiMin, f, i;
+    for(f = SEG_FIT.kpiMin; f <= cap + 0.001; f += 0.5){
+      krow.style.fontSize = f + 'px';
+      var over = krow.scrollWidth > availW + 1 || krow.offsetHeight > maxH;
+      for(i = 0; i < cards.length && !over; i++){
+        over = cards[i].scrollWidth > cards[i].clientWidth;
+      }
+      if(over) break;
+      best = f;
+    }
+    krow.style.fontSize = best + 'px';
+    return best;
+  }
+
+  /* The width the widest table would LIKE. Every cell is nowrap, so max-content
+     is exactly the width at which no number is squeezed. Measured on the table
+     itself, never on its cell: a table too wide for the cell simply overflows
+     it (.ccell clips), so the cell's width says nothing about the room needed. */
+  function tablesNeedWidth(tables){
+    var w = 0;
+    tables.forEach(function(t){
+      var prev = t.style.width;
+      t.style.width = 'max-content';
+      w = Math.max(w, t.offsetWidth);
+      t.style.width = prev;
+    });
+    return Math.ceil(w);
+  }
+
+  function fitTables(box){
+    // Let the spacers decide where the content sits (like RMX / Price & Volume):
+    // the shared frame vertically centres the body row, which pushes short
+    // content to the middle. Anchor it to the top instead, so the Top slider is
+    // the real gap below the header and the Bottom slider the real reserved band.
+    var center=box.querySelector('.slide-center');
+    if(!center) return;
+    if(center.parentElement) center.parentElement.style.alignItems='flex-start';
+
+    // The report page's slide pads the whole frame; that padding is invisible
+    // extra blank space the whitespace sliders can't remove. Pull the body row
+    // out to the slide edges (the header keeps its padding), so 0px blank space
+    // really means "right at the edge" and the sliders account for ALL of it.
+    //
+    // NOT ON A DECK CAPTURE. A bare frame has no sliders and no bands to
+    // account for — it keeps AmrSlide's 8px so a card's border, and the first
+    // letter of a left-aligned caption, are not shaved off at the picture's
+    // edge. They were: "SEGMENT · MTD" came out as "EGMENT · MTD" the moment
+    // the fitter started using the full width instead of leaving the whole
+    // stack scaled down and centred.
+    var bare = box.classList && box.classList.contains('slide-bare');
+    if(center.parentElement && !bare){
+      var pad=parseFloat(getComputedStyle(box).paddingLeft)||0;
+      center.parentElement.style.marginLeft=(-pad)+'px';
+      center.parentElement.style.marginRight=(-pad)+'px';
+      box.style.paddingBottom='0px';
+    }
+
+    var bodyR  = center.parentElement;
+    var availW = center.clientWidth;
+    var availH = bodyR ? bodyR.clientHeight : 0;
+    var krow   = box.querySelector('.seg-kpi-row');
+    var tables = [].slice.call(box.querySelectorAll('table.gt'));
+    if(!availW || !availH || !tables.length) return;
+
+    /* 1 — the strip takes its share first. */
+    var kpiF = krow ? fitSegKpiRow(krow, availW, availH * SEG_FIT.kpiShare, SEG_FIT.kpiMax) : 0;
+
+    /* 2 — the tables fill what is left, in BOTH directions. */
+    var caps = tables.map(function(t){
+      var c = t.previousElementSibling;
+      return (c && c.classList && c.classList.contains('ccap')) ? c : null;
+    });
+
+    function apply(f, padY, wrap){
+      tables.forEach(function(t){
+        t.classList.toggle('wrapText', !!wrap);
+        t.style.transform = '';                    // cleared; only the last-resort
+                                                   // clamp at the end may set one
+        t.style.fontSize = f + 'px';
+        t.style.setProperty('--px', '0.72em');
+        t.style.setProperty('--py', padY + 'em');
+      });
+      caps.forEach(function(c){
+        if(c){ c.style.fontSize = Math.max(9, Math.round(f * 0.8 * 10) / 10) + 'px';
+               c.style.margin = '0 0 ' + Math.round(f * 0.42) + 'px'; }
+      });
+      var rows = box.querySelectorAll('.crow');
+      for(var i = 0; i < rows.length; i++) rows[i].style.marginBottom = Math.round(f * 0.5) + 'px';
+    }
+    /* The whole composition, not just the tables: the strip, the captions and
+       the gaps are all inside .slide-center, so this is the number that decides
+       whether build() has to scale anything. */
+    function fits(){
+      return tablesNeedWidth(tables) <= availW && center.scrollHeight <= availH;
+    }
+
+    function settle(wrap){
+      /* one measurement at the base size, then jump to the estimate — a nowrap
+         table's width and height are both near enough linear in the font-size
+         once the padding scales with it */
+      apply(SEG_FIT.tblBase, SEG_FIT.padYMin, wrap);
+      var w0 = tablesNeedWidth(tables) || 1;
+      var h0 = center.scrollHeight || 1;
+      /* only the table part of the height scales with the font */
+      var fixed = krow ? (krow.offsetHeight + 24) : 0;
+      var byW = SEG_FIT.tblBase * availW / w0;
+      var byH = SEG_FIT.tblBase * Math.max(1, availH - fixed) / Math.max(1, h0 - fixed);
+      var f = Math.max(SEG_FIT.tblMin,
+                Math.min(SEG_FIT.tblMax, Math.floor(Math.min(byW, byH) * 2) / 2));
+      var guard = 0;
+      apply(f, SEG_FIT.padYMin, wrap);
+      while(f > SEG_FIT.tblMin && guard++ < 60 && !fits()){
+        f -= 0.5; apply(f, SEG_FIT.padYMin, wrap);
+      }
+      guard = 0;
+      while(f < SEG_FIT.tblMax && guard++ < 60){
+        apply(f + 0.5, SEG_FIT.padYMin, wrap);
+        if(!fits()){ apply(f, SEG_FIT.padYMin, wrap); break; }
+        f += 0.5;
+      }
+      return f;
+    }
+
+    var wrap = false, font = settle(false);
+    /* Only wrap the headers when NOT wrapping has cost real size. The report
+       page's own slide reads "MAJOR PROJECT SEGMENT" on one line and that is
+       the look to keep; a header broken over two lines is the price of a
+       readable number, never the default. */
+    if(font <= SEG_FIT.tblMin + 0.001){
+      var wrapped = settle(true);
+      if(wrapped > font){ wrap = true; font = wrapped; } else { font = settle(false); }
+    }
+
+    /* 3 — spend what is left over rather than leaving a white band. The strip
+       first (it is the thing that reads smallest), then the row padding. */
+    if(krow && kpiF < SEG_FIT.kpiMax){
+      var guard = 0, f2 = kpiF;
+      while(f2 < SEG_FIT.kpiMax && guard++ < 40){
+        krow.style.fontSize = (f2 + 0.5) + 'px';
+        var clipped = false, kids = krow.children;
+        for(var i = 0; i < kids.length && !clipped; i++) clipped = kids[i].scrollWidth > kids[i].clientWidth;
+        if(clipped || krow.scrollWidth > availW || center.scrollHeight > availH){
+          krow.style.fontSize = f2 + 'px'; break;
+        }
+        f2 += 0.5;
+      }
+    }
+    var padY = SEG_FIT.padYMin, guardP = 0;
+    while(padY < SEG_FIT.padYMax && guardP++ < 40){
+      apply(font, Math.round((padY + 0.02) * 100) / 100, wrap);
+      if(center.scrollHeight > availH){ apply(font, padY, wrap); break; }
+      padY = Math.round((padY + 0.02) * 100) / 100;
+    }
+
+    /* Last resort, and only for a table that genuinely cannot be made to fit at
+       the smallest font with wrapped headers — the Extras & VAP detail view is
+       thirteen columns wide. A clipped column is a wrong number on a picture
+       nobody can restyle, so scale that one table rather than let .ccell cut it
+       off. Height is not scaled here: everything above already fits. */
+    tables.forEach(function(t){
+      var room = t.parentElement ? t.parentElement.clientWidth : 0;
+      if(!room || t.scrollWidth <= room + 1) return;
+      t.style.transformOrigin = 'top left';
+      t.style.transform = 'scale(' + (room / t.scrollWidth) + ')';
+    });
+  }
+
+/* ---------------------------------------------------------------------------
+ * end of the lifted block
+ * ------------------------------------------------------------------------- */
+
+  /* The block the deck photographs. buildSlideContent returns a
+     DocumentFragment; a fragment cannot be measured or captured, so it is
+     wrapped in a real element first. */
+  function content(){
+    var frag = buildSlideContent();
+    if(!frag) return null;
+    var wrap = document.createElement('div');
+    wrap.className = 'seg-slide-wrap';
+    wrap.style.cssText = 'width:100%;display:flex;flex-direction:column';
+    wrap.appendChild(frag);
+    return wrap;
+  }
+
+  /* There is no fitBare any more - the deck photographs the same framed
+     slide the pages do, so fitSlide is the only fitter. See the note at the
+     bottom of Deck_Fuel.html for why the bare variant made slides worse. */
+
+  return {
+    TABLES: TABLES,
+    marketLabel: function(m){ return marketLabel(m); },
+    tableHtml: function(key, ctx){
+      return withCtx(ctx, function(){
+        for(var i=0;i<TABLES.length;i++){
+          if(TABLES[i].key === key) return TABLES[i].build(CTX.data);
+        }
+        return null;
+      });
+    },
+    content: function(ctx){ return withCtx(ctx, function(){ return content(); }); },
+    slideContent: function(ctx){ return withCtx(ctx, function(){ return buildSlideContent(); }); },
+    kpiCardsHtml: function(ctx){ return withCtx(ctx, function(){ return segKpiCardsHtml(); }); },
+    fitSlide: function(box, ctx){ return withCtx(ctx, function(){ return fitTables(box); }); }
+  };
+})();
+
+
+/* ===========================================================================
+ * Deck Builder adapter — 'seg'. Registered only on the Deck Builder page.
+ * ---------------------------------------------------------------------------
+ * One call per market+period, cached, so the ten slides cost ten calls rather
+ * than one per render attempt.
+ * ========================================================================= */
+(function(){
+  if(!window.AmrDeckSource) return;
+
+  var CACHE = {};
+  var KPIVALS = { loaded:false, vals:null };
+
+  function srv(fn, args){
+    return new Promise(function(resolve, reject){
+      if(typeof google==='undefined' || !google.script || !google.script.run){
+        return reject(new Error('Product Segment data needs the live web app.'));
+      }
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn]
+        .apply(null, args || []);
+    });
+  }
+  function monthOf(spec){
+    var m = Number(spec && spec.month) || 0;
+    return (m >= 1 && m <= 12) ? m : 0;          // 0 = let the backend decide
+  }
+  function key(spec){ return (spec.market||'') + '|' + (spec.period||'MTD') + '|m' + monthOf(spec); }
+
+  /* No bookOf() here any more. AmrKpi.rmx already tries the market's own
+     workbook first and the other as a fallback, so which book a market sits in
+     is its business, not this adapter's. */
+
+  function loadKpi(){
+    if(KPIVALS.loaded) return Promise.resolve(KPIVALS.vals);
+    if(!window.AmrKpi){ KPIVALS.loaded = true; return Promise.resolve(null); }
+    return new Promise(function(resolve){
+      try { AmrKpi.load(function(v){ KPIVALS.loaded=true; KPIVALS.vals=v||null; resolve(v); }); }
+      catch(e){ KPIVALS.loaded = true; resolve(null); }
+    });
+  }
+
+  /* The Segment page reads the Ready-Mix workbook through RMX_getSlideTables:
+     one call per market + period + month. month 0 = the server's report month. */
+  function loadSeg(spec){
+    var k = key(spec);
+    if(CACHE[k]) return Promise.resolve(CACHE[k]);
+    return srv('RMX_getSlideTables', [{
+      market: spec.market, period: spec.period || 'MTD', month: monthOf(spec), upload: null
+    }]).then(function(d){
+      if(!d) throw new Error('No Product Segment data for ' + (spec.market||'?') + '.');
+      CACHE[k] = d; return d;
+    });
+  }
+
+  /* THERE IS NO REGION TO CHOOSE ON AN RMX SLIDE.
+     The KPI cards here come from AmrKpi.rmx(vals, market, period), which finds
+     the market's own block in the workbook's "RMX Summary" tab BY NAME and
+     reads nothing else — no region sheet, no index, no picker. The Price &
+     Volume cards are the ones that read a per-region plant statement.
+
+     This used to hand the module AmrPvSlide.kpiFor(...), the AGG side's region
+     slice, and declare a kpiPicker built from the AGG region list. AmrSegSlide
+     ignores every field of it, so the dropdown changed nothing at all — it just
+     sat on ten RMX rows in the Deck Builder offering "AGG GTA", which is not
+     even the same product line. All it needed was to not be there. */
+  function ctxFor(spec){
+    return {
+      data: CACHE[key(spec)] || null,
+      market: spec.market || '',
+      period: spec.period || 'MTD',
+      /* NOT {} - that means "each table's default", and byType/detail default
+         OFF (EXPORT_DEFAULT_OFF), so the slide was the Segment table alone.
+         The deck wants Segment + By extra type, which is the pair the Segment
+         page ticks for its own export. `detail` stays off: it is the EXTRAS
+         LOOKUP working view, too wide to read at slide size. */
+      exportSel: { 'seg:segment': true, 'seg:byType': true, 'seg:detail': false },
+      kpi: { vals: KPIVALS.vals }
+    };
+  }
+
+  AmrDeckSource.register('seg', {
+    prepare: function(spec){ return Promise.all([loadSeg(spec), loadKpi()]); },
+    /* Just the KPI workbook, so the Region dropdown is answerable at Plan
+       time. The segment tables themselves are per row and stay in prepare(). */
+    warm: function(){ return loadKpi(); },
+    content: function(spec){
+      if(!CACHE[key(spec)]) throw new Error('Product Segment data is not loaded yet.');
+      var el = AmrSegSlide.content(ctxFor(spec));
+      if(!el) throw new Error('Could not build the Product Segment block.');
+      return el;
+    },
+    fit: function(box, spec){ return AmrSegSlide.fitSlide(box, ctxFor(spec)); },
+    /* NO kpiPicker - see ctxFor above. An RMX market resolves its own KPI block
+       by name; there is no region sheet to pick, so a dropdown here could only
+       ever be decoration that shows an AGG region on a Ready-Mix slide. */
+    /* ↻ Update from source: forget the tables and the KPI slice. */
+    reset: function(){
+      CACHE = {};
+      KPIVALS.loaded = false; KPIVALS.vals = null;
+    }
+  });
+})();
+</script>
 
 <!-- ===================== §P landing ===================== -->
 <template id="tpl-landing">
@@ -10673,6 +11425,1226 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
 
     /* The page's own init, last — see the banner above. */
     rmxPageInit();
+  }
+});
+</script>
+
+<!-- ===================== §P segment ===================== -->
+<!-- Commercial Product Segment. Its table (table.gt) and the slide-body
+     rows are in §A3 — AmrSegSlide renders the same markup for the deck,
+     so page and slide cannot drift. Six id-scoped rules became classes. -->
+<template id="tpl-segment">
+<header class="bar">
+  <div class="brand">
+    <span class="mark">AMRIZE</span>
+    <span>
+      <span class="title">Commercial Product Segment</span>
+      <span class="sub">Reads the Ready-Mix raw data → computed RMX commercial slide</span>
+    </span>
+  </div>
+  <button class="ghost" data-act="home" title="Back to the suite home">&#8962; Home</button>
+  <button class="ghost" data-act="help" title="How to use this page">? Help</button>
+  <button class="ghost" data-act="settings" title="Change the Google Sheet this app reads from">&#9881; Data sheet</button>
+  <div class="spacer"></div>
+  <!-- the Ready-Mix raw tabs, not the old Slide Segment / Slide Product ones -->
+  <button class="ghost" id="syncBtn" title="Re-read the Google Sheet and rebuild this page for every user">&#8635; Update from source</button>
+  <button class="ghost primary" id="exportBtn">Download slide PNG</button>
+
+  <button class="ghost" id="viewBtn" title="Show the slide full screen — no download needed">Expand slide</button>
+</header>
+
+<div class="shell">
+  <aside class="rail">
+    <div class="panel">
+      <p class="eyebrow">Slide</p>
+      <div class="field">
+        <label class="lbl" for="marketSel">Market</label>
+        <select id="marketSel"></select>
+      </div>
+      <div class="field">
+        <label class="lbl" for="monthSel">Report month</label>
+        <select id="monthSel"><option>&#8212;</option></select>
+      </div>
+      <div class="field">
+        <label class="lbl">Period</label>
+        <div class="btnrow" id="periodBtns" style="display:flex;gap:8px">
+          <button type="button" class="lk full" data-period="MTD" style="background:var(--navy,#011E6A);color:#fff;border-color:var(--navy,#011E6A)">MTD</button>
+          <button type="button" class="lk full" data-period="YTD">YTD</button>
+        </div>
+      </div>
+      <div class="field">
+        <label class="lbl" for="titleIn">Title</label>
+        <input type="text" id="titleIn" value="NORTH RMX – Commercial">
+      </div>
+      <div class="field">
+        <label class="lbl" for="subIn">Subtitle</label>
+        <input type="text" id="subIn" value="">
+      </div>
+      <p class="hint">Pick the market, the report month and the period. <b>MTD</b> is that month on its own,
+        <b>YTD</b> is January through it &mdash; each makes its own slide, so download one, switch the period and
+        download the other. The month now <b>slices the data</b>, not just the wording: it defaults to the last
+        closed month the Ready-Mix data carries.</p>
+    </div>
+
+    <div class="panel">
+      <p class="eyebrow">KPIs <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)">· optional</span></p>
+      <div class="field">
+        <label class="lbl" for="segKpiFileMain">AGG &amp; RMX EBITDA Report (.xlsx)</label>
+        <input type="file" id="segKpiFileMain" accept=".xlsx,.xlsm" style="width:100%;font:500 12px Inter">
+        <div class="dzstat" id="segKpiSavedMain" style="display:none;margin-top:4px"></div>
+      </div>
+      <div class="field">
+        <label class="lbl" for="segKpiFileMbsk">Manitoba / Saskatchewan workbook (.xlsx)</label>
+        <input type="file" id="segKpiFileMbsk" accept=".xlsx,.xlsm" style="width:100%;font:500 12px Inter">
+        <div class="dzstat" id="segKpiSavedMbsk" style="display:none;margin-top:4px"></div>
+      </div>
+      <div class="dzstat" id="segKpiStat" style="display:none;margin-top:2px"></div>
+      <p class="hint">Upload the AGG &amp; RMX EBITDA Report export(s). HNS, North and Innocon come from the first workbook; Manitoba and Saskatchewan from the second (same layout). Both files are <b>remembered on this device</b> &mdash; refreshing keeps them, and every page that reads the same report picks them up automatically. The KPI strip appears above the tables on the page, in the preview and on the exported PNG, and follows the Market and MTD / YTD pickers.</p>
+    </div>
+
+    <div class="panel">
+      <p class="eyebrow">Logo · optional</p>
+      <div class="btnrow">
+        <button class="lk full" id="logoBtn">Upload logo</button>
+        <button class="lk" id="logoClear">Remove</button>
+      </div>
+      <input type="file" id="logoFile" accept="image/*" style="display:none">
+      <div class="logoName" id="logoName">Loading the Amrize logo…</div>
+      <p class="hint">The Amrize logo loads automatically. Upload to override it, or if it can’t be fetched.</p>
+    </div>
+
+    <div class="panel">
+      <p class="eyebrow">Blank space (for comments)</p>
+      <div id="sbWs"></div>
+      <p class="hint">Reserves empty bands around the tables for reviewers to add commentary.</p>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="section-head">
+      <h2>1 · Data</h2>
+      <span class="meta">Read live from the Ready-Mix workbook — the same tabs RMX · Price &amp; Volume reads.</span>
+    </div>
+    <div class="panel">
+      <div class="dzstat" id="loadStat">Loading the Ready-Mix data…</div>
+      <p class="hint" style="margin-bottom:6px">Tap the <b>?</b> for the exact column layout each tab needs:</p>
+      <div class="hint" style="display:flex;flex-direction:column;gap:7px">
+        <span><b>Main Raw Data</b> <button type="button" class="amr-qm" data-amr-hint="sb_main" title="Source layout for the segment table">?</button> <span style="color:var(--muted)">— the Segment table</span></span>
+        <span><b>Extra Raw Data</b> / <b>Associate Raw Data</b> <button type="button" class="amr-qm" data-amr-hint="sb_extras" title="Source layout for the Extras / VAP tables">?</button> <span style="color:var(--muted)">— the two Extras &amp; VAP tables</span></span>
+      </div>
+      <!-- NOTE — MONTH FORMAT.
+           The month column is Bill Month ("Jul-25" / "Jul-26"), spelled
+           `bill_month` in the QlikView export. Everything here buckets on the
+           month ordinal RMX_Backend.gs works out, and the year on the cell is
+           ignored there, so each month arriving as TWO rows (one per year) is
+           re-aggregated in the buckets — see the MONTH COLUMN block above
+           MONTH_COLS_ in RMX_Backend.gs. The risk is not this page, it is the
+           mixed spelling ("Jul-26" vs "July-26") silently dropping rows from
+           the sheet's own SUMIFS joins. -->
+    </div>
+
+    <div id="segKpiSection" style="display:none">
+      <div class="section-head">
+        <h2>KPIs</h2><span class="meta" id="segKpiMeta"></span>
+      </div>
+      <div class="previewCard" style="padding:14px;margin-bottom:22px"><div id="segKpiStrip"></div></div>
+    </div>
+
+    <div class="section-head">
+      <h2>2 · Tables</h2>
+      <span class="meta">Tick a table to put it on the slide below · the first two are on by default</span>
+    </div>
+    <div class="tbl-stack" id="tablesHost"><div class="card"><div class="empty">Loading the Ready-Mix data…</div></div></div>
+
+    <div class="section-head">
+      <h2>3 · Slide preview</h2>
+      <span class="meta">16:9 · live · only the ticked tables · adjust margins in the left panel</span>
+    </div>
+    <div class="previewCard"><div class="previewHost" id="previewHost"><div class="empty">Loading the Ready-Mix data…</div></div></div>
+  </main>
+</div>
+
+  <!-- The page's own panel inside the QlikView guide; AmrQlikGuide moves
+       the node into the aside on mount. This page already used .lk for
+       its two buttons, so it never had the white-on-white .ghost bug. -->
+  <div id="guideExtra">
+    <p class="eyebrow" style="margin:0 0 8px">Replace raw data <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)">· using downloaded QlikView files</span></p>
+    <div class="field"><label class="lbl" for="upMain">Main Raw Data (.xlsx)</label>
+      <input type="file" id="upMain" accept=".xlsx,.xls,.xlsm" style="width:100%;font:500 12px Inter"></div>
+    <div class="field"><label class="lbl" for="upExtra">Extra Raw Data (.xlsx)</label>
+      <input type="file" id="upExtra" accept=".xlsx,.xls,.xlsm" style="width:100%;font:500 12px Inter"></div>
+    <div class="field"><label class="lbl" for="upAssoc">Associate Raw Data (.xlsx)</label>
+      <input type="file" id="upAssoc" accept=".xlsx,.xls,.xlsm" style="width:100%;font:500 12px Inter"></div>
+    <button class="lk full" id="upGo" style="margin-top:6px">Run on these files</button>
+    <div id="upStatus" style="display:none;margin-top:6px;font:600 12px Inter;color:var(--blue-100)">✓ Running on your uploaded files</div>
+    <button class="lk" id="upReset" style="width:100%;margin-top:8px">Back to sheet data</button>
+    <p class="hint">All three files together, for this session only &mdash; the same upload the Ready-Mix page takes.
+      Lookups still come from the connected Google Sheet, and nothing is written back.</p>
+  </div>
+</template>
+
+<script>
+/* ---- §P segment — registration ---------------------------------------------
+   Ported from Page_Segment.html. Transformed, not retyped; the edits:
+
+     · BOTH DOMContentLoaded handlers became named functions called at the end
+       of boot(), in the order they were registered. segKpiInit sat at line 638
+       with five hundred lines of declarations below it — the chunk 5 rule
+     · the upload half of the page's tail IIFE moved inside this scope, because
+       it reads STATE, CACHE, loadTables and setStat
+     · the header's inline on*= handlers became data-act delegation
+     · #tablesHost and #previewHost stopped carrying style: the on-page card
+       stack is §A3's .tbl-stack and the preview host its .previewHost, both
+       names three other pages already use
+     · table.gt and the slide-body rows (.crow/.ccell/.ccap/.phold) went to §A3
+       — AmrSegSlide emits the same markup for the deck, so they are shared by
+       construction, and tests/deckstatic.js fails if a second copy appears
+     · the QlikView guide became AmrQlikGuide.mount()
+
+   This page needed no §A4 block: `.shell{max-width:1480px}` was already the
+   §A3 default, and .logoName / .dzstat / .previewCard / .empty arrived with
+   the fuel pages in chunk 3.                                                */
+AMR.page('segment', {
+  title: 'Amrize · Commercial Product Segment',
+  /* html2canvas for the capture, SheetJS for the KPI workbook and the three
+     uploaded raw exports. No Chart.js — this page is tables and a KPI strip. */
+  libs: ['html2canvas', 'xlsx'],
+  help: `<h3>What this page does</h3>
+<p>Turns the Ready-Mix figures into a finished 16:9 commercial slide you can download as a PNG. It reads the
+<b>same raw tabs as RMX &middot; Price &amp; Volume</b> &mdash; Main, Extra and Associate Raw Data &mdash; so the slide
+and that page can never disagree, and there are no Slide Segment / Slide Product tabs to export any more.</p>
+<h3>The three tables</h3>
+<p><b>Segment</b> &mdash; Major Project Segment: volume, mix share, YoY and <b>ASP Inc VA</b>, which is
+(base concrete revenue + Extras + VAP) &divide; that segment&rsquo;s concrete m&sup3;.<br>
+<b>By extra type</b> &mdash; the EXTRAS and VAP streams by <b>Type</b>, priced on total concrete m&sup3; so the rows add to the Total.<br>
+<b>Extras &amp; VAP detail</b> &mdash; the same Types priced on <b>applied</b> m&sup3;, with volume applied and penetration rate next to it.
+Its totals show <b>revenue only</b>: applied volume can&rsquo;t be added across types, because the same m&sup3; is counted once per extra it carries.</p>
+<p>Both Extras tables group on <b>EXTRAS LOOKUP</b>. CUSTOM FLAG LOOKUP is no longer used by either &mdash; one tab to maintain, and a material moves in both tables at once.</p>
+<h3>How to use it</h3>
+<p>1. Make sure the data sheet is set (&#9881; <b>Settings</b> / <b>Data sheet</b> at the top) &mdash; it is the Ready-Mix workbook.
+2. Pick the <b>Market</b>. 3. Pick the <b>Report month</b> &mdash; it now slices the data, and only offers months the workbook holds.
+4. Pick the <b>Period</b>: <b>MTD</b> is that month alone, <b>YTD</b> is January through it &mdash; each makes its own slide, so download
+one, switch the period, and download the other. 5. Read the tables in <b>2 &middot; Tables</b> and <b>tick the ones you want on the slide</b> &mdash;
+Segment and By extra type start ticked, the detail table starts off; the preview underneath follows your ticks straight away.
+6. Press <b>&#8635; Update from source</b> after the sheet is updated. 7. Adjust the <b>blank-space</b> sliders for comment bands.
+8. <b>Download slide PNG</b>, or <b>Expand slide</b> to show it full screen without downloading anything.</p>
+<h3>Tabs it reads</h3>
+<p><code>Main Raw Data</code>, <code>Extra Raw Data</code>, <code>Associate Raw Data</code>, plus the
+<code>PLANT LOOKUP</code>, <code>PRODUCT MASTER</code> and <code>EXTRAS LOOKUP</code> tabs. To point this page at a
+different workbook, use &#9881; <b>Data sheet</b> &mdash; it is the same setting the Ready-Mix page uses, so changing it
+changes both.</p>
+<h3>Month format</h3>
+<p>The month column is <b>Bill Month</b> (&ldquo;Jul-25&rdquo; / &ldquo;Jul-26&rdquo;), spelled <code>bill_month</code> in the
+QlikView export. It carries the year, so each month arrives as <b>two rows</b> &mdash; one per year &mdash; which the
+buckets re-aggregate. The thing to watch is the mixed spelling (&ldquo;Jul-26&rdquo; vs &ldquo;July-26&rdquo;), which
+silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note above <code>MONTH_COLS_</code> in
+<code>RMX_Backend.gs</code>.</p>`,
+
+  boot: function(root){
+
+    /* The header's Home / Help / Data sheet buttons, by delegation. */
+    root.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!b) return;
+      switch (b.getAttribute('data-act')){
+        case 'home':     AMR.nav.home();     break;
+        case 'help':     AMR.openHelp();     break;
+        case 'settings': AMR.openSettings(); break;
+      }
+    });
+
+  /* ======================= CONFIG =======================
+   * WHERE THE NUMBERS COME FROM (changed)
+   * ---------------------------------------------------------------------------
+   * This page used to read two pre-summed QlikView tabs of its own — "Slide
+   * Segment MTD / YTD" for the segment table and "Slide Product <Market> MTD /
+   * YTD" for the product table. It doesn't any more. Everything on the slide is
+   * computed from the READY-MIX RAW TABS (Main / Extra / Associate Raw Data),
+   * through RMX_getSlideTables in RMX_Backend.gs — one call per market + period +
+   * month, returning the segment table AND both Extras tables together.
+   *
+   * What that buys: the slide and the RMX · Price & Volume page can no longer
+   * disagree, the market list is the real PLANT LOOKUP one, the Report month
+   * actually slices the data, and there are two fewer QlikView exports to run
+   * every month.
+   *
+   * THE PRODUCT TABLE IS GONE. In its place are the two Extras tables the RMX
+   * page carries: BY EXTRA TYPE and EXTRAS & VAP DETAIL. Both group on the
+   * EXTRAS LOOKUP category — CUSTOM FLAG LOOKUP is no longer read by either.
+   *
+   * The 1600x900 slide frame, the comment-band sliders and the PNG export all
+   * live in the shared SlideExport.html (AmrSlide). This page only builds the
+   * content that goes on the slide.
+   */
+
+  /* "Central Canada" = every market in one slide. The value must match
+     ALL_MARKETS in RMX_Backend.gs, which is what tells the backend to skip the
+     market filter. It is NOT a market in PLANT LOOKUP. */
+  var ALL_MKT = '__ALL__';
+  /* Starting list only — replaced by the real PLANT LOOKUP markets the first
+     time the backend answers, so a new market appears here without an edit. */
+  var MARKETS = ['HNS_SW','Innocon','Manitoba','North','Saskatchewan'];
+  var MARKET_LABEL = { '__ALL__':'Central Canada', HNS_SW:'HNS', Innocon:'Innocon',
+                       Manitoba:'Manitoba', North:'North', Saskatchewan:'Saskatchewan' };
+
+  /* The two years the Ready-Mix backend reads by COLUMN NAME ("2026 Vol",
+     "2025 Net Sales ex VA (CAD)"). On a year roll these move together with the
+     column names in RMX_Backend.gs — they are only used for table headers here. */
+  var CY_YEAR = 2026, PY_YEAR = 2025;
+
+  var MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  var IS_LIVE = (typeof google !== 'undefined' && google.script && google.script.run);
+
+  /* month: 1-12, pinned by the Report month picker. 0 means "let the backend
+     decide" and is only ever the state before the first answer lands. */
+  var STATE = { market:ALL_MKT, month:0, period:'MTD', latestMonth:0, monthList:[],
+                title:'', titleDirty:false, sub:'', logo:'', logoSVG:'',
+                upload:null,       // session token for uploaded QlikView files
+                exportSel:{} };    // which tables are ticked for the slide, by key
+
+  var DATA  = null;   // the payload the tables are drawn from
+  var CACHE = {};     // in-memory, per market|period|month
+
+  /* ======================= HELPERS ======================= */
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function marketLabel(m){ return MARKET_LABEL[m] || m || ''; }
+
+  function cellSign(c){
+    var t=String(c==null?'':c).trim();
+    if(/^\(.*\)$/.test(t)) return -1;
+    var s=t.replace(/[$,%()\s]/g,'').replace(/[\u2013\u2014\u2212]/g,'-');
+    if(/^-?\d*\.?\d+$/.test(s)&&s!==''){ var v=parseFloat(s); return v<0?-1:(v>0?1:0); }
+    return 0;
+  }
+  /* A missing RATE prints as an en dash, never $0.00 — a zero here would read as
+     a real price. A missing PERCENTAGE prints n/a, as it always has. */
+  var DASH = '\u2013';
+  function fInt(n){ return (n==null)?DASH:Math.round(n).toLocaleString('en-CA'); }
+  function f$(n){ return (n==null)?DASH:'$'+Number(n).toLocaleString('en-CA',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  function f$0(n){ return (n==null)?DASH:'$'+Math.round(n).toLocaleString('en-CA'); }
+  function f$S(n){ return (n==null)?'n/a':((n<0?'-$':'+$')+Math.abs(n).toFixed(2)); }
+  function pct0(n){ return (n==null)?'n/a':Math.round(n*100)+'%'; }
+  function pct1(n){ return (n==null)?'n/a':(n*100).toFixed(1)+'%'; }
+  function pctS(n){ if(n==null) return 'n/a'; var v=n*100; return (v>=0?'+':'-')+Math.abs(v).toFixed(1)+'%'; }
+  function setStat(el, ok, msg){ if(!el) return; el.className='dzstat '+(ok?'ok':'err'); el.textContent=msg; }
+
+  /* ======================= THE THREE TABLES =======================
+   * Same style and design as before: the shared .gt table, a blue Total band, and
+   * the fit pass below shrinking each one to its column.
+   */
+
+  /* ---- 1. MAJOR PROJECT SEGMENT ----
+     Identical columns to the old table, computed from Main Raw Data instead of
+     the Slide Segment tab. ASP INC VA = (base concrete revenue + Extras + VAP)
+     over that segment's own concrete m3, so the rows add to the Total. */
+  function segmentTable(d){
+    var S = d && d.segment;
+    if(!S || !S.rows || !S.rows.length) return null;
+    var t = S.total;
+    var header = ['Major Project Segment','CY Vol','CY Vol %','PY Vol','PY Vol %','\u0394 YOY %',
+                  'CY ASP Inc VA','PY ASP Inc VA','\u0394 ASP Inc VA'];
+    var out = [];
+    out.push({ total:true, grand:true, cells:['Total', fInt(t.cyVol), '100%', fInt(t.pyVol), '100%',
+      pct0(t.volPct), f$(t.aspCY), f$(t.aspPY), pct1(t.aspPct)] });
+    S.rows.forEach(function(r){
+      out.push({ cells:[ r.label, fInt(r.cyVol), pct0(r.cyShare), fInt(r.pyVol), pct0(r.pyShare),
+        pct0(r.volPct), f$(r.aspCY), f$(r.aspPY), pct1(r.aspPct) ] });
+    });
+    return { header:header, rows:out, leftCols:1, signed:[5,8],
+             groups:{ 6:'gB', 7:'gB', 8:'gB' } };
+  }
+
+  /* The three on-page card headings, and the keys the tick boxes are stored
+     under. Order is the order they appear, on the page AND on the slide. */
+  var TABLES = [
+    { key:'seg:segment', eb:'Main Raw Data',  title:'Segment',              cap:'Segment',
+      build:function(d){ return segmentTable(d); } },
+    { key:'seg:byType',  eb:'Summary',        title:'By extra type',        cap:'By extra type',
+      build:function(d){ return extrasTypeTable(d); } },
+    { key:'seg:detail',  eb:'EXTRAS LOOKUP',  title:'Extras & VAP detail',  cap:'Extras & VAP detail',
+      build:function(d){ return extrasDetailTable(d); } }
+  ];
+
+  /* ---- 2. BY EXTRA TYPE ----
+     The EXTRAS and VAP streams, each with its own subtotal, then a grand total.
+     ASP is priced on TOTAL CONCRETE m3 (not applied m3), which is what makes the
+     rows add to the Total and lets ASP change carry penetration as well as rate.
+     Column 1 is the EXTRAS LOOKUP category: header "Type", right-aligned. */
+  function extrasTypeTable(d){
+    var e = d && d.extras;
+    if(!e || (!(e.byTypeExtras||[]).length && !(e.byTypeVap||[]).length)) return null;
+    var header = ['Stream','Type', CY_YEAR+' Rev', PY_YEAR+' Rev','Rev % chg',
+                  CY_YEAR+' ASP/m\u00B3', PY_YEAR+' ASP/m\u00B3','ASP change'];
+    function cells(stream, r){
+      return [ stream, r.label, f$0(r.cyRev), f$0(r.pyRev), pctS(r.revPct),
+               f$(r.aspCY), f$(r.aspPY), f$S(r.aspChg) ];
+    }
+    var rows = [];
+    function block(list, tot, name){
+      if(!list || !list.length) return;
+      list.forEach(function(r,i){ rows.push({ cells:cells(i===0?name:'', r) }); });
+      if(tot) rows.push({ total:true, cells:cells('', { label:name+' Total', cyRev:tot.cyRev,
+        pyRev:tot.pyRev, revPct:tot.revPct, aspCY:tot.aspCY, aspPY:tot.aspPY, aspChg:tot.aspChg }) });
+    }
+    block(e.byTypeExtras, e.byTypeExtrasTotal, 'EXTRAS');
+    block(e.byTypeVap,    e.byTypeVapTotal,    'VAP');
+    if(e.byTypeTotal) rows.push({ total:true, grand:true, cells:cells('', { label:'Total',
+      cyRev:e.byTypeTotal.cyRev, pyRev:e.byTypeTotal.pyRev, revPct:e.byTypeTotal.revPct,
+      aspCY:e.byTypeTotal.aspCY, aspPY:e.byTypeTotal.aspPY, aspChg:e.byTypeTotal.aspChg }) });
+    return { header:header, rows:rows, leftCols:2, signed:[4,7],
+             groups:{ 2:'gA', 3:'gA', 4:'gA', 5:'gB', 6:'gB', 7:'gB' } };
+  }
+
+  /* ---- 3. EXTRAS & VAP DETAIL ----
+     Same rows as the table above — both group on EXTRAS LOOKUP now — but priced
+     on APPLIED m3, with the applied volume and penetration rate printed next to
+     it. That is the difference between the two tables, and why both are here. */
+  function extrasDetailTable(d){
+    var e = d && d.extras;
+    if(!e || (!(e.extras||[]).length && !(e.vap||[]).length)) return null;
+    var header = ['Stream','Type',
+      CY_YEAR+' vol applied', CY_YEAR+' appl. rate',
+      PY_YEAR+' vol applied', PY_YEAR+' appl. rate','\u0394 appl. rate',
+      CY_YEAR+' Rev', PY_YEAR+' Rev','Rev % chg',
+      CY_YEAR+' Applied ASP', PY_YEAR+' Applied ASP','ASP change'];
+    function cells(stream, r){
+      return [ stream, r.label,
+        fInt(r.cyM3), pct1(r.rateCY), fInt(r.pyM3), pct1(r.ratePY), pctS(r.rateChg),
+        f$0(r.cyRev), f$0(r.pyRev), pctS(r.revPct),
+        f$(r.aspCY), f$(r.aspPY), f$S(r.aspChg) ];
+    }
+    /* NO TOTAL ROWS ON THIS TABLE - APPLIED VOLUME DOES NOT ADD UP.
+       One pour is counted once PER EXTRA TYPE: a m3 that took a standard fee, a
+       cooling charge and a fibre dose sits in all three rows. Summing the applied
+       volume counts the same concrete several times over, and everything priced
+       off it - applied rate, applied ASP, their deltas - inherits that (it is why
+       the old penetration total came out above 100%). Only revenue would have
+       totalled, and "By extra type" above already carries EXTRAS Total, VAP Total
+       and Total revenue - so there is nothing left for a total row here to say. */
+    var rows = [];
+    function block(list, name){
+      if(!list || !list.length) return;
+      list.forEach(function(r,i){ rows.push({ cells:cells(i===0?name:'', r) }); });
+    }
+    block(e.extras, 'EXTRAS');
+    block(e.vap,    'VAP');
+    return { header:header, rows:rows, leftCols:2, signed:[6,9,12],
+             groups:{ 2:'gV', 3:'gV', 4:'gV', 5:'gV', 6:'gV', 7:'gA', 8:'gA', 9:'gA', 10:'gB', 11:'gB', 12:'gB' } };
+  }
+
+  /* ======================= THE RENDERER =======================
+   * ONE function draws the table, and both the page card and the slide call it,
+   * so the two are the same table by construction - not two renderers kept in
+   * step by hand. The page wraps it in a scroll box; that is the whole
+   * difference in the markup, and the CSS above is shared.
+   */
+
+  /* Which classes a cell carries. Label columns are flagged `tlbl` (see the CSS
+     note - NOT `lbl`, which Styles.html already owns) and are never coloured
+     green/red; value columns are, unless the row is a total. */
+  function cellClasses(t, r, ci){
+    var lc = t.leftCols || 1, cls = [];
+    if(ci < lc){ cls.push('tlbl'); return cls; }
+    if(!r.total){
+      var sg = cellSign(r.cells[ci]);
+      if((t.signed||[]).indexOf(ci) !== -1){ if(sg>0) cls.push('pos'); else if(sg<0) cls.push('neg'); }
+      else if(sg < 0){ cls.push('neg'); }
+    }
+    return cls;
+  }
+
+  function renderTable(t){
+    var lc = t.leftCols || 1;
+
+    /* Even columns: one share each, two for the row-name column. */
+    var wsum = 0, weights = t.header.map(function(_, i){
+      var w = (i === lc - 1) ? 2 : 1; wsum += w; return w; });
+    var cols = '<colgroup>' + weights.map(function(w){
+      return '<col style="width:' + (w * 100 / wsum).toFixed(3) + '%">'; }).join('') + '</colgroup>';
+
+    /* header - label columns left, everything after them right */
+    var thead = '<tr>' + t.header.map(function(h, i){
+      var c = [];
+      if(i < lc) c.push('tlbl');
+      var g = (t.groups || {})[i]; if(g) c.push(g);
+      return '<th' + (c.length ? ' class="' + c.join(' ') + '"' : '') + '>' + esc(h) + '</th>';
+    }).join('') + '</tr>';
+
+    /* the repeated first cell becomes one merged EXTRAS / VAP spine cell */
+    var spine = {}, run = null;
+    t.rows.forEach(function(r, i){
+      if(lc < 2 || r.total){ run = null; return; }
+      var v = r.cells[0];
+      if(v){ run = { n:1, label:v }; spine[i] = run; }
+      else if(run){ run.n++; }
+    });
+
+    var body = t.rows.map(function(r, ri){
+      var tds = '';
+      for(var ci = 0; ci < r.cells.length; ci++){
+        if(lc >= 2 && ci === 0){
+          /* spine cell, or nothing at all: on a total row the label below spans
+             both label columns, which is what closes the white notch that used
+             to sit under the spine. */
+          if(spine[ri]) tds += '<td class="section" rowspan="' + spine[ri].n + '">' + esc(spine[ri].label) + '</td>';
+          continue;
+        }
+        if(lc >= 2 && ci === 1 && r.total){
+          tds += '<td class="tlbl" colspan="2">' + esc(r.cells[ci]) + '</td>';
+          continue;
+        }
+        var cls = cellClasses(t, r, ci);
+        tds += '<td' + (cls.length ? ' class="' + cls.join(' ') + '"' : '') + '>' + esc(r.cells[ci]) + '</td>';
+      }
+      var rowCls = r.grand ? ' class="grand"' : (r.total ? ' class="subtot"' : '');
+      return '<tr' + rowCls + '>' + tds + '</tr>';
+    }).join('');
+
+    return '<table class="gt">' + cols + '<thead>' + thead + '</thead><tbody>' + body + '</tbody></table>';
+  }
+
+  function renderPageTable(t){ return '<div class="tbl-scroll">' + renderTable(t) + '</div>'; }
+
+  /* ======================= KPI STRIP (AGG & RMX EBITDA Report workbooks) =======================
+     Two uploads, both SHARED with everyone via the suite's Drive folder
+     (see KpiShared.html) — upload once, on this page or Price & Volume, and
+     every user on every device picks it up: the main AGG & RMX EBITDA Report
+     (HNS, North, Innocon) and the Manitoba / Saskatchewan one. Layout (both the same): ONE sheet holding
+     every market as a stacked block. Each block starts with a header row whose
+     label column (H) reads e.g. "HNSSW  RMX"; the rows below it carry
+     "Units Sold, km3", "Total Revenue (with Other included)", "Concrete Sales",
+     "Total Raw Materials". Relative to the label column, the value columns are:
+         MTD  −6 CY kRC · −5 CY RC/m³ · −4 PY kRC · −3 PY RC/m³ · −2 Δ# · −1 Δ%
+         YTD  +1 CY kRC · +2 CY RC/m³ · +3 PY kRC · +4 PY RC/m³ · +5 Δ# · +6 Δ%
+     The Δ columns are read straight from the workbook (for the money rows they
+     track RC/m³, matching the statement). Cards render identically to the
+     Price & Volume KPI cards, on the page AND inside the slide (preview + PNG),
+     and follow the Market + MTD/YTD pickers. */
+  var SEGKPI = { vals:null };
+
+  /* NO KPI CARDS FOR CENTRAL CANADA - deliberate.
+     The EBITDA workbook's "RMX Summary" tab does contain a "Central  RMX" block,
+     and it would be easy to wire up (one more entry in AmrKpi.RMX_MARKETS with
+     the token 'central'). It is left out because that block is HNSSW + North +
+     Innocon ONLY - verified against the July 2026 file, MTD units 54.53 + 4.38 +
+     83.12 = 142.03, exactly the Central figure. Manitoba and Saskatchewan live in
+     the separate MB/SK workbook and are not in it, so the block is not the same
+     population as the Central Canada tables on this page and the cards would read
+     low against them.
+     No guard is needed below: AmrKpi.rmx returns null for an unknown market key
+     (including the '__ALL__' sentinel), segKpiCardsHtml then returns '' and
+     renderSegKpis hides the whole strip. */
+  function segKpiExtract(market){
+    if(!window.AmrKpi) return null;
+    return AmrKpi.rmx(SEGKPI.vals, market || STATE.market, STATE.period);
+  }
+  function segKpiAllHeaders(){ return window.AmrKpi ? AmrKpi.rmxHeaders(SEGKPI.vals) : []; }
+
+  /* ---- cards: built by AmrSegSlide, so the page and the slide cannot drift ----
+     The card markup, its formats and its em-based sizing all live in
+     Deck_SEG.html now; this page passes its live state in as a ctx and gets the
+     same html the deck gets. It used to hold its own copy of all of it, which is
+     exactly the Phase 4 debt: a fix to the strip had to be made twice, and the
+     two copies had already drifted (the page's EXPORT_DEFAULT_OFF said one thing,
+     the module's said another).
+
+     segCtx() is the whole of what the module reads. exportSel is resolved HERE,
+     for every key, rather than passed through half-filled: an absent key means
+     "use the module's default", and the module defaults `By extra type` OFF while
+     this page has it ON. Passing isOn() for all three is what keeps the slide
+     showing what the tick boxes above it say. */
+  function segCtx(){
+    return {
+      data: DATA,
+      market: STATE.market,
+      period: STATE.period,
+      exportSel: { 'seg:segment': isOn('seg:segment'),
+                   'seg:byType':  isOn('seg:byType'),
+                   'seg:detail':  isOn('seg:detail') },
+      kpi: { vals: SEGKPI.vals, sheet:'', index:{}, sheets:[], map:{} }
+    };
+  }
+  function segKpiCardsHtml(){ return AmrSegSlide.kpiCardsHtml(segCtx()); }
+  /* on-page strip above the preview — mirrors the Price & Volume KPI section */
+  function renderSegKpis(){
+    var sec=document.getElementById('segKpiSection'), strip=document.getElementById('segKpiStrip');
+    if(!sec || !strip) return;
+    var html=segKpiCardsHtml();
+    if(!html){ sec.style.display='none'; strip.innerHTML=''; return; }
+    sec.style.display='';
+    /* Same builder and same fitter as the Price & Volume strip — the cards are
+       em-based, so the row's font-size is the card's size and AmrKpi grows it to
+       the width this panel actually has. */
+    strip.innerHTML = AmrKpi.stripHtml(html);
+    AmrKpi.fitStrip(strip.firstChild);
+    var meta=document.getElementById('segKpiMeta');
+    if(meta){
+      var x=segKpiExtract();
+      meta.textContent=(x&&x.tab?x.tab+' \u00B7 ':'')+(STATE.period==='YTD'?'year to date':'month to date');
+    }
+  }
+
+  /* apply the shared values and report what was found for each market */
+  function segKpiApplyValues(values, note){
+    SEGKPI.vals = values || null;
+    if(window.AmrBoot) AmrBoot.done('KPI figures');   // one of the two boot steps
+    var st=document.getElementById('segKpiStat');
+    if(st){
+      var got=MARKETS.filter(function(m){ return !!segKpiExtract(m); });
+      if(!SEGKPI.vals){ st.style.display='none'; }
+      else if(got.length){
+        st.style.display='';
+        setStat(st,true,'\u2713 '+(note||'KPI data found')+': '+got.map(marketLabel).join(', '));
+      } else {
+        st.style.display='';
+        var hdrs=segKpiAllHeaders();
+        setStat(st,false,'No market blocks matched. Headers in file: '+(hdrs.length?hdrs.map(esc).join(', '):'none found')
+          +'. Expected each to contain the market name + "RMX" (e.g. "HNSSW  RMX", "North RMX").');
+      }
+    }
+    ['main','mbsk'].forEach(function(book){
+      var f = window.AmrKpi ? AmrKpi.files(SEGKPI.vals)[book] : null;
+      segKpiSaved(book, f ? f.name : null);
+    });
+    renderPreview();
+  }
+
+  /* the "in use by everyone" line + Remove link under each file input */
+  function segKpiSaved(book, name){
+    var el=document.getElementById(book==='main'?'segKpiSavedMain':'segKpiSavedMbsk'); if(!el) return;
+    if(!name){ el.style.display='none'; el.innerHTML=''; return; }
+    el.style.display=''; el.className='dzstat ok';
+    el.innerHTML='\u2713 '+esc(name)+' \u00B7 in use by everyone &nbsp;'
+      +'<a href="#" data-kpiclear="'+book+'" style="color:var(--neg);font-weight:700;text-decoration:none">Remove</a>';
+  }
+
+  function segKpiInit(){
+    function wire(id, book){
+      var inp=document.getElementById(id); if(!inp) return;
+      inp.addEventListener('change', function(){
+        var f=this.files && this.files[0]; if(!f) return;
+        var st=document.getElementById('segKpiStat');
+        if(!window.AmrKpi){ if(st){ st.style.display=''; setStat(st,false,'The KPI module didn\u2019t load \u2014 please refresh the page.'); } return; }
+        if(st){ st.style.display=''; setStat(st,true,'Reading the workbook\u2026'); }
+        AmrKpi.upload(book, f, function(ok, res){
+          if(!ok){ if(st){ st.style.display=''; setStat(st,false,String(res)); } return; }
+          segKpiApplyValues(res, 'Shared with everyone \u2014 KPI data');
+        });
+      });
+    }
+    wire('segKpiFileMain','main');
+    wire('segKpiFileMbsk','mbsk');
+
+    /* Remove: takes the workbook away for everyone, not just this device */
+    document.addEventListener('click', function(e){
+      var a=e.target.closest ? e.target.closest('[data-kpiclear]') : null; if(!a) return;
+      e.preventDefault();
+      var book=a.getAttribute('data-kpiclear');
+      if(!window.AmrKpi) return;
+      var inp=document.getElementById(book==='main'?'segKpiFileMain':'segKpiFileMbsk'); if(inp) inp.value='';
+      AmrKpi.clear(book, function(ok, res){
+        var st=document.getElementById('segKpiStat');
+        if(!ok){ if(st){ st.style.display=''; setStat(st,false,String(res)); } return; }
+        segKpiApplyValues(res);
+      });
+    });
+
+    /* the shared numbers — instant when this device already has this version */
+    if(window.AmrKpi) AmrKpi.load(function(v){ segKpiApplyValues(v, 'KPI data'); });
+  }
+
+  /* ======================= 2 · TABLES (on the page) =======================
+     Every table is drawn on the page first and carries a tick box; the slide
+     below is built from whatever is ticked, in this order. Same pattern, same
+     control, same default behaviour as RMX · Price & Volume — except that there
+     the detail table is the one that starts off, and here a slide starts as
+     Segment + By extra type. Ticks are remembered
+     for the session, so switching market, month or period keeps your selection. */
+  /* Segment and By extra type are both on to begin with - the pair the slide is
+     normally built from, and the same pair the Deck Builder starts with. Only the
+     Extras & VAP detail table is opt-in. */
+  var EXPORT_DEFAULT_OFF = { 'seg:detail':1 };
+  function isOn(key){
+    var saved = STATE.exportSel[key];
+    return (saved === undefined) ? !EXPORT_DEFAULT_OFF[key] : saved;
+  }
+  function cbHtml(key){
+    return '<input type="checkbox" class="export-cb" data-key="'+esc(key)+'" '+(isOn(key)?'checked ':'')
+      +'title="Include on the slide">';
+  }
+  function renderTables(){
+    var host=document.getElementById('tablesHost'); if(!host) return;
+    if(!DATA){ host.innerHTML='<div class="card"><div class="empty">Loading the Ready-Mix data…</div></div>'; return; }
+    var ml=marketLabel(STATE.market);
+    host.innerHTML = TABLES.map(function(T){
+      var t=null; try{ t=T.build(DATA); }catch(e){ t=null; }
+      return '<div class="card">'
+        +'<div class="card-head">'+cbHtml(T.key)
+        +'<div><span class="eb">'+esc(T.eb)+'</span>'
+        +'<h3>'+esc(T.title)+' — '+esc(ml)+' ('+esc(STATE.period)+')</h3></div></div>'
+        + (t ? renderPageTable(t)
+             : '<div class="empty">No data for this market and period.</div>')
+        +'</div>';
+    }).join('');
+  }
+  /* one delegated listener, wired once — the cards are rebuilt on every render */
+  document.addEventListener('change', function(e){
+    var cb = e.target && e.target.classList && e.target.classList.contains('export-cb') ? e.target : null;
+    if(!cb) return;
+    STATE.exportSel[cb.getAttribute('data-key')] = cb.checked;
+    renderPreview();
+  });
+
+  /* ======================= SLIDE =======================
+     The slide's CONTENT and its FITTER both live in Deck_SEG.html (AmrSegSlide),
+     which the Deck Builder also includes. This page delegates rather than keeping
+     a second copy: the block below used to be duplicated line for line, so a fix
+     to the layout had to be made twice and the two had already drifted.
+     Everything the module needs arrives as segCtx(). */
+
+  /* ONE PERIOD PER SLIDE, and only the TICKED tables — in the order they appear
+     on the page above, each full width. Switch the Period picker and export again
+     for the other slide. The shared engine (AmrSlide) wraps this in the branded
+     1600x900 frame and adds the comment bands.
+     Returns null when nothing is ticked, which is what the callers check. */
+  function buildSlideContent(){ return AmrSegSlide.slideContent(segCtx()); }
+
+  /* shared options passed to AmrSlide for both preview and export */
+  function slideOpts(){
+    return { title:STATE.title, subtitle:STATE.sub, logo:STATE.logo, logoSVG:STATE.logoSVG,
+             margins:AmrSlide.margins(), fit:fitTables };
+  }
+
+  /* The fitter, passed to AmrSlide as `fit`. Same one the deck runs, for the same
+     reason as buildSlideContent above: one copy, in Deck_SEG.html. It sizes the
+     KPI strip and the tables to the frame's REAL height and width, so nothing is
+     scaled a second time on the way out. */
+  function fitTables(box){ return AmrSegSlide.fitSlide(box, segCtx()); }
+
+  /* The base font of the ON-PAGE strip (section "KPIs" above the preview). Every
+     size inside a KPI card is em, so this one number is the card's size; the
+     slide's own copy of the strip is grown from here by the module's fitter. */
+  var SEG_KPI_BASE = 10;
+
+  /* ======================= WHITESPACE BANDS =======================
+     The KPI cards sit above the tables on the slide. When there are no cards
+     (Central Canada, or before a workbook has been shared) the tables would
+     float up into that empty space, so the TOP band opens wider — and how much
+     wider depends on how many tables are TICKED: three tables fill the slide on
+     their own and want almost nothing, one table needs the old 165px to sit
+     where the eye expects it. With KPI cards the top is already occupied, so the
+     band stays small whatever is ticked.
+     This is only the DEFAULT: the moment someone moves any slider themselves we
+     stop re-setting it, so a deliberate adjustment is never undone. */
+  var WS_TOP = { withKpi:20, withoutKpi:{ 1:165, 2:110, 3:60 } };
+  var WS = { top:WS_TOP.withKpi, touched:false, busy:false };
+
+  function mountWs(){
+    WS.busy = true;                       // suppress the mount-time onChange
+    AmrSlide.mountControls('sbWs', {
+      left:345, right:55, top:WS.top, bottom:15, maxLR:650, maxTB:320,
+      onChange:function(m){
+        if(WS.busy) return;
+        WS.touched = true; WS.top = m.top;
+        renderPreview();
+      } });
+    WS.busy = false;
+  }
+
+  /* Re-open the top band at the right default. Safe to call on every render:
+     it only remounts when the value actually needs to change. */
+  function syncWs(){
+    if(WS.touched || !document.getElementById('sbWs')) return;
+    var n = TABLES.filter(function(T){ return isOn(T.key); }).length;
+    var want = segKpiCardsHtml() ? WS_TOP.withKpi : (WS_TOP.withoutKpi[n] || 60);
+    if(want === WS.top) return;
+    WS.top = want;
+    mountWs();
+  }
+
+  /* ======================= PREVIEW + EXPORT ======================= */
+  var renderTimer;
+  function scheduleRender(){ clearTimeout(renderTimer); renderTimer=setTimeout(renderPreview,120); }
+  function renderPreview(){
+    renderSegKpis();
+    renderTables();
+    syncWs();
+    var host=document.getElementById('previewHost'); if(!host) return;
+    var content=buildSlideContent();
+    if(!content){ host.innerHTML='<div class="empty">Tick one or more tables above to preview the slide.</div>'; return; }
+    AmrSlide.previewInto(host, content, slideOpts());
+  }
+  function exportPNG(){
+    var content=buildSlideContent();
+    if(!content){ setStat(document.getElementById('loadStat'), false, 'Tick at least one table to export.'); return; }
+    var o=slideOpts(); o.button='exportBtn';
+    o.filename='amrize_'+(STATE.title||'slide')+'_'+(STATE.sub||'');
+    AmrSlide.exportSlide(content, o);
+  }
+
+  /* Same slide, shown full screen instead of downloaded. */
+  function viewFullScreen(){
+    var content=buildSlideContent();
+    if(!content){ setStat(document.getElementById('loadStat'), false, 'Tick at least one table to show.'); return; }
+    AmrSlide.viewSlide(content, slideOpts());
+  }
+
+  /* ======================= DATA LOADING =======================
+   * One call per market + period + month: RMX_getSlideTables in RMX_Backend.gs.
+   * Answers are kept in memory AND on the device (AmrCache), so flicking between
+   * markets and periods is instant once they have been seen.
+   *
+   * THE DEVICE CACHE IS GATED ON THE READY-MIX VERSION, not this page's own.
+   * AmrCache.boot() would ask for the 'segment' data version — the version of the
+   * Slide Builder tabs this page no longer reads. The Ready-Mix generation and
+   * build stamp come back with every payload instead, exactly as the RMX page
+   * does it, so a re-sync or a backend change clears this device on its next
+   * visit and a stale slide can't survive one.
+   */
+  function cacheToken_(d){
+    return String((d && d.generation != null) ? d.generation : '')
+         + '|' + String((d && d.build) || '');
+  }
+  function ckeyFor_(market, period, month){
+    return market+'|'+period+'|m'+(month||0)+(STATE.upload?'|u'+STATE.upload:'');
+  }
+  function ckey_(){ return ckeyFor_(STATE.market, STATE.period, STATE.month); }
+
+  /* ONE LOADING SCREEN, ONE PULL.
+     -----------------------------------------------------------------------
+     RMX_prepare reads the Ready-Mix data ONCE and leaves every market's finished
+     tables in the server cache (see the prepareAll block comment in
+     RMX_Backend.gs). It hands back this market's payload in the same reply, so
+     the page renders off one round trip and every later market or period is a
+     small cache read instead of another 14 MB bundle fetch.
+
+     That is also why the warm loop is gone. It fired twelve RMX_getSlideTables
+     calls in the background and every one of them re-read the whole bundle -
+     twelve times eighteen seconds of server work to save a wait that is now
+     about a second. Apps Script runs one user's calls end to end, so those
+     twelve also sat in front of whatever the user did next.
+
+     THE SCREEN IS ONE JOB, RAISED ONCE. AmrProgress shows the lowest-order job
+     and lists the rest, so several keys going up and down at different moments
+     is what read as flicker. Everything here uses LOAD_JOB with the same
+     wording, and it comes down in exactly one place - applyData, once the tables
+     are actually on the page. */
+  var LOAD_JOB = 'data';
+  var LOAD_TEXT = 'Pulling from Google Sheets\u2026';
+
+  /* During BOOT the screen is AmrBoot's - one screen, up until everything the
+     page needs has landed. After boot these are ordinary AmrProgress jobs, and
+     AmrProgress now waits out a grace period before painting, so a market switch
+     that takes under half a second shows nothing at all. */
+  function showLoading(note){
+    if(window.AmrBoot && !AmrBoot.finished()) return;      // the boot screen owns it
+    if(window.AmrProgress) AmrProgress.set(LOAD_JOB, { text:LOAD_TEXT, order:0, note:note||'' });
+  }
+  function hideLoading(){
+    if(window.AmrBoot) AmrBoot.done('data');
+    if(window.AmrProgress) AmrProgress.clear(LOAD_JOB);
+  }
+
+  /* The first pull. One call: this market's tables, the market list, the month
+     options, and every other market warmed server-side ready to be asked for. */
+  function bootLoad(){
+    var st=document.getElementById('loadStat');
+    if(!IS_LIVE){ setStat(st,false,'This page only reads data inside the live Apps Script web app.'); return; }
+
+    showLoading('Reading the Ready-Mix workbook and preparing every market');
+    if(st){ st.className='dzstat'; st.textContent=LOAD_TEXT; }
+
+    google.script.run
+      .withSuccessHandler(function(res){
+        if(window.AmrCache && res && res.generation != null) AmrCache.check(cacheToken_(res));
+        if(res && res.markets && res.markets.length) MARKETS = res.markets.slice();
+
+        /* EVERY MARKET, IN THE BROWSER, FROM THIS ONE REPLY.
+           Warming the server cache still left a round trip per market - pick a
+           market and wait on a call. Aggregates does not do that: its opening call
+           carries every market, so switching is instant. prepare hands back the
+           same finished payloads it just cached, so seed them all and every later
+           switch is a memory hit with no server call at all. */
+        var pl = (res && res.payloads) || {};
+        /* Both the resolved month and whatever the picker is on: prepare answers
+           for a resolved month, and before the first reply STATE.month is still 0,
+           so seeding only one of them leaves the payloads under a name nothing
+           looks up. */
+        var mos = [(res && res.month) || 0];
+        if(mos.indexOf(STATE.month) === -1) mos.push(STATE.month);
+        Object.keys(pl).forEach(function(k){
+          var bits = k.split('|');                       // '<kind>|<market>|<period>'
+          if(bits[0] !== 'slide') return;
+          mos.forEach(function(mo){ CACHE[ckeyFor_(bits[1], bits[2], mo)] = pl[k]; });
+          var ck = ckeyFor_(bits[1], bits[2], (res.month || STATE.month));
+          /* AmrCache is localStorage and caps near 900 KB per entry, so these go
+             in one market at a time exactly as a single fetch would write them. */
+          if(!STATE.upload && window.AmrCache) AmrCache.set('slide:'+ck, pl[k]);
+        });
+
+        if(!res || !res.payload){
+          /* prepare answered but carried no payload for this market: fall through
+             to the ordinary per-market read rather than leave the page empty */
+          loadTables();
+          return;
+        }
+        var d = res.payload;
+        CACHE[ckeyFor_(STATE.market, STATE.period, STATE.month)] = d;
+        applyData(d, 'Loaded');
+      })
+      .withFailureHandler(function(err){
+        if(window.AmrBoot) AmrBoot.fail('Could not read the Ready-Mix workbook');
+        else if(window.AmrProgress) AmrProgress.fail(LOAD_JOB, 'Could not read the Ready-Mix workbook');
+        setStat(st, false, (err && err.message) ? err.message : 'Could not read the Ready-Mix workbook.');
+      })
+      .RMX_prepare({ want:'slide', market:STATE.market, period:STATE.period,
+                     month:STATE.month, upload:STATE.upload });
+  }
+
+  /* A market or period switch. Almost always a hit - in memory, on the device, or
+     in the server cache prepare filled - so a short wait rather than the
+     twenty-second rebuild it used to be. */
+  function loadTables(force){
+    var st=document.getElementById('loadStat');
+    var ck=ckey_();
+
+    if(!force && CACHE[ck]){ applyData(CACHE[ck], 'Loaded'); return; }
+    if(!force && !STATE.upload && window.AmrCache){
+      var dev=AmrCache.get('slide:'+ck);
+      if(dev){ CACHE[ck]=dev; applyData(dev, 'Loaded'); return; }
+    }
+    if(!IS_LIVE){ setStat(st,false,'This page only reads data inside the live Apps Script web app.'); return; }
+
+    if(st){ st.className='dzstat'; st.textContent = force ? 'Re-reading the Ready-Mix workbook\u2026' : LOAD_TEXT; }
+    showLoading(marketLabel(STATE.market) + ' \u00b7 ' + STATE.period);
+
+    google.script.run
+      .withSuccessHandler(function(d){
+        if(window.AmrCache && d && d.generation != null) AmrCache.check(cacheToken_(d));
+        CACHE[ck]=d;
+        if(!STATE.upload && window.AmrCache) AmrCache.set('slide:'+ck, d);
+        applyData(d, force?'Updated':'Loaded');
+      })
+      .withFailureHandler(function(err){
+        if(window.AmrProgress) AmrProgress.fail(LOAD_JOB, 'Could not read the Ready-Mix data');
+        setStat(st, false, (err && err.message) ? err.message : 'Could not read the Ready-Mix workbook.');
+      })
+      .RMX_getSlideTables({ market:STATE.market, period:STATE.period, month:STATE.month,
+                            upload:STATE.upload, force:!!force });
+  }
+
+  function applyData(d, note){
+    DATA = d || null;
+    hideLoading();          // the ONE place the loading screen comes down
+
+    /* the real market list, once we have it */
+    if(d && d.markets && d.markets.length && d.markets.join('|') !== MARKETS.join('|')){
+      MARKETS = d.markets.slice();
+      fillMarketSelect();
+    }
+    /* the month the backend actually reported on — pin the picker to it, and
+       file this answer under the pinned key too so nothing is fetched twice */
+    if(d && d.month){
+      STATE.latestMonth = d.latestMonth || d.month;
+      if(!STATE.month){ STATE.month = d.month; CACHE[ckey_()] = d; }
+      refreshMonths(d);
+    }
+    var st=document.getElementById('loadStat');
+    if(st && d){
+      var segN = (d.segment && d.segment.rows) ? d.segment.rows.length : 0;
+      var exN  = (d.extras && d.extras.extras) ? d.extras.extras.length : 0;
+      var vpN  = (d.extras && d.extras.vap)    ? d.extras.vap.length    : 0;
+      setStat(st, segN>0, '\u2713 '+(note||'Loaded')+' \u00B7 '+marketLabel(STATE.market)
+        +' \u00B7 '+(STATE.month?MONTH_NAMES[STATE.month-1]:'')+' '+STATE.period
+        +' \u00B7 '+segN+' segments \u00B7 '+exN+' extras / '+vpN+' VAP types'
+        +(STATE.upload?' \u00B7 from your uploaded files':''));
+    }
+    autoTitle(); autoSub();
+    renderPreview();
+  }
+
+  /* An explicit update — the button, or the ⚙ Data sheet being pointed somewhere
+     new — re-reads the sheet for EVERYONE and leaves the sidebar exactly as a
+     fresh page load would. */
+  function updateFromSheets(){
+    if(!IS_LIVE) return;
+    var btn=document.getElementById('syncBtn');
+    if(btn){ btn.disabled=true; btn.classList.add('busy'); }
+    /* Ask first: an untouched sheet means there is nothing to rebuild, for
+       anyone — see AmrFresh.ifChanged in Shell.html. */
+    if(window.AmrFresh){ AmrFresh.ifChanged(function(changed){
+      if(!changed){ if(btn){ btn.disabled=false; btn.classList.remove('busy'); } return; }
+      updateFromSheetsNow();
+    }); return; }
+    updateFromSheetsNow();
+  }
+  function updateFromSheetsNow(){
+    var btn=document.getElementById('syncBtn');
+    showLoading('Re-reading the Google Sheet');   // the same one screen, not a second
+    CACHE={};
+    STATE.titleDirty=false; STATE.month=0;
+    google.script.run
+      .withSuccessHandler(function(res){
+        if(window.AmrCache && res && res.generation != null) AmrCache.check(cacheToken_(res));
+        if(btn){ btn.disabled=false; btn.classList.remove('busy'); }
+        /* No tick here: a 'done' flash followed by the next job going up is
+           exactly the flicker. The screen stays until applyData takes it down. */
+        bootLoad();
+      })
+      .withFailureHandler(function(err){
+        if(btn){ btn.disabled=false; btn.classList.remove('busy'); }
+        if(window.AmrProgress) AmrProgress.fail(LOAD_JOB, 'Could not re-read the sheet');
+        setStat(document.getElementById('loadStat'), false, (err && err.message) || String(err));
+      })
+      .RMX_syncData({ period:STATE.period });
+  }
+
+  /* ======================= UI WIRING ======================= */
+  function fillMarketSelect(){
+    var sel=document.getElementById('marketSel');
+    var list=[ALL_MKT].concat(MARKETS);
+    sel.innerHTML=list.map(function(m){
+      return '<option value="'+esc(m)+'"'+(m===STATE.market?' selected':'')+'>'+esc(marketLabel(m))+'</option>'; }).join('');
+  }
+  function autoTitle(){
+    /* The preset leads with the report month. Short month here (the subtitle
+       already carries the long form). Once the user types their own title we stop
+       overwriting it — clearing the box brings the automatic one back. */
+    if(STATE.titleDirty) return;
+    var when = STATE.month ? (MONTH_NAMES[STATE.month-1].slice(0,3)+' '+CY_YEAR) : '';
+    STATE.title = (when ? when+' \u2014 ' : '')
+                + marketLabel(STATE.market).toUpperCase()+' RMX \u2013 Commercial';
+    var el=document.getElementById('titleIn'); if(el) el.value=STATE.title;
+  }
+  /* keep the subtitle in step with the chosen month + period ("June 2026 · MTD")
+     — still editable. The period in the subtitle also flows into the PNG
+     filename, so MTD and YTD exports don't overwrite each other. */
+  function autoSub(){
+    if(!STATE.month) return;
+    STATE.sub=MONTH_NAMES[STATE.month-1]+' '+CY_YEAR+' \u00B7 '+STATE.period;
+    var el=document.getElementById('subIn'); if(el) el.value=STATE.sub;
+  }
+
+  /* Fill the Report-month dropdown from the months the DATA actually carries —
+     the current-year ones (`months.cy`), so the list can never offer a month the
+     workbook has nothing in. Picking one re-slices the tables: MTD is that month
+     alone, YTD is January through it. */
+  function refreshMonths(d){
+    var sel=document.getElementById('monthSel'); if(!sel) return;
+    var list=(d && d.months && d.months.cy && d.months.cy.length) ? d.months.cy.slice() : [];
+    if(!list.length){ for(var i=1;i<=12;i++) list.push(i); }
+    STATE.monthList=list;
+    if(list.indexOf(STATE.month)===-1) STATE.month = (list.indexOf(STATE.latestMonth)!==-1) ? STATE.latestMonth : list[list.length-1];
+    sel.innerHTML=list.map(function(m){
+      return '<option value="'+m+'"'+(m===STATE.month?' selected':'')+'>'+MONTH_NAMES[m-1]+' '+CY_YEAR+'</option>'; }).join('');
+  }
+
+  /* Auto-load the Amrize logo. If the fetch is blocked (CORS/offline), we leave the
+     upload control as the fallback — exactly the manual flow as before. */
+  var AMRIZE_LOGO_SVG = `<svg width="126" height="36" viewBox="0 0 126 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_3228_1252)">
+<g clip-path="url(#clip1_3228_1252)">
+<g clip-path="url(#clip2_3228_1252)">
+<path d="M40.9092 13.1431H46.175L52.4633 28.0708H48.1534L47.0916 25.4268H40.0037L38.9421 28.0708H34.6322L40.9092 13.1431ZM45.6039 21.741L43.5422 16.6289L41.4806 21.741H45.6039ZM59.6812 13.1431L62.7622 21.2685L65.8437 13.1431H71.6308V28.0708H67.7998V18.2025L63.4545 28.0708H62.0677L57.7228 18.2025V28.0708H53.8919V13.1431H59.6812ZM83.5758 13.1431C87.1053 13.1431 88.8022 15.486 88.8022 18.2025C88.8022 20.3476 87.7095 22.2839 85.6899 23.1477L88.6043 28.0708H83.993L81.38 23.585H78.5468V28.0708H74.6042V13.1431H83.5758ZM82.9293 20.0025C84.0747 20.0025 84.8128 19.3784 84.8128 18.3476C84.8128 17.3168 84.0524 16.8267 83.0855 16.8267H78.5468V20.0025H82.9293ZM91.101 13.1431H95.0573V28.0708H91.101V13.1431ZM97.446 24.429L105.67 16.8289H97.51V13.1431H111.385V16.7234L103.16 24.385H111.499V28.0708H97.446V24.4268V24.429ZM113.831 13.1431H126V16.8289H117.787V18.5564H125.387V22.2312H117.787V24.385H126V28.0708H113.831V13.1431Z" fill="#011E6A"/>
+<path d="M29.6559 28.0709H19.6782L18.3064 23.8491L26.4222 18.1191L29.6559 28.0709ZM7.27544 5.67938L0 28.0709H9.9776L14.8279 13.1432L16.4446 18.1191H26.4222L22.3803 5.67938H7.27544Z" fill="#011E6A"/>
+</g>
+</g>
+</g>
+<defs>
+<clipPath id="clip0_3228_1252">
+<rect width="126" height="36" fill="white"/>
+</clipPath>
+<clipPath id="clip1_3228_1252">
+<rect width="126.183" height="25.875" fill="white" transform="translate(0 4.5)"/>
+</clipPath>
+<clipPath id="clip2_3228_1252">
+<rect width="126" height="22.3915" fill="white" transform="translate(0 5.67938)"/>
+</clipPath>
+</defs>
+</svg>`;
+
+  function fetchAmrizeLogo(){
+    var nm=document.getElementById('logoName');
+    if(STATE.logo || STATE.logoSVG) return;            // user already chose one
+    STATE.logoSVG=AMRIZE_LOGO_SVG; STATE.logo='';
+    if(nm) nm.textContent='Amrize logo loaded.';
+    renderPreview();
+  }
+
+  /* Was a DOMContentLoaded handler. CALLED AT THE END OF boot() — see the
+     banner above; the event is what used to guarantee the declarations
+     below it had run. */
+  function segPageInit(){
+    fillMarketSelect();
+    autoTitle();
+    STATE.sub=document.getElementById('subIn').value;
+
+    // source-tab hints shown by the "?" buttons in the Data panel
+    if(window.AmrHint){
+      AmrHint.register('sb_main',
+        '<h3>Source tab — <code>Main Raw Data</code></h3>'
+        +'<p>The <b>Segment</b> table is computed from this tab — one row per plant / product / segment line. '
+        +'Volume and base concrete revenue come from here; the Extras and VAP revenue that turns base ASP into '
+        +'<b>ASP Inc VA</b> comes from the two tabs in the next hint, matched on Major Project Segment.</p>'
+        +'<div class="amr-scroll"><table><tr>'
+        +'<th>Month</th><th>Plant</th><th>Product Mix</th><th>Major Project Segment</th>'
+        +'<th>2025 Vol</th><th>2025 Net Sales ex VA (CAD)</th><th>2026 Vol</th><th>2026 Net Sales ex VA (CAD)</th></tr>'
+        +'<tr><td>Jul</td><td>P100</td><td>AB123 - 25 MPa</td><td>Res - High Rise</td>'
+        +'<td>900</td><td>171,000</td><td>980</td><td>196,000</td></tr></table></div>'
+        +'<h3>Lookup tabs</h3>'
+        +'<p><b>PLANT LOOKUP</b> (Plant → Region / Subregion / Market / Submarket) drives the Market picker, '
+        +'so the markets here are the same ones RMX · Price &amp; Volume offers.</p>');
+      AmrHint.register('sb_extras',
+        '<h3>Source tabs — <code>Extra Raw Data</code> / <code>Associate Raw Data</code></h3>'
+        +'<p>The <b>By extra type</b> and <b>Extras &amp; VAP detail</b> tables are computed from these two tabs '
+        +'(same column layout). Header names matter; column order can vary.</p>'
+        +'<div class="amr-scroll"><table><tr>'
+        +'<th>Plant</th><th>mat_prod_hier_3</th><th>mat_descr</th><th>Major Project Segment</th>'
+        +'<th>Total Revenue - 2025</th><th>Total Revenue - 2026</th><th>M3 Applied To - 2025</th><th>M3 Applied To - 2026</th></tr>'
+        +'<tr><td>P100</td><td>FIBRE</td><td>Steel fibre</td><td>Res - High Rise</td>'
+        +'<td>4,000</td><td>5,200</td><td>300</td><td>360</td></tr></table></div>'
+        +'<h3>Lookup tab</h3>'
+        +'<p><b>EXTRAS LOOKUP</b> (mat_descr → category). <b>Both</b> tables group on it — that is the '
+        +'<b>Type</b> column. CUSTOM FLAG LOOKUP is no longer read by either table.</p>'
+        +'<p>The two tables carry the same rows on purpose. What differs is the base: '
+        +'<b>By extra type</b> prices on total concrete m³ (so the rows add to the Total), '
+        +'<b>Extras &amp; VAP detail</b> prices on applied m³ and prints penetration next to it.</p>');
+    }
+
+    document.getElementById('marketSel').addEventListener('change', function(){
+      STATE.market=this.value; autoTitle(); loadTables();
+    });
+    document.getElementById('monthSel').addEventListener('change', function(){
+      STATE.month=parseInt(this.value,10)||0;
+      autoTitle(); autoSub(); loadTables();
+    });
+    // MTD / YTD toggle — the active period is filled navy
+    var pBtns=[].slice.call(document.querySelectorAll('#periodBtns button'));
+    function paintPeriod(){
+      pBtns.forEach(function(b){
+        var on=b.getAttribute('data-period')===STATE.period;
+        b.style.background=on?'var(--navy,#011E6A)':'';
+        b.style.color=on?'#fff':'';
+        b.style.borderColor=on?'var(--navy,#011E6A)':'';
+      });
+    }
+    pBtns.forEach(function(b){
+      b.addEventListener('click', function(){
+        STATE.period=this.getAttribute('data-period');
+        paintPeriod(); autoSub(); loadTables();
+      });
+    });
+    document.getElementById('titleIn').addEventListener('input', function(){
+      STATE.title=this.value;
+      STATE.titleDirty = (this.value.trim()!=='');   // empty box → back to the automatic title
+      if(!STATE.titleDirty) autoTitle();
+      scheduleRender();
+    });
+    document.getElementById('subIn').addEventListener('input', function(){ STATE.sub=this.value; scheduleRender(); });
+
+    // re-read the raw tabs from the Google Sheet (bumps the data version for everyone)
+    document.getElementById('syncBtn').addEventListener('click', updateFromSheets);
+
+    // shared comment-band sliders (Left/Right/Top/Bottom) → re-render on change
+    mountWs();
+
+    // logo
+    var lf=document.getElementById('logoFile');
+    document.getElementById('logoBtn').addEventListener('click', function(){ lf.click(); });
+    lf.addEventListener('change', function(){ var f=this.files&&this.files[0]; if(!f) return;
+      var rd=new FileReader(); rd.onload=function(){ STATE.logo=rd.result; STATE.logoSVG=''; document.getElementById('logoName').textContent=f.name; renderPreview(); }; rd.readAsDataURL(f); });
+    document.getElementById('logoClear').addEventListener('click', function(){
+      STATE.logo=''; STATE.logoSVG=''; lf.value=''; document.getElementById('logoName').textContent='No logo — top-right corner stays blank.'; renderPreview(); });
+    fetchAmrizeLogo();
+
+    document.getElementById('exportBtn').addEventListener('click', exportPNG);
+    document.getElementById('viewBtn').addEventListener('click', viewFullScreen);
+    window.addEventListener('resize', scheduleRender);
+
+    /* ONE screen for the whole opening, and it comes down in applyData - not when
+       the first thing finishes. The KPI workbook is named too, so the tables never
+       appear before the strip above them. */
+    if(window.AmrBoot){ AmrBoot.need('data'); AmrBoot.need('KPI figures'); }
+    renderPreview();
+    bootLoad();        // ONE call: this market's tables + every other market warmed
+  }
+
+
+    /* ---- run on uploaded QlikView files (session only) ----
+       Was the second half of a tail IIFE; it reads STATE, CACHE, loadTables
+       and setStat, so it belongs inside the page's own scope. */
+    var MON3=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    function sanitize(rows){          // google.script.run can't carry Date objects
+      for (var r=0;r<rows.length;r++) for (var c=0;c<rows[r].length;c++){
+        var v=rows[r][c];
+        if (v instanceof Date) rows[r][c]=MON3[v.getMonth()]+'-'+String(v.getFullYear()).slice(2);
+      }
+      return rows;
+    }
+    function readWb(file){
+      return new Promise(function(res, rej){
+        var rd=new FileReader();
+        rd.onload=function(e){ try{
+          var wb=XLSX.read(new Uint8Array(e.target.result),{type:'array',cellDates:true});
+          res(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:''}));
+        }catch(err){ rej(err); } };
+        rd.onerror=function(){ rej(new Error('Could not read '+file.name)); };
+        rd.readAsArrayBuffer(file);
+      });
+    }
+    function el(id){ return document.getElementById(id); }
+    function wire(){
+      var go=el('upGo'), reset=el('upReset'); if(!go) return;
+      reset.style.display='none';
+      go.addEventListener('click', function(){
+        var fM=el('upMain').files[0], fE=el('upExtra').files[0], fA=el('upAssoc').files[0];
+        var st=el('loadStat');
+        if(!fM||!fE||!fA){ setStat(st,false,'Choose all three files first (Main, Extra, Associate).'); return; }
+        if(!IS_LIVE){ setStat(st,false,'Uploads only work in the live web app.'); return; }
+        setStat(st,true,'Reading the Excel files\u2026');
+        Promise.all([readWb(fM),readWb(fE),readWb(fA)]).then(function(v){
+          setStat(st,true,'Uploading \u0026 computing\u2026');
+          google.script.run.withSuccessHandler(function(res){
+            STATE.upload=res.token; CACHE={}; STATE.month=0;
+            el('upStatus').style.display='block'; go.style.display='none'; reset.style.display='';
+            loadTables();
+          }).withFailureHandler(function(e){ setStat(st,false,(e&&e.message)||String(e)); })
+            .RMX_uploadData({ main:sanitize(v[0]), extras:sanitize(v[1]), assoc:sanitize(v[2]) });
+        }).catch(function(e){ setStat(st,false,'Could not read the Excel file: '+((e&&e.message)||e)); });
+      });
+      reset.addEventListener('click', function(){
+        STATE.upload=null; CACHE={}; STATE.month=0;
+        el('upStatus').style.display='none'; go.style.display=''; reset.style.display='none';
+        ['upMain','upExtra','upAssoc'].forEach(function(id){ var x=el(id); if(x) x.value=''; });
+        loadTables();
+      });
+    }
+
+    /* The ⚙ Data sheet modal calls this after it is pointed somewhere new. */
+    window.amrReloadData = function(){ updateFromSheets(); };
+
+    /* The Ready-Mix exports — the same three files Ready-Mix takes, because
+       this page reads those tabs. */
+    AmrQlikGuide.mount({
+      title: 'Download from QlikView',
+      fabLabel: '&#128229; QlikView Guide',
+      extra: document.getElementById('guideExtra'),
+      steps: [
+        { text: 'Step 1 — Select the displayed fields and selections from QlikView and then export to excel (Main Raw Data export).',
+          img: 'https://drive.google.com/file/d/1U9H1GuzFSehFYANj19NmIMIXLxA8epq9/view?usp=sharing' },
+        { text: 'Step 2 — Select the displayed fields and selections from QlikView and then export to excel, if you dont have access to the Total Revenue table and need a particular report Please Reach Out. (Extra Raw Data export)',
+          img: 'https://drive.google.com/file/d/1diVm7kAsbkV_hARy8vvaIabsE_qDr64Q/view?usp=sharing' },
+        { text: 'Step 3 — Select the displayed fields and selections from QlikView and then export to excel, if you dont have access to the Total Revenue table and need a particular report Please Reach Out. (Associate Raw Data export)',
+          img: 'https://drive.google.com/file/d/1Bd1bdH0pcjv0S0jgw9lcWjJQm_BaXhQA/view?usp=sharing' }
+      ]
+    });
+
+    /* The three inits, last, in the order the events used to fire them. */
+    segKpiInit();
+    segPageInit();
+    wire();
   }
 });
 </script>
