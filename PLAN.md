@@ -1,6 +1,6 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: in progress on `merging-files`. Chunks 0–9 done — `app.html` is ~972 KB and holds the runtime, ten shared modules and eight of the eleven pages, the Executive Overview now complete. Only Deck Builder (chunk 10) and TP01 (chunk 11) are left on the client side. §A3 is 363 rules and §A4 is 302; chunk 9 added **zero** CSS, because chunk 8 landed all of it. All 17 test harnesses run and are green, and `tests/ovperiod.js` drives `app.html` alongside the legacy page through a real browser — the only merged page under that kind of gate. The 16 `.gs` files are untouched and stay that way until chunk 12.**
+**Status: in progress on `merging-files`. Chunks 0–10 done — `app.html` is ~1.07 MB and holds the runtime, thirteen shared modules and nine of the ten pages. Only TP01 (chunk 11) is left on the client side. §A3 is 363 rules and §A4 is 372. All 17 test harnesses run and are green; `tests/ovperiod.js` and `tests/bgrender.js` both drive `app.html` through a real browser alongside their legacy side, and `tests/pageparity.js` now covers seven pages. The 16 `.gs` files are untouched and stay that way until chunk 12.**
 
 > ## Read this file before doing anything. Every session, every agent.
 >
@@ -559,7 +559,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 7 | **Product Segment** | `Page_Segment` + `Deck_SEG`. §E gains `AmrSegSlide`; §A3 gains `table.gt` and the slide-body rows. **Zero §A4 rules** — six id-scoped rules became `.tbl-stack` / `.previewHost`, and everything else was already shared. | `tests/merge.js`, `tests/pageparity.js` (170 comparisons), `tests/segboot.js`, `tests/deckstatic.js` + the whole suite — all green | ✅ |
 | 8 | **Overview, part 1 — shell and cube** | `Page_Overview`'s whole markup (342 lines, 136 ids), its whole style block as **234 §A4 rules**, and the shell half of its script: state, helpers, the panel primitives, the market chips, the period model (`STATE`, `PICK_SERVER`, `windowPeriod`), the month window, the `AmrCube` wiring, the history pill, `load()` and `boot()`. No painters — they are behind a ten-name **CHUNK 9 SEAM** block. §A3 gained exactly one rule. `tests/ovperiod.js` drives `app.html` as a second side now, and `tests/merge.js` learned to resolve `$('id')`. | `tests/merge.js`, `tests/ovperiod.js` (both sides; merged is shell-only) + the whole suite — all green | ✅ |
 | 9 | **Overview, part 2 — the panels** | Every painter, both cross-filter engines, the fifteen chart registries in `CH`, `pcatFits`, the SAP/USGAAP cards, customers, fuel surcharge, product category, and the data-quality sheet with its lookup editor — 4,128 lines, and **zero CSS**. The chunk-8 seam block goes; all ten names are the real thing. *(`hidePanel` / `resetPanels` are NOT here: they are the panel primitives the shell's own `renderTab` needs, so they landed in chunk 8. Corrected against the code.)* | `tests/ovperiod.js`, merged side's shell flag removed — all seven checks, both tabs, all four periods, mutation-tested three ways — plus the whole 17-harness suite, all green | ✅ |
-| 10 | **Deck Builder** | `Page_DeckBuilder` + `Deck_Sources` + `Deck_Styles`. | `tests/deckpath.js`, `tests/bgrender.js` + a real deck build | ☐ |
+| 10 | **Deck Builder** | `Page_DeckBuilder` + `Deck_Sources` + `Deck_Styles` **+ `Deck_RMX` + `AmrTick`** — §E gains `AmrDeckSource`, `AmrRmxSlide` and `AmrTick`, and §B gains the 86 `.slide-bare` capture rules. **70 §A4 rules, all `.db-*`, zero collisions.** Nine inline handlers became listeners, three of them delegated because the rows are redrawn. `tests/bgrender.js` drives `app.html` as a second side and checks all six deck sources register — the one thing that could only break in the merge. | `tests/merge.js`, `tests/modparity.js` (13 modules), `tests/bgrender.js` (both sides), `tests/pageparity.js` (190 comparisons) + the whole suite — all green. **A real deck build is still owed**: `DECK_create` / `addSlide` / `finish` have never run against the live deployment | ✅ |
 | 11 | **TP01** | `Page_TP01`. Mail sends as the deploying account. | a real send to a test recipient | ☐ |
 
 ### The server, and the cutover
@@ -640,6 +640,70 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   global. *(The id check was replaced in chunk 4 — see [§3](#3-how-the-pages-live-inside-one-html-file).
   Ids repeat across pages on purpose; what is checked now is that none repeats within one page
   and that the mount empties `#appRoot`.)*
+
+### What chunk 10 settled
+
+- **§E has an ORDER now, and it is load-bearing for the first time.** `AmrPvSlide`,
+  `AmrFuelExec`, `AmrSegSlide` and `AmrRmxSlide` each end with an `AmrDeckSource.register()`
+  wrapped in `if(!window.AmrDeckSource) return;`. Three of them have been in §E since chunks
+  3, 5 and 7 with that guard falling straight through, because the registry was not there.
+  Putting `AmrDeckSource` above all four is what turns them on — and putting it *below* even
+  one of them costs that adapter silently: no error, no warning, just a Deck Builder that
+  opens with a shorter source list than it should have. `tests/bgrender.js` checks the
+  registry in a real browser for that reason, and was mutation-tested by moving
+  `AmrDeckSource` below `AmrSegSlide`: five of the six sources vanish and it names them.
+
+- **This page's whole script was top level — no IIFE at all.** That is why its nine inline
+  `on*=` handlers worked, and why every one of them had to become a listener: inside a
+  registration IIFE they resolve against `window` and find nothing. Six were in the markup
+  (wired by id or `data-act`); **three were written into generated rows** by `rowHtml()` and
+  `kpiPickerHtml()`, and those are delegated on `#dbList` rather than bound per row, because
+  `redraw()` replaces that host's innerHTML on every status change and per-element listeners
+  would go with it. This is the first port where generated handlers appeared; TP01 has three
+  more of the same shape.
+
+- **A diff cannot tell you a handler still fires.** `#dbList`'s markup differs by exactly the
+  six attribute forms the port moved, so the case declares a `normalise` that strips those and
+  compares everything else byte for byte — and then **unticks a slide** and compares again.
+  Without that second step, deleting the delegated listener passes clean; with it, two
+  comparisons fail. `pageparity.js` gained `drive` (a case can move a control any way it
+  likes, not only by clicking a button) and `readAsked` (compare what each side asked the
+  server, for rewiring that changes nothing on screen).
+
+- **70 §A4 rules, zero collisions, nothing promoted.** Every rule is `.db-*` and none of them
+  is a component: no other page has a slide-plan table, a three-stage bar or a preview mock
+  built from template geometry. The chunk 6 test answering in the other direction, as the
+  Overview's 234 did.
+
+- **The Deck Builder is the one page that keeps a fourth breakpoint, with the reason written
+  next to it.** 1080px (the rail dropping below the list) maps onto `--bp-mid`. 1180px does
+  not: the slide rows degrade in two stages — drop the Layout column, then drop the Region
+  picker and the thumbnail — and folding them together would put seven grid columns, 668px of
+  fixed tracks, into a 644px column at 1000px wide. §3 allows a fourth step with a reason;
+  this is the reason.
+
+- **The page gained a `? Help` button.** It has always had `HELP_HTML` and no way to open it —
+  the header carried Home and Check template only. One button, and the help it already had.
+
+- **§B is a mirror and stays one.** `Deck_Styles.html`'s 86 rules are all under `.slide-bare`
+  — checked, not assumed. They duplicate rules that also live in §A3, and collapsing them is
+  chunk 16, against real captures: the deck's output is a picture nobody can restyle
+  afterwards, so "these look the same" is not the standard.
+
+- **A comment describing CSS is not CSS.** The first scan of `Deck_Styles.html` reported one
+  unscoped rule, `.exp table td`. It came from the file's own header comment, which quotes
+  `.exp table th, .exp table td{padding:4px 9px}` in prose to explain what the file exists
+  for. Nothing is unscoped. That is the **fourth** time in this merge that a checker read
+  prose as code; the fix is always the same — anchor on the element, strip comments first.
+
+- **The scoper had to learn what an at-rule is.** Scoping `@keyframes spin{to{…}}` produced
+  `@keyframes spin{body[data-page="tp01"] to{…}}` — a keyframe stop is not a selector, and a
+  scoped one silently does nothing. `@media` and `@supports` wrap real selectors and are
+  scoped; everything else is copied through. Found on TP01, fixed for both.
+
+- **`AmrTick` ports here, as chunk 8 said it would.** The Deck Builder's `dbSoon` and
+  `AmrSlide`'s capture settle are its only callers. `tests/bgrender.js` proves it is
+  worker-backed inside `app.html`, not only inside `Shell.html`.
 
 ### What chunk 9 settled
 
@@ -785,7 +849,9 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   all of them Landing's, Ready-Mix's and the Inventory Report's.
 - **`.ghost` on white is NOT on this page.** Product Segment already used `.lk` for its two
   guide buttons. Four of five ported pages had the bug; this one had the fix. `Page_TP01` and
-  `Landing` are what is left to check.
+  `Landing` are what is left to check. *(Both checked in chunks 10–11: neither puts a button
+  inside its guide at all — TP01's guide is one step with no upload panel, Landing's is five
+  steps with none — so the item is closed.)*
 - **THREE deferred inits, and the order is the contract.** `segKpiInit` was registered at line
   638 with five hundred lines of declarations below it, the main handler at 1058, and the
   guide's `wire()` in a tail IIFE. All three are called at the end of `boot()` **in the order
@@ -1059,15 +1125,14 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 
 Stated up front so nobody is surprised later:
 
-- **`app.html` will be ~1.1 MB, not the ~1.0 MB estimated in chunk 0.** Measured after chunk 9:
-  972 KB with eight pages in, and the four files still to come (`Page_DeckBuilder`,
-  `Deck_Sources`, `Deck_Styles`, `Page_TP01`) are 127 KB of source between them, less TP01's
-  copy of the QlikView guide. The estimate was low because it assumed the legacy sweep would
-  take more than it has: the sweep is real (~720 lines of guide, ~1,225 lines of dead includes,
-  the id-styling collapse) but the pages themselves port close to one-for-one. **`app.gs`
-  ~515 KB.** Both are far inside Apps Script's limits, but the script editor gets sluggish on
-  files this size. That is the trade being made deliberately: slower to edit in the browser,
-  trivial to move.
+- **`app.html` is ~1.13 MB, not the ~1.0 MB estimated in chunk 0.** Measured with all ten
+  pages in after chunk 11 — 1,158,583 bytes. The estimate was low because it assumed the
+  legacy sweep would take more than it has: the sweep is real (~720 lines of guide, ~1,225
+  lines of dead includes, the id-styling collapse, four spinner keyframes down to one) but the
+  pages themselves port close to one-for-one, and §E grew by three modules the original count
+  did not include. **`app.gs` ~515 KB.** Both are far inside Apps Script's limits, but the
+  script editor gets sluggish on files this size. That is the trade being made deliberately:
+  slower to edit in the browser, trivial to move.
 - **Every page load ships every page.** Today `?page=rmx` sends 96 KB; afterwards it sends the
   whole file. HtmlService gzips, so expect roughly 200 KB on the wire against ~25 KB now. The
   extra is markup the browser parses into inert fragments and CSS it discards on a `data-page`
@@ -1189,7 +1254,8 @@ not prove it** — read the next box before deleting anything.
   else. It also shadowed the runtime; `merge.js`'s no-shadow check now guards that.
 - **`Page_PriceVolume`'s `syncKpiName()`** *(chunk 5, done)*. No caller, and the `#kpiName`
   input it wrote to exists in no file.
-- **`AmrKpiStore` in `Shell.html`** *(decide by chunk 13)*. **Zero callers anywhere** —
+- **`AmrKpiStore` in `Shell.html`** *(confirmed dead in chunk 10; delete at chunk 13)*.
+  Every page is ported now, so there is nothing left that could claim it. **Zero callers anywhere** —
   grepped every `.html` and `.gs`; the only other hits are two comments. Client-side modules
   are the one place grep IS conclusive (§11's box: no dynamic dispatch, and a browser module
   cannot be reached by a trigger or the Run menu). It was deliberately NOT ported in chunk 5.
@@ -1267,11 +1333,13 @@ from a page:
   - `tests/modparity.js` *(chunk 3, retires at chunk 13)* — every §E module is byte-for-byte
     the file it came from, which is what makes `regress.js`, `slidefit.js`, `pvcheck.js` and
     `deckpath.js` cover `app.html` too.
-  - `tests/ovperiod.js` *(pointed at `app.html` in chunk 8)* — the only harness that drives a
-    merged page through a real browser. It runs the same fixture and the same checks against
-    the legacy page and against `app.html`, labelling every failure with the side it happened
-    on, so "both broke" and "the port broke" cannot be confused. Its legacy side goes at
-    chunk 13 with the file it reads.
+  - `tests/ovperiod.js` *(pointed at `app.html` in chunk 8)* and `tests/bgrender.js`
+    *(chunk 10)* — the two harnesses that drive `app.html` through a real browser. Each runs
+    the same fixture and the same checks against the legacy page and against `app.html`,
+    labelling every failure with the side it happened on, so "both broke" and "the port
+    broke" cannot be confused. `bgrender` also checks the deck source registry, which is the
+    only way to catch a §E ordering mistake. Their legacy sides go at chunk 13 with the files
+    they read.
 - **Install the harness dependencies once, together.** `npm install playwright chart.js jsdom`
   — Chromium is already at `/opt/pw-browsers`. Five harnesses were being reported as
   "unavailable" for two chunks because nobody had run that line.

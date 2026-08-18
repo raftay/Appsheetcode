@@ -1309,6 +1309,131 @@ body[data-page="overview"] .xf-dd .opts button.sel{font-weight:700; color:var(--
 body[data-page="overview"] .xf-dd .opts .none{padding:8px; color:var(--muted); font:600 11.5px Inter}
 body[data-page="overview"] .xf-dd .foot{margin-top:6px; font:600 10.5px Inter; color:var(--muted)}
 body[data-page="overview"] .xf-dd .clr1{margin-top:6px; border:0; background:transparent; color:var(--neg); font:700 11px Inter; cursor:pointer; padding:4px 6px}
+/* ---- §P deckbuilder --------------------------------------------------------
+   70 rules, all .db-*, and not one of them collides with §A1-§A3 — so nothing
+   was promoted and nothing was dropped. That is the chunk 6 test answering
+   "this is a page, not a component": no other page has a slide-plan table, a
+   three-stage bar or a geometry-driven preview mock.
+
+   The 1080px media query maps onto --bp-mid. The 1180px one does NOT and is
+   kept as this page's own step, with the reason PLAN.md §3 asks for: the slide
+   rows degrade in two stages — drop the Layout column, then drop the Region
+   picker and the thumbnail — and folding them together would put seven columns
+   of grid, 668px of fixed tracks, into a 644px column at 1000px wide.       */
+/* ---- Deck Builder page-only rules (tokens/base/header from Styles.html) ---- */
+body[data-page="deckbuilder"] .dbwrap{max-width:1560px; margin:0 auto; padding:14px 20px 28px; box-sizing:border-box;
+  display:grid; grid-template-columns:300px minmax(0,1fr); gap:16px; align-items:start}
+@media (max-width:980px){body[data-page="deckbuilder"] .dbwrap{grid-template-columns:1fr} }   /* --bp-mid; was 1080px */
+
+body[data-page="deckbuilder"] .db-rail{display:flex; flex-direction:column; gap:12px; position:sticky; top:12px}
+body[data-page="deckbuilder"] .db-panel{background:var(--white); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); padding:14px 15px}
+body[data-page="deckbuilder"] .db-panel h3{font:800 12px Archivo; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--blue-80); margin:0 0 10px}
+body[data-page="deckbuilder"] .db-lbl{display:block; font:600 11.5px Inter; color:var(--muted); margin:10px 0 5px}
+body[data-page="deckbuilder"] .db-lbl:first-of-type{margin-top:0}
+body[data-page="deckbuilder"] .db-in{width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:9px;
+  background:#F4F7FC; padding:8px 10px; font:500 12.5px Inter; color:var(--ink)}
+body[data-page="deckbuilder"] .db-note{font:500 11.5px Inter; color:var(--muted); line-height:1.5; margin:8px 0 0}
+body[data-page="deckbuilder"] .db-note b{color:var(--ink)}
+
+body[data-page="deckbuilder"] .dbbtn{display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  border:1px solid var(--line); background:#fff; color:var(--blue-80); cursor:pointer;
+  font:600 12px Inter; padding:0 13px; height:34px; border-radius:9px; transition:.14s;
+  white-space:nowrap}
+body[data-page="deckbuilder"] .dbbtn:hover:not(:disabled){background:var(--blue-10); border-color:var(--blue-40)}
+body[data-page="deckbuilder"] .dbbtn.primary{background:var(--blue-100); border-color:var(--blue-100); color:#fff}
+body[data-page="deckbuilder"] .dbbtn.primary:hover:not(:disabled){background:var(--blue-90)}
+body[data-page="deckbuilder"] .dbbtn:disabled{opacity:.45; cursor:default}
+body[data-page="deckbuilder"] .dbbtn.wide{width:100%}
+
+/* ---- stage bar ---- */
+body[data-page="deckbuilder"] .db-stages{display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+  background:var(--white); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); padding:12px 14px; margin-bottom:14px}
+body[data-page="deckbuilder"] .db-stage{display:flex; align-items:center; gap:8px}
+body[data-page="deckbuilder"] .db-step{width:22px; height:22px; border-radius:50%; background:var(--blue-10);
+  color:var(--blue-100); font:700 11px Inter; display:flex; align-items:center;
+  justify-content:center; flex:none}
+body[data-page="deckbuilder"] .db-stage.done .db-step{background:var(--pos); color:#fff}
+body[data-page="deckbuilder"] .db-arrow{color:var(--line); font:700 15px Inter}
+body[data-page="deckbuilder"] .db-spacer{flex:1}
+body[data-page="deckbuilder"] .db-prog{font:600 12px Inter; color:var(--muted)}
+
+/* ---- the slide list ---- */
+body[data-page="deckbuilder"] .db-list{background:var(--white); border:1px solid var(--line); border-radius:var(--r);
+  box-shadow:var(--shadow); overflow:hidden}
+body[data-page="deckbuilder"] .db-group{background:var(--blue-10); border-top:1px solid var(--line);
+  border-bottom:1px solid var(--line); padding:7px 14px;
+  font:800 11px Archivo; letter-spacing:.06em; text-transform:uppercase; color:var(--blue-100)}
+body[data-page="deckbuilder"] .db-group:first-child{border-top:0}
+body[data-page="deckbuilder"] .db-row{display:grid; grid-template-columns:30px 34px minmax(0,1fr) 128px 132px 96px 176px;
+  gap:12px; align-items:center; padding:9px 14px; border-bottom:1px solid #F0F4FA}
+body[data-page="deckbuilder"] .db-row:last-child{border-bottom:0}
+@media (max-width:1180px){ body[data-page="deckbuilder"] .db-row{grid-template-columns:30px 34px minmax(0,1fr) 132px 96px 176px}
+  body[data-page="deckbuilder"] .db-row .db-layout{display:none} }
+@media (max-width:980px){ body[data-page="deckbuilder"] .db-row{grid-template-columns:30px 34px minmax(0,1fr) 96px}
+  body[data-page="deckbuilder"] .db-row .db-layout, body[data-page="deckbuilder"] .db-row .db-kpi-wrap, body[data-page="deckbuilder"] .db-row .db-kpi-none, body[data-page="deckbuilder"] .db-row .db-thumb{display:none} }
+
+/* the per-row Region picker, on slides that carry a KPI strip */
+body[data-page="deckbuilder"] .db-kpi{width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:7px;
+  background:#F4F7FC; padding:5px 7px; font:600 11px Inter; color:var(--ink); cursor:pointer}
+body[data-page="deckbuilder"] .db-kpi:hover{border-color:var(--blue-40)}
+body[data-page="deckbuilder"] .db-kpi-none{font:500 10.5px Inter; color:var(--muted); font-style:italic}
+body[data-page="deckbuilder"] .db-kpi-wrap{display:flex; flex-direction:column; gap:3px; min-width:0}
+body[data-page="deckbuilder"] .db-kpi-cap{font:700 8.5px Archivo; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+body[data-page="deckbuilder"] .db-row.off{opacity:.45}
+body[data-page="deckbuilder"] .db-num{font:600 11px Inter; color:var(--muted); text-align:right}
+body[data-page="deckbuilder"] .db-ttl{font:600 12.5px Inter; color:var(--ink); overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap}
+body[data-page="deckbuilder"] .db-sub{font:500 10.5px Inter; color:var(--muted); margin-top:1px}
+body[data-page="deckbuilder"] .db-layout{font:500 11px Inter; color:var(--muted); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap}
+body[data-page="deckbuilder"] .db-st{font:700 10.5px Inter; letter-spacing:.03em; text-transform:uppercase}
+body[data-page="deckbuilder"] .db-st.pending{color:var(--muted)}
+body[data-page="deckbuilder"] .db-st.working{color:var(--blue-70)}
+body[data-page="deckbuilder"] .db-st.ready{color:var(--pos)}
+body[data-page="deckbuilder"] .db-st.error{color:var(--neg)}
+body[data-page="deckbuilder"] .db-st.done{color:var(--pos)}
+body[data-page="deckbuilder"] .db-err{font:500 10.5px Inter; color:var(--neg); margin-top:2px; white-space:normal; line-height:1.35}
+
+/* ---- the in-page slide preview: a faithful mock built from template geometry ---- */
+body[data-page="deckbuilder"] .db-thumb{width:176px; height:99px; border:1px solid var(--line); border-radius:5px;
+  background:#fff; position:relative; overflow:hidden; cursor:pointer}
+body[data-page="deckbuilder"] .db-thumb.empty{background:#F7FAFE}
+body[data-page="deckbuilder"] .db-slot{position:absolute; box-sizing:border-box}
+body[data-page="deckbuilder"] .db-slot.title{background:transparent; color:var(--blue-100); font:800 5px Archivo;
+  display:flex; align-items:center; overflow:hidden; white-space:nowrap}
+body[data-page="deckbuilder"] .db-slot.comment{background:#DCEEFB; border:.5px solid #BBD9F2; border-radius:1px}
+/* An EMPTY image slot is a dashed placeholder, so it reads as "a picture goes
+   here". A FILLED one is not: the grey and the dash would sit behind the
+   picture and, wherever the picture's shape and the slot's shape do not agree
+   to the pixel, show as a grey band along its edge — which reads as part of the
+   slide rather than as part of the mock. */
+body[data-page="deckbuilder"] .db-slot.image{background:#F0F4FA; border:.5px dashed #C6D5E8}
+body[data-page="deckbuilder"] .db-slot.image.filled{background:transparent; border:0}
+body[data-page="deckbuilder"] .db-slot.image img{width:100%; height:100%; object-fit:contain; display:block}
+body[data-page="deckbuilder"] .db-slot.page{color:var(--muted); font:600 4px Inter; display:flex; align-items:flex-end}
+
+/* ---- lightbox for a full-size look at one slide mock ---- */
+body[data-page="deckbuilder"] .db-lb{position:fixed; inset:0; z-index:9999; background:rgba(1,30,106,.86); display:none;
+  align-items:center; justify-content:center; flex-direction:column; gap:12px; padding:20px}
+body[data-page="deckbuilder"] .db-lb.open{display:flex}
+body[data-page="deckbuilder"] .db-lb-close{position:absolute; top:12px; right:18px; border:0; background:transparent;
+  color:#fff; font:700 30px Inter; cursor:pointer; line-height:1}
+body[data-page="deckbuilder"] .db-lb-hint{color:#fff; font:600 12px Inter; opacity:.85}
+body[data-page="deckbuilder"] .db-big{background:#fff; border-radius:8px; position:relative; overflow:hidden;
+  box-shadow:0 20px 60px rgba(0,0,0,.45)}
+body[data-page="deckbuilder"] .db-big .db-slot.title{font:800 20px Archivo}
+body[data-page="deckbuilder"] .db-big .db-slot.page{font:600 11px Inter}
+
+body[data-page="deckbuilder"] .db-banner{border-radius:var(--r); padding:11px 14px; font:600 12.5px Inter;
+  margin-bottom:12px; line-height:1.5}
+body[data-page="deckbuilder"] .db-banner.warn{background:#FFF6E5; border:1px solid #F5D08A; color:#7A5200}
+body[data-page="deckbuilder"] .db-banner.bad{background:#FDECEC; border:1px solid #F3B7B7; color:#8A1F1F}
+body[data-page="deckbuilder"] .db-banner.ok{background:#E9F8EF; border:1px solid #A9DFC0; color:#15653A}
+body[data-page="deckbuilder"] .db-banner a{color:inherit; font-weight:800}
+
 /* ---- §P inventoryreport --------------------------------------------------
    This page fills the viewport: the PDF frame takes whatever is left after the
    toolbar. That needs a height chain from <body> down, which is why these two
@@ -1352,9 +1477,160 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
 /* ============================================================================
    §B  SLIDE CSS — .slide-bare capture styles
    ----------------------------------------------------------------------------
-   Ported in chunk 10 with the Deck Builder. Every rule scoped under
-   .slide-bare, the wrapper AmrSlide.captureBare photographs.
+   Was Deck_Styles.html. Every one of its 86 rules is scoped under .slide-bare,
+   the wrapper AmrSlide.captureBare puts around content it is about to
+   photograph, so this block cannot reach a page — checked, not assumed.
+
+   It is a MIRROR of rules that also live in §A3, and it stays one for now.
+   Merging the two is chunk 16, and only against real captures: the deck's
+   output is a picture nobody can restyle afterwards, so "these look the same"
+   is not the standard. If you change a slide table in §A3, change it here.
    ========================================================================== */
+ changes that page's cascade order, and these
+     pages are in daily use. If you restyle a slide table on a report page,
+     change it here too — the deck is the other consumer.
+     ======================================================================== -->
+<style>
+/* ---------------------------------------------------------------------------
+   AGG Price & Volume  ·  mirrors Page_PriceVolume.html
+   The compact export padding is the one that matters most: without it the
+   tables overflow their card and get clipped.
+   ------------------------------------------------------------------------ */
+.slide-bare .tbl-card{padding-bottom:6px}
+.slide-bare .tbl-pad{padding:0 6px 8px}
+.slide-bare .tbl-card .card-head{padding-bottom:12px}
+.slide-bare .exp .tbl-card .card-head{padding:10px 14px 6px}
+.slide-bare .exp table th{white-space:nowrap; line-height:1.15}
+/* The fitter drives the cell padding and the header size off the table's own
+   font-size, so growing the numbers grows the whole table instead of cramming
+   bigger digits into cells sized for 13px. A `font:` shorthand pins the header
+   at 11px, which is why the header size is a variable of its own. */
+.slide-bare .exp table th, .slide-bare .exp table td{padding:var(--tpy,4px) var(--tpx,9px)}
+.slide-bare .exp table thead th{font-size:var(--thf,11px)}
+
+.slide-bare thead th.grp-asp{background:var(--blue-60)}
+.slide-bare thead th.grp-ppi{background:var(--blue-70)}
+.slide-bare .grp-vol{box-shadow:inset 3px 0 0 var(--blue-20)}
+.slide-bare .grp-asp{box-shadow:inset 3px 0 0 var(--blue-30)}
+.slide-bare .grp-fsc{box-shadow:inset 3px 0 0 var(--blue-40)}
+.slide-bare .grp-app{box-shadow:inset 3px 0 0 var(--blue-30)}
+.slide-bare .grp-ppi{box-shadow:inset 3px 0 0 var(--blue-60)}
+.slide-bare .grp-pt{box-shadow:inset 3px 0 0 var(--blue-40)}
+
+/* Top 10 Customers */
+.slide-bare .ctbl-wrap{overflow-x:auto; padding:0 40px}
+.slide-bare table.cust{min-width:880px}
+.slide-bare table.cust thead tr.grp th{background:var(--blue-100); color:#cfe0f6; font:700 9.5px Archivo;
+  letter-spacing:.12em; text-transform:uppercase; padding:8px 10px; text-align:left;
+  border-right:1px solid rgba(255,255,255,.12)}
+.slide-bare table.cust thead tr.grp th.sticky-l{background:var(--blue-100)}
+.slide-bare table.cust thead tr.col th{background:var(--blue-80); color:#fff; font:600 10.5px Inter;
+  letter-spacing:.02em; padding:8px 10px; text-align:left; white-space:nowrap}
+.slide-bare table.cust thead tr.col th:first-child{text-align:left}
+.slide-bare table.cust td{padding:8px 10px; text-align:right; white-space:nowrap;
+  border-bottom:1px solid var(--line); font-size:12.5px}
+.slide-bare table.cust td:first-child{text-align:left}
+.slide-bare table.cust tr.parent>td{font-weight:600; background:#fff}
+.slide-bare table.cust tr.child>td{background:var(--blue-10); color:var(--muted); font-size:12px}
+.slide-bare table.cust tr.child>td:first-child{padding-left:30px; font-weight:500; color:var(--ink)}
+.slide-bare table.cust tfoot td{background:#fff; font-weight:700; border-top:2px solid var(--blue-100);
+  padding:11px 10px}
+.slide-bare .chev{display:inline-block; width:14px; color:var(--blue-60); font-size:10px}
+.slide-bare .collapsed .chev{transform:rotate(-90deg)}
+
+/* ---------------------------------------------------------------------------
+   Ready-Mix Price & Volume  ·  mirrors Page_Rmx.html
+   .rmx-eb-title is the "By submarket" / "By extra type" heading and
+   .rmx-eb-badge's margin-left:auto is what pushes the mix badge to the right.
+   The rmx-yellow variants are deliberately not mirrored: the deck always
+   photographs on white.
+   ------------------------------------------------------------------------ */
+.slide-bare .tbl-scroll{overflow-x:auto; padding:0 6px 10px}
+.slide-bare th.gB{background:var(--blue-60)}
+.slide-bare th.gA{background:var(--blue-70)}
+.slide-bare th.gV{background:var(--blue-80)}
+.slide-bare tr.subtotal td{font-weight:700; background:#EEF3FB; border-top:1px solid var(--blue-40)}
+.slide-bare td.section{font:800 11px Inter; letter-spacing:.04em; color:#fff; background:var(--blue-70);
+  text-align:center; vertical-align:middle; white-space:normal}
+.slide-bare table.rtbl th, .slide-bare table.rtbl td{padding:6px 9px}
+.slide-bare table.rtbl th.tlbl, .slide-bare table.rtbl td.tlbl{text-align:left}
+.slide-bare table.rtbl td.tlbl{font-weight:600}
+.slide-bare table.rtbl thead th{font-size:1em}
+.slide-bare table.rtbl tr.subtotal td{background:#EEF3FB; font-weight:700; border-top:1px solid var(--blue-40)}
+.slide-bare table.rtbl tfoot td{background:#D3E3F6; color:var(--blue-100); font-weight:800;
+  border-top:2px solid var(--blue-100)}
+
+.slide-bare .rmx-export-block{width:100%}
+.slide-bare .rmx-export-block .rmx-eb-head{display:flex; align-items:center; margin-bottom:8px}
+.slide-bare .rmx-eb-title{font:700 20px Archivo; color:var(--blue-100)}
+.slide-bare .rmx-eb-badge{margin-left:auto; font:800 20px Inter}
+.slide-bare .rmx-eb-badge.pos{color:var(--pos)}
+.slide-bare .rmx-eb-badge.neg{color:var(--neg)}
+.slide-bare .rmx-export-block table{min-width:0}
+.slide-bare .rmx-export-block thead th{font-size:1em}
+.slide-bare .rmx-export-block thead th small{font-size:.82em}
+
+/* ---------------------------------------------------------------------------
+   Commercial Product Segment  ·  mirrors Page_Segment.html
+   The page sizes table.gt under #tablesHost; the deck scrapes the table out of
+   that host, so the same sizing is restated on the capture wrapper instead.
+   ------------------------------------------------------------------------ */
+.slide-bare .crow{display:flex; gap:12px; align-items:flex-start}
+.slide-bare .ccell{flex:1 1 0%; min-width:0; overflow:hidden}
+.slide-bare .ccap{font:700 10.5px Archivo; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--blue-70); margin:0 0 5px}
+.slide-bare table.gt{--px:9px; --py:5px; width:100%; border-collapse:collapse; font-size:13px;
+  table-layout:auto}
+/* An explicit font-size inside a `font:` shorthand beats inheritance, so the
+   header would stay 11px while the fitter grew the values past 20px. */
+.slide-bare table.gt thead th{background:var(--blue-100); color:#fff; font-weight:700; font-size:1em;
+  text-align:right; white-space:nowrap; padding:calc(var(--py) + 3px) var(--px); line-height:1.2;
+  vertical-align:middle; border-right:1px solid rgba(255,255,255,.10)}
+.slide-bare table.gt thead th.gB{background:var(--blue-60)}
+.slide-bare table.gt thead th.gA{background:var(--blue-70)}
+.slide-bare table.gt thead th.gV{background:var(--blue-80)}
+.slide-bare table.gt tbody td{padding:var(--py) var(--px); text-align:right; white-space:nowrap;
+  color:var(--ink); border-bottom:1px solid #EEF3F9}
+.slide-bare table.gt thead th.tlbl, .slide-bare table.gt tbody td.tlbl{text-align:left}
+.slide-bare table.gt tbody td.tlbl{font-weight:600}
+.slide-bare table.gt td.section{background:var(--blue-70); color:#fff; font-weight:800; letter-spacing:.04em;
+  text-align:center; vertical-align:middle; white-space:normal; font-size:.88em}
+.slide-bare table.gt tbody tr.subtot td{background:#EEF3FB; font-weight:700; border-top:1px solid var(--blue-40)}
+.slide-bare table.gt tbody tr.grand td{background:#D3E3F6; color:var(--blue-100); font-weight:800;
+  border-top:2px solid var(--blue-100)}
+.slide-bare table.gt td.pos{color:var(--pos)}
+.slide-bare table.gt td.neg{color:var(--neg)}
+.slide-bare table.gt.wrapText thead th{white-space:normal}
+.slide-bare table.gt.wrapText tbody td.tlbl{white-space:normal}
+.slide-bare table.gt{--px:10px; --py:6px; font-size:12.5px; min-width:560px}
+
+/* ---------------------------------------------------------------------------
+   Fuel Recovery, both pages  ·  mirrors Page_FuelSurcharge.html
+   (Page_RmxFuel.html carries the same block; the two are already identical.)
+   ------------------------------------------------------------------------ */
+.slide-bare .fsc-wrap{width:100%}
+.slide-bare table.fsc-t{width:100%; border-collapse:collapse; font-size:15px}
+.slide-bare table.fsc-t thead th{background:var(--blue-80); color:#fff; font:600 11px Inter;
+  letter-spacing:.02em; text-transform:uppercase; padding:7px 10px; text-align:right; white-space:nowrap;
+  border-right:1px solid rgba(255,255,255,.10)}
+.slide-bare table.fsc-t thead th:first-child{text-align:left}
+.slide-bare table.fsc-t tbody td{padding:5px 10px; text-align:right; white-space:nowrap;
+  border-bottom:1px solid var(--line)}
+.slide-bare table.fsc-t tbody td.lft{text-align:left; font-weight:600; color:var(--ink)}
+.slide-bare table.fsc-t tbody tr.totrow td{background:var(--blue-10); font-weight:700; color:var(--blue-100);
+  border-top:2px solid var(--blue-100)}
+.slide-bare table.fsc-t tbody tr td.pos, .slide-bare table.fsc-t tbody tr.totrow td.pos{color:var(--pos); font-weight:600}
+.slide-bare table.fsc-t tbody tr td.neg, .slide-bare table.fsc-t tbody tr.totrow td.neg{color:var(--neg); font-weight:600}
+.slide-bare .fsc-exec{display:flex; flex-direction:column; gap:.6em; font-size:14px}
+.slide-bare .fsc-period{background:var(--blue-100); color:#fff; font:700 .95em Archivo; letter-spacing:.05em;
+  text-transform:uppercase; padding:.5em .95em}
+.slide-bare .fsc-secbar{background:var(--blue-80); color:#fff; font:700 .85em Inter; letter-spacing:.03em;
+  text-transform:uppercase; padding:.45em 1.1em; margin-top:.15em}
+.slide-bare table.fsc-t.exec{font-size:1em}
+.slide-bare table.fsc-t.exec thead th{font:600 .8em Inter; padding:.5em .95em}
+.slide-bare table.fsc-t.exec thead th.grp{text-align:center; border-bottom:1px solid rgba(255,255,255,.25)}
+.slide-bare table.fsc-t.exec thead th.mid{vertical-align:middle}
+.slide-bare table.fsc-t.exec tbody td{padding:.34em .75em}
 </style>
 </head>
 
@@ -2052,13 +2328,103 @@ window.AMR = (function(){
    chunk 5 with Price & Volume, which is the first caller of all four.
 
    AmrSegSlide arrived in chunk 7 with Product Segment, the page that renders
-   its tables. Still to come: AmrDeckSource and AmrRmxSlide (both chunk 10 —
-   Ready-Mix calls nothing in AmrRmxSlide, so it is the Deck Builder's).
-   AmrTick has no caller on any page ported so far. **AmrKpiStore has no caller
-   ANYWHERE** — grepped across every .html and .gs, the only hits are its own
-   definition in Shell.html and two comments. It is on the legacy hit-list
-   rather than here; do not port it to give it a home.
+   its tables. AmrTick, AmrDeckSource and AmrRmxSlide arrived in chunk 10 with
+   the Deck Builder — the only page that calls any of them.
+
+   ORDER MATTERS FOR ONE OF THEM. AmrPvSlide, AmrFuelExec, AmrSegSlide and
+   AmrRmxSlide each end with an AmrDeckSource.register() guarded by
+   `if(!window.AmrDeckSource) return;`. AmrDeckSource has to be ABOVE all four
+   or every guard falls through and the Deck Builder opens with an empty source
+   list and no error at all. tests/bgrender.js checks the registry from a real
+   browser for exactly that reason.
+
+   **AmrKpiStore has no caller ANYWHERE** — grepped across every .html and .gs,
+   the only hits are its own definition in Shell.html and two comments. Every
+   page is ported now, so nothing is going to claim it: it goes at chunk 13.
+   Do not port it to give it a home.
    ========================================================================== */
+</script>
+
+<script>
+/* ---- §E AmrTick — a timer a background tab cannot stop ---------------------
+   Was Shell.html. Chunk 8 settled that the Overview does not call it: the
+   callers are the Deck Builder's dbSoon and AmrSlide's capture settle, which
+   is why it comes across here rather than earlier. requestAnimationFrame does
+   not fire at all in a hidden tab, so without this a forty-slide render stops
+   dead the moment somebody clicks onto another tab.                         */
+/* ==================================================================
+ * AmrTick - a timer that a background tab cannot stop.
+ * ------------------------------------------------------------------
+ * A hidden tab is not a paused tab, but the browser treats it as one
+ * in two ways that between them stop long jobs dead:
+ *
+ *   requestAnimationFrame does not fire AT ALL. Not late - never.
+ *     Anything that waits for a frame before continuing waits forever.
+ *     That is what stopped the Deck Builder on whatever slide it was
+ *     rendering the moment somebody clicked onto another tab.
+ *   setTimeout is clamped to once a second in a hidden tab, and after
+ *     five minutes hidden Chrome drops it to once a MINUTE. A forty
+ *     slide render paced by a main-thread timer would then take the
+ *     best part of an hour.
+ *
+ * Timers inside a Worker are not throttled that way, and a message
+ * from a worker is delivered to a hidden page immediately. So this is
+ * one tiny worker whose only job is to sleep and post back, wrapped in
+ * the same shape as setTimeout. Where there is no Worker (or the blob
+ * URL is refused) it degrades to a plain setTimeout, which is exactly
+ * what the caller would have written anyway.
+ *
+ *     var id = AmrTick(250, fn);   // like setTimeout
+ *     AmrTick.clear(id);
+ *     AmrTick.frames(fn);          // "after a frame or two" - but it
+ *                                  //  RESOLVES in a hidden tab
+ *
+ * frames() is the one to reach for before photographing the DOM: it
+ * waits for two real frames when there are frames to be had, and falls
+ * back to the clock when there are not. Whichever comes first wins and
+ * the other is dropped, so a tab that is hidden mid-wait still
+ * continues.
+ * ================================================================== */
+window.AmrTick = (function(){
+  var W = null, seq = 0, waiting = {};
+  try {
+    var src = 'self.onmessage=function(e){var d=e.data;' +
+              'if(d.op==="set"){setTimeout(function(){self.postMessage(d.id);},d.ms);}};';
+    W = new Worker(URL.createObjectURL(new Blob([src], { type:'text/javascript' })));
+    W.onmessage = function(e){
+      var fn = waiting[e.data];
+      if (fn){ delete waiting[e.data]; try { fn(); } catch(err){} }
+    };
+  } catch (e){ W = null; }
+
+  function tick(ms, fn){
+    if (!W) return { t: setTimeout(fn, ms||0) };
+    var id = ++seq;
+    waiting[id] = fn;
+    W.postMessage({ op:'set', id:id, ms:ms||0 });
+    return { w: id };
+  }
+  tick.clear = function(h){
+    if (!h) return;
+    if (h.t != null) clearTimeout(h.t);
+    if (h.w != null) delete waiting[h.w];
+  };
+  /* two frames if the tab is showing, the clock if it is not */
+  tick.frames = function(fn, ms){
+    var done = false, h = null;
+    function go(){
+      if (done) return;
+      done = true;
+      tick.clear(h);
+      fn();
+    }
+    h = tick(ms || 120, go);
+    try {
+      requestAnimationFrame(function(){ requestAnimationFrame(go); });
+    } catch (e){ /* no rAF at all: the tick above still lands */ }
+  };
+  return tick;
+})();
 </script>
 
 <script>
@@ -3231,6 +3597,121 @@ window.AmrCube = (function(){
 
    Each page now calls AmrCube.configure({...}).init() itself, first thing in
    its own boot, once it knows which lines and which tab it needs. */
+</script>
+
+<script>
+/* ---- §E AmrDeckSource — the Deck Builder's content-source registry ---------
+   Was Deck_Sources.html. It has to sit ABOVE every module that registers into
+   it: AmrPvSlide, AmrFuelExec, AmrSegSlide and AmrRmxSlide all end with an
+   AmrDeckSource.register() guarded by `if(!window.AmrDeckSource) return;`, and
+   three of them have been in §E since chunks 3, 5 and 7 with that guard
+   falling straight through. Putting the registry here is what turns them on,
+   and it is inert on every other page — register() only fills a map.        */
+var AmrDeckSource = (function(){
+
+  var REG = {};
+
+  /* Register one source. Re-registering the same id replaces it and says so:
+     two modules claiming 'pv' is a real mistake (both pages included at once),
+     and silently keeping one of them would be near-impossible to spot. */
+  function register(id, impl){
+    id = String(id||'');
+    if(!id){ console.warn('AmrDeckSource.register called without an id'); return; }
+    if(!impl || typeof impl.content !== 'function'){
+      console.warn('AmrDeckSource: source "'+id+'" has no content() — ignored');
+      return;
+    }
+    if(REG[id]) console.warn('AmrDeckSource: source "'+id+'" registered twice; using the newer one');
+    REG[id] = impl;
+  }
+
+  function has(id){ return !!REG[String(id||'')]; }
+  function get(id){ return REG[String(id||'')] || null; }
+  function list(){ return Object.keys(REG).sort(); }
+
+  /* Load what the Deck Builder needs to DESCRIBE a row, before anything is
+     rendered — today that is the KPI workbook behind the Region dropdown.
+     prepare() also loads it, but prepare() only runs during a render, so
+     without this the picker cannot know its options until the first render has
+     happened: every row read "no workbook", including the ones whose workbook
+     was uploaded, and the region could only be corrected after paying for a
+     render that used the wrong one. Which is precisely backwards.
+
+     Optional, must not throw, and a failure is not allowed to stop the Plan
+     stage — the list is still usable without a dropdown. Resolves when every
+     source that has one is done, so the caller can redraw once. */
+  function warmAll(){
+    var jobs = [];
+    Object.keys(REG).forEach(function(id){
+      var src = REG[id];
+      if(typeof src.warm !== 'function') return;
+      try { jobs.push(Promise.resolve(src.warm())); }
+      catch(e){ console.warn('AmrDeckSource: warm() failed for "'+id+'"', e); }
+    });
+    return Promise.all(jobs).catch(function(e){
+      console.warn('AmrDeckSource: a warm() rejected', e);
+      return null;
+    });
+  }
+
+  /* ↻ Update from source. Every adapter holds what it fetched for the rest of
+     the page's life — that is the whole point of prepare() being cheap the
+     second time — so invalidating the SERVER's cache is only half of it. Until
+     these are dropped the next Render happily re-photographs the copy already
+     in this browser and the new figures never appear.
+
+     reset() is optional and must not throw: one adapter with a bad one cannot
+     be allowed to leave the others holding stale data. Returns how many ran,
+     which is what the Deck Builder reports. */
+  function resetAll(){
+    var n = 0;
+    Object.keys(REG).forEach(function(id){
+      var src = REG[id];
+      if(typeof src.reset !== 'function') return;
+      try { src.reset(); n++; }
+      catch(e){ console.warn('AmrDeckSource: reset() failed for "'+id+'"', e); }
+    });
+    return n;
+  }
+
+  /* Which sources a recipe needs but nobody registered. The Deck Builder
+     shows this up front, so a missing adapter is a sentence on the page
+     rather than 43 rows that each fail on their own. */
+  function missingFor(rows){
+    var need = {}, out = [];
+    (rows||[]).forEach(function(r){ if(r && r.source) need[r.source]=1; });
+    Object.keys(need).sort().forEach(function(s){ if(!REG[s]) out.push(s); });
+    return out;
+  }
+
+  /* prepare + content for one recipe row, always as a Promise so the caller
+     has a single shape to await. A source that throws synchronously inside
+     content() is turned into a rejected promise rather than taking the whole
+     render loop down. */
+  function build(spec){
+    spec = spec || {};
+    var src = get(spec.source);
+    if(!src){
+      return Promise.reject(new Error('No content source registered for "'+
+        spec.source+'". The page that produces it is not included in the Deck '+
+        'Builder yet.'));
+    }
+    return Promise.resolve()
+      .then(function(){
+        return (typeof src.prepare === 'function') ? src.prepare(spec) : null;
+      })
+      .then(function(){
+        var el = src.content(spec);
+        if(!el) throw new Error('"'+spec.source+'" returned no content for '+
+          (spec.id||'this slide')+'.');
+        return el;
+      });
+  }
+
+  return { register:register, has:has, get:get, list:list,
+           missingFor:missingFor, build:build, warmAll:warmAll,
+           resetAll:resetAll };
+})();
 </script>
 
 <script>
@@ -6302,6 +6783,579 @@ var AmrSegSlide = (function(){
       CACHE = {};
       KPIVALS.loaded = false; KPIVALS.vals = null;
     }
+  });
+})();
+</script>
+
+<script>
+/* ---- §E AmrRmxSlide — the Ready-Mix slide content --------------------------
+   Was Deck_RMX.html. It is the DECK BUILDER's, not Ready-Mix's: chunk 6 found
+   Page_Rmx.html has zero references to it and removed the include, 603 lines
+   off every Ready-Mix page load. It arrives with the page that does call it. */
+var AmrRmxSlide = (function(){
+
+  var CTX = {};
+
+  function ctx_(c){
+    c = c || {};
+    return {
+      data:       c.data || null,
+      month:      c.month || 0,
+      latestMonth: c.latestMonth || 0,
+      /* which Extras/VAP tables to show. The page starts with NONE and the
+         user picks; the deck wants both, every month. */
+      extraCards: c.extraCards || [],
+      /* Others / #N/A handling. 'separate' is the page's default and matches
+         Qlik; the merge toggle only moves labels, never PPI numbers. */
+      naMode:     c.naMode || 'separate',
+      breakdowns: c.breakdowns || [],
+      /* {} = "no explicit choice", so every table falls back to its default */
+      exportSel:  c.exportSel || {},
+      /* mapping-miss counts drive the "Fix mapping" strip. The deck passes
+         none, so no strip is painted onto a slide - which is what you want:
+         it is a call to action for the page, not something to present. */
+      mapCounts:  c.mapCounts || null
+    };
+  }
+  function withCtx(ctx, fn){
+    var prev = CTX; CTX = ctx_(ctx);
+    try { return fn(); } finally { CTX = prev; }
+  }
+
+  function $(id){ return document.getElementById(id); }
+
+  /* The rendered cards carry a "Fix mapping" button that navigates the report
+     page. Nothing navigates from an off-screen copy, but the lifted markup
+     references it, so it has to exist. The page keeps the real one. */
+  function jumpToMapping(){ if(window.rmxJumpToMapping) window.rmxJumpToMapping(); }
+
+  /* renderReport() and renderExtras() both end by refreshing the report page's
+     live slide preview. That is the page's business, not the module's, and on
+     the Deck Builder there is nothing to refresh - so this is a no-op unless
+     the page has installed the real one. Without it, every RMX slide died on
+     "renderRmxPreview is not defined". */
+  function renderRmxPreview(){
+    if(typeof window.rmxRenderPreview === 'function') window.rmxRenderPreview();
+  }
+
+/* ---------------------------------------------------------------------------
+ * Lifted verbatim from Page_Rmx.html. Keep it that way: fix bugs here and let
+ * the page delegate.
+ * ------------------------------------------------------------------------- */
+  var ALL_MKT = '__ALL__', ALL_MKT_LABEL = 'Central Canada';
+
+  var MONTH_NAMES = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
+
+  var EXPORT_DEFAULT_OFF = { 'extras:detail':1 };
+
+  var _mkSrc=null, _mkOut=null;
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+  function fInt(n){ return Math.round(n||0).toLocaleString('en-CA'); }
+
+  function f$(n){ return '$'+(n||0).toLocaleString('en-CA',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+  function f$0(n){ return '$'+Math.round(n||0).toLocaleString('en-CA'); }
+
+  function f$S(n){ return (n>=0?'+':'-')+'$'+Math.abs(n||0).toFixed(2); }
+
+  function fPct(n){ return ((n||0)*100).toFixed(1)+'%'; }
+
+  function fPctS(n){ var v=(n||0)*100; return (v>=0?'+':'')+v.toFixed(1)+'%'; }
+
+  function mktLabel(m){ return (m===ALL_MKT) ? ALL_MKT_LABEL : (m||''); }
+
+  function monthTag_(){
+    var m = CTX.month || CTX.latestMonth || 0;
+    return m ? ' \u00b7 ' + MONTH_NAMES[m-1].slice(0,3) : '';
+  }
+
+  function labelForDim(k){
+    var b=CTX.breakdowns.filter(function(x){return x.key===k;})[0];
+    return b?b.label:k;
+  }
+
+  function naLabel(v){ return String(v)==='#N/A' ? 'Others' : v; }
+
+  function naModeFor(){ return CTX.naMode==='separate' ? 'separate' : 'merged'; }
+
+  function cFld(d, dimKey){
+    return dimKey==='SUBMARKET'?d.submarket : dimKey==='SEGMENT'?d.segment : dimKey==='STRENGTH'?d.strength : d.cls;
+  }
+
+  function cGroupBy(keys, dimKey, ppiMap){
+    var map={}, order=[];
+    keys.forEach(function(r){
+      var label=String(cFld(r.dims,dimKey)||'(blank)').trim()||'(blank)';
+      if(!map[label]){ 
+        map[label]={label:label,pyVol:0,cyVol:0,baseCY:0,basePY:0}; 
+        order.push(label); 
+      }
+      var g=map[label];
+      g.pyVol+=r.pyVol; g.cyVol+=r.cyVol; g.baseCY+=r.baseCY; g.basePY+=r.basePY;
+    });
+    return order.map(function(l){ return cFinalize(map[l], (ppiMap||{})[l]); });
+  }
+
+  function cMergedKeys(keys){
+    if (_mkSrc===keys && _mkOut) return _mkOut;
+    var map={}, order=[];
+    keys.forEach(function(r){
+      var d=r.dims;
+      var dd={submarket:d.submarket, segment:d.segment,
+              app:naLabel(d.app), cls:naLabel(d.cls), strength:naLabel(d.strength)};
+      var kk=[dd.submarket,dd.segment,dd.app,dd.cls,dd.strength].join('|');
+      var g=map[kk];
+      if(!g){ g=map[kk]={dims:dd, pyVol:0,cyVol:0,basePY:0,baseCY:0}; order.push(kk); }
+      g.pyVol+=r.pyVol; g.cyVol+=r.cyVol; g.basePY+=r.basePY; g.baseCY+=r.baseCY;
+    });
+    _mkOut = order.map(function(kk){ return map[kk]; });
+    _mkSrc=keys;
+    return _mkOut;
+  }
+
+  function cMixEffect(groups, total){
+    if(!total.pyVol||!total.aspBasePY) return 0;
+    var sp=0; groups.forEach(function(g){ sp += (g.pyVol/total.pyVol)*g.aspBaseCY; });
+    var priceOnly=(sp-total.aspBasePY)/total.aspBasePY;
+    return total.aspIncBase-priceOnly;
+  }
+
+  function cPack(g){
+    return { 
+      label:g.label, cyVol:g.cyVol, pyVol:g.pyVol, volPct:g.pyVol?(g.cyVol-g.pyVol)/g.pyVol:0,
+      aspBaseCY:g.aspBaseCY, aspBasePY:g.aspBasePY, aspIncBase:g.aspIncBase, ppiBase:g.ppiBase 
+    };
+  }
+
+  function cPpi(wf){ return (wf && wf.w) ? wf.f/wf.w : 0; }
+
+  function cPpiDim(res, dimKey){
+    var src=(res && res.ppi && res.ppi[dimKey]) || {};
+    if (naModeFor()!=='merged') return src;
+    var out={};
+    for (var lbl in src){
+      var k=naLabel(lbl), o=out[k] || (out[k]={w:0,f:0});
+      o.w+=src[lbl].w||0; o.f+=src[lbl].f||0;
+    }
+    return out;
+  }
+
+  function cTotal(groups, totalWf){
+    var t={label:'Total',pyVol:0,cyVol:0,baseCY:0,basePY:0};
+    groups.forEach(function(g){ 
+      t.pyVol+=g.pyVol;t.cyVol+=g.cyVol;t.baseCY+=g.baseCY;t.basePY+=g.basePY;
+    });
+    return cFinalize(t, totalWf);   // plant x mix — identical on every breakdown
+  }
+
+  function cFinalize(g, wf){
+    g.aspBaseCY=g.cyVol?g.baseCY/g.cyVol:0;
+    g.aspBasePY=g.pyVol?g.basePY/g.pyVol:0;
+    g.aspIncBase=g.aspBasePY?(g.aspBaseCY-g.aspBasePY)/g.aspBasePY:0;
+    g.ppiBase=cPpi(wf);
+    return g;
+  }
+
+  function cPlantTable(res){
+    var plants = (res && res.plants) || [];
+    var ppiMap = (res && res.ppi && res.ppi.PLANT) || {};
+    var groups = plants.map(function(p){
+      return cFinalize({ label:p.label, pyVol:p.pyVol, cyVol:p.cyVol,
+                         baseCY:p.baseCY, basePY:p.basePY }, ppiMap[p.label]);
+    });
+    var total = cTotal(groups, (res && res.ppi && res.ppi.total) || null);   // all plants
+    groups.sort(function(a,b){ return b.cyVol-a.cyVol; });
+    return { key:'PLANT', label:labelForDim('PLANT'), noMix:true,
+             rows: groups.slice(0,10).map(cPack), total: cPack(total), mixEffect:0 };
+  }
+
+  function buildTables(res, dims){
+    var tables = dims.map(function(dim){
+      /* TOP 10 PLANTS. Plant is not one of the key-grain fields, so this table is
+         built from the pre-rolled `plants` list the server sends alongside the
+         key rows (see plantRows_ in RMX_Backend.gs for why it is separate).
+         The Others / #N/A toggle is a PRODUCT MASTER question and does not touch
+         plants, so the key-set choice below does not apply here. */
+      if (dim==='PLANT') return cPlantTable(res);
+      // global toggle: merged uses re-bucketed keys, separate uses the
+      // server's sheet-parity keys untouched
+      var keySet = (naModeFor()==='merged') ? cMergedKeys(res.keys) : res.keys;
+      var groups=cGroupBy(keySet,dim,cPpiDim(res,dim));
+      groups.sort(function(a,b){ return b.cyVol-a.cyVol; });
+      var total=cTotal(groups, (res.ppi&&res.ppi.total)||null);
+      return { key:dim, label:labelForDim(dim),
+               rows:groups.map(cPack), total:cPack(total), mixEffect:cMixEffect(groups,total) };
+    });
+    return { ok:true, market:res.market, period:res.period, dimensions:dims, tables:tables };
+  }
+
+  function cbHtml(key){
+    var saved = CTX.exportSel[key];
+    var on = (saved === undefined) ? !EXPORT_DEFAULT_OFF[key] : saved;   // default = checked, except above
+    return '<input type="checkbox" class="export-cb" data-key="'+key+'" '+(on?'checked ':'')
+      +'title="Include in Export" style="margin-right:10px;width:16px;height:16px;accent-color:#2A6EFF;cursor:pointer;">';
+  }
+
+  function colsHtml(n, labelAt){
+    var w = [], sum = 0, i;
+    for(i = 0; i < n; i++){ var x = (i === labelAt) ? 2 : 1; w.push(x); sum += x; }
+    return '<colgroup>' + w.map(function(x){
+      return '<col style="width:' + (x * 100 / sum).toFixed(3) + '%">'; }).join('') + '</colgroup>';
+  }
+
+  function byTypeRow(r){
+    return '<td class="tlbl">'+esc(r.label)+'</td>'
+      +'<td class="tnum">'+f$0(r.cyRev)+'</td><td class="tnum">'+f$0(r.pyRev)+'</td>'
+      +'<td class="tnum '+(r.revPct>=0?'pos':'neg')+'">'+fPctS(r.revPct)+'</td>'
+      +'<td class="tnum">'+f$(r.aspCY)+'</td><td class="tnum">'+f$(r.aspPY)+'</td>'
+      +'<td class="tnum '+(r.aspChg>=0?'pos':'neg')+'">'+f$S(r.aspChg)+'</td>';
+  }
+
+  function byTypeRowNoLabel(r){
+    /* whole dollars, exactly like the rows above it - the subtotal used to print
+       two decimals here while every data row printed none */
+    return '<td class="tnum">'+f$0(r.cyRev)+'</td><td class="tnum">'+f$0(r.pyRev)+'</td>'
+      +'<td class="tnum">'+fPctS(r.revPct)+'</td>'
+      +'<td class="tnum">'+f$(r.aspCY)+'</td><td class="tnum">'+f$(r.aspPY)+'</td>'
+      +'<td class="tnum">'+f$S(r.aspChg)+'</td>';
+  }
+
+  function byTypeHtml(d){
+    var head='<div class="card" data-imp="byType"><div class="card-head">'+cbHtml('extras:byType')+'<div><span class="eb">Summary</span>'
+      +'<h3>By extra type — '+esc(mktLabel(d.market))+' ('+esc(d.period)+')</h3></div>'
+      +'<div class="right">'+(window.AmrHint?AmrHint.btn('rmx_extras'):'')+'</div></div>'
+      +'<div class="tbl-scroll"><table class="rtbl">'+colsHtml(8, 1)+'<thead><tr>'
+      +'<th class="tlbl">Stream</th><th class="tlbl">Type</th>'
+      +'<th class="gA">2026 Rev</th><th class="gA">2025 Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">2026 ASP/m³</th><th class="gB">2025 ASP/m³</th><th class="gB">ASP change</th></tr></thead><tbody>';
+    var ex=d.byTypeExtras||[], vp=d.byTypeVap||[], body='';
+    if(ex.length){
+      body += '<tr><td class="section" rowspan="'+ex.length+'">EXTRAS</td>'+byTypeRow(ex[0])+'</tr>';
+      for(var i=1;i<ex.length;i++) body += '<tr>'+byTypeRow(ex[i])+'</tr>';
+      body += '<tr class="subtotal"><td class="tlbl" colspan="2">EXTRAS Total</td>'+byTypeRowNoLabel(d.byTypeExtrasTotal)+'</tr>';
+    }
+    if(vp.length){
+      body += '<tr><td class="section" rowspan="'+vp.length+'">VAP</td>'+byTypeRow(vp[0])+'</tr>';
+      for(var j=1;j<vp.length;j++) body += '<tr>'+byTypeRow(vp[j])+'</tr>';
+      body += '<tr class="subtotal"><td class="tlbl" colspan="2">VAP Total</td>'+byTypeRowNoLabel(d.byTypeVapTotal)+'</tr>';
+    }
+    var foot='<tfoot><tr><td class="tlbl" colspan="2">Total</td>'+byTypeRowNoLabel(d.byTypeTotal)+'</tr></tfoot>';
+    return head+body+'</tbody>'+foot+'</table></div></div>';
+  }
+
+  function detailRow(r){
+    return '<td class="tlbl">'+esc(r.label)+'</td>'
+      +'<td class="tnum">'+fInt(r.cyM3)+'</td><td class="tnum">'+fPct(r.rateCY)+'</td>'
+      +'<td class="tnum">'+fInt(r.pyM3)+'</td><td class="tnum">'+fPct(r.ratePY)+'</td>'
+      +'<td class="tnum '+(r.rateChg>=0?'pos':'neg')+'">'+fPctS(r.rateChg)+'</td>'
+      +'<td class="tnum">'+f$0(r.cyRev)+'</td><td class="tnum">'+f$0(r.pyRev)+'</td>'
+      +'<td class="tnum '+(r.revPct>=0?'pos':'neg')+'">'+fPctS(r.revPct)+'</td>'
+      +'<td class="tnum">'+f$(r.aspCY)+'</td><td class="tnum">'+f$(r.aspPY)+'</td>'
+      +'<td class="tnum '+(r.aspChg>=0?'pos':'neg')+'">'+f$S(r.aspChg)+'</td>';
+  }
+
+  function mergedDetailHtml(d){
+    var head='<div class="card" data-imp="detail"><div class="card-head">'+cbHtml('extras:detail')+'<div><span class="eb">EXTRAS LOOKUP</span>'
+      +'<h3>Extras &amp; VAP detail — '+esc(mktLabel(d.market))+' ('+esc(d.period)+')</h3></div>'
+      +'<div class="right">'+(window.AmrHint?AmrHint.btn('rmx_extras'):'')+'</div></div>'
+      +'<div class="tbl-scroll"><table class="rtbl">'+colsHtml(13, 1)+'<thead><tr>'
+      +'<th class="tlbl">Stream</th><th class="tlbl">Type</th>'
+      +'<th class="gV">2026 vol applied</th><th class="gV">2026 appl. rate</th>'
+      +'<th class="gV">2025 vol applied</th><th class="gV">2025 appl. rate</th><th class="gV">Δ appl. rate</th>'
+      +'<th class="gA">2026 Rev</th><th class="gA">2025 Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">2026 Applied ASP</th><th class="gB">2025 Applied ASP</th><th class="gB">ASP change</th></tr></thead><tbody>';
+    var body='';
+    if(d.extras.length){
+      body += '<tr><td class="section" rowspan="'+(d.extras.length)+'">EXTRAS</td>'+detailRow(d.extras[0])+'</tr>';
+      for(var i=1;i<d.extras.length;i++) body += '<tr>'+detailRow(d.extras[i])+'</tr>';
+    }
+    if(d.vap.length){
+      body += '<tr><td class="section" rowspan="'+(d.vap.length)+'">VAP</td>'+detailRow(d.vap[0])+'</tr>';
+      for(var j=1;j<d.vap.length;j++) body += '<tr>'+detailRow(d.vap[j])+'</tr>';
+    }
+    return head+body+'</tbody></table></div></div>';
+  }
+
+  function marketTableHtml(tbl, market, period){
+    var totCy=tbl.total.cyVol||1;
+    var totPy=tbl.total.pyVol||1;
+    var head='<div class="tbl-scroll"><table class="rtbl">'+colsHtml(10, 0)+'<thead><tr>'
+      +'<th class="tlbl">'+esc(tbl.label)+'</th>'
+      +'<th>CY Vol</th><th>%CY</th><th>PY Vol</th><th>%PY</th><th>Vol%</th>'
+      +'<th class="gB">CY ASP <small>BASE</small></th><th class="gB">PY ASP <small>BASE</small></th>'
+      +'<th class="gB">ASP% inc <small>BASE</small></th><th class="gB">PPI <small>BASE</small></th>'
+      + '</tr></thead><tbody>';
+    var body=tbl.rows.map(function(r){
+      return '<tr><td class="tlbl">'+esc(r.label)+'</td>'
+        +'<td class="tnum">'+fInt(r.cyVol)+'</td><td class="tnum">'+fPct(r.cyVol/totCy)+'</td>'
+        +'<td class="tnum">'+fInt(r.pyVol)+'</td><td class="tnum">'+fPct(r.pyVol/totPy)+'</td>'
+        +'<td class="tnum '+(r.volPct>=0?'pos':'neg')+'">'+fPctS(r.volPct)+'</td>'
+        +'<td class="tnum">'+f$(r.aspBaseCY)+'</td><td class="tnum">'+f$(r.aspBasePY)+'</td>'
+        +'<td class="tnum '+(r.aspIncBase>=0?'pos':'neg')+'">'+fPctS(r.aspIncBase)+'</td>'
+        +'<td class="tnum '+(r.ppiBase>=0?'pos':'neg')+'">'+fPctS(r.ppiBase)+'</td></tr>';
+    }).join('');
+    var t=tbl.total;
+    var foot='</tbody><tfoot><tr><td class="tlbl">Total</td>'
+      +'<td class="tnum">'+fInt(t.cyVol)+'</td><td class="tnum">100%</td>'
+      +'<td class="tnum">'+fInt(t.pyVol)+'</td><td class="tnum">100%</td><td class="tnum">'+fPctS(t.volPct)+'</td>'
+      +'<td class="tnum">'+f$(t.aspBaseCY)+'</td><td class="tnum">'+f$(t.aspBasePY)+'</td>'
+      +'<td class="tnum">'+fPctS(t.aspIncBase)+'</td><td class="tnum">'+fPctS(t.ppiBase)+'</td></tr></tfoot>';
+    return head+body+foot+'</table></div>';
+  }
+
+  function impactFor(scope){
+    var c = CTX.mapCounts; if(!c) return '';
+    if(scope==='main'  && c.product) return fInt(c.product)+' product'+(c.product===1?'':'s')+' aren\u2019t in PRODUCT MASTER, so their volume sits in the <b>N/A</b> row.';
+    if(scope==='byType'&& c.extras)  return fInt(c.extras)+' material'+(c.extras===1?'':'s')+' aren\u2019t in EXTRAS LOOKUP, so their revenue sits in <b>Unclassified</b>.';
+    if(scope==='detail'){
+      var bits=[];
+      if(c.extras) bits.push(fInt(c.extras)+' not in EXTRAS LOOKUP (\u2192 <b>Unclassified</b>)');
+      if(bits.length) return bits.join(' and ')+'.';
+    }
+    return '';
+  }
+
+  function paintImpact(){
+    [].forEach.call(document.querySelectorAll('#tablesHost .card'), function(c){
+      setStrip(c, impactFor('main'));
+    });
+    /* keyed off the card, not its position - either Extras table can be showing
+       on its own now that they hang off their own chips */
+    [].forEach.call(document.querySelectorAll('#extrasHost .card'), function(c){
+      setStrip(c, impactFor(c.getAttribute('data-imp') || ''));
+    });
+  }
+
+  function setStrip(card, html){
+    if(!card) return;
+    var old = card.querySelector('.impact');
+    if(!html){ if(old && old.parentNode===card) card.removeChild(old); return; }
+    if(old){ old.querySelector('.impact-t').innerHTML = html; return; }
+    var el = document.createElement('div');
+    el.className='impact';
+    el.innerHTML = '<span class="impact-i">!</span><span class="impact-t">'+html+'</span>'
+      + '<button class="impact-go">Fix mapping</button>';
+    var head = card.querySelector('.card-head');
+    if(head && head.nextSibling) card.insertBefore(el, head.nextSibling); else card.appendChild(el);
+    el.querySelector('.impact-go').onclick = jumpToMapping;
+  }
+
+  function renderReport(d){
+    var html = d.tables.map(function(tbl){
+      var up=tbl.mixEffect>=0;
+      /* Top 10 Plants is a slice, not a complete set of rows — mix effect would
+         be meaningless, and the heading reads "Top 10 Plants", not "By ...". */
+      var badge = tbl.noMix ? ''
+        : '<span class="badge '+(up?'up':'down')+'"><span class="k">MIX EFFECT</span>'+fPctS(tbl.mixEffect)+'</span>';
+      return '<div class="card mkt-card">'
+        +'<div class="card-head">'+cbHtml('main:'+tbl.key)
+        +'<div><span class="eb">'+esc(mktLabel(d.market))+' · '+esc(d.period)+'</span>'
+        +'<h3>'+(tbl.noMix?'':'By ')+esc(tbl.label)+'</h3></div>'
+        +'<div class="right">'+(window.AmrHint?AmrHint.btn('rmx_main'):'')
+        + badge + '</div></div>'
+        + marketTableHtml(tbl, d.market, d.period)
+        + (tbl.noMix ? '<p class="hint" style="padding:0 16px 12px;margin:0">Ordered by CY volume. '
+            + 'Shares are of the whole selection, so the ten rows add to less than 100% &mdash; the rest is every other plant.</p>' : '')
+        + '</div>';
+    }).join('');
+    $('tablesHost').innerHTML = html || '<div class="card"><div class="empty">No data.</div></div>';
+
+    if(window.paintImpact) paintImpact();
+    renderRmxPreview();
+  }
+
+  function renderExtras(d){
+    var html='';
+    if(d){
+      if(CTX.extraCards.indexOf('BYTYPE')>=0) html += byTypeHtml(d);
+      if(CTX.extraCards.indexOf('DETAIL')>=0) html += mergedDetailHtml(d);
+    }
+    $('extrasHost').innerHTML = html;
+
+    if(window.paintImpact) paintImpact();
+    renderRmxPreview();
+  }
+
+  function buildRmxContent(){
+    var cards = [].slice.call(document.querySelectorAll('#tablesHost .card, #extrasHost .card')).filter(function(c){
+      var cb = c.querySelector('.export-cb'); return cb && cb.checked;
+    });
+    if(cards.length === 0) return null;
+
+    var inner = document.createElement('div'); inner.className='rmx-exp-inner';
+    inner.style.cssText = 'transform-origin:top left;width:100%;display:flex;flex-direction:column;gap:16px';
+    cards.forEach(function(c){
+      var h3=c.querySelector('h3'), badge=c.querySelector('.badge'), t=c.querySelector('table');
+      var block=document.createElement('div'); block.className='rmx-export-block';
+      block.innerHTML =
+        '<div class="rmx-eb-head"><span class="rmx-eb-title">'+esc(h3?h3.textContent:'')+'</span>'
+        + (badge ? '<span class="rmx-eb-badge '+(badge.classList.contains('down')?'neg':'pos')+'">'+esc(badge.textContent)+'</span>' : '')
+        + '</div>'
+        + (t ? t.outerHTML : '');
+      inner.appendChild(block);
+    });
+
+    var row = document.createElement('div'); row.className='rmx-exp-row';
+    row.style.cssText = 'width:100%;overflow:hidden';
+    row.appendChild(inner);
+    return row;
+  }
+
+  function rmxFitTables(box){
+    // 1) per-table width fit — GROW the font to fill the box (like the Slide Builder),
+    //    only shrinking if even the smallest step still overflows.
+    [].forEach.call(box.querySelectorAll('.rmx-export-block table'), function(t){
+      var avail = t.parentElement ? t.parentElement.clientWidth : 0; if(!avail) return;
+      var sz=13, MAX=30, guard=0; t.style.transform=''; t.style.fontSize=sz+'px';
+      // grow while it still fits
+      while(sz<MAX && guard<80){ t.style.fontSize=(sz+0.5)+'px'; if(t.scrollWidth>avail){ t.style.fontSize=sz+'px'; break; } sz+=0.5; guard++; }
+      // shrink if we started already too wide
+      guard=0;
+      while(t.scrollWidth>avail && sz>6 && guard<60){ sz-=0.5; t.style.fontSize=sz+'px'; guard++; }
+      if(t.scrollWidth>avail+1){ var s=avail/t.scrollWidth; t.style.transformOrigin='top left'; t.style.transform='scale('+s+')'; }
+    });
+
+    // 2) whole-stack height fit
+    var center = box.querySelector('.slide-center'); if(!center) return;
+    var bodyR  = center.parentElement; var availH = bodyR ? bodyR.clientHeight : 0; if(!availH) return;
+    var row = box.querySelector('.rmx-exp-row'), inner = box.querySelector('.rmx-exp-inner');
+    if(!row || !inner) return;
+
+    inner.style.transform=''; inner.style.width='100%';
+    var natH = inner.scrollHeight;
+    if(natH > availH){
+      var s = availH / natH;
+      var colW = row.clientWidth;
+      inner.style.width = Math.round(colW / s) + 'px';   // pre-widen so the scaled stack still fills the width
+      inner.style.transform = 'scale('+s+')';
+    }
+    row.style.height = availH + 'px';   // pin → AmrSlide's generic centring/scaling becomes a no-op
+  }
+
+/* ---------------------------------------------------------------------------
+ * end of the lifted block
+ * ------------------------------------------------------------------------- */
+
+  /* Build the stage the renderers expect, run them, scrape, tear it down.
+     Off-screen rather than display:none so the tables actually lay out and
+     scrollWidth means something to the fitter. */
+  function renderOffscreen(d, extras){
+    var host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:-99999px;top:0;width:1400px';
+    host.innerHTML = '<div id="tablesHost"></div><div id="extrasHost"></div>';
+    document.body.appendChild(host);
+    try {
+      renderReport(d);
+      renderExtras(extras || null);
+      /* the deck takes every table; there is no one here to tick the boxes */
+      [].forEach.call(host.querySelectorAll('.export-cb'), function(cb){
+        cb.checked = true;
+      });
+      var el = buildRmxContent();
+      /* buildRmxContent copies outerHTML into a fresh tree, so the result does
+         not point back at anything we are about to remove. */
+      return el;
+    } finally {
+      if(host.parentNode) host.parentNode.removeChild(host);
+    }
+  }
+
+  /* There is no fitBare any more - the deck photographs the same framed
+     slide the pages do, so fitSlide is the only fitter. See the note at the
+     bottom of Deck_Fuel.html for why the bare variant made slides worse. */
+
+  return {
+    buildTables:   function(res, dims, ctx){
+      return withCtx(ctx, function(){ return buildTables(res, dims); });
+    },
+    DEFAULT_DIMS: ['SUBMARKET','STRENGTH','PLANT'],
+    renderReport:  function(ctx){ return withCtx(ctx, function(){ return renderReport(); }); },
+    renderExtras:  function(ctx){ return withCtx(ctx, function(){ return renderExtras(); }); },
+    content:       function(ctx){ return withCtx(ctx, function(){ return buildRmxContent(); }); },
+    contentOffscreen: function(d, extras, ctx){
+      return withCtx(ctx, function(){ return renderOffscreen(d, extras); });
+    },
+    fitSlide:      function(box, ctx){ return withCtx(ctx, function(){ return rmxFitTables(box); }); }
+  };
+})();
+
+
+/* ===========================================================================
+ * Deck Builder adapter — 'rmx'. Registered only on the Deck Builder page.
+ * ========================================================================= */
+(function(){
+  if(!window.AmrDeckSource) return;
+
+  var KEYS = {};
+
+  function srv(fn, args){
+    return new Promise(function(resolve, reject){
+      if(typeof google==='undefined' || !google.script || !google.script.run){
+        return reject(new Error('Ready-Mix data needs the live web app.'));
+      }
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn]
+        .apply(null, args || []);
+    });
+  }
+  /* the month keys the cache too: one deck is one month, but a session can
+     build July and then August without either serving the other */
+  function monthOf(spec){
+    var m = Number(spec && spec.month) || 0;
+    return (m >= 1 && m <= 12) ? m : 0;          // 0 = let the backend decide
+  }
+  function key(spec){ return (spec.market||'') + '|' + (spec.period||'MTD') + '|m' + monthOf(spec); }
+
+  /* This page does NOT get finished tables from the server. RMX_getKeys sends
+     key rows and the browser builds every table from them - which is why the
+     compute layer had to come across with the renderers. month 0 = the
+     server's report month (last closed). */
+  /* RMX_getExtras is NOT fetched. These slides carry the three dimension tables
+     and nothing else, and the extras tables they used to feed now live on the
+     Product Segment slide. Re-add the call here if extraCards below ever comes
+     back - renderExtras takes null and renders nothing, so the slide is right
+     either way, but a table with no data behind it is not. */
+  function load(spec){
+    var k = key(spec), opts = { market:spec.market, period:spec.period||'MTD', month:monthOf(spec), upload:null };
+    if(KEYS[k]) return Promise.resolve();
+    return srv('RMX_getKeys', [opts]).then(function(d){ KEYS[k]=d; });
+  }
+
+  AmrDeckSource.register('rmx', {
+    prepare: function(spec){ return load(spec); },
+    content: function(spec){
+      var k = key(spec), res = KEYS[k];
+      if(!res) throw new Error('Ready-Mix data is not loaded yet.');
+      /* THREE TABLES, exactly as the page's own export produces: By Submarket,
+         By Strength Class, Top 10 Plants. extraCards used to add "By extra
+         type" and "Extras & VAP detail" on top, which pushed a five-table stack
+         into one image slot - and those two belong on the Product Segment
+         slide, where the Segment page puts them.
+
+         breakdowns is what labelForDim() reads. Passing [] left every heading
+         falling back to the RAW DIMENSION KEY, which is why these slides said
+         "By SUBMARKET" and "PLANT" where the page says "By Submarket" and
+         "Top 10 Plants". RMX_getKeys already returns the list. */
+      var ctx = { month:monthOf(spec), latestMonth:res.latestMonth || 0,
+                  extraCards:[], exportSel:{}, mapCounts:null,
+                  naMode:'separate', breakdowns:res.breakdowns || [] };
+      var d = AmrRmxSlide.buildTables(res, AmrRmxSlide.DEFAULT_DIMS, ctx);
+      var el = AmrRmxSlide.contentOffscreen(d, null, ctx);
+      if(!el) throw new Error('Could not build the Ready-Mix block - no tables came back.');
+      return el;
+    },
+    fit: function(box, spec){
+      var res = KEYS[key(spec)];
+      return AmrRmxSlide.fitSlide(box, {
+        month:monthOf(spec), latestMonth:(res && res.latestMonth) || 0,
+        extraCards:[], exportSel:{}, mapCounts:null,
+        naMode:'separate', breakdowns:(res && res.breakdowns) || [] });
+    },
+    /* ↻ Update from source: forget the key rows, so the next Render fetches
+       them again rather than rebuilding the tables from the old ones. */
+    reset: function(){ KEYS = {}; }
   });
 })();
 </script>
@@ -13373,12 +14427,6 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
    TRANSFORMED, not retyped: the page's script block is here whole and every
    edit is listed below, so reviewing this means reviewing the list.
 
-   Chunk 8 landed the shell; CHUNK 9 lands the panels — every painter, both
-   cross-filter engines, the fifteen chart registries in CH, the SAP/USGAAP
-   cards, customers, fuel surcharge, product category, and the data-quality
-   sheet with its lookup editor. The chunk-8 seam block is gone: the ten stubs
-   it held are the real functions now, in the page's own order.
-
    The edits:
 
      · the DOMContentLoaded handler became a direct boot() call at the END of
@@ -18706,6 +19754,999 @@ AMR.page('overview', {
        wait for — and AMR.start() only calls this after the template is mounted.
        It still runs LAST, which is the position the event used to give it. */
     boot();
+  }
+});
+</script>
+
+<!-- ===================== §P deckbuilder ===================== -->
+<!-- The Deck Builder. Its markup is the page's own; the six inline on*=
+     handlers in it and the three its JS wrote into generated rows are
+     data attributes now, read by delegation. -->
+<template id="tpl-deckbuilder">
+<header class="bar">
+  <div class="brand">
+    <span class="mark">AMRIZE</span>
+    <span>
+      <span class="title">Deck Builder</span>
+      <span class="sub">Every page &rarr; one Google Slides deck &mdash; real text, real comment boxes</span>
+    </span>
+  </div>
+  <button class="ghost" data-act="home" title="Back to the suite home">&#8962; Home</button>
+  <button class="ghost" data-act="help" title="How to use this page">? Help</button>
+  <button class="ghost" data-act="db-validate" title="Check the template before building on it">&#10003; Check template</button>
+</header>
+
+<div class="dbwrap">
+
+  <!-- ============ left rail ============ -->
+  <div class="db-rail">
+    <div class="db-panel">
+      <h3>Template</h3>
+      <div id="dbTplInfo" class="db-note">Reading the template&hellip;</div>
+      <button class="dbbtn wide" id="dbReloadTpl" style="margin-top:10px">
+        &#8635; Reload template</button>
+      <p class="db-note">Move a box in the template and reload &mdash; the previews and the
+        generated slides both follow. No code change.</p>
+    </div>
+
+    <div class="db-panel">
+      <h3>Deck</h3>
+      <label class="db-lbl" for="dbMonth">Report month</label>
+      <select class="db-in" id="dbMonth"></select>
+      <p class="db-note" style="margin-top:6px">Every slide is built for this month &mdash;
+        MTD is the month on its own, YTD is January through it. Defaults to
+        <b>last month</b>, because the deck is normally built once the month has
+        closed and the data is all in.</p>
+      <label class="db-lbl">Deck name</label>
+      <input class="db-in" id="dbName" type="text" placeholder="Amrize Commercial Deck">
+      <label class="db-lbl">Cover subtitle</label>
+      <input class="db-in" id="dbSub" type="text" placeholder="Central Canada &middot; Commercial">
+    </div>
+
+    <div class="db-panel">
+      <h3>Content sources</h3>
+      <div id="dbSources" class="db-note">&mdash;</div>
+    </div>
+  </div>
+
+  <!-- ============ main ============ -->
+  <div>
+    <div id="dbBanners"></div>
+
+    <div class="db-stages">
+      <div class="db-stage" id="dbStage1"><span class="db-step">1</span>
+        <button class="dbbtn" id="dbBtnPlan">Plan</button></div>
+      <span class="db-arrow">&rarr;</span>
+      <div class="db-stage" id="dbStage2"><span class="db-step">2</span>
+        <button class="dbbtn" id="dbBtnRender" disabled
+          title="Re-reads the source sheets, then photographs each content block">Render</button></div>
+      <span class="db-arrow">&rarr;</span>
+      <div class="db-stage" id="dbStage3"><span class="db-step">3</span>
+        <button class="dbbtn primary" id="dbBtnPublish" disabled>Publish to Slides</button></div>
+      <div class="db-spacer"></div>
+      <div class="db-prog" id="dbProg"></div>
+    </div>
+
+    <div class="db-list" id="dbList">
+      <div style="padding:26px 16px; text-align:center" class="db-note">
+        Press <b>Plan</b> to list the slides this month&rsquo;s deck will contain.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- full-size look at one slide mock -->
+<div class="db-lb" id="dbLb">
+  <button class="db-lb-close" data-act="db-lb-close">&times;</button>
+  <div class="db-big" id="dbBig"></div>
+  <div class="db-lb-hint">Press Esc or click outside to close</div>
+</div>
+</template>
+
+<script>
+/* ---- §P deckbuilder — registration -----------------------------------------
+   Ported from Page_DeckBuilder.html. Transformed, not retyped; the edits:
+
+     · NINE inline handlers became listeners. Six were in the markup and are
+       wired by id or data-act; THREE were written into generated HTML by
+       rowHtml() and kpiPickerHtml() and are delegated on #dbList, which is
+       the only thing that survives the innerHTML rewrite redraw() does on
+       every status change. This page's whole script was top level — it had no
+       IIFE at all — so every one of those handlers resolved against window
+       and none of them would have worked inside a registration.
+     · the DOMContentLoaded handler became dbPageInit(), called at the end of
+       boot(). It waited for AmrDeckSource and AmrCache, which were included
+       below it; §E is above §P here, so there is nothing left to wait for
+     · the script tag that printed window.APP_URL from the escaping scriptlet
+       form is gone — §D reads it off a body data attribute
+     · the page gained a ? Help button. It always had HELP_HTML and no way to
+       open it: the header carried Home and Check template only.
+     · 70 style rules became §A4, scoped to body[data-page="deckbuilder"]
+
+   NOT changed: the three-stage flow, the source check inside Render, and the
+   per-row Region picker are the page's own and are ported line for line.   */
+AMR.page('deckbuilder', {
+  title: 'Amrize · Deck Builder',
+  /* Chart.js because the content modules draw the slides' charts, html2canvas
+     because AmrSlide.captureBare photographs them. No SheetJS: this page reads
+     the KPI numbers the server already parsed, it never opens a workbook. */
+  libs: ['chart', 'html2canvas'],
+  help:
+    '<h3>What is this?</h3><p>Builds the monthly pack as a real Google Slides deck. '+
+    'The <b>title</b> and the <b>comment box</b> land as editable Slides text — only the '+
+    'table or chart goes in as a picture. That is the difference from the PNG export on '+
+    'each report page, which flattens the whole slide into one image.</p>'+
+    '<h3>Three stages</h3><p><b>Plan</b> lists the slides from the recipe — untick anything '+
+    'this month skips. <b>Render</b> re-reads the source sheets, then photographs each content '+
+    'block in your browser, one at a time; you can watch the previews fill in. <b>Publish</b> '+
+    'sends them to Slides, one slide per call.</p>'+
+    '<h3>If a slide fails</h3><p>It goes red with the reason. Press <b>Render</b> again — only '+
+    'the unfinished rows are retried, nothing already done is rebuilt.</p>'+
+    '<h3>Getting new figures</h3><p>There is nothing to press and nothing to remember — '+
+    '<b>Render re-reads the source sheets itself</b>, every time, before it photographs '+
+    'anything. Almost always nothing has moved, and then it costs one question and renders '+
+    'exactly as before: the workbooks carry a last-modified time, so an unchanged sheet is '+
+    'recognised as unchanged rather than rebuilt on the off-chance.</p>'+
+    '<p>When something <i>has</i> moved it says so, clears what was fetched, drops the slides '+
+    'already built from the old figures and rebuilds them. That is the case worth having: '+
+    'whatever has been loaded stays loaded for as long as this tab is open, and Render skips '+
+    'any slide that already has a picture — so without the check, a sheet updated mid-session '+
+    'would leave you with a deck that builds perfectly and is quietly out of date.</p>'+
+    '<h3>The Region dropdown</h3><p>Slides with a KPI strip read one region sheet of an EBITDA '+
+    'workbook, and there are two workbooks: Manitoba and Saskatchewan are on their own, '+
+    'everything else is on the main one. Each row is only offered the regions from ITS workbook. '+
+    'A row whose workbook has not been uploaded says <i>no workbook</i> instead — upload it on '+
+    'the Price &amp; Volume page and the dropdown appears there on its own.</p>'+
+    '<p>Set it <b>before you press Render</b> and that slide is photographed with it first time. '+
+    'You can also change it <b>while a render is running</b>: a slide the render has not reached '+
+    'yet simply picks it up when its turn comes, and one already photographed is put back in the '+
+    'queue and rebuilt before the run ends — you do not have to press Render again. The choice is '+
+    'remembered per market, in the same place the Price &amp; Volume page reads it, so it also '+
+    'corrects every other slide for that market.</p>'+
+    '<h3>Rendering with the tab in the background</h3><p>Fine, and normal — nobody watches forty '+
+    'slides go by. The render keeps going when this tab is not the one you are looking at. It may '+
+    'run slower there, because browsers deliberately slow hidden tabs down; it will not stop.</p>'+
+    '<h3>Changing the layout</h3><p>Move or resize a box in the template deck, then press '+
+    '<b>&#8635; Reload template</b>. The previews and the generated slides both follow — the '+
+    '{{IMAGE}} box is a guide, not a frame, so the picture is always fitted inside it and can '+
+    'never cover the title or the comments.</p>'+
+    '<h3>Changing which slides are in the deck</h3><p>The list comes from '+
+    '<b>Deck_Recipe.gs</b>. Adding, removing or reordering a slide is an edit to that one '+
+    'array.</p>',
+
+  boot: function(root){
+
+    /* The header's Home / Help / Check template buttons, by delegation. */
+    root.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('[data-act]') : null;
+      if (!b) return;
+      switch (b.getAttribute('data-act')){
+        case 'home':          AMR.nav.home();  break;
+        case 'help':          AMR.openHelp();  break;
+        case 'db-validate':   dbValidate();    break;
+        case 'db-lb-close':   dbCloseLb();     break;
+      }
+    });
+
+  /* ===========================================================================
+   * Deck Builder — PLAN, then RENDER, then PUBLISH.
+   * ---------------------------------------------------------------------------
+   * Three stages, never one shot. 43 slides of client-side rendering plus 43
+   * Slides API round trips does not fit in one execution, and a failure at slide
+   * 40 must not cost the first 39. So:
+   *
+   *   PLAN     read the recipe. No data, instant. Untick what this month skips.
+   *   RENDER   check the source sheets first (see dbSourceCheck), then one slide
+   *            at a time, in the browser: ask the source page for its content
+   *            block, photograph it, keep the PNG. All the compute is here. One
+   *            slide per tick keeps the page responsive and lets you watch it
+   *            fill in.
+   *   PUBLISH  one google.script.run per slide. The server duplicates the
+   *            layout, fills the tokens and drops the picture in. ~2-4s each,
+   *            well inside the 6-minute limit because no call ever handles more
+   *            than one slide.
+   *
+   * A row that fails is marked red and left alone — press Render again and only
+   * the unfinished rows are retried. Nothing is ever redone from scratch.
+   *
+   * That last sentence is exactly why Render opens with the source check, and
+   * why the check is PART OF RENDER rather than a fourth button: reusing
+   * everything is right until the data underneath moves, and then it is the one
+   * thing keeping the old figures on screen — with every slide building and
+   * nothing going red. A step that must never be skipped does not belong behind
+   * a button somebody has to remember. See dbSourceCheck below.
+   * ========================================================================= */
+
+  var IS_LIVE = (typeof google !== 'undefined' && google.script && google.script.run);
+
+  var TPL   = null;    // DECK_readTemplate(): layouts + slot geometry, in points
+  var ROWS  = [];      // recipe rows + per-row build state
+  var DECKR = null;    // { deckId, url } once created
+  var BUSY  = false;
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  /* google.script.run as a Promise, so the stages read as sequences. */
+  function srv(fn, args){
+    return new Promise(function(resolve, reject){
+      if(!IS_LIVE) return reject(new Error('This page only works inside the live Apps Script web app.'));
+      google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[fn]
+        .apply(null, args || []);
+    });
+  }
+
+  function banner(kind, html){
+    var d = document.createElement('div');
+    d.className = 'db-banner ' + kind;
+    d.innerHTML = html;
+    document.getElementById('dbBanners').appendChild(d);
+  }
+  function clearBanners(){ document.getElementById('dbBanners').innerHTML = ''; }
+  function prog(t){ document.getElementById('dbProg').textContent = t || ''; }
+
+  function setBusy(b){
+    BUSY = b;
+    document.getElementById('dbBtnPlan').disabled    = b;
+    document.getElementById('dbBtnRender').disabled  = b || !ROWS.length;
+    document.getElementById('dbBtnPublish').disabled = b || !countReady();
+    document.getElementById('dbReloadTpl').disabled  = b;
+  }
+
+  function countOn(){ return ROWS.filter(function(r){ return r.on; }).length; }
+  function countReady(){ return ROWS.filter(function(r){ return r.on && r.png; }).length; }
+  function countDone(){ return ROWS.filter(function(r){ return r.status==='done'; }).length; }
+
+
+  /* =========================================================================
+   * TEMPLATE — the geometry every preview and every capture size comes from
+   * ======================================================================= */
+  function dbLoadTemplate(){
+    var host = document.getElementById('dbTplInfo');
+    host.textContent = 'Reading the template…';
+    return srv('DECK_readTemplate')
+      .then(function(t){
+        TPL = t;
+        var report = (t.layouts||[]).filter(function(L){ return L.role === 'report'; });
+        host.innerHTML =
+          '<b>'+esc(t.name)+'</b><br>'+
+          Math.round(t.pageWidth)+' &times; '+Math.round(t.pageHeight)+' pt &middot; '+
+          report.length+' report layout'+(report.length===1?'':'s')+'<br>'+
+          '<span style="color:var(--muted)">'+esc(report.map(function(L){ return L.layoutId; }).join(', '))+'</span>';
+        redraw();
+      })
+      .catch(function(e){
+        TPL = null;
+        host.innerHTML = '<span style="color:var(--neg);font-weight:700">'+
+          esc(e && e.message ? e.message : String(e))+'</span>';
+      });
+  }
+
+  function dbValidate(){
+    clearBanners();
+    prog('Checking the template…');
+    srv('DECK_validateTemplate')
+      .then(function(r){
+        prog('');
+        (r.errors||[]).forEach(function(m){ banner('bad', '<b>Template error:</b> '+esc(m)); });
+        (r.warnings||[]).forEach(function(m){ banner('warn', esc(m)); });
+        if(r.ok && !(r.warnings||[]).length){
+          banner('ok', 'Template checks out — '+ (r.layouts||[]).length +' layouts, no problems.');
+        } else if(r.ok){
+          banner('ok', 'Template is usable. The notes above are worth a look but will not stop a build.');
+        }
+      })
+      .catch(function(e){ prog(''); banner('bad', esc(e && e.message ? e.message : String(e))); });
+  }
+
+  function layoutOf(id){
+    if(!TPL) return null;
+    var L = (TPL.layouts||[]).filter(function(x){ return x.layoutId === id; });
+    return L.length ? L[0] : null;
+  }
+
+
+  /* =========================================================================
+   * THE DECK'S REPORT MONTH
+   * -------------------------------------------------------------------------
+   * ONE month for the whole deck. Pick July and every slide is July: MTD is July
+   * on its own, YTD is January through July, on all four backends. The deck is
+   * normally built after a month has closed and all its data is in, so the
+   * default is LAST month and the running month is offered but never the default
+   * — it is only part-billed, and a half-month reads as a collapse.
+   *
+   * The backends take a month 1-12 with no year and read it against the export's
+   * current year (pvReportMonth_, reportMonth_, buildCells_ x2 — all four resolve
+   * 0 to last calendar month the same way). So the list is the months of the
+   * current reporting year only; offering "August last year" would silently be
+   * read as August THIS year.
+   * ======================================================================= */
+  var DB_MON = ['January','February','March','April','May','June',
+                'July','August','September','October','November','December'];
+  var DECK_MONTH = 0;                       // 1-12, set when the picker is built
+
+  function dbPrevMonth(){ return (new Date()).getMonth() || 12; }   // Jan -> Dec, as the backends do
+  function dbCurMonth(){  return (new Date()).getMonth() + 1; }
+
+  /* Which year a chosen month belongs to. Only the January case moves it: there
+     "last month" is December of the year before. */
+  function dbYearOf(m){
+    var now = new Date();
+    return (m > now.getMonth() + 1) ? now.getFullYear() - 1 : now.getFullYear();
+  }
+
+  function dbBuildMonthPicker(){
+    var sel = document.getElementById('dbMonth'); if(!sel) return;
+    var cur = dbCurMonth(), prev = dbPrevMonth();
+    DECK_MONTH = prev;
+
+    var list = [];
+    for(var m = 1; m <= cur; m++) list.push(m);
+    if(cur === 1) list.unshift(12);         // in January last month is December, and it is the default
+
+    sel.innerHTML = list.map(function(m){
+      var tag = (m === prev) ? ' — last month'
+              : (m === cur)  ? ' — this month, part-billed' : '';
+      return '<option value="'+m+'"'+(m===prev?' selected':'')+'>'
+           + DB_MON[m-1] + ' ' + dbYearOf(m) + tag + '</option>';
+    }).join('');
+
+    sel.addEventListener('change', function(){
+      DECK_MONTH = parseInt(this.value, 10) || prev;
+      dbSyncDeckName();
+      /* Anything already photographed was photographed for the OLD month. */
+      var n = 0;
+      ROWS.forEach(function(r){
+        if(r.png || r.status === 'ready'){ r.png = null; r.w = r.h = 0; r.status = 'pending'; n++; }
+      });
+      redraw(); updateStages();
+      prog(DB_MON[DECK_MONTH-1] + ' selected' + (n ? ' · re-render the ' + n + ' slide(s) already built' : ''));
+    });
+    dbSyncDeckName();
+  }
+
+  /* The deck name follows the month unless someone has typed their own. */
+  function dbSyncDeckName(){
+    var el = document.getElementById('dbName'); if(!el) return;
+    if(el.getAttribute('data-touched')) return;
+    var m = DECK_MONTH || dbPrevMonth();
+    el.value = 'Amrize Commercial Deck — ' + DB_MON[m-1] + ' ' + dbYearOf(m);
+  }
+
+
+  /* Fill in the per-row Region dropdowns. Cheap and idempotent — every adapter's
+     warm() returns what it already has once it has it — so it is safe to call
+     again after the sources have been cleared. Never rejects. */
+  function dbWarmPickers(){
+    if(!(window.AmrDeckSource && AmrDeckSource.warmAll)) return Promise.resolve();
+    return AmrDeckSource.warmAll().then(function(){
+      if(ROWS.length) redraw();
+    });
+  }
+
+
+  /* =========================================================================
+   * THE SOURCE CHECK — the first half of Render, not a button
+   * -------------------------------------------------------------------------
+   * Rendering does not re-read the sheets. It never had to: every backend cache
+   * key is prefixed with the source workbook's modified time, so a sync moves
+   * the version and strands the old entries on its own. What IS reused, for the
+   * whole life of this page, is what the ADAPTERS have already fetched — that is
+   * the point of prepare() being cheap the second time. So a sheet that changes
+   * while this tab is open is invisible here until something drops those, and
+   * pressing Render again would not do it either: a row that already has a
+   * picture is skipped entirely.
+   *
+   * There is deliberately NO button for this. A deck built from figures the
+   * sheet replaced an hour ago is the one failure this page cannot show you —
+   * every slide builds, nothing goes red, and the pack is quietly last week's.
+   * A step that must never be skipped does not belong behind a button somebody
+   * has to remember, and a second button that Render then repeats is one more
+   * thing to explain. So Render just does it, every time, first.
+   *
+   * It is nearly free when nothing has moved, which is the normal answer: the
+   * whole check is one ask for the workbooks' modified time — the same number
+   * the caches are already keyed on — so an unchanged sheet is recognised as
+   * unchanged instead of being rebuilt on the off-chance. Nothing is said and
+   * nothing is thrown away; rendering carries straight on. When something HAS
+   * moved it does the two things it must:
+   *   1. drop every adapter's in-browser copy,
+   *   2. drop every rendered picture, because it was photographed from figures
+   *      that are now the old ones. Same reasoning as changing the month.
+   * and says so, because that is the explanation for the work about to happen.
+   *
+   * The template is deliberately NOT reloaded: it is a Slides file, nothing to
+   * do with the data, and it has its own button.
+   * ======================================================================= */
+
+  /* Resolves to true when the data moved (and was therefore cleared), false when
+     there was nothing to do. Never rejects — a check that cannot run must not
+     stop a render; it says so and lets the rows fail on their own terms. */
+  function dbSourceCheck(){
+    return new Promise(function(resolve){
+
+      /* AmrFresh.ifChanged puts up the shell's full-screen 'sync' job, but only
+         takes it down again on the "nothing changed" path — every other caller
+         is a report page that goes straight into its own rebuild and owns the
+         screen from there. This one hands back to a render loop that drives the
+         progress LINE, not the overlay, so it has to take the screen down
+         itself, on EVERY path including failure. Without this the overlay sits
+         there saying "Checking the sheet…" over a page that has finished. */
+      function release(){
+        if(window.AmrProgress){
+          try { AmrProgress.clear('sync'); } catch(e){}
+        }
+      }
+
+      if(!IS_LIVE || !window.AmrFresh){
+        /* Not fatal: say the figures could not be vouched for and render anyway.
+           Off-platform there is nothing to check and the rows will fail with
+           their own readable reasons; live, this is worth seeing. */
+        if(IS_LIVE){
+          banner('warn', 'Could not check the source sheets — the shell did not '+
+            'load. Rendering with whatever is already loaded.');
+        }
+        release();
+        resolve(false);
+        return;
+      }
+
+      prog('Checking the source sheets…');
+
+      AmrFresh.ifChanged(function(changed){
+        release();
+
+        /* Nothing moved: the normal answer. Nothing to say, nothing to drop. */
+        if(!changed){ resolve(false); return; }
+
+        var n = window.AmrDeckSource ? AmrDeckSource.resetAll() : 0;
+
+        /* Every picture on screen was taken from the old figures. */
+        var dropped = 0;
+        ROWS.forEach(function(r){
+          if(r.png || r.status === 'ready' || r.status === 'error'){
+            r.png = null; r.w = r.h = 0; r.status = 'pending'; r.err = '';
+            dropped++;
+          }
+        });
+
+        banner('ok', '<b>New figures — the source sheets have changed.</b> ' +
+          n + ' content source' + (n===1?'':'s') + ' cleared' +
+          (dropped ? ' and ' + dropped + ' slide' + (dropped===1?'':'s') +
+                     ' already built dropped, because ' + (dropped===1?'it was':'they were') +
+                     ' photographed from the old figures. Rebuilding ' +
+                     (dropped===1?'it':'them') + ' now.'
+                   : '. Rendering from the new data.'));
+
+        /* resetAll() cleared what the Region dropdowns read, so put it back
+           before the redraw — otherwise every row would flip to "no workbook"
+           for the length of the render. dbWarmPickers redraws for us. */
+        dbWarmPickers().then(function(){ resolve(true); });
+      });
+    });
+  }
+
+
+  /* =========================================================================
+   * STAGE 1 — PLAN
+   * ======================================================================= */
+  function dbPlan(){
+    clearBanners();
+    setBusy(true);
+    prog('Reading the recipe…');
+    srv('DECK_getRecipe')
+      .then(function(rec){
+        ROWS = (rec.rows||[]).map(function(r){
+          return { spec:r, on:!r.optional, status:'pending', png:null,
+                   w:0, h:0, err:'' };
+        });
+        (rec.problems||[]).forEach(function(p){
+          banner('bad', '<b>Recipe:</b> '+esc(p));
+        });
+
+        /* Name the missing adapters ONCE, up front. Otherwise the same fact
+           arrives 39 separate times, once per failed row. */
+        var missing = AmrDeckSource.missingFor(rec.rows||[]);
+        if(missing.length){
+          var n = ROWS.filter(function(r){ return missing.indexOf(r.spec.source) !== -1; }).length;
+          banner('warn', '<b>'+n+' of '+ROWS.length+' slides cannot be rendered yet.</b> '+
+            'No content source is registered for: <b>'+esc(missing.join(', '))+'</b>. '+
+            'Those pages have not been moved into shared includes yet, so the Deck '+
+            'Builder cannot reach their tables. Everything else below will build.');
+        }
+
+        /* A layout the template does not have is a hard stop for those rows. */
+        var badLayouts = {};
+        ROWS.forEach(function(r){
+          if(TPL && !layoutOf(r.spec.layout)) badLayouts[r.spec.layout] = 1;
+        });
+        Object.keys(badLayouts).forEach(function(L){
+          banner('bad', 'Layout <b>'+esc(L)+'</b> is in the recipe but not in the '+
+            'template. Add a slide with "LAYOUT: '+esc(L)+'" in its speaker notes, '+
+            'or point those recipe rows at a layout that exists.');
+        });
+
+        prog(ROWS.length + ' slides planned');
+        redraw();
+        setBusy(false);
+        updateStages();
+
+        /* The Region dropdown lists the KPI workbook's sheets, and the workbook
+           is only fetched by prepare() — which runs during a render. So until
+           this, every row read "no workbook" until the first render was already
+           paid for, which is the wrong way round: the region is chosen to avoid
+           rendering the wrong one. Warm it now and redraw once. Deliberately
+           AFTER setBusy(false): the list is usable while it lands, and a KPI
+           workbook that never answers must not leave the page stuck on Plan. */
+        dbWarmPickers();
+      })
+      .catch(function(e){
+        prog('');
+        banner('bad', esc(e && e.message ? e.message : String(e)));
+        setBusy(false);
+      });
+  }
+
+
+  /* =========================================================================
+   * STAGE 2 — RENDER, one slide at a time
+   * ------------------------------------------------------------------------
+   * Serial on purpose. Parallel captures fight over the same off-screen layout
+   * and the same Chart.js canvases, and the progress line stops meaning
+   * anything. Slow and legible beats fast and unexplainable.
+   *
+   * STAGE 2 RUNS FIRST, ALWAYS. Photographing 43 slides from figures the sheet
+   * replaced an hour ago is the one failure this page cannot show you — every
+   * slide builds, nothing goes red, and the deck is quietly last week's. The
+   * check costs one ask for the workbooks' modified time, and when nothing has
+   * moved it throws nothing away and renders exactly as before. So it is not
+   * something to remember to press.
+   * ======================================================================= */
+  function dbRenderAll(){
+    if(!TPL){ banner('bad', 'Load the template first — the capture size comes from it.'); return; }
+    clearBanners();
+    setBusy(true);
+
+    /* The check may DROP rows that already have pictures, so `todo` cannot be
+       worked out until it has run. */
+    dbSourceCheck().then(dbRenderPass);
+  }
+
+  /* THE QUEUE IS LIVE WHILE IT RUNS.
+     It used to be a plain local array: whatever was outstanding when Render was
+     pressed, and nothing could be added to it afterwards. That is what made
+     changing a slide's Region mid-render a dead end - the slide was dropped back
+     to "pending" and then quietly never rebuilt, so the only way out was to wait
+     for the whole pass and press Render again. Keeping the queue and its cursor
+     on the page means dbPickKpi can push a row back on and have it rebuilt in
+     this pass, whether it has been photographed already or not. */
+  var RQ = null;                       // { list:[rows], i:cursor } while rendering
+
+  function dbRenderPass(){
+    var todo = ROWS.filter(function(r){ return r.on && !r.png; });
+    if(!todo.length){ prog('Nothing to render'); setBusy(false); updateStages(); return; }
+
+    RQ = { list: todo, i: 0 };
+    function next(){
+      if(RQ.i >= RQ.list.length){
+        RQ = null;
+        var ok = countReady(), failed = ROWS.filter(function(r){ return r.status==='error'; }).length;
+        prog(ok + ' of ' + countOn() + ' slides ready' + (failed ? ' · ' + failed + ' failed' : ''));
+        if(failed) banner('warn', failed+' slide'+(failed===1?'':'s')+' could not be rendered. '+
+          'Press <b>Render</b> again to retry just those.');
+        setBusy(false); updateStages();
+        return;
+      }
+      var row = RQ.list[RQ.i++];
+      /* a row can be dropped from the queue after it was added - unticked, or its
+         picture rebuilt by something else */
+      if(!row.on || row.png){ dbSoon(next); return; }
+      prog('Rendering ' + RQ.i + ' of ' + RQ.list.length + ' · ' + row.spec.title);
+      row.status = 'working'; row.err = ''; drawRow(row);
+
+      renderOne(row)
+        .then(function(){ row.status = 'ready'; })
+        .catch(function(e){
+          row.status = 'error';
+          row.err = (e && e.message) ? e.message : String(e);
+        })
+        .then(function(){
+          drawRow(row);
+          dbSoon(next);               // yield, so the page stays alive
+        });
+    }
+    next();
+  }
+  /* Yield to the page between slides. AmrTick runs its timer in a worker, which a
+     background tab does not throttle - a plain setTimeout here is clamped to one
+     a second while the tab is hidden, and to one a MINUTE after five minutes of
+     it. Rendering with the tab in the background is the normal way to use this
+     page: nobody watches forty slides go by. */
+  function dbSoon(fn){
+    if(window.AmrTick) AmrTick(0, fn); else setTimeout(fn, 0);
+  }
+
+  /* One slide: ask its source for the content block, photograph it at the size
+     the template's image slot actually needs. */
+  function renderOne(row){
+    var L = layoutOf(row.spec.layout);
+    if(!L) return Promise.reject(new Error('Layout "'+row.spec.layout+'" is not in the template.'));
+    var slot = L.slots && L.slots.image;
+    if(!slot) return Promise.reject(new Error('Layout "'+row.spec.layout+'" has no {{IMAGE}} box.'));
+
+    /* THE FRAME IS THE SHAPE OF THE IMAGE BOX.
+       Width is the pages' own slide width, so a table is laid out at the size the
+       page lays it out at and the deck's tables read like the page's. Height is
+       that width in the slot's proportions, so the picture FILLS its box: no
+       letterboxing, and — the part that was actually breaking slides — the page's
+       fitter gets a real height to fit into instead of an unbounded column that
+       something downstream then had to shrink. */
+    var cssW = 1600;
+    var cssH = Math.max(200, Math.round(cssW * (slot.h || 1) / (slot.w || 1)));
+
+    var src = AmrDeckSource.get(row.spec.source) || {};
+    /* ONE month for the whole deck. Every adapter keys its cache on it and passes
+       it to its backend, so MTD and YTD on every slide are the same month. */
+    row.spec.month = DECK_MONTH || dbPrevMonth();
+    /* what the KPI strip on this picture is about to read - so changing the
+       Region later can tell which pictures went stale and which did not */
+    row.kpiUsed = dbKpiNow(row);
+
+    return AmrDeckSource.build(row.spec).then(function(el){
+      return AmrSlide.captureBare(el, {
+        width: cssW,
+        height: cssH,
+        capturePx: slot.capturePx || Math.round(slot.w * 4),
+        /* the ceiling Google will enforce anyway - clamping here means the text
+           is RENDERED at final size instead of resampled down to it */
+        maxPx: slot.maxPx || 2048,
+        /* the source's own fitter, given the row so it can rebuild its ctx —
+           the SAME function the page runs before a PNG download */
+        fit: (typeof src.fit === 'function')
+          ? function(box){ return src.fit(box, row.spec); }
+          : null
+      });
+    }).then(function(cap){
+      row.png = cap.dataUrl; row.w = cap.w; row.h = cap.h;
+    });
+  }
+
+
+  /* =========================================================================
+   * STAGE 3 — PUBLISH, one google.script.run per slide
+   * ======================================================================= */
+  function dbPublish(){
+    clearBanners();
+    var todo = ROWS.filter(function(r){ return r.on && r.png && r.status !== 'done'; });
+    if(!todo.length){ banner('warn', 'Nothing rendered to publish yet.'); return; }
+    setBusy(true);
+    prog('Creating the deck…');
+
+    var name = document.getElementById('dbName').value.trim();
+    var sub  = document.getElementById('dbSub').value.trim();
+
+    var start = DECKR ? Promise.resolve(DECKR)
+      : srv('DECK_create', [{ name:name || undefined, deckTitle:name || undefined, deckSub:sub }]);
+
+    start.then(function(d){
+      DECKR = d;
+      var i = 0;
+      function next(){
+        if(i >= todo.length){
+          prog('Finishing…');
+          return srv('DECK_finish', [DECKR.deckId]).then(function(out){
+            prog(out.slides + ' slides published');
+            banner('ok', 'Deck ready — <a href="'+esc(out.url)+'" target="_blank">open it in Google Slides</a> '+
+              '('+out.slides+' slides). Titles and comment boxes are real, editable text.');
+            setBusy(false); updateStages();
+          });
+        }
+        var row = todo[i++];
+        prog('Publishing ' + i + ' of ' + todo.length + ' · ' + row.spec.title);
+        row.status = 'working'; drawRow(row);
+
+        srv('DECK_addSlide', [DECKR.deckId, {
+            recipeId: row.spec.id, layoutId: row.spec.layout,
+            title: row.spec.title, subtitle: row.spec.subtitle,
+            comment: '',                       // real, empty, typeable on the slide
+            png: row.png, imgW: row.w, imgH: row.h
+          }])
+          .then(function(){ row.status = 'done'; })
+          .catch(function(e){
+            row.status = 'error';
+            row.err = (e && e.message) ? e.message : String(e);
+          })
+          .then(function(){ drawRow(row); setTimeout(next, 0); });
+      }
+      next();
+    }).catch(function(e){
+      prog('');
+      banner('bad', esc(e && e.message ? e.message : String(e)));
+      setBusy(false);
+    });
+  }
+
+
+  /* =========================================================================
+   * THE LIST + the in-page slide mock
+   * ------------------------------------------------------------------------
+   * The mock is drawn from the template's REAL geometry in points, scaled down.
+   * So it shows where things will actually land, it is instant, it needs no deck
+   * to exist — and when someone moves a box in the template and reloads, the
+   * previews move with it.
+   * ======================================================================= */
+  function redraw(){
+    var host = document.getElementById('dbList');
+    if(!ROWS.length){
+      host.innerHTML = '<div style="padding:26px 16px;text-align:center" class="db-note">'+
+        'Press <b>Plan</b> to list the slides this month&rsquo;s deck will contain.</div>';
+      return;
+    }
+    var html = '', group = '';
+    ROWS.forEach(function(r, i){
+      if(r.spec.group !== group){
+        group = r.spec.group;
+        html += '<div class="db-group">'+esc(group)+'</div>';
+      }
+      html += rowHtml(r, i);
+    });
+    host.innerHTML = html;
+    ROWS.forEach(function(r, i){ paintThumb(i); });
+  }
+
+  /* Some slides carry a KPI strip whose numbers come from ONE region sheet of
+     the EBITDA workbook. Which sheet is a per-device choice, normally made on
+     the report page. Showing the picker here too means a market whose region
+     was never set — or was set wrong — can be fixed without leaving the Deck
+     Builder, and the choice is remembered in the same place the report page
+     reads, so it is not a second setting to keep in sync.
+     The source declares the picker; this page stays generic. */
+  function kpiPickerHtml(r, i){
+    var src = window.AmrDeckSource ? AmrDeckSource.get(r.spec.source) : null;
+    var p = src && src.kpiPicker;
+    if(!p) return '<div></div>';
+
+    /* The row's own list, not the merged one. Manitoba and Saskatchewan read the
+       SECOND EBITDA workbook; every other market reads the first. Offering one
+       list to both meant a Manitoba row was offered Ontario's regions and
+       defaulted to the first of them — a real region sheet, silently the wrong
+       one. Now each row is asked what IT can choose from. */
+    var sheets = [];
+    try { sheets = p.sheets(r.spec) || []; } catch(e){ sheets = []; }
+
+    if(!sheets.length){
+      /* Empty means one of two different things, and they are fixed by
+         different actions, so they are not allowed to read the same. */
+      var book = '';
+      try { book = (typeof p.book === 'function') ? p.book(r.spec) : ''; } catch(e){}
+      var missing = true;
+      try { missing = (typeof p.hasBook === 'function') ? !p.hasBook(r.spec) : true; } catch(e){}
+      var name = (window.AmrKpi && AmrKpi.bookLabel) ? AmrKpi.bookLabel(book) : 'EBITDA';
+      return '<div class="db-kpi-none" title="'+esc(missing
+          ? 'This slide\u2019s KPI cards come from the ' + name + ' workbook, which '+
+            'has not been uploaded yet. Upload it on the Price & Volume page and '+
+            'the region dropdown appears here.'
+          : 'The ' + name + ' workbook is uploaded but has no region sheet for '+
+            'this market.')+'">'+
+        esc(missing ? 'no workbook' : 'no region')+'</div>';
+    }
+    var cur = '';
+    try { cur = p.current(r.spec) || ''; } catch(e){}
+    return '<div class="db-kpi-wrap"><span class="db-kpi-cap">Region</span>'+
+      '<select class="db-kpi" title="Which region sheet the KPI cards read. '+
+        'Set it before Render, or during one - a slide not yet reached picks it up on its turn." '+
+      'data-db-kpi="'+i+'">'+
+      sheets.map(function(s){
+        return '<option value="'+esc(s)+'"'+(s===cur?' selected':'')+'>'+esc(s)+'</option>';
+      }).join('')+'</select></div>';
+  }
+
+  /* Which region sheet a row's picture was actually taken with. Stamped at
+     render time, so "is this picture stale?" is a comparison and not a guess. */
+  function dbKpiNow(r){
+    var src = window.AmrDeckSource ? AmrDeckSource.get(r.spec.source) : null;
+    var p = src && src.kpiPicker;
+    if(!p || !p.current) return null;
+    try { return p.current(r.spec) || null; } catch(e){ return null; }
+  }
+
+  /* CHOOSING A REGION IS NOT A RE-RENDER.
+     The whole point of the dropdown being here is to get the region right BEFORE
+     the slide is photographed. So:
+       • a slide this pass has not reached yet needs nothing at all - it will be
+         built with the new region when its turn comes, and the line below says
+         when that is;
+       • a slide already photographed has its picture dropped and is put BACK ON
+         THE LIVE QUEUE, so it is rebuilt at the end of this pass instead of being
+         left "pending" for somebody to notice.
+     The choice is remembered per MARKET, where the report page reads it, so it
+     lands on every other row for the same market too - and those rows' pictures
+     are just as stale. Each is checked against what it was rendered with rather
+     than assumed. */
+  function dbPickKpi(i, sheet){
+    var r = ROWS[i];
+    var src = window.AmrDeckSource ? AmrDeckSource.get(r.spec.source) : null;
+    if(src && src.kpiPicker && src.kpiPicker.choose){
+      try { src.kpiPicker.choose(r.spec, sheet); } catch(e){}
+    }
+    /* choose() has written the source's own memory, and that memory is keyed by
+       VIEW - market and refine - so it is the only thing that knows which rows
+       this applies to. A kpiSheet pinned on a row would outrank it and go stale
+       the moment its twin was changed instead, so the pins come off and every row
+       reads the memory. */
+    ROWS.forEach(function(row){ if(row.spec) delete row.spec.kpiSheet; });
+
+    var requeued = 0, ahead = 0;
+    ROWS.forEach(function(row){
+      if(!row.on) return;
+      if(!row.png){
+        /* not photographed yet: nothing to undo. It is only "ahead" if a pass is
+           actually running and has not passed it. */
+        if(RQ && RQ.list.indexOf(row) >= RQ.i && dbKpiNow(row) !== row.kpiUsed) ahead++;
+        return;
+      }
+      if(dbKpiNow(row) === row.kpiUsed) return;      // its picture is still right
+      row.png = null; row.w = row.h = 0; row.status = 'pending'; row.err = '';
+      requeued++;
+      if(RQ && RQ.list.indexOf(row) < RQ.i) RQ.list.push(row);
+    });
+
+    redraw();
+    prog(requeued
+        ? ('Region set to ' + sheet + ' · ' + requeued + ' slide' + (requeued===1?'':'s') +
+           ' rebuilding' + (RQ ? ' in this run' : ' — press Render'))
+        : ('Region set to ' + sheet + (ahead ? ' · will be used when those slides render' : '')));
+    setBusy(BUSY);                 // recompute the buttons; do not end a render
+  }
+
+  function rowHtml(r, i){
+    /* refine sits next to the market it narrows, so a Land row is readable as
+       "pv · Southwest · Land · MTD" rather than looking like a duplicate of the
+       plain Southwest row above it */
+    var sub = [r.spec.source, r.spec.market, r.spec.refine, r.spec.period]
+      .filter(Boolean).join(' · ');
+    return '<div class="db-row'+(r.on?'':' off')+'" id="dbRow'+i+'">'+
+      '<input type="checkbox" '+(r.on?'checked':'')+' data-db-toggle="'+i+'">'+
+      '<div class="db-num">'+(i+1)+'</div>'+
+      '<div><div class="db-ttl">'+esc(r.spec.title)+'</div>'+
+        '<div class="db-sub">'+esc(sub)+'</div>'+
+        (r.err ? '<div class="db-err">'+esc(r.err)+'</div>' : '')+'</div>'+
+      '<div class="db-layout">'+esc(r.spec.layout)+'</div>'+
+      kpiPickerHtml(r, i)+
+      '<div class="db-st '+stCls(r.status)+'">'+stTxt(r.status)+'</div>'+
+      '<div class="db-thumb'+(r.png?'':' empty')+'" id="dbThumb'+i+'" '+
+        'data-db-lb="'+i+'" title="Click for a full-size look"></div>'+
+    '</div>';
+  }
+  function stCls(s){ return s==='working'?'working': s==='ready'?'ready':
+                            s==='error'?'error': s==='done'?'done':'pending'; }
+  function stTxt(s){ return s==='working'?'working…': s==='ready'?'ready':
+                            s==='error'?'failed': s==='done'?'published':'—'; }
+
+  function drawRow(r){
+    var i = ROWS.indexOf(r); if(i < 0) return;
+    var el = document.getElementById('dbRow'+i); if(!el) return;
+    el.outerHTML = rowHtml(r, i);
+    paintThumb(i);
+  }
+
+  function dbToggle(i, on){
+    ROWS[i].on = on;
+    var el = document.getElementById('dbRow'+i);
+    if(el) el.classList.toggle('off', !on);
+    prog(countOn() + ' of ' + ROWS.length + ' slides selected');
+    setBusy(false);
+  }
+
+  /* Build the mock: every slot the layout has, positioned by the template. */
+  function slotHtml(r, L, scale){
+    if(!L) return '<div class="db-note" style="padding:6px;font-size:9px">no layout</div>';
+    var s = L.slots || {}, out = '';
+    function box(kind, rect, inner){
+      if(!rect) return '';
+      return '<div class="db-slot '+kind+'" style="left:'+(rect.x*scale)+'px;top:'+(rect.y*scale)+
+        'px;width:'+(rect.w*scale)+'px;height:'+(rect.h*scale)+'px">'+(inner||'')+'</div>';
+    }
+    out += box('comment', s.comment, '');
+    out += box('image' + (r.png ? ' filled' : ''), s.image,
+               r.png ? '<img src="'+r.png+'" alt="">' : '');
+    out += box('image', s.image2, '');
+    out += box('title', s.title, esc(r.spec.title));
+    out += box('page', s.page, '');
+    return out;
+  }
+
+  function paintThumb(i){
+    var r = ROWS[i], host = document.getElementById('dbThumb'+i);
+    if(!host) return;
+    if(!TPL){ host.innerHTML = ''; return; }
+    var L = layoutOf(r.spec.layout);
+    var scale = 176 / (TPL.pageWidth || 720);
+    host.innerHTML = slotHtml(r, L, scale);
+  }
+
+  /* ---- full-size look ---- */
+  function dbOpenLb(i){
+    if(!TPL) return;
+    var r = ROWS[i], L = layoutOf(r.spec.layout);
+    var W = Math.min(window.innerWidth - 60, 1000);
+    var scale = W / (TPL.pageWidth || 720);
+    var big = document.getElementById('dbBig');
+    big.style.width  = Math.round((TPL.pageWidth||720) * scale) + 'px';
+    big.style.height = Math.round((TPL.pageHeight||405) * scale) + 'px';
+    big.innerHTML = slotHtml(r, L, scale);
+    document.getElementById('dbLb').classList.add('open');
+  }
+  function dbCloseLb(){ document.getElementById('dbLb').classList.remove('open'); }
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' || e.keyCode === 27) dbCloseLb();
+  });
+  document.getElementById('dbLb').addEventListener('click', function(e){
+    if(e.target === this) dbCloseLb();
+  });
+
+  function updateStages(){
+    document.getElementById('dbStage1').classList.toggle('done', ROWS.length > 0);
+    document.getElementById('dbStage2').classList.toggle('done', countReady() > 0);
+    document.getElementById('dbStage3').classList.toggle('done', countDone() > 0);
+  }
+
+
+  /* =========================================================================
+   * boot — WAS a DOMContentLoaded handler, deferred because AmrDeckSource and
+   * AmrCache were included after this script. §E is above §P now, so both exist
+   * by construction; this is called at the end of boot() instead, which is the
+   * position the event used to give it.
+   * ======================================================================= */
+  function dbPageInit(){
+    var have = window.AmrDeckSource ? AmrDeckSource.list() : [];
+    document.getElementById('dbSources').innerHTML = have.length
+      ? '<b>Registered:</b> ' + esc(have.join(', '))
+      : '<span style="color:var(--neg);font-weight:700">None registered yet.</span><br>'+
+        'The report pages still hold their content builders. Moving them into '+
+        'shared includes is what lights this up, one page at a time.';
+
+    /* builds the Report month picker AND names the deck for the month it lands on */
+    dbBuildMonthPicker();
+    document.getElementById('dbName').addEventListener('input', function(){
+      this.setAttribute('data-touched', '1');       // a typed name stops following the month
+    });
+
+    /* One small call for the data version this page opened with. It is what
+       lets ↻ Update from source answer "nothing has changed" honestly instead
+       of throwing the session away on the first press, and it starts the shell's
+       watcher, so a sync that lands while the deck is half-built says so. */
+    if(IS_LIVE && window.AmrCache) AmrCache.boot(function(){});
+
+    if(IS_LIVE) dbLoadTemplate();
+    else document.getElementById('dbTplInfo').innerHTML =
+      '<span style="color:var(--neg);font-weight:700">This page only works inside '+
+      'the live Apps Script web app.</span>';
+  }
+
+    /* The four rail / stage buttons, by id — they are in the template and
+       never redrawn, so a listener each is simpler than delegating. */
+    document.getElementById('dbReloadTpl').addEventListener('click', function(){ dbLoadTemplate(); });
+    document.getElementById('dbBtnPlan').addEventListener('click', dbPlan);
+    document.getElementById('dbBtnRender').addEventListener('click', dbRenderAll);
+    document.getElementById('dbBtnPublish').addEventListener('click', dbPublish);
+
+    /* The slide list IS redrawn, on every status change, so its three controls
+       are delegated on the host rather than bound to rows that get replaced. */
+    var list = document.getElementById('dbList');
+    list.addEventListener('change', function(e){
+      var t = e.target;
+      if (t.hasAttribute && t.hasAttribute('data-db-kpi'))    dbPickKpi(Number(t.getAttribute('data-db-kpi')), t.value);
+      else if (t.hasAttribute && t.hasAttribute('data-db-toggle')) dbToggle(Number(t.getAttribute('data-db-toggle')), t.checked);
+    });
+    list.addEventListener('click', function(e){
+      var t = e.target.closest ? e.target.closest('[data-db-lb]') : null;
+      if (t) dbOpenLb(Number(t.getAttribute('data-db-lb')));
+    });
+
+    /* Was a DOMContentLoaded handler; runs LAST, which is where the event
+       put it, after every declaration above has been evaluated. */
+    dbPageInit();
   }
 });
 </script>

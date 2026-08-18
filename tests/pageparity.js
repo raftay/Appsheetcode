@@ -231,10 +231,46 @@ function rmxModel() {
   return man;
 }
 
+/* The Deck Builder reads two things before it can draw anything: the template's
+   geometry (which drives every preview mock and every capture size) and the
+   recipe (which IS the slide list). Four rows, one per adapter shape, so the
+   list exercises a KPI Region picker, a row without one, and both layouts. */
+function deckModel() {
+  const rect = (x, y, w, h, extra) => Object.assign({ x, y, w, h }, extra || {});
+  const layout = (id, has) => ({
+    layoutId: id, index: 1, role: 'report',
+    slots: Object.assign(
+      { title: rect(40, 30, 640, 40), image: rect(40, 90, 640, 280, { capturePx: 800, maxPx: 1600 }) },
+      has.comment ? { comment: rect(40, 380, 640, 60) } : {}),
+    has: { title: true, comment: !!has.comment, image: true, image2: false, label1: false, label2: false },
+    tokens: ['title', 'image'].concat(has.comment ? ['comment'] : [])
+  });
+  return {
+    template: {
+      templateId: 'TPL1', name: 'Amrize Deck Template',
+      pageWidth: 720, pageHeight: 405,
+      layouts: [layout('L_FULL_IMAGE', {}), layout('L_COMMENT_IMAGE', { comment: true })],
+      reportCount: 2, slideCount: 3
+    },
+    recipe: {
+      rows: [
+        { id:'fsc_mtd', source:'fsc',  market:'',            refine:'', period:'MTD', layout:'L_FULL_IMAGE',    title:'AGG Fuel Recovery — MTD', subtitle:'', group:'Fuel',   optional:false },
+        { id:'pv_gta',  source:'pv',   market:'GTA',         refine:'', period:'MTD', layout:'L_COMMENT_IMAGE', title:'AGG Price & Volume — GTA', subtitle:'', group:'AGG',   optional:false },
+        { id:'seg_sk',  source:'seg',  market:'SASKATCHEWAN',refine:'', period:'YTD', layout:'L_COMMENT_IMAGE', title:'Product Segment — SK',     subtitle:'', group:'RMX',   optional:true  },
+        { id:'nope',    source:'ghost',market:'',            refine:'', period:'',    layout:'L_FULL_IMAGE',    title:'A source nothing registers',subtitle:'', group:'Other', optional:false }
+      ],
+      count: 4, problems: []
+    }
+  };
+}
+
 /* Server replies, by function name. A page asking for anything not listed here
    is a finding, not something to paper over — the runner reports it. */
 function serverStubs(model) {
   return {
+    /* Deck Builder */
+    DECK_readTemplate: () => model.template,
+    DECK_getRecipe:    () => model.recipe,
     getFscData:      () => model,
     getRmxFuelData:  () => model,
     getFscDataFromUpload:     () => model,
@@ -519,6 +555,56 @@ const PAGES = [
     },
   },
   {
+    /* The Deck Builder. Its whole script was TOP LEVEL — no IIFE at all — so
+       every one of its nine inline handlers resolved against window and none
+       of them survives a registration. Six were in the markup; three were
+       written into generated rows. This case reads the list after Plan, then
+       unticks a slide, which is the only way to find out whether the delegated
+       handler that replaced the inline onchange actually fires. */
+    id: 'deckbuilder',
+    legacy: 'Page_DeckBuilder.html',
+    model: deckModel,
+    views: ['__planned__', '__toggled__'],
+    viewButton: () => '',
+    /* Plan on both sides first — the list is empty until the recipe lands. */
+    setup: async win => {
+      win.document.getElementById('dbBtnPlan')
+         .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 120));
+    },
+    drive: (win, view) => {
+      if (view !== '__toggled__') return;
+      const box = win.document.querySelector('#dbList .db-row input[type=checkbox]');
+      if (!box) throw new Error('no slide checkbox in #dbList');
+      box.checked = false;
+      box.dispatchEvent(new win.Event('change', { bubbles: true }));
+    },
+    payload:  { host: 'dbList' },
+    /* the list holds a "press Plan" note until the recipe lands, so what proves
+       both sides rendered is the note, and the rows are proved by the diff */
+    expectMarkup: 'db-note',
+    readHtml: { tpl: 'dbTplInfo', sources: 'dbSources', month: 'dbMonth', banners: 'dbBanners' },
+    readText: { prog: 'dbProg' },
+    /* The three attributes the port moved, and nothing else. The legacy side
+       writes inline handlers, the merged side data attributes; every figure,
+       class, id and title in those 4 rows is still compared byte for byte. */
+    normalise: t => t
+      .replace(/ onchange="db(?:PickKpi|Toggle)\([^"]*\)"/g, '')
+      .replace(/ onclick="dbOpenLb\([^"]*\)"/g, '')
+      .replace(/ data-db-(?:kpi|toggle|lb)="\d+"/g, ''),
+    chrome: {
+      /* no guide and no "?" hint on this page — asserting either would fail
+         for the right reason on the wrong page */
+      noGlobals: ['ROWS', 'TPL', 'BUSY', 'DECK_MONTH', 'dbPlan', 'dbRenderAll',
+                  'dbPublish', 'dbValidate', 'dbLoadTemplate', 'dbToggle',
+                  'dbPickKpi', 'dbOpenLb', 'dbCloseLb', 'rowHtml', 'redraw',
+                  'esc', 'srv', 'banner', 'prog', 'setBusy', 'dbPageInit'],
+      modules: ['AMR', 'AmrSlide', 'AmrTick', 'AmrDeckSource', 'AmrKpi',
+                'AmrCache', 'AmrPvSlide', 'AmrSegSlide', 'AmrRmxSlide',
+                'AmrFuelExec', 'AmrProgress', 'AmrBoot', 'AmrFresh'],
+    },
+  },
+  {
     /* The Ready-Mix twin. It shares 21 ids with the case above ON PURPOSE
        (PLAN.md §3) — that is not a mistake to be fixed, and the two cases
        being nearly identical is the point. */
@@ -556,13 +642,19 @@ function checkChrome(win, spec, id, ok, fail) {
     else fail(`${id} · chrome · ${name}${extra ? ' — ' + extra : ''}`);
   };
 
+  /* Only seven of the ten pages ever had a QlikView guide. Asserting one on a
+     page that never had it fails for the right reason on the wrong page —
+     the same call chunk 6 made about AmrHint on Ready-Mix — so a case opts in
+     by declaring how many steps it expects. */
   const guide = doc.getElementById('qlikGuide');
-  t('QlikView guide mounted', !!guide);
-  if (guide && spec.guideSteps != null) {
-    const got = guide.querySelectorAll('#qlikGuideSteps p').length;
-    t(`guide has ${spec.guideSteps} steps`, got === spec.guideSteps, `got ${got}`);
+  if (spec.guideSteps != null) {
+    t('QlikView guide mounted', !!guide);
+    if (guide) {
+      const got = guide.querySelectorAll('#qlikGuideSteps p').length;
+      t(`guide has ${spec.guideSteps} steps`, got === spec.guideSteps, `got ${got}`);
+    }
+    t('guide FAB mounted', !!doc.getElementById('qgFab'));
   }
-  t('guide FAB mounted', !!doc.getElementById('qgFab'));
   if (spec.guideExtra) {
     t('the page\'s own guide panel moved into the aside',
       !!(guide && guide.querySelector('#' + spec.guideExtra)));
@@ -627,6 +719,12 @@ function snapshot(win, page, side) {
     notice: aside.map(el => el.textContent.replace(/\s+/g, ' ').trim()).join(' | '),
   };
   for (const [key, id] of Object.entries(page.readHtml || {})) out[key] = txt(id);
+  /* A port is allowed to change HOW a handler is attached — inline on*= is
+     what breaks inside a registration IIFE — so a case may declare exactly
+     which attributes to drop before comparing. Everything else in the markup
+     still has to match byte for byte, and whether the new handler actually
+     fires is proved by driving it, not by reading it. */
+  if (page.normalise) for (const k of Object.keys(out)) out[k] = page.normalise(String(out[k]));
   for (const [key, id] of Object.entries(page.readValue || {})) out[key] = val(id);
   for (const [key, i] of Object.entries(page.readText || {})) {
     const id = map(i); const e = doc.getElementById(id);
@@ -636,6 +734,12 @@ function snapshot(win, page, side) {
 }
 
 function clickView(win, view, page) {
+  /* Most pages switch view with a button. Some do not: the Deck Builder's
+     second reading is taken after unticking a slide, which is a checkbox and a
+     `change` event, and driving it is the POINT of that case — the port moved
+     its handler from an inline onchange to a delegated one, and a diff of the
+     markup alone would pass whether or not anything still listens. */
+  if (page.drive) return page.drive(win, view);
   const b = win.document.querySelector(page.viewButton(view));
   if (!b) throw new Error(`no view button ${page.viewButton(view)}`);
   b.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
@@ -663,8 +767,15 @@ function clickView(win, view, page) {
     for (const [name, side] of [['legacy', A], ['merged', B]]) {
       const snap = snapshot(side.window, page, name);
       checks++;
-      if (snap.tables && snap.tables.includes('<table')) ok(`${page.id} · ${name} rendered a table`);
-      else fail(`${page.id} · ${name} rendered no table — got ${JSON.stringify(String(snap.tables).slice(0, 120))}`);
+      /* Both sides must actually have rendered — two identically empty pages
+         are not a pass, and that is the failure mode a naive diff calls green.
+         Most pages prove it with a <table>; the ones that do not say what to
+         look for instead. The Deck Builder's list is empty until Plan runs, so
+         its marker is checked after `setup`, not here. */
+      const want = page.expectMarkup || '<table';
+      if (page.expectMarkup === false) { checks--; }
+      else if (snap.tables && snap.tables.includes(want)) ok(`${page.id} · ${name} rendered ${want}`);
+      else fail(`${page.id} · ${name} rendered no ${want} — got ${JSON.stringify(String(snap.tables).slice(0, 120))}`);
       if (page.expectNotice) {
         checks++;
         if (snap.notice && snap.notice.includes(page.expectNotice)) ok(`${page.id} · ${name} rendered the data notice`);
@@ -689,6 +800,11 @@ function clickView(win, view, page) {
         clickView(A.window, view, page); clickView(B.window, view, page); await settle(60);
       }
       const a = snapshot(A.window, page, 'legacy'), b = snapshot(B.window, page, 'merged');
+      /* Some rewiring has no DOM to read — a control that saves through the
+         server and changes nothing on screen. What proves its listener
+         survived the move off an inline on*= is that both sides asked the
+         server the same things in the same order. */
+      if (page.readAsked) { a.asked = A.asked.join(','); b.asked = B.asked.join(','); }
       /* DUMP=<page id> prints what this case actually compares. Worth running
          when a mutation you expected to fail passes instead — usually the
          reading is not looking at the thing you changed. */

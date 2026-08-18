@@ -38,7 +38,10 @@ const MODULES = [
   { name: 'AmrKpi',       open: 'window.AmrKpi = (function(){',      from: 'KpiShared.html' },
   { name: 'AmrCube',      open: 'window.AmrCube = (function(){',     from: 'Cube.html' },
   { name: 'AmrPvSlide',   open: 'var AmrPvSlide = (function(){',     from: 'Deck_PV.html' },
-  { name: 'AmrSegSlide',  open: 'var AmrSegSlide = (function(){',    from: 'Deck_SEG.html' }
+  { name: 'AmrSegSlide',  open: 'var AmrSegSlide = (function(){',    from: 'Deck_SEG.html' },
+  { name: 'AmrTick',      open: 'window.AmrTick = (function(){',     from: 'Shell.html' },
+  { name: 'AmrDeckSource',open: 'var AmrDeckSource = (function(){',  from: 'Deck_Sources.html' },
+  { name: 'AmrRmxSlide',  open: 'var AmrRmxSlide = (function(){',    from: 'Deck_RMX.html' }
 ];
 
 const blocksOf = src => [...src.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]);
