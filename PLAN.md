@@ -703,12 +703,79 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 
 | # | Chunk | What lands | | |
 |---|---|---|---|---|
-| 14 | **Page switching without reload** | The nav mounts a page instead of reloading — the switcher, Home, and every `data-page-link` card, all through one `AMR.nav.go()`. **All of it is §D**: no page and no §E module was touched, so `pageparity` / `cssparity` / `modparity` all survive. Teardown is automatic rather than per-page — the runtime records what a mounted page registers and removes it — because eleven `document`/`window` listeners across the ten registrations would otherwise stack, and **48 listeners leak per lap** without it, measured. `tests/pageswitch.js` is the gate. | `pageswitch.js` (two laps of all ten pages, mutation-tested three ways) + the whole suite, 20 green | ✅ |
+| 14 | **Page switching without reload** *(reviewed, and four bugs fixed — see below)* | The nav mounts a page instead of reloading — the switcher, Home, and every `data-page-link` card, all through one `AMR.nav.go()`. **All of it is §D**: no page and no §E module was touched, so `pageparity` / `cssparity` / `modparity` all survive. Teardown is automatic rather than per-page — the runtime records what a mounted page registers and removes it — because eleven `document`/`window` listeners across the ten registrations would otherwise stack, and **48 listeners leak per lap** without it, measured. `tests/pageswitch.js` is the gate. | `pageswitch.js` (two laps of all ten pages, mutation-tested three ways) + the whole suite, 20 green | ✅ |
 | 15 | **The three drifted helpers** | Diff `toNum_` / `norm_` / `gk_` across the three namespaces, write down what each difference *does*, then unify only what is provably equivalent. | ☐ |
 | 16 | **Collapse `Deck_Styles`** | Fold the `.slide-bare` mirror into the component layer, proven against real captures. | ☐ |
 | 17 | **Device cache on both fuel pages** | Wire `AmrCache` into AGG Fuel Recovery and RMX Fuel Recovery, so a repeat visit paints from `localStorage` instead of waiting on the sheet. **Requested; new behaviour, not a port** — see [§10](#10-four-things-this-merge-does-not-touch). | ☐ |
 | 18 | **`APP_log` at the server entry points** | Chunk 12 wrote the helper and left the 10,889 moved lines alone, on purpose — see its notes. This wires it in, and the order is the order of the payoff: **`APP_cachePut_`'s `n > 250` bail first** (that silent `skip` is the whole reason the `cache` field exists, and README §6 is what it costs), then `APP_cacheGet_`'s hit/miss, then the entry points a harness already covers so each line lands with a gate on it — `getFscData`, `getPvUnmapped`, `qlikSyncCheck`, `RMX_prepare`. Never inside a per-row loop. **Do the `catch (e) {}` pass in the same chunk**: [§7](#7-logging-and-the-debug-functions-it-replaces) says silent is right for an optional cache read and wrong for everything else, and chunk 12 carried all of them across undecided because deciding them is an edit, not a move. | ☐ |
 | 19 | **The unwired Saskatchewan rates readout** | `getSaskRatesStatus` says in its own comment that it exists "so the Settings screen can check the sheet without loading a whole page", and no `.html` has ever called it. Either wire it into Settings or delete it and the sentence — but not inside a merge. See [§1a](#1a-chunk-1-results--the-three-audits). | ☐ |
+
+### What the chunk-14 REVIEW found — four bugs, all shipped, all now gated
+
+Chunk 14 was reviewed line by line before chunk 15 was started, and it had four defects.
+Every one was reproduced in real Chromium **before** being fixed, and every one now has a
+check in `tests/pageswitch.js` that was proved to fail without the fix. The common thread is
+worth stating once, because it is the thing chunk 14 got 90% right and 10% wrong:
+
+> **A reload used to be the teardown, and it tore down things nothing in the repo had to
+> name.** Chunk 14 replaced it with a runtime that records what a mounted page registers. That
+> is the right design — but it only unmounts what it can SEE, and three of these four are
+> things it could not see.
+
+- **`setInterval` is wrapped and `app.html` never calls it — not once.** The hook was written
+  for `AmrFresh`'s five-minute poll, and `AmrFresh` reschedules with `setTimeout`. So the poll
+  survived every switch, and what it cost is not a stray timer, it is a **wrong answer**:
+  `mine` is the data version of the page that started the watch, `page()` reads
+  `window.APP_PAGE` which the switch has already moved, and `APP_getGen_` is **per page**. The
+  next poll therefore compared two different pages' versions, never matched, and put
+  *"these figures are out of date"* over a page that was perfectly current — then `show()`
+  cleared the timer on its way out, so freshness checking was **dead for the rest of the
+  session**. `AmrFresh.stop()`, called from `teardown()`, is the fix.
+
+- **The loading screen outlived the page that raised it.** `#amrLoad` is on `KEEP_ON_SWITCH`
+  for a good reason — `AmrProgress` caches `mounted` and `host`, so detaching the node leaves
+  the flag true and the screen unable to appear again. But keeping the **node** while keeping
+  the **jobs** strands it: the callback that would have called `done()` or `clear()` belongs
+  to the page that has gone, and chunk 14's own stale guard drops it *by design*, so nothing
+  ever removed the job. The new page sat under the old page's overlay until a full reload —
+  and switching while something is loading is exactly when a user clicks away.
+  `AmrProgress.reset()` is the fix.
+
+  > Note the shape of this one: **the stale guard and `KEEP_ON_SWITCH` were each correct, and
+  > together they made a bug neither had on its own.**
+
+- **Every page binds a delegated click listener to `#appRoot`, and the capture did not watch
+  it.** `mount()` hands the element to `boot()` as its `root` argument and pages delegate onto
+  it rather than onto rows they redraw — which is the right thing for a page to do. But
+  `#appRoot` is permanent, and **`innerHTML = ''` says nothing about listeners bound to the
+  element itself**, so one stayed per page visited. That is not harmless: the two fuel pages
+  are the same screen on different numbers and share their classes and ids **on purpose**, so
+  the page you left has selectors that MATCH the page you are on. The capture list is
+  `[document, window, #appRoot]` now.
+
+  > `AMR.nav.held()` reported zero the whole time, and so did the CDP count — because
+  > `pageswitch.js` asked `document` and `window`, which is where chunk 14 believed the
+  > listeners were. **The gate was measuring the same assumption the code made.** It counts
+  > every `<body>`-level node now, and names the one that grew.
+
+- **Back did not go back.** `popstate` reads `e.state.amrPage`, and the history entry the tab
+  was *opened* on has no state at all — so the handler fell through to "the page I am already
+  on" and did nothing. The first Back after the first switch was a no-op, every time, which is
+  not what [§8](#8-the-chunks)'s chunk-14 row or the commit message claimed. `start()` stamps
+  the entry record with `replaceState` now.
+
+**Two §E modules gained one method each** (`AmrFresh.stop`, `AmrProgress.reset`) and that is
+the first deliberate change to §E since the port. `modparity.js` was **not** retired for it:
+it already carries `gsparity.js`'s declared-edit mechanism, and three of `AmrFresh`'s edits
+were already declared there. Both are declared with their reasons, everything else in §E is
+still proved byte-for-byte, and the harness that `apphtml.js`'s slicing rests on stays alive.
+
+**Also fixed, and it is a tidy rather than a bug:** `wireSettingsRows` / `wireModalDismiss` /
+`wireHintButtons` were called on every mount. Two bind to `document` so the capture removed
+and re-added them each switch; the third binds to `#amrSetList`, a `<body>`-level shell node
+that teardown leaves alone, so it stacked one duplicate per switch — six identical handlers
+means one click on *Save* sends six writes and schedules six reloads. They wire the permanent
+shell, so they are installed once in `start()`, **before** `MOUNTED` goes true.
 
 ### What chunk 14 settled
 

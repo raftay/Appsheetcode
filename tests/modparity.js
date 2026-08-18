@@ -105,6 +105,80 @@ const EDITS = {
       window.location.reload();`,
       to:   `      b.textContent = 'Loading the new figures\\u2026';
       reloadTop();` },
+    { kind: 'replace',
+      why: 'THE WATCH HAD TO BECOME STOPPABLE, and this is the first §E edit chunk 14 forced. ' +
+           'Before chunk 14 a page switch was a full reload, so this module was re-evaluated ' +
+           'between pages and its state went with it. Now it is not. The poll reschedules with ' +
+           'setTimeout rather than running on an interval, so §D\'s capture cannot see it — and ' +
+           'leaving it running is not a stray timer, it is a wrong answer: `mine` is the data ' +
+           'version of the page that STARTED the watch while page() reads window.APP_PAGE, ' +
+           'which the switch has already moved. APP_getGen_ is per page, so the next poll ' +
+           'compares two different pages\' versions, never matches, and greys out a page that is ' +
+           'perfectly current — then show() clears the timer, so freshness checking is dead for ' +
+           'the rest of the session. Reproduced in Chromium before the fix; tests/pageswitch.js ' +
+           'check "stale-poll" is the gate.',
+      from: `      timer = setTimeout(check, EVERY);
+    }
+  };`,
+      to:   `      timer = setTimeout(check, EVERY);
+    },
+
+    /* END THIS PAGE'S WATCH. Called by §D's teardown, because since chunk 14 a
+       page switch is not a reload and this module is no longer re-evaluated
+       between pages.
+
+       What it costs to leave running is not a stray timer, it is a wrong
+       answer. \`mine\` is the data version of the page that STARTED the watch,
+       while page() reads window.APP_PAGE, which the switch has already moved —
+       and APP_getGen_ is per page, so the next poll compares one page's version
+       with another page's and they never match. The user gets "these figures are
+       out of date" over a page that is perfectly current, and show() clears the
+       timer on its way out, so freshness checking is dead for the rest of the
+       session. Clearing \`mine\` is what lets the new page start its own watch:
+       start() declines while one is already running. */
+    stop: function(){
+      if (timer){ clearTimeout(timer); timer = null; }
+      mine = null;
+      shown = false;
+    }
+  };` },
+  ],
+
+  AmrProgress: [
+    { kind: 'replace',
+      why: 'THE OVERLAY OUTLIVED THE PAGE THAT RAISED IT. #amrLoad is on §D\'s KEEP_ON_SWITCH ' +
+           'list — correctly, because this module caches `mounted` and `host`, and detaching the ' +
+           'node leaves the flag true and the screen unable to appear again. But keeping the ' +
+           'NODE while keeping the JOBS strands it: the callback that would have called done() ' +
+           'or clear() belongs to the page that has gone, §D\'s stale guard drops it by design, ' +
+           'and nothing else ever removes the job. The new page then sits under the old page\'s ' +
+           'loading screen until a full reload — and switching pages while something is loading ' +
+           'is exactly when a user clicks away. Reproduced in Chromium before the fix; ' +
+           'tests/pageswitch.js check "stranded-overlay" is the gate.',
+      from: `    repaint: render
+  };`,
+      to:   `    repaint: render,
+
+    /* EVERYTHING THIS PAGE PUT UP, GONE. Called by §D's teardown on a page
+       switch. The node cannot simply be removed — #amrLoad is on §D's
+       KEEP_ON_SWITCH list precisely because \`mounted\` and \`host\` are cached
+       here, and detaching it would leave the flag true and the screen unable to
+       appear again — so the JOBS are what has to go.
+
+       Left alone they strand the overlay: the callback that would have called
+       done() or clear() belongs to the page that has gone, and §D's stale guard
+       drops it, so nothing ever removes the job and the new page sits under the
+       old page's loading screen until a full reload. Switching pages while
+       something is loading is exactly when a user clicks away. */
+    reset: function(){
+      jobs = {}; details = {}; detail = null;
+      disarm();
+      /* Only if the screen was ever built: render() would otherwise mount it
+         here, on a page that never showed one, and put a node on <body> that
+         teardown has just finished accounting for. */
+      if (mounted) render();
+    }
+  };` },
   ],
 };
 

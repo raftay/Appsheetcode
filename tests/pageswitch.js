@@ -69,6 +69,23 @@ const pass = (what, msg) => console.log(`  ✓ ${what}${msg ? ': ' + msg : ''}`)
    have actually mounted before it counts. */
 const STUB = `<script>
 (function(){
+  /* WHAT IS STILL PENDING. AmrFresh reschedules its five-minute poll with
+     setTimeout, not setInterval, so "did the poll die with the page" is not a
+     question the runtime's own bookkeeping can answer — and waiting five
+     minutes is not an option. Tracking live timers by delay makes it one. */
+  var realST = window.setTimeout, realCT = window.clearTimeout;
+  window.__timers = {};
+  window.setTimeout = function(fn, ms){
+    var id = realST(function(){ delete window.__timers[id];
+                                fn && fn.apply(this, arguments); }, ms);
+    window.__timers[id] = ms || 0;
+    return id;
+  };
+  window.clearTimeout = function(id){ delete window.__timers[id]; return realCT(id); };
+  window.__longTimers = function(min){
+    var out = []; for (var k in window.__timers) if (window.__timers[k] >= min) out.push(window.__timers[k]);
+    return out;
+  };
   var ZERO = { cyVol:0, pyVol:0, cyRev:0, pyRev:0, revPct:0, volPct:0,
                aspCY:0, aspPY:0, aspPct:0, aspChg:0, cyShare:0, pyShare:0 };
   var EMPTY = { ok:true, rows:[], sections:[], months:{all:[7],cy:[7]}, month:7, latestMonth:7,
@@ -86,8 +103,12 @@ const STUB = `<script>
                 priceBridge:{ ppi:0, totalAsp:0, items:[] },
                 segment:{ total:ZERO, rows:[] }, cust:{ MTD:{rows:[],total:null}, YTD:{rows:[],total:null} },
                 exec:{MTD:{all:[],applied:[]},YTD:{all:[],applied:[]}}, summary:{MTD:[],YTD:[]}, byMonth:{} };
-  function answer(name){
-    if (name === 'getDataVersion')  return { generation:'g1' };
+  function answer(name, args){
+    /* PER PAGE, because APP_getGen_ is: a source stamp for THAT page plus the
+       code build. A fixture that answers the same version for every page cannot
+       fail when a watch started on one page keeps asking on another — which is
+       precisely the bug this harness now gates. */
+    if (name === 'getDataVersion')  return { generation:'gen-' + ((args && args[0]) || '?') };
     if (name === 'getKpiValues')    return { generation:'g1', cached:false, values:{ main:null, mbsk:null } };
     if (name === 'getGuideImages')  return [];
     if (name === 'getLogo')         return '';
@@ -107,8 +128,9 @@ const STUB = `<script>
       if(prop==='withFailureHandler') return function(f){ bad=f; return proxy; };
       if(typeof prop!=='string') return undefined;
       return function(){
+        var args = [].slice.call(arguments);
         window.__calls.push(prop);
-        setTimeout(function(){ try { ok && ok(answer(prop)); } catch(e){ bad && bad(e); } }, 0);
+        setTimeout(function(){ try { ok && ok(answer(prop, args)); } catch(e){ bad && bad(e); } }, 0);
       };
     }});
     return proxy;
@@ -167,6 +189,12 @@ const SNAPSHOT = () => ({
   guides:     document.querySelectorAll('#qlikGuide, .qgFab, .qgLightbox').length,
   templates:  document.querySelectorAll('template').length,
   openModals: document.querySelectorAll('.amr-open').length,
+  /* The loading screen is deliberately NOT removed on a switch (§D's
+     KEEP_ON_SWITCH), so whether it is SHOWING is the only thing that says
+     the job behind it went with its page. */
+  overlay:    !!document.querySelector('#amrLoad.show'),
+  /* Anything still scheduled far enough out to be a poll rather than a beat. */
+  longTimers: window.__longTimers(60000).length,
   /* THE ONE A DOM DIFF CANNOT SEE. Eleven stacked keydown handlers look exactly
      like one from the outside, so the runtime reports what it is holding. */
   held:       window.AMR.nav.held(),
@@ -194,15 +222,38 @@ const SNAPSHOT = () => ({
      Mutation-tested against precisely that mistake. */
   const cdp = await pg.context().newCDPSession(pg);
   await cdp.send('DOM.enable'); await cdp.send('Runtime.enable');
+  async function countOn(expr) {
+    const { result } = await cdp.send('Runtime.evaluate', { expression: expr });
+    if (!result.objectId) return 0;
+    const { listeners } = await cdp.send('DOMDebugger.getEventListeners',
+                                         { objectId: result.objectId });
+    return listeners.length;
+  }
   async function realListeners() {
     let total = 0;
-    for (const expr of ['document', 'window']) {
-      const { result } = await cdp.send('Runtime.evaluate', { expression: expr });
-      const { listeners } = await cdp.send('DOMDebugger.getEventListeners',
-                                           { objectId: result.objectId });
-      total += listeners.length;
-    }
+    for (const expr of ['document', 'window']) total += await countOn(expr);
     return total;
+  }
+  /* DOCUMENT AND WINDOW ARE NOT THE WHOLE SURFACE, and believing they were hid
+     a leak for a whole chunk. The shared modal shells sit on <body>, OUTSIDE
+     #appRoot — that is the entire reason they survive a page swap — so a
+     per-mount addEventListener on one of them is neither recorded by §D's
+     capture (it wraps document and window only) nor removed by teardown. It
+     stacked one duplicate handler on #amrSetList per switch, and six identical
+     handlers means one click on Save sends six writes. */
+  async function shellListeners() {
+    const n = await pg.evaluate(() => document.body.children.length);
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const c = await countOn(`document.body.children[${i}]`);
+      if (!c) continue;
+      const name = await pg.evaluate(
+        j => { const e = document.body.children[j]; return e.id || e.tagName.toLowerCase(); }, i);
+      parts.push(`${name}=${c}`);
+    }
+    /* Named, not totalled. "23 where there were 13" sends you looking;
+       "appRoot=12 where it was 2" is the bug. */
+    return parts.join(' ');
   }
   /* Attribute an error to the page that was mounted when it happened; "one of
      twenty-one switches threw" is not a report anybody can act on. */
@@ -231,7 +282,8 @@ const SNAPSHOT = () => ({
       const ok = await pg.evaluate(p => window.AMR.nav.go(p), id);
       await pg.waitForTimeout(260);
       const s = await pg.evaluate(SNAPSHOT);
-      s.real = await realListeners();
+      s.real  = await realListeners();
+      s.shell = await shellListeners();
       seen.push({ lap, id, ok, s });
 
       if (!ok) { fail('switch', `lap ${lap}: AMR.nav.go('${id}') refused`); continue; }
@@ -252,7 +304,10 @@ const SNAPSHOT = () => ({
     const a = seen.find(x => x.lap === 1 && x.id === id);
     const b = seen.find(x => x.lap === 2 && x.id === id);
     if (!a || !b) continue;
-    for (const k of ['bodyKids', 'bodyIds', 'guides', 'openModals']) {
+    /* `overlay` is deliberately NOT compared lap to lap: whether a boot screen
+       happens to be painted when the snapshot is taken is a race with the grace
+       period, not a leak. The stranded-overlay probe below is the gate for it. */
+    for (const k of ['bodyKids', 'bodyIds', 'guides', 'openModals', 'longTimers']) {
       if (String(a.s[k]) !== String(b.s[k])) {
         leaks++;
         fail('no-leak', `${id}: ${k} was ${JSON.stringify(a.s[k])} on the first visit and ` +
@@ -279,6 +334,14 @@ const SNAPSHOT = () => ({
                       `and carried ${a.s.real} on the first — ${b.s.real - a.s.real} were added ` +
                       `and never removed. This is Chromium's count, not the runtime's.`);
     }
+    if (a.s.shell !== b.s.shell) {
+      leaks++;
+      fail('no-leak', `${id}: <body>-level nodes hold [${b.s.shell}] on the second visit and ` +
+                      `held [${a.s.shell}] on the first. These outlive the mount — #appRoot ` +
+                      `keeps its own listeners when innerHTML is replaced, and the shared modal ` +
+                      `shells are outside it entirely — so anything bound to one per mount ` +
+                      `stacks unless §D's capture records that target.`);
+    }
   }
   if (!leaks) {
     const worst = seen.reduce((m, x) => Math.max(m, x.s.real), 0);
@@ -304,10 +367,83 @@ const SNAPSHOT = () => ({
     pass('back-to-base', 'a round trip through every page leaves the shell as it found it');
   }
 
-  /* An unregistered page must not silently do nothing. */
+  /* ---------------------------------------------------------------- the poll
+     AmrFresh watches whether the data behind THIS page has moved. It
+     reschedules with setTimeout, so §D's setInterval hook never saw it, and
+     leaving it running is not a stray timer — it is a wrong answer. `mine` is
+     the version of the page that started the watch; page() reads
+     window.APP_PAGE, which the switch has already moved; APP_getGen_ is per
+     page. So the next poll compares two different pages' versions, never
+     matches, and greys out a page that is perfectly current — then show()
+     clears the timer, so freshness checking is dead for the rest of the
+     session. AmrFresh.stop(), called from teardown, is the fix. */
+  const polls = await pg.evaluate(() => window.__longTimers(60000));
+  if (polls.length) {
+    fail('stale-poll', `${polls.length} timer(s) of 60s or more are still pending ` +
+      `(${polls.join(', ')}ms) after switching away from the page that started them. A watch ` +
+      `that outlives its page asks for the NEW page's data version and compares it with the ` +
+      `OLD page's — they are per page, so it never matches and the "out of date" grey-out ` +
+      `covers a page that is fine.`);
+  } else pass('stale-poll', 'no five-minute watch outlives the page that started it');
+
+  /* ----------------------------------------------------------- the overlay
+     #amrLoad is deliberately kept across a switch (§D's KEEP_ON_SWITCH): the
+     module caches `mounted` and `host`, so detaching it leaves the flag true
+     and the screen unable to appear again. But keeping the node while keeping
+     the JOBS strands it — the callback that would have cleared the job belongs
+     to the page that has gone and the stale guard drops it by design, so the
+     new page sits under the old page's loading screen until a full reload.
+     Raised here on purpose: switching while something is loading is exactly
+     when a real user clicks away. */
+  await pg.evaluate(() => window.AmrProgress.set('pageswitch-probe',
+                          { text: 'Loading the sheet\u2026', now: true }));
+  await pg.waitForTimeout(120);
+  const overlayUp = await pg.evaluate(() => !!document.querySelector('#amrLoad.show'));
+  await pg.evaluate(() => window.AMR.nav.go('segment'));
+  await pg.waitForTimeout(300);
+  const overlayStuck = await pg.evaluate(() => !!document.querySelector('#amrLoad.show'));
+  if (!overlayUp) {
+    fail('stranded-overlay', 'the probe never raised the loading screen, so the check below ' +
+                             'proves nothing — fix the probe rather than trusting the pass');
+  } else if (overlayStuck) {
+    fail('stranded-overlay', 'the loading screen raised by the previous page is still covering ' +
+      'the new one. AmrProgress keeps the job, its clearing callback was dropped with the page ' +
+      'that registered it, and nothing else removes it: the app is under a dead overlay until a ' +
+      'full reload.');
+  } else pass('stranded-overlay', 'the loading screen comes down with the page that raised it');
+
+  /* An unregistered page must not silently do nothing. NOTE THE POSITION: go()
+     falls back by clicking a target=_top anchor, which really does navigate the
+     tab, so every check that needs this document has to have run already. */
   const refused = await pg.evaluate(() => window.AMR.nav.go('nosuchpage'));
   if (refused !== false) fail('fallback', 'go() to an unknown page did not refuse');
   else pass('fallback', 'an unknown page falls back to a full navigation');
+
+  /* ------------------------------------------------------------ the back button
+     PLAN.md claims Back returns to the previous page. It only does if the entry
+     the tab was OPENED on carries state: popstate reads e.state.amrPage, and
+     the record the browser creates on load has none, so the handler fell
+     through to "the page I am already on" and did nothing. That made the first
+     Back after the first switch a no-op, every time. start() stamps the entry
+     record with replaceState now. Run on a fresh load so the 20-odd pushes
+     above cannot mask it. */
+  const tmpBack = path.join(os.tmpdir(), 'amr_pageswitch_back.html');
+  fs.writeFileSync(tmpBack, pageHtml('landing'));
+  await pg.goto('file://' + tmpBack, { waitUntil: 'load' });
+  await pg.waitForTimeout(400);
+  await pg.evaluate(() => window.AMR.nav.go('rmx'));
+  await pg.waitForTimeout(300);
+  const reached = await pg.evaluate(() => document.body.getAttribute('data-page'));
+  await pg.goBack();
+  await pg.waitForTimeout(400);
+  const back = await pg.evaluate(() => document.body.getAttribute('data-page'));
+  if (reached !== 'rmx') {
+    fail('back-button', `never reached rmx (data-page is "${reached}"), so Back proves nothing`);
+  } else if (back !== 'landing') {
+    fail('back-button', `Back left the app on "${back}", not "landing". The entry history ` +
+      `record carries no amrPage, so popstate falls through to the page it is already on and ` +
+      `does nothing.`);
+  } else pass('back-button', 'Back returns to the page the tab was opened on');
 
   if (errs.length) {
     /* Page code writes to the console on purpose; only real throws land here. */
