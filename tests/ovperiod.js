@@ -76,12 +76,7 @@ function expand(src, depth) {
    same file the live app serves, with the same stub spliced into its body. */
 const SIDES = [
   { name: 'legacy', file: 'Page_Overview.html' },
-  /* `shell` is chunk 8's marker and chunk 9 deletes it: the merged page has the
-     period model, the month window and the cube but not the panel painters yet,
-     so checks 1-2 run against it and 3-7 do not. It is here rather than absent
-     because the four Period buttons ARE chunk 8's review, and they are only
-     observable in a browser. */
-  { name: 'merged', file: 'app.html', shell: true }
+  { name: 'merged', file: 'app.html' }
 ];
 
 /* ---- the synthetic cube -------------------------------------------------
@@ -413,10 +408,6 @@ async function run(side, browser, allFails) {
   s = await press('MTD');
   if (s.win.replace(/\s+/g, ' ') !== 'Aug 2025→Aug 2025') bad('This month window is "' + s.win + '", expected Aug 2025→Aug 2025');
 
-  /* Chunk 8 stops here: everything below reads a panel, and the painters are
-     chunk 9. Delete these three lines with the `shell` flag above. */
-  if (side.shell) { await pg.close(); allFails.push.apply(allFails, fails); return; }
-
   /* ---- 3. no panel anywhere ever explains itself ---- */
   for (const k of ['MTD','YTD','PMTD','PYTD']) {
     const t = await press(k);
@@ -532,7 +523,7 @@ async function run(side, browser, allFails) {
     fails.forEach(f => console.error('  ✗ ' + f));
     process.exit(1);
   }
-  console.log('ovperiod: ok — ' + SIDES.map(s => s.name + (s.shell ? ' (shell only)' : '')).join(' + ') +
-    ': four Period settings, Product Category on Prev month only, ' +
+  console.log('ovperiod: ok on both sides (' + SIDES.map(s => s.name).join(' + ') +
+    ') — four Period settings, Product Category on Prev month only, ' +
     'no panel left explaining itself.');
 })();

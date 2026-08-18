@@ -1,6 +1,6 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: in progress on `merging-files`. Chunks 0–8 done — `app.html` is ~742 KB and holds the runtime, ten shared modules and eight of the eleven pages (Landing, Inventory Report, both Fuel Recovery pages, AGG Price & Volume, Ready-Mix, Product Segment, and the Executive Overview's shell). §A3 is 363 rules — chunk 8 added exactly one; §A4 is 302, because the Overview is 234 of them. All 17 test harnesses run and are green, and `tests/ovperiod.js` now drives `app.html` as well as the legacy page. The 16 `.gs` files are untouched and stay that way until chunk 12.**
+**Status: in progress on `merging-files`. Chunks 0–9 done — `app.html` is ~972 KB and holds the runtime, ten shared modules and eight of the eleven pages, the Executive Overview now complete. Only Deck Builder (chunk 10) and TP01 (chunk 11) are left on the client side. §A3 is 363 rules and §A4 is 302; chunk 9 added **zero** CSS, because chunk 8 landed all of it. All 17 test harnesses run and are green, and `tests/ovperiod.js` drives `app.html` alongside the legacy page through a real browser — the only merged page under that kind of gate. The 16 `.gs` files are untouched and stay that way until chunk 12.**
 
 > ## Read this file before doing anything. Every session, every agent.
 >
@@ -558,7 +558,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 6 | **Ready-Mix** | `Page_Rmx` only — **`Deck_RMX` does NOT come here**, see below. 65 of its 67 id-scoped rules were deleted rather than ported, because chunk 5 had already promoted the same mapping check and dialog. **Two dead includes removed from the legacy page**: `Deck_RMX` and `Cube`, ~1,225 lines on every Ready-Mix load. The one page with a real §A4 block, and the reason is bare element selectors. | `tests/merge.js`, `tests/pageparity.js` (147 comparisons), `tests/rmxcost.js`, `tests/segboot.js` + the whole suite — all green | ✅ |
 | 7 | **Product Segment** | `Page_Segment` + `Deck_SEG`. §E gains `AmrSegSlide`; §A3 gains `table.gt` and the slide-body rows. **Zero §A4 rules** — six id-scoped rules became `.tbl-stack` / `.previewHost`, and everything else was already shared. | `tests/merge.js`, `tests/pageparity.js` (170 comparisons), `tests/segboot.js`, `tests/deckstatic.js` + the whole suite — all green | ✅ |
 | 8 | **Overview, part 1 — shell and cube** | `Page_Overview`'s whole markup (342 lines, 136 ids), its whole style block as **234 §A4 rules**, and the shell half of its script: state, helpers, the panel primitives, the market chips, the period model (`STATE`, `PICK_SERVER`, `windowPeriod`), the month window, the `AmrCube` wiring, the history pill, `load()` and `boot()`. No painters — they are behind a ten-name **CHUNK 9 SEAM** block. §A3 gained exactly one rule. `tests/ovperiod.js` drives `app.html` as a second side now, and `tests/merge.js` learned to resolve `$('id')`. | `tests/merge.js`, `tests/ovperiod.js` (both sides; merged is shell-only) + the whole suite — all green | ✅ |
-| 9 | **Overview, part 2 — the panels** | Every painter, both cross-filter engines, the fifteen chart registries in `CH`, `pcatFits`, the SAP/USGAAP cards, customers, fuel surcharge, product category, and the data-quality sheet with its lookup editor — 4,128 lines. The chunk-8 seam block goes. *(`hidePanel` / `resetPanels` are NOT here: they are the panel primitives the shell's own `renderTab` needs, so they landed in chunk 8. Corrected against the code.)* Split from chunk 8 because 6,022 lines is a quarter of all client code and reviewing it in one commit is not reviewing it. | `tests/ovperiod.js` with the merged side's shell flag removed — all seven checks, both tabs, all four periods — plus `tests/freshness.js` and the whole suite | ☐ |
+| 9 | **Overview, part 2 — the panels** | Every painter, both cross-filter engines, the fifteen chart registries in `CH`, `pcatFits`, the SAP/USGAAP cards, customers, fuel surcharge, product category, and the data-quality sheet with its lookup editor — 4,128 lines, and **zero CSS**. The chunk-8 seam block goes; all ten names are the real thing. *(`hidePanel` / `resetPanels` are NOT here: they are the panel primitives the shell's own `renderTab` needs, so they landed in chunk 8. Corrected against the code.)* | `tests/ovperiod.js`, merged side's shell flag removed — all seven checks, both tabs, all four periods, mutation-tested three ways — plus the whole 17-harness suite, all green | ✅ |
 | 10 | **Deck Builder** | `Page_DeckBuilder` + `Deck_Sources` + `Deck_Styles`. | `tests/deckpath.js`, `tests/bgrender.js` + a real deck build | ☐ |
 | 11 | **TP01** | `Page_TP01`. Mail sends as the deploying account. | a real send to a test recipient | ☐ |
 
@@ -640,6 +640,39 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
   global. *(The id check was replaced in chunk 4 — see [§3](#3-how-the-pages-live-inside-one-html-file).
   Ids repeat across pages on purpose; what is checked now is that none repeats within one page
   and that the mount empties `#appRoot`.)*
+
+### What chunk 9 settled
+
+- **It added no CSS and no modules** — the same shape chunk 4 had, for the same reason: chunk 8
+  landed the whole style block, so §A3 is byte-for-byte what it was and §A4 did not move off
+  302. A 4,128-line commit that touches no stylesheet is easier to review than a 6,000-line one
+  that touches everything, which is the whole argument for the split.
+
+- **The seam held.** All ten names in chunk 8's `CHUNK 9 SEAM` block are the page's own
+  functions now and the block is gone. Nothing else in the port had to change to absorb them —
+  no call site, no ordering, no state — which is what "the seam is ten names" was claiming and
+  is now evidence rather than a plan.
+
+- **`tests/ovperiod.js` runs all seven checks against `app.html`.** Four Period settings, both
+  tabs, the four-period sweep for stray notices, Product Category on Prev month only *and off
+  the right server tab*, plants/materials/customers/bridges/surcharge under a cube span, the
+  2024 quick-window dropping the live-book panels, and a server period bringing everything
+  back. The merged Overview answers identically to the legacy page on every one.
+
+- **Mutation-tested three ways, each failing on the merged side alone**, so the gate is known to
+  be reading the port and not something both sides share:
+  - `pcatFits()` forced to `true` → Product Category shows under This month and Year to date.
+  - `PICK_SERVER`'s `PMTD` / `PYTD` swapped → Product Category reads the wrong tab (the check
+    chunk 8 had to add before this mutation could fail at all).
+  - `prevMonthOf()` stepping back two months → both Prev-month windows land a month early.
+  A fourth was tried and did **not** fail: making `snapWindowTo()` return immediately. That is
+  not a hole — `periodSpan()` and `syncWindow()` between them still put the handles in the
+  right place, so the mutation genuinely changes nothing observable. Worth writing down so the
+  next agent does not go looking for the bug it implies.
+
+- **`AmrKpiStore` is still unclaimed.** Neither Overview chunk touches it; the only pages left
+  are the Deck Builder and TP01. Unless one of them turns out to call it, it goes at chunk 13
+  as the hit-list says.
 
 ### What chunk 8 settled
 
@@ -1026,10 +1059,15 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 
 Stated up front so nobody is surprised later:
 
-- **`app.html` will be ~1.0 MB** (1.13 MB of HTML today, less the ~720 lines of guide
-  duplication and whatever the legacy sweep takes). **`app.gs` ~515 KB.** Both are far inside
-  Apps Script's limits, but the script editor gets sluggish on files this size. That is the
-  trade being made deliberately: slower to edit in the browser, trivial to move.
+- **`app.html` will be ~1.1 MB, not the ~1.0 MB estimated in chunk 0.** Measured after chunk 9:
+  972 KB with eight pages in, and the four files still to come (`Page_DeckBuilder`,
+  `Deck_Sources`, `Deck_Styles`, `Page_TP01`) are 127 KB of source between them, less TP01's
+  copy of the QlikView guide. The estimate was low because it assumed the legacy sweep would
+  take more than it has: the sweep is real (~720 lines of guide, ~1,225 lines of dead includes,
+  the id-styling collapse) but the pages themselves port close to one-for-one. **`app.gs`
+  ~515 KB.** Both are far inside Apps Script's limits, but the script editor gets sluggish on
+  files this size. That is the trade being made deliberately: slower to edit in the browser,
+  trivial to move.
 - **Every page load ships every page.** Today `?page=rmx` sends 96 KB; afterwards it sends the
   whole file. HtmlService gzips, so expect roughly 200 KB on the wire against ~25 KB now. The
   extra is markup the browser parses into inert fragments and CSS it discards on a `data-page`
