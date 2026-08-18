@@ -2061,7 +2061,7 @@ window.AMR = (function(){
     document.body.appendChild(a); a.click();
     setTimeout(function(){ if (a.parentNode) a.parentNode.removeChild(a); }, 1500);
   }
-  function goHome(){ navTop(hrefFor('landing')); }
+  function goHome(){ if (!go('landing')) navTop(hrefFor('landing')); }
   function reloadThisPage(){
     var href = hrefFor(PAGE);
     navTop(href + (href.indexOf('?') === -1 ? '?' : '&') + 'r=' + Date.now());
@@ -2095,7 +2095,9 @@ window.AMR = (function(){
     }).join('');
     sel.addEventListener('change', function(){
       if (this.value === PAGE) return;
-      navTop(hrefFor(this.value));
+      /* go() falls back to a full navigation itself; if it does, the select is
+         left showing a page we are leaving anyway. */
+      go(this.value);
     });
     var brand = bar.querySelector('.brand') || bar.firstElementChild;
     if (brand && brand.nextSibling) bar.insertBefore(sel, brand.nextSibling);
@@ -2403,6 +2405,131 @@ window.AMR = (function(){
   };
 
   /* ==========================================================================
+     WHAT A MOUNTED PAGE LEAVES BEHIND  (chunk 14)
+     --------------------------------------------------------------------------
+     Switching pages without a reload means the previous page has to be taken
+     apart, and emptying #appRoot does not do that. Three kinds of thing outlive
+     the markup, and every one of them is a real leak rather than a theoretical
+     one:
+
+       · LISTENERS ON document / window. Eleven of them across the ten page
+         registrations — Escape handlers, delegated clicks, resize recomputes.
+         Nothing removes them, so rmx → segment → rmx would bind Ready-Mix's
+         keydown twice and run it against a detached DOM.
+       · NODES APPENDED TO <body>. AmrQlikGuide's aside and its FAB, the
+         progress screen, a lightbox, the off-screen slide box. All of them sit
+         OUTSIDE #appRoot on purpose, which is exactly why emptying it misses
+         them.
+       · REPEATING TIMERS. AmrFresh polls every five minutes for the page it was
+         started on.
+
+     RATHER THAN ASK EACH PAGE TO CLEAN UP, THE RUNTIME RECORDS. Page code is
+     not touched at all: the hooks below wrap addEventListener, setInterval and
+     nothing else, they are installed once, and because exactly one page is
+     mounted at a time, anything registered while it is mounted belongs to it —
+     including from a callback that lands long after boot() returned. §D's and
+     §E's own listeners are installed at evaluation time, before the first
+     mount, so they are never captured.
+
+     The <body> baseline is taken before the first page goes in, so the
+     permanent shells — #appRoot and the modal dialogs — are what "belongs
+     here" means.
+     ========================================================================== */
+  /* MODULE SINGLETONS THAT MUST SURVIVE A SWITCH. AmrProgress builds its
+     loading screen once, lazily, and then caches the node behind a `mounted`
+     flag — remove it and the flag stays true, so the screen never appears
+     again. It is page-independent infrastructure, unlike AmrQlikGuide's aside,
+     which carries THIS page's steps and has to go so the next page can build
+     its own. Anything a module appends to <body> and then holds a reference to
+     belongs on this list; anything a page causes to appear does not. */
+  var KEEP_ON_SWITCH = '#amrLoad';
+
+  var LISTENERS = [];      /* [target, type, fn, opts] added while a page is up */
+  var INTERVALS = [];      /* repeating timers started while a page is up       */
+  var BODY_BASE = null;    /* the body children that are not any page's         */
+  var MOUNTED   = false;   /* record only between mount and teardown            */
+  var GENERATION = 0;      /* bumped on every switch; see staleGuard below      */
+
+  function installCapture(){
+    [document, window].forEach(function(t){
+      var orig = t.addEventListener.bind(t);
+      t.addEventListener = function(type, fn, opts){
+        if (MOUNTED) LISTENERS.push([t, type, fn, opts]);
+        return orig(type, fn, opts);
+      };
+    });
+    var setI = window.setInterval;
+    window.setInterval = function(fn, ms){
+      var id = setI.apply(window, arguments);
+      if (MOUNTED) INTERVALS.push(id);
+      return id;
+    };
+  }
+
+  /* A page's in-flight google.script.run callbacks cannot be cancelled, and
+     they land on whatever page is mounted when they do. Left alone they run the
+     old page's render against the new page's DOM, which throws somewhere deep
+     and looks like the NEW page is broken. So every handler is stamped with the
+     generation that registered it and silently dropped if it has moved on. */
+  function installStaleGuard(){
+    if (!LIVE || !window.google || !google.script || !google.script.run) return;
+    var desc = Object.getOwnPropertyDescriptor(google.script, 'run');
+    var get = desc && desc.get;
+    function wrap(runner){
+      var gen = GENERATION;
+      return new Proxy(runner, {
+        get: function(t, prop){
+          var v = t[prop];
+          if (typeof v !== 'function') return v;
+          if (prop === 'withSuccessHandler' || prop === 'withFailureHandler'){
+            return function(f){
+              return wrap(v.call(t, function(){
+                if (gen !== GENERATION){
+                  log('debug', 'AMR.nav', 'dropped a callback from a page that is gone',
+                      { was: gen, now: GENERATION });
+                  return;
+                }
+                return f.apply(this, arguments);
+              }));
+            };
+          }
+          return v.bind(t);
+        }
+      });
+    }
+    try {
+      Object.defineProperty(google.script, 'run', {
+        configurable: true,
+        get: function(){ return wrap(get ? get.call(google.script) : desc.value); }
+      });
+    } catch (e) {
+      log('warn', 'AMR.nav', 'could not guard stale callbacks', { error: String(e) });
+    }
+  }
+
+  function teardown(){
+    MOUNTED = false;
+    LISTENERS.forEach(function(l){
+      try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
+    });
+    LISTENERS = [];
+    INTERVALS.forEach(function(id){ try { clearInterval(id); } catch (e) {} });
+    INTERVALS = [];
+    if (BODY_BASE){
+      [].slice.call(document.body.children).forEach(function(el){
+        if (BODY_BASE.indexOf(el) === -1 && !el.matches(KEEP_ON_SWITCH)) {
+          try { el.remove(); } catch (e) {}
+        }
+      });
+    }
+    /* Any modal left open belongs to the page that opened it. */
+    [].forEach.call(document.querySelectorAll('.amr-modal, .amr-stale'), function(m){
+      m.classList.remove('amr-open');
+    });
+    GENERATION++;
+  }
+
+  /* ==========================================================================
      THE PAGE REGISTRY
      --------------------------------------------------------------------------
      AMR.page(id, spec) registers; AMR.start() mounts exactly one.
@@ -2424,21 +2551,31 @@ window.AMR = (function(){
     REGISTRY[id] = spec || {};
   }
 
-  function start(){
-    var id = PAGE;
+  function mount(id){
     var spec = REGISTRY[id];
     if (!spec){
       log('error', 'AMR.start', 'no page registered', { page: id });
       document.getElementById('appRoot').innerHTML =
         '<div class="empty">This page is not available yet.</div>';
-      return;
+      return false;
     }
 
     var tpl = document.getElementById('tpl-' + id);
     if (!tpl){
       log('error', 'AMR.start', 'no template', { page: id });
-      return;
+      return false;
     }
+
+    /* The page identity has to move BEFORE the markup does. §A4 is scoped on
+       body[data-page], so mounting first would paint the new page with the old
+       page's stylesheet for a frame; and page code reads window.APP_PAGE, which
+       is what AmrCache keys its device store on and what AmrFresh asks the
+       server about. Getting that stale is a page showing another page's cached
+       numbers. */
+    PAGE = id;
+    window.APP_PAGE = id;
+    api.currentPage = id;
+    document.body.setAttribute('data-page', id);
 
     var t0 = Date.now();
     /* EMPTY IT FIRST. This one line is what makes it safe for two pages to
@@ -2465,7 +2602,10 @@ window.AMR = (function(){
     wireHintButtons();
     log('info', 'AMR.start', 'mounted', { page: id, ms: Date.now() - t0 });
 
+    var gen = GENERATION;
     need(spec.libs || []).then(function(){
+      /* The user can switch again while a library is still loading. */
+      if (gen !== GENERATION) return;
       if (typeof spec.boot === 'function'){
         var b0 = Date.now();
         try {
@@ -2483,14 +2623,119 @@ window.AMR = (function(){
     }).catch(function(err){
       log('error', 'AMR.start', 'libraries failed', { page: id, error: String(err) });
     });
+    return true;
   }
+
+  function start(){
+    /* Everything on <body> right now belongs to the shell, not to any page.
+       Taken before the first mount, which is the only moment that is true. */
+    BODY_BASE = [].slice.call(document.body.children);
+    installCapture();
+    installStaleGuard();
+    MOUNTED = true;
+    mount(PAGE);
+  }
+
+  /* ==========================================================================
+     GO — a page switch with no round trip  (chunk 14)
+     --------------------------------------------------------------------------
+     The browser already has every page. Reloading to reach one costs a server
+     round trip, a full parse of a 1.1 MB file, and every module re-evaluated,
+     to reach markup that was already in the document.
+
+     THREE THINGS MAKE THIS SAFE AND ALL THREE ARE LOAD-BEARING:
+
+       1. It REPLACES, never adds. Pages share ids on purpose — the two fuel
+          pages are the same screen on different numbers and reuse #syncBtn,
+          #tablesHost and nineteen more — and that only holds while exactly one
+          page is in the document. mount() empties #appRoot first; teardown()
+          takes care of everything outside it.
+       2. It FALLS BACK. Anything unexpected — an unregistered page, a throw
+          mid-switch — and it does the full navigation instead. A slow page
+          switch is a worse outcome than a broken one only if the broken one is
+          impossible, and it is not.
+       3. THE BACK BUTTON STILL WORKS. history.pushState adds an entry to the
+          joint session history, so Back returns to the previous page and
+          popstate mounts it. Be precise about what this does NOT do: the app
+          runs in a sandbox iframe and the top window owns the address bar, so
+          the visible URL never changes and a browser REFRESH re-requests the
+          top window's original ?page=. Back and forward move within the app;
+          refresh returns to where the tab was opened.
+     ========================================================================== */
+  function go(pageKey, opts){
+    opts = opts || {};
+    if (!pageKey || pageKey === PAGE) return true;
+
+    if (!REGISTRY[pageKey] || !document.getElementById('tpl-' + pageKey)){
+      log('warn', 'AMR.nav', 'no client page, navigating instead', { page: pageKey });
+      navTop(hrefFor(pageKey));
+      return false;
+    }
+
+    var t0 = Date.now(), from = PAGE;
+    try {
+      teardown();
+      MOUNTED = true;
+      if (!mount(pageKey)) throw new Error('mount refused ' + pageKey);
+      if (!opts.fromPopState) pushUrl(pageKey);
+      window.scrollTo(0, 0);
+      log('info', 'AMR.nav', 'switched', { from: from, to: pageKey, ms: Date.now() - t0 });
+      return true;
+    } catch (err){
+      log('error', 'AMR.nav', 'switch failed, falling back to a full load',
+          { from: from, to: pageKey, error: String(err), stack: err && err.stack });
+      navTop(hrefFor(pageKey));
+      return false;
+    }
+  }
+
+  function pushUrl(pageKey){
+    try {
+      if (!window.history || !history.pushState) return;
+      var u = new URL(window.location.href);
+      if (pageKey === 'landing') u.searchParams.delete('page');
+      else u.searchParams.set('page', pageKey);
+      history.pushState({ amrPage: pageKey }, '', u.toString());
+    } catch (e) {
+      /* Not fatal: the page is mounted either way, the URL is just stale. */
+      log('debug', 'AMR.nav', 'pushState unavailable', { error: String(e) });
+    }
+  }
+
+  window.addEventListener('popstate', function(e){
+    var id = (e.state && e.state.amrPage) || PAGE;
+    if (id !== PAGE) go(id, { fromPopState: true });
+  });
+
+  /* One delegated handler for every in-app link. The landing cards and the
+     feature tiles all carry data-page-link and a real href, so this is an
+     upgrade rather than a replacement: middle-click and "open in new tab" still
+     get a normal navigation, and a modified click is left alone deliberately. */
+  document.addEventListener('click', function(e){
+    if (e.defaultPrevented || e.button !== 0) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var a = e.target.closest ? e.target.closest('[data-page-link]') : null;
+    if (!a) return;
+    var key = a.getAttribute('data-page-link');
+    if (!REGISTRY[key]) return;              /* let the href do its job */
+    e.preventDefault();
+    go(key);
+  });
 
   /* ---- the public surface ---- */
   var api = {
     log: log,
     live: LIVE,
     lib: { need: need },
-    nav: { top: navTop, home: goHome, reload: reloadThisPage, hrefFor: hrefFor },
+    nav: { top: navTop, home: goHome, reload: reloadThisPage, hrefFor: hrefFor, go: go,
+           /* What the mounted page is currently holding. The counts are the
+              only external evidence that teardown ran, and a leak here is
+              invisible in the DOM — eleven stacked keydown handlers look
+              exactly like one. tests/pageswitch.js asserts they do not grow. */
+           held: function(){
+             return { listeners: LISTENERS.length, intervals: INTERVALS.length,
+                      generation: GENERATION };
+           } },
     esc: esc, escAttr: escAttr,
     openHelp: openHelp, openSettings: openSettings,
     page: page, start: start,

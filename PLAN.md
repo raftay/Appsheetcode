@@ -1,8 +1,8 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: chunks 0–13 done on `merging-files`. THE MERGE IS COMPLETE — the script project is `app.gs`, `app.html` and `appsscript.json`, and nothing else.** 37 files became 3. `app.html` is ~1.13 MB and holds the runtime, thirteen shared modules and all ten pages; `app.gs` is 542 KB in eleven sections. All **19** harnesses run and are green.
+**Status: chunks 0–13 done on `merging-files`. THE MERGE IS COMPLETE — the script project is `app.gs`, `app.html` and `appsscript.json`, and nothing else.** 37 files became 3. `app.html` is ~1.13 MB and holds the runtime, thirteen shared modules and all ten pages; `app.gs` is 542 KB in eleven sections. All **20** harnesses run and are green.
 
-**Chunk 14 is next, and everything from here is [§10](#10-four-things-this-merge-does-not-touch) work** — behaviour changes that were deliberately kept out of the merge so a regression would have one possible cause instead of two. Take the first unticked chunk in [§8](#8-the-chunks).
+**Chunk 15 is next.** Chunk 14 is done — the nav mounts instead of reloading, all of it in §D, so the three parity harnesses survive. **Everything from here is [§10](#10-four-things-this-merge-does-not-touch) work** — behaviour changes that were deliberately kept out of the merge so a regression would have one possible cause instead of two. Take the first unticked chunk in [§8](#8-the-chunks).
 
 Two items are still owed and neither is code: **`APP_verifyPermissions()` has never been run** (nothing off-platform can), and **no real deck has ever been built** against the live deployment. Both need somebody in the Apps Script editor.
 
@@ -703,12 +703,62 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 
 | # | Chunk | What lands | | |
 |---|---|---|---|---|
-| 14 | **Page switching without reload** | The nav mounts a page instead of reloading. Removes the whole per-load cost in [§9](#9-what-this-costs). **Must REPLACE the mounted page, never keep two** — pages share ids on purpose ([§3](#3-how-the-pages-live-inside-one-html-file)). Also needs a teardown for the guide aside and FAB, which live outside `#appRoot`. | ☐ |
+| 14 | **Page switching without reload** | The nav mounts a page instead of reloading — the switcher, Home, and every `data-page-link` card, all through one `AMR.nav.go()`. **All of it is §D**: no page and no §E module was touched, so `pageparity` / `cssparity` / `modparity` all survive. Teardown is automatic rather than per-page — the runtime records what a mounted page registers and removes it — because eleven `document`/`window` listeners across the ten registrations would otherwise stack, and **48 listeners leak per lap** without it, measured. `tests/pageswitch.js` is the gate. | `pageswitch.js` (two laps of all ten pages, mutation-tested three ways) + the whole suite, 20 green | ✅ |
 | 15 | **The three drifted helpers** | Diff `toNum_` / `norm_` / `gk_` across the three namespaces, write down what each difference *does*, then unify only what is provably equivalent. | ☐ |
 | 16 | **Collapse `Deck_Styles`** | Fold the `.slide-bare` mirror into the component layer, proven against real captures. | ☐ |
 | 17 | **Device cache on both fuel pages** | Wire `AmrCache` into AGG Fuel Recovery and RMX Fuel Recovery, so a repeat visit paints from `localStorage` instead of waiting on the sheet. **Requested; new behaviour, not a port** — see [§10](#10-four-things-this-merge-does-not-touch). | ☐ |
 | 18 | **`APP_log` at the server entry points** | Chunk 12 wrote the helper and left the 10,889 moved lines alone, on purpose — see its notes. This wires it in, and the order is the order of the payoff: **`APP_cachePut_`'s `n > 250` bail first** (that silent `skip` is the whole reason the `cache` field exists, and README §6 is what it costs), then `APP_cacheGet_`'s hit/miss, then the entry points a harness already covers so each line lands with a gate on it — `getFscData`, `getPvUnmapped`, `qlikSyncCheck`, `RMX_prepare`. Never inside a per-row loop. **Do the `catch (e) {}` pass in the same chunk**: [§7](#7-logging-and-the-debug-functions-it-replaces) says silent is right for an optional cache read and wrong for everything else, and chunk 12 carried all of them across undecided because deciding them is an edit, not a move. | ☐ |
 | 19 | **The unwired Saskatchewan rates readout** | `getSaskRatesStatus` says in its own comment that it exists "so the Settings screen can check the sheet without loading a whole page", and no `.html` has ever called it. Either wire it into Settings or delete it and the sentence — but not inside a merge. See [§1a](#1a-chunk-1-results--the-three-audits). | ☐ |
+
+### What chunk 14 settled
+
+- **The teardown is the chunk; the mounting was the easy half.** Emptying `#appRoot` does not
+  unmount a page. Three kinds of thing outlive the markup and every one is a real leak:
+  eleven `document`/`window` listeners across the ten page registrations, the nodes modules
+  append to `<body>` (the guide aside and its FAB, the progress screen, the lightbox, the
+  off-screen slide box — all deliberately OUTSIDE `#appRoot`, which is exactly why emptying it
+  misses them), and `AmrFresh`'s five-minute poll. Measured with the removal disabled:
+  **48 listeners added and never removed per lap of the ten pages.**
+
+- **The runtime records; the pages were not touched.** Rather than ask ten registrations to
+  clean up after themselves — which would have been a deliberate page change, and would have
+  retired the three parity harnesses on the spot — §D wraps `addEventListener` and
+  `setInterval` and notes what is registered *while a page is mounted*. Exactly one page is
+  ever mounted, so anything registered in that window belongs to it, **including from a
+  callback that lands long after `boot()` returned**. §D's and §E's own listeners are
+  installed at evaluation time, before the first mount, so they are never captured. A page
+  added later gets teardown for free without anyone remembering.
+
+- **One module singleton had to be exempted, and finding it is what the harness is for.**
+  `AmrProgress` builds the loading screen once, lazily, then caches the node behind a
+  `mounted` flag. Removing it on switch left the flag true and the reference detached — **the
+  loading screen would never have appeared again after the first page switch**, and nothing in
+  the DOM would have looked wrong. `KEEP_ON_SWITCH` is the list, `#amrLoad` is on it, and the
+  rule is written beside it: a module that appends to `<body>` and keeps a reference belongs
+  there; anything a page causes to appear does not.
+
+- **In-flight `google.script.run` callbacks cannot be cancelled, so they are neutered.** Left
+  alone, a reply to the page you just left runs its render against the page you are now on,
+  throws somewhere deep, and looks like the NEW page is broken. Every handler is stamped with
+  the generation that registered it and dropped if it has moved on.
+
+- **Be precise about what the back button does.** `history.pushState` adds a joint-history
+  entry, so Back returns to the previous page and `popstate` mounts it. It does **not** change
+  the address bar — the app is in a sandbox iframe and the top window owns that — so a browser
+  *refresh* re-requests the top window's original `?page=`. Back and forward move within the
+  app; refresh returns to where the tab was opened.
+
+- **`AMR.nav.held()` is diagnostics, not the gate, and the difference cost a mutation.** It
+  reports what the runtime *recorded*. A teardown that forgets `removeEventListener` but still
+  empties its own array reports zero either way — which is precisely the mutation that passed
+  until `pageswitch.js` started asking **Chromium** through CDP instead. Measure the effect,
+  not the bookkeeping.
+
+- **Two things kept the risk survivable.** `go()` falls back to a full navigation on anything
+  unexpected — an unregistered page, a throw mid-switch — so the worst case is the old
+  behaviour rather than a broken one. And the page identity moves *before* the markup:
+  `body[data-page]` is what §A4 is scoped on, and `window.APP_PAGE` is what `AmrCache` keys
+  its device store on, so getting either stale is a page showing another page's cached numbers.
 
 ### What chunk 13 settled
 

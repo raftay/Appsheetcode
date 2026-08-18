@@ -247,17 +247,23 @@ const SHARED_IDS = new Set([
 
 /* ------------------------------------------------- 4b. one page at a time */
 {
-  /* The check above is only sound because AMR.start() empties #appRoot before
-     it mounts. Without that line a second mount would put two #tablesHost in
-     one document and getElementById would answer for whichever came first —
-     which is exactly what chunk 14 will be tempted to do for speed. */
-  const start = NO_COMMENTS.slice(NO_COMMENTS.indexOf('function start()'));
-  const body = start.slice(0, start.indexOf('\n  }'));
-  const clears = /getElementById\('appRoot'\)[\s\S]{0,200}?\.innerHTML\s*=\s*''/.test(body);
-  if (clears) pass('single-mount', 'AMR.start() empties #appRoot before mounting');
-  else fail('single-mount',
-            'AMR.start() does not clear #appRoot before appending — two mounted pages ' +
-            'would share ids. See PLAN.md §3.');
+  /* The check above is only sound because mount() empties #appRoot before it
+     appends. Without that line a second mount would put two #tablesHost in one
+     document and getElementById would answer for whichever came first — which
+     is exactly what chunk 14 was tempted to do for speed, and did not.
+     tests/pageswitch.js proves the runtime behaviour; this proves the line is
+     still there, which is cheaper and fails in a more obvious place. */
+  const at = NO_COMMENTS.indexOf('function mount(id)');
+  if (at === -1) {
+    fail('single-mount', 'no function mount(id) in §D — the mount moved and this check is blind');
+  } else {
+    const body = NO_COMMENTS.slice(at, NO_COMMENTS.indexOf('\n  }', at));
+    const clears = /getElementById\('appRoot'\)[\s\S]{0,200}?\.innerHTML\s*=\s*''/.test(body);
+    if (clears) pass('single-mount', 'mount() empties #appRoot before mounting');
+    else fail('single-mount',
+              'mount() does not clear #appRoot before appending — two mounted pages ' +
+              'would share ids. See PLAN.md §3.');
+  }
 }
 
 /* The three ways a §A4 selector may name its page. `:where(body[data-page=…])`

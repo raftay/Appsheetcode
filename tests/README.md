@@ -205,6 +205,38 @@ instead of `body[data-page="x"]` narrows the rule without adding weight, so the 
 exactly what the unscoped legacy rule had. That is what "scoping a style block" was assumed to
 mean all along.
 
+## `pageswitch.js` — switching pages leaves nothing behind
+
+Chunk 14 made the nav mount a page instead of reloading. A reload used to *be* the teardown,
+so taking it away means the previous page has to be taken apart by hand — and emptying
+`#appRoot` does not do that.
+
+```bash
+npm install playwright
+node tests/pageswitch.js
+```
+
+It switches through every page **twice** and asserts the document comes back to the same shape
+each time. Twice, because none of this shows up on the first switch: it shows up on the fifth,
+as a page that has grown slow or a handler firing for a screen the user left.
+
+What it checks, and why each one is there:
+
+- **One page in the document.** Pages share ids on purpose — the two fuel pages are the same
+  screen on different numbers — and that only holds while exactly one is mounted. Disable the
+  `#appRoot` clear and this reports `syncBtn, banner, monthSel…` declared twice.
+- **The `<body>` shell is unchanged.** The guide aside, its FAB, the progress screen and the
+  lightbox all live *outside* `#appRoot`, which is exactly why emptying it misses them.
+- **Chromium's own listener count, through CDP** — not `AMR.nav.held()`. That distinction cost
+  a mutation: `held()` reports what the runtime *recorded*, so a teardown that forgets
+  `removeEventListener` but still empties its own array reports zero either way. Asking the
+  browser instead catches it, and quantifies it: **48 listeners leaked per lap** with removal
+  disabled.
+- **No uncaught errors**, attributed to the page that was mounted when they happened.
+
+Mutation-tested three ways: stop removing listeners, stop removing body children, stop
+emptying `#appRoot`. Each is caught, and each names what actually broke.
+
 ## `apphtml.js` — not a harness; the reader in front of `app.html`
 
 The client-side twin of `appgs.js`, and it answers two different questions:
