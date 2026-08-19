@@ -231,5 +231,41 @@ console.log('\nthere is one tab reader, and PV_Lookup uses it:');
     `${keysAfterPV.length} key(s) after PV, ${keysAfterBoth.length} after both`);
 }
 
+/* ======================================================================
+ * 5. One schema token, and the check's own key carries it  (chunk 21)
+ * ======================================================================
+ * PV's key always mixed in SCHEMA_ and this file's never did, so bumping the
+ * schema stranded every Price & Volume table and left the mapping check
+ * serving a result computed from rows of the OLD shape — a stale answer that
+ * looks exactly like a correct one.
+ *
+ * Asserted here as well as in helpers.js, and the two are not the same claim.
+ * helpers.js reads the source: `PV.SCHEMA` appears in the key builder. This
+ * RUNS it, which is the half that can actually break — the read crosses an
+ * IIFE boundary, so a schema that is private, misspelled or not yet defined
+ * throws where the harness can see it instead of at a month end.
+ * ==================================================================== */
+console.log('\nthe mapping check is keyed on the same schema as the tables it reads:');
+{
+  const ctx = load();
+  const schema = ctx.PV.SCHEMA;
+  checkThat('PV exports the schema token', typeof schema === 'string' && schema.length > 0, schema);
+
+  ctx.getPvUnmapped({ force: true });
+  const mine = Object.keys(ctx._cache).filter(k => /lookupcheck/.test(k));
+  checkThat('the mapping check wrote an entry at all', mine.length > 0,
+    Object.keys(ctx._cache).join(', '));
+  checkThat('...and its key carries the schema',
+    mine.every(k => k.indexOf('|' + schema + '|') !== -1),
+    mine.join(', ') + '  (schema ' + JSON.stringify(schema) + ')');
+
+  /* The other direction, which is the one that made this a bug: PV's tables
+     and this check must move together, so both keys carry the same token. */
+  const tabs = Object.keys(ctx._cache).filter(k => /tab:/.test(k));
+  checkThat('the tables it is computed from carry the same one',
+    tabs.length > 0 && tabs.every(k => k.indexOf('|' + schema + '|') !== -1),
+    tabs.join(', '));
+}
+
 console.log(fails ? `\n${fails} failing check(s)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

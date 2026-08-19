@@ -705,6 +705,35 @@ var DECK = (function () {\n` },
   s = s.replace(/[$,%\s]/g, '').replace(/\(/g, '-').replace(/\)/g, '');
   if (s === '' || s === '-') return 0;` },
 
+  /* ---- CHUNK 21: the mapping check keys on the schema it depends on ------- */
+    { kind: 'replace', gone: [],
+      why: 'PVLOOK.gk_ omitted SCHEMA_ where PV.gk_ carried it, so bumping the schema stranded ' +
+           'every Price & Volume table and left this page\'s mapping check serving a result ' +
+           'COMPUTED FROM rows of the old shape — a stale answer that looks exactly like a ' +
+           'correct one. It reads PV.SCHEMA rather than declaring a second copy of the token, ' +
+           'because a second literal is the thing nobody remembers to bump. Every existing ' +
+           'entry under the old key becomes unreachable: one miss, then a rebuild, for one ' +
+           'page\'s check. tests/pvlookup.js check 5 RUNS it — the read crosses an IIFE ' +
+           'boundary, which is the half that can actually break. ',
+      from: `function gen_(){ return APP_getGen_('pricevolume'); }
+function gk_(k){ return 'pv|g' + gen_() + '|' + k; }`,
+      to: `function gen_(){ return APP_getGen_('pricevolume'); }
+/* PV.SCHEMA IS IN THE KEY, AND CHUNK 21 IS WHY. It was not, and PV's own key
+   always had it — so bumping SCHEMA_ stranded every Price & Volume table and
+   left this page's mapping check serving a result computed from rows of the old
+   shape. Read at call time, never at construction: PV is above this IIFE, but
+   nothing here should depend on that.
+
+   THE TWO KEYS ARE STILL NOT THE SAME KEY, deliberately. PV keys on the raw
+   source stamp; this keys on APP_getGen_, which is that stamp PLUS
+   APP_CODE_BUILD — so a code push already invalidates the check and does not
+   invalidate PV's tables. That is the safe direction of the two (an extra
+   rebuild, never a stale read) and it is left alone.
+
+   Every existing entry under the old key is now unreachable: one miss, then a
+   rebuild, for one page's mapping check. */
+function gk_(k){ return 'pv|g' + gen_() + '|' + PV.SCHEMA + '|' + k; }` },
+
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
      script.gs §2 carries the census and the rule each one was decided by. */
@@ -981,6 +1010,27 @@ var DECK = (function () {\n` },
      are wrong, and the two rules are about different inputs. */
   s = s.replace(/[$,%\s]/g, '').replace(/\(/g, '-').replace(/\)/g, '');
   if (s === '' || s === '-') return 0;` },
+
+  /* ---- CHUNK 21: PV exports its schema token, so there is only one --------- */
+    { kind: 'replace', gone: [],
+      why: 'PV_Lookup.gs keys its own cache on PV.SCHEMA now, and SCHEMA_ is private to this ' +
+           'IIFE — so it has to be exported for the fix to work at all. Same move, and the same ' +
+           'argument, as readTab and RAW_HEADER_NAMES directly above it: two copies of one rule ' +
+           'is how it keeps coming back. ',
+      from: `    readTab:           readTab_,
+    RAW_HEADER_NAMES:  RAW_HEADER_NAMES_
+  };`,
+      to: `    readTab:           readTab_,
+    RAW_HEADER_NAMES:  RAW_HEADER_NAMES_,
+
+    /* THE CACHE-SHAPE VERSION, so PV_Lookup.gs can key on the same one. Same
+       argument as readTab directly above: two copies of one rule is how it
+       keeps coming back. PV_Lookup caches a result COMPUTED FROM the rows this
+       schema describes, so a bump that strands PV's tables has to strand its
+       check too — see PLAN.md chunk 21. Exported as a value: bumping it means
+       editing the literal, which is what SCHEMA_'s own comment asks for. */
+    SCHEMA:            SCHEMA_
+  };` },
 
   /* ---- DEAD CODE FOUND BY THE 404-NAME AUDIT ---------------------------------
      Not debug functions — those are all gone. These are IIFE-private helpers with

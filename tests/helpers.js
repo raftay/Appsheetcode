@@ -222,24 +222,45 @@ const nm = runTable('norm_',  NORM,  NORM_TABLE);
 
 /* ------------------------------------------------------------------ gk_
    Two copies, both in the Price & Volume family, both building CacheService
-   keys — and they are not the same key. PV's carries SCHEMA_; PVLOOK's does
-   not, so a schema bump invalidates one cache and leaves the other serving
-   rows shaped the old way. Asserted on source text, because what matters is
-   which INPUTS go into the key, and a key builder that stopped reading one of
-   them would still return a plausible string. */
+   keys — and until chunk 21 they were not keyed on the same things. PV's
+   carried SCHEMA_ and PVLOOK's did not, so a schema bump stranded every PV
+   table and left the mapping check serving a result computed from rows of the
+   OLD shape — a stale answer that looks exactly like a correct one. **This
+   block is now the gate on the fix rather than the record of the gap.**
+
+   ONE TOKEN, NOT TWO. PVLOOK reads `PV.SCHEMA` rather than declaring a second
+   copy of 'v5' — a second literal is the thing nobody remembers to bump on the
+   one occasion it matters. So this asserts the shape of the dependency, not
+   just the presence of a string: PV exports it, PV keys on it, PVLOOK keys on
+   PV's, and PV_Lookup.gs has not grown a token of its own.
+
+   Asserted on source text, because what matters is which INPUTS go into the
+   key, and a key builder that stopped reading one of them would still return a
+   perfectly plausible string. tests/pvlookup.js check 5 RUNS it, which is the
+   other half: the read crosses an IIFE boundary. */
 {
   const pv     = extract('PV_Backend.gs', 'gk_').text;
   const pvlook = extract('PV_Lookup.gs',  'gk_').text;
+  const pvRegion = region('PV_Backend.gs');
+
   if (!/SCHEMA_/.test(pv))
     fail('gk_', 'PV.gk_ no longer mixes SCHEMA_ into its cache key — a schema bump ' +
                 'will stop invalidating the Price & Volume cache');
-  else if (/SCHEMA_/.test(pvlook))
-    fail('gk_', 'PVLOOK.gk_ now mixes in SCHEMA_ and PV.gk_ already did. That may well be ' +
-                'the right fix, but it changes every existing cache key: say so in PLAN.md ' +
-                'and update this check.');
+  else if (!/SCHEMA:\s*SCHEMA_/.test(pvRegion))
+    fail('gk_', 'PV no longer exports SCHEMA. PV_Lookup.gs keys on it (chunk 21) and cannot ' +
+                'see SCHEMA_ itself — it is in another IIFE — so this breaks the mapping ' +
+                'check\'s key at run time, where it will read as a cache that never warms.');
+  else if (!/PV\.SCHEMA/.test(pvlook))
+    fail('gk_', 'PVLOOK.gk_ has stopped keying on PV.SCHEMA. That is chunk 21 undone: a ' +
+                'SCHEMA_ bump will stop invalidating the mapping check while it invalidates ' +
+                'everything the check is computed from. If a second schema token was ' +
+                'introduced here instead, that is the failure this check exists to catch.');
+  else if (/SCHEMA_\s*=/.test(pvlook + extract('PV_Lookup.gs', 'gen_').text))
+    fail('gk_', 'PV_Lookup.gs has grown its own schema constant. Two copies of a version ' +
+                'token is one copy nobody bumps.');
   else
-    pass('gk_', 'PV keys on generation+SCHEMA_, PVLOOK on generation alone — recorded, ' +
-                'and PLAN.md chunk 15 says why that gap is a finding rather than a tidy');
+    pass('gk_', 'both key on generation + ONE schema token, PV\'s, read across the IIFE ' +
+                'boundary the way PV.readTab already is (chunk 21)');
 }
 
 /* ------------------------------------------------- the census cannot drift

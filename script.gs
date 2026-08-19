@@ -4292,7 +4292,15 @@ function getCrossData(opts) {
        bug and got the same fix separately. Three copies of one rule is how it
        keeps coming back, so there is one reader now and everybody calls it. */
     readTab:           readTab_,
-    RAW_HEADER_NAMES:  RAW_HEADER_NAMES_
+    RAW_HEADER_NAMES:  RAW_HEADER_NAMES_,
+
+    /* THE CACHE-SHAPE VERSION, so PV_Lookup.gs can key on the same one. Same
+       argument as readTab directly above: two copies of one rule is how it
+       keeps coming back. PV_Lookup caches a result COMPUTED FROM the rows this
+       schema describes, so a bump that strands PV's tables has to strand its
+       check too — see PLAN.md chunk 21. Exported as a value: bumping it means
+       editing the literal, which is what SCHEMA_'s own comment asks for. */
+    SCHEMA:            SCHEMA_
   };
 })();
 
@@ -4424,7 +4432,21 @@ function code_(v){
  * already read this generation is free for the other.
  * Generation-keyed, so a sync invalidates it with everything else. */
 function gen_(){ return APP_getGen_('pricevolume'); }
-function gk_(k){ return 'pv|g' + gen_() + '|' + k; }
+/* PV.SCHEMA IS IN THE KEY, AND CHUNK 21 IS WHY. It was not, and PV's own key
+   always had it — so bumping SCHEMA_ stranded every Price & Volume table and
+   left this page's mapping check serving a result computed from rows of the old
+   shape. Read at call time, never at construction: PV is above this IIFE, but
+   nothing here should depend on that.
+
+   THE TWO KEYS ARE STILL NOT THE SAME KEY, deliberately. PV keys on the raw
+   source stamp; this keys on APP_getGen_, which is that stamp PLUS
+   APP_CODE_BUILD — so a code push already invalidates the check and does not
+   invalidate PV's tables. That is the safe direction of the two (an extra
+   rebuild, never a stale read) and it is left alone.
+
+   Every existing entry under the old key is now unreachable: one miss, then a
+   rebuild, for one page's mapping check. */
+function gk_(k){ return 'pv|g' + gen_() + '|' + PV.SCHEMA + '|' + k; }
 
 function pvGet_(key){
   try {
