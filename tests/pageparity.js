@@ -2,13 +2,13 @@
 /* =============================================================================
  * tests/pageparity.js — the OLD page and the MERGED page render the same thing
  * -----------------------------------------------------------------------------
- * merge.js proves app.html is structurally sound and modparity.js proves the
- * shared modules came across untouched. Neither runs a page. This does: it
+ * merge.js proves app.html is structurally sound and slidecss.js proves the
+ * slide keeps the rules it cannot inherit. Neither runs a page. This does: it
  * boots the legacy page and app.html's port of it side by side under jsdom,
  * with google.script.run stubbed to return the same model to both, and diffs
  * the DOM they produce.
  *
- * It is the gate README §10 asks for, and it is what catches the class of
+ * It is what catches the class of
  * break the other harnesses cannot see — a mistyped id, a listener that never
  * got wired, a template that mounts empty. Every page chunk should add its case
  * to PAGES below before touching the page.

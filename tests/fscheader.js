@@ -22,9 +22,8 @@ const vm = require('vm');
 const path = require('path');
 
 const { region, attach } = require('./scriptgs.js');
-/* Was FSC_Backend.gs; it is script.gs §6 now. tests/gsparity.js proves the region
-   is still byte-for-byte that file, which is what keeps this harness a proof
-   about the code that actually runs. */
+/* Was FSC_Backend.gs; it is script.gs §6 now, sliced back out by scriptgs.js so
+   this harness runs the code that actually runs. */
 const SRC = region('FSC_Backend.gs');
 
 /* ---- the tab, as the sheet really lays it out ---------------------------- */

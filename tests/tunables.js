@@ -2,11 +2,10 @@
 /* =============================================================================
  * tests/tunables.js — §C says exactly what the pages used to say themselves
  * -----------------------------------------------------------------------------
- * Chunk 22 lifted the slide frame and every page's whitespace defaults out of
- * the module and the pages that read them into app.html's §C. That is a MOVE,
- * and a move is only safe if the values did not change on the way — the same
- * argument gsparity.js and modparity.js make about their halves of the merge,
- * and the same way of proving it: read the BEFORE out of git and compare.
+ * The slide frame and every page's whitespace defaults were lifted out of the
+ * module and the pages that read them into app.html's §C. That is a MOVE, and a
+ * move is only safe if the values did not change on the way — proved the way
+ * the merge itself was: read the BEFORE out of git and compare.
  *
  * WHAT IT CHECKS
  *   1. §C evaluates on its own, with no runtime around it. It sits above §D and
@@ -54,9 +53,9 @@ const APP = whole();
 
 /* ===========================================================================
  * The BEFORE, as literals. Written out here rather than parsed out of REF,
- * because a check that derives both sides from the same text cannot fail —
- * gsparity.js's note on its `rewrite` edits says the same thing. Each string is
- * asserted to appear in REF's app.html, so the literals cannot rot either.
+ * because a check that derives both sides from the same text cannot fail. Each
+ * string is asserted to appear in REF's app.html, so the literals cannot rot
+ * either.
  * ======================================================================== */
 const WAS = {
   slide: [

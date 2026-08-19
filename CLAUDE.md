@@ -40,7 +40,7 @@ files travels with them. What the banners do not carry is the **evidence** — e
 there because something broke, and the account of what broke is in `README.md` and in the
 commit that made the change.
 
-## The five that will bite you
+## The six that will bite you
 
 Each is stated in full in `README.md`; these are the ones worth knowing before you touch
 anything.
@@ -58,10 +58,15 @@ anything.
    cut that takes one function too many is still valid JavaScript.
 5. **A comment claiming code is dead is not evidence, and neither is a grep.** Read the code,
    and check the trigger list and the function's own comment before deleting anything.
+6. **Never name a period back at a column header.** `2026 Volume`, `CY Volume`,
+   `Total Revenue - 2025` and `Total Revenue -PY` are all live and both sides change without
+   notice. Read a header through §3's `APP_period_` / `APP_yearCols_`, and take the current
+   year off the **data** — the Year column, or a Bill Month. A lookup that names a period
+   returns −1 the day it changes and the page publishes zeroes under correct headings.
 
 ## Most of this cannot be tested off-platform
 
 Anything touching `SlidesApp`, `DriveApp`, `CacheService` or a spreadsheet needs the live
 deployment. What *can* be checked is the client-side compute and render layer — that is what
-the 26 harnesses in `tests/` are for. Run the relevant ones before and after touching a page;
+the 24 harnesses in `tests/` are for. Run the relevant ones before and after touching a page;
 `tests/README.md` says what each one claims.

@@ -14,16 +14,14 @@
  *       the deleted file, read out of GIT — for a harness whose job is to
  *       compare the merged app against the app it replaced. `pageparity` and
  *       `cssparity` need a second side, and there is no second side on disk.
- *       Same trick gsparity.js uses for the 16 .gs: point at a commit instead
+ *       Point at a commit instead
  *       of a directory. regress.js and pvcheck.js used it too, from a directory
  *       staged BY HAND — which is what eventually killed them, see below.
  *
- * What makes the first form safe is tests/modparity.js: it proves every §E
- * module is byte-for-byte the file it came from, so slicing here and reading the
- * old file are the same thing. modparity reads its side through legacy() now,
- * so it survived the deletion — it is the client-side gsparity and it retires
- * for the same reason, which is NOT "the sources are gone" but "a legitimate
- * change has landed inside a moved region".
+ * §E was byte-for-byte the files it came from, and modparity.js proved it until
+ * a deliberate change landed inside a module and it retired, as its own header
+ * said it should. legacy() stays, because pageparity and cssparity still need a
+ * second side and git is where it is.
  *
  * WHEN THE LEGACY SIDE RETIRES. The moment a page is deliberately changed,
  * app.html stops being a port of anything and every legacy() comparison starts
@@ -81,8 +79,7 @@ const blocksOf = src => [...src.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m
 const APP_BLOCKS = blocksOf(APP);
 
 /* Each module's own opening line — a match on CODE, not on a banner comment
-   somebody could copy without the body. Kept here rather than in modparity.js
-   because two files need it and one list cannot drift from itself. */
+   somebody could copy without the body. */
 const MODULES = [
   { name: 'AmrProgress',   open: 'window.AmrProgress = (function(){', from: 'Shell.html' },
   { name: 'AmrBoot',       open: 'window.AmrBoot = (function(){',     from: 'Shell.html' },

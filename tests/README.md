@@ -10,14 +10,13 @@ Builder extraction work lives.
 Nothing here is uploaded to Apps Script. The repo root is a flat mirror of the script
 project; this folder is not part of it.
 
-**Since chunk 13 the whole script project is `script.gs`, `app.html` and `appsscript.json`.**
-Both merged files have a reader in front of them and a parity gate behind it, and the pattern
-is the same on each side:
+**The whole script project is `script.gs`, `app.html` and `appsscript.json`.** Both merged
+files have a reader in front of them:
 
-| | reader | parity gate | reads a deleted file out of |
-|---|---|---|---|
-| server | `scriptgs.js` — one **region** of `script.gs` | `gsparity.js` | git, at `4d8ee5d` |
-| client | `apphtml.js` — a **module / style layer / page** of `app.html`, or a deleted file whole | `modparity.js` | git, at `61b714c` |
+| | reader | reads a deleted file out of |
+|---|---|---|
+| server | `scriptgs.js` — one **region** of `script.gs` | git, at `4d8ee5d` |
+| client | `apphtml.js` — a **module / style layer / page** of `app.html`, or a deleted file whole | git, at `61b714c` |
 
 Read the reader's header before pointing anything new at either file. The distinction that
 matters is *which* of the two things a harness wants: the code that **ships** (a region of the
@@ -25,10 +24,17 @@ merged file) or the app it **replaced** (the deleted file, out of git). `deckpat
 deck adapters, so it wants §E; `pageparity` is a comparison, so it wants the old page. Getting
 that backwards leaves a harness testing a file nobody serves.
 
-**The legacy half of a comparison does not retire when the files are deleted — it retires when
-a page or module is deliberately changed.** Until then `app.html` really is a port of those
-files and the comparison really does mean something. `pageparity.js`, `cssparity.js` and
-`modparity.js` are the three; delete them at that point rather than weakening them.
+**The legacy half of a comparison retires when a page or module is deliberately changed** —
+not when the files are deleted. Until then `app.html` really is a port of those files and the
+comparison really does mean something. `pageparity.js` and `cssparity.js` are what is left of
+that family; delete them at that point rather than weakening them.
+
+`gsparity.js` and `modparity.js` were the two parity gates and are **gone**, on exactly that
+rule and by their own instruction. The CY/PY header work changed code inside moved regions of
+both files on purpose, so neither file is a copy of anything any more and a gate saying
+otherwise could only be weakened, never passed. What they were protecting — that a region
+sliced out of `script.gs` or `app.html` is the code that actually runs — is now protected by
+the harnesses that run that code rather than by comparing it to a commit.
 
 Install everything at once: `npm install playwright chart.js jsdom`. `--no-save` prunes
 whatever is not on the command line, so doing them one at a time leaves you with only the last.
@@ -51,11 +57,9 @@ by hand into `$OLD_DIR`. Three things killed them, and the third is the one that
    and chunks 22–23 changed `AmrFuelExec` and `AmrPvSlide`. "Byte-identical to the
    pre-extraction page" stopped being something anyone wanted to be true.
 
-**What replaced them is `modparity.js`, and the difference is the staging.** It proves the same
-modules are the files they came from, reading the comparand from a **commit** rather than a
-directory somebody fills in by hand, and declaring each deliberate edit with its reason. A gate
-whose second side has to be assembled by hand is a gate that stops running; that is the lesson,
-and it is why `gsparity.js` and `apphtml.js` were built the way they were.
+**The lesson that outlived them: a gate whose second side has to be assembled by hand is a
+gate that stops running.** Point at a commit, never at a directory somebody fills in. That is
+why `apphtml.js` is built the way it is.
 
 ## `merge.js` — the structural gate for `app.html`
 
@@ -240,9 +244,10 @@ to resolve: swap its one `read` helper and every check it had keeps working.
 reading a legacy page's own style block used to give — leaving the scope on would mean none of
 them applied in a synthetic document. Both scoping forms are recognised, `:where()` included.
 
-What makes `mod()` trustworthy is `modparity.js`, which proves §E is still byte-for-byte the
-file it came from. That is why deleting modparity at the cutover — which the plan called for —
-would have removed the proof underneath the thing built to replace it.
+`mod()` slices a §E module out of the shipped file, which is the code that runs. It used to be
+backed by `modparity.js` proving that slice byte-for-byte identical to the file it came from;
+that gate is gone now the modules have deliberately changed, so what a `mod()` check proves is
+what it says and nothing about a deleted file.
 
 ## `rmxfixture.js` — not a harness; the Ready-Mix model both sides render
 
@@ -368,43 +373,6 @@ fails naming `"5%"` and `"-12.5%"`.
 node tests/helpers.js
 ```
 
-## `gsparity.js` — `script.gs` holds verbatim copies of the 16 `.gs`
-
-Chunk 12 merged 10,889 lines of working backend into one file. The argument that made it safe
-was that it is a **move** — ordered concatenation, no renaming, nothing reconciled. This turns
-that argument into something checkable.
-
-```bash
-node tests/gsparity.js           # no dependencies
-REF=<commit> node tests/gsparity.js
-```
-
-It reads the 16 originals **out of git**, not off disk: they were deleted in the same commit
-that added `script.gs`, because the two cannot coexist in an Apps Script project. `regress.js`
-and `pvcheck.js` staged their comparand the same way but from a hand-filled directory, and that
-is what eventually killed them — see the top of this file. Point at a commit.
-
-Five checks: every source appears verbatim after the ten edits declared in the file and no
-others; the sections are in `README.md` §3 order; the top-level name set moved by exactly the
-declared deletions and additions; no top-level name is declared twice; LF throughout.
-
-**The third check is the one that earns its place.** Every cut in the build had to match its
-anchor exactly once, which sounds sufficient and is not. The `RMX_debugMonths` cut ran to the
-first `  return s;\n}` after its banner — and `RMX_debugMonths` does not end that way,
-`RMX_whoWins` does. The cut matched, uniquely, and silently deleted `RMX_whoWins`: a function
-the Ready-Mix page names *in an error banner shown to the user*, telling them to run it.
-`node --check` passed. Every structural check passed. A set difference of declared names named
-it instantly. **When you delete code by anchored text, diff the symbol table, not the syntax.**
-
-Mutation-tested four ways before being trusted: deleting `RMX_whoWins` (fails two checks),
-appending a second top-level `getReport` (fails the collision check), flipping the file to CRLF
-(fails the line-ending check and every region), and moving the §5 engine down into §8 (fails
-the ordering check, and only that one).
-
-**Retire this at chunk 13**, same as `modparity.js`: the moment a legitimate change lands
-inside a moved region, `script.gs` stops being a copy of anything and this starts failing for the
-right reason. Delete it then — do not weaken it.
-
 ## `scriptgs.js` — not a harness; the region slicer the others use
 
 Seven harnesses used to read a `.gs` file by name. They read a **region** of `script.gs` now, and
@@ -428,35 +396,6 @@ the region would have left eight checks that could no longer fail.
 file wants.
 
 Three of the seven have a `load()` of their own, so import it as `loadRegions`.
-
-## `modparity.js` — §E holds verbatim copies (and it did NOT retire at chunk 13)
-
-Every shared module inside `app.html`'s §E is byte-for-byte the file it was ported from. That
-is what let `slidefit.js` and `deckpath.js` count as proof about `app.html` while they still
-pointed at the *old* files, and what makes `apphtml.js`'s slicing trustworthy now that they
-point at §E. Since `regress.js` and `pvcheck.js` were deleted it is also the **only** proof
-that `AmrFuelExec` and `AmrPvSlide` are what they were. Line endings are normalised, because the repo is
-mixed and `app.html` is LF throughout by `README.md` §10.
-
-```bash
-node tests/modparity.js
-```
-
-**It did not retire at chunk 13, and deleting it would have been actively harmful.** The plan
-said "once the old `.html` are deleted there is no second copy" — there is, in git, which is
-the trick `gsparity.js` had already established for the 16 `.gs`. It reads its source side
-through `apphtml.legacy()` now.
-
-That matters because `apphtml.js` is what the repointed gates read `app.html` **through**, and
-its slicing is only trustworthy while §E is still a verbatim copy. This is the proof of that.
-Deleting it would have removed the ground under its own replacement.
-
-**Retire it when a §E module is deliberately changed** — not when the sources are deleted.
-Same end of life as `gsparity.js`, for the reason its header gives: keep it while `app.html`
-is provably those files, delete it rather than weaken it when it is not.
-
-`slidefit.js` and `deckpath.js` no longer point at the old files — they read §E directly now,
-which is the code that ships.
 
 ## `deckpath.js` — the deck's own path
 
@@ -779,6 +718,29 @@ that bumping a file's modified time is picked up. It also pins the retry rule �
 *could not happen* (lock held) leaves the stamp alone and is retried, a run that *finished
 with a bad tab* records the stamp and logs, because that tab will be just as broken next hour.
 
+**And that `qlikSyncNow` does NOT do that.** Two manual runs over an unchanged file both
+write, and write the same amount — while the trigger, on that same file, still skips it.
+Somebody running the manual sync is there *because* the sheet is wrong and the file did not
+move, so the trigger's optimisation must not reach them.
+
+**Years on one side, CY/PY on the other.** The Aggregates export names years (`2025 Volume`,
+`2026 Volume`) and the workbook it feeds has been re-headed to `CY Volume` / `PY Volume`.
+Neither side is under this code's control and either can change again, so the fixture pairs
+one against the other and checks every value lands in the column it belongs in — including
+that CY and PY are not swapped, which is the failure a total would not show. The surcharge is
+the same defect wearing different clothes: the export heads it `Fuel Surchage` and the
+workbook `Fuel Surcharge`, one missing letter, one column that matched nothing and was never
+written while every other column on the tab synced.
+
+The other half of that rule is checked too: an export naming a year the workbook does not have
+a column for yet is reported **unmatched**, not paired by rank into last year's column.
+
+**The temp sheet.** An `.xls` export has to be converted before it can be read, and a Drive
+copy takes its audience from the folder it is created in. The harness asserts the copy names a
+parent of its own, that every non-owner permission is deleted and the owner's is not, that no
+permission is ever *created* (the only Drive call that emails a person), and that the copy is
+trashed.
+
 ## `freshness.js` — the data version
 
 Runs `Config.gs` + `Code.gs` under Node with Drive stubbed, and counts the Drive calls.
@@ -906,10 +868,9 @@ sizes it prints differ from production.
 
 ## `tunables.js` — §C is what the pages said
 
-Chunk 22 lifted the slide frame out of `AmrSlide` and the five pages' whitespace defaults out
-of the pages, into `app.html`'s **§C TUNABLES**. That is a move, and this is the proof it
-changed nothing on the way — the same argument `gsparity.js` and `modparity.js` make about
-their halves, by the same method: read the BEFORE out of git.
+The slide frame was lifted out of `AmrSlide` and the five pages' whitespace defaults out of
+the pages, into `app.html`'s **§C TUNABLES**. That is a move, and this is the proof it changed
+nothing on the way, by the method the merge itself used: read the BEFORE out of git.
 
 ```bash
 node tests/tunables.js            # no dependencies
@@ -937,22 +898,25 @@ session log rather than here, because it needs both trees at once.
 ## `yearroll.js` — a 2031 workbook reads as 2031
 
 Every other fixture in this folder is a **2026** workbook, which is exactly why nothing here
-caught the bug chunk 23 fixed: the year was baked into four different data contracts, and a
-fixture from the year the code assumes cannot tell "reads the data" from "assumes the
-calendar".
+caught the year being baked into four different data contracts: a fixture from the year the
+code assumes cannot tell "reads the data" from "assumes the calendar".
 
 ```bash
 node tests/yearroll.js            # no dependencies
 ```
 
-So this one is from **2031**, and it runs the real code against it:
+So this one is from **2031**, and it runs the real code against it. **Section 1b runs the same
+page again with the workbook re-headed `CY Volume` / `PY Volume`**, which is the other half of
+the same property: a CY header names no year at all, so the Year column beside it is the only
+thing that can date the pair, and without that the page reads as a column of zeroes under
+correct headings.
 
 | check | what would have happened without it |
 |---|---|
 | AGG Fuel Recovery, through `getFscData` | it summed `market\|2026\|month` buckets. A 2027 export writes 2027, every sum finds nothing, and the page publishes a **full table of zeroes** under headings naming a year that has gone — no error, no empty state |
-| Ready-Mix's `yearPair_` | it asked for `'2026 vol'` by name. `col_` returns −1, `toNum_` turns the missing cell into 0, same zeroes. Also checks the two NEWEST of three years win, and that no call site passes a `/g` regex — `exec` on one carries `lastIndex` and would skip every other column |
-| the QlikView sync's alias | six literal entries covering 2025 and 2026. The export names the year first and the sheet names it last, for any year, now |
-| TP01's `iYearCol` | `headers.indexOf('2026 Volume')` → −1, every Additional Revenue to Post computed off a blank cell, and the workbook still downloads |
+| Ready-Mix's `yearPair_` | it asked for `'2026 vol'` by name. `col_` returns −1, `toNum_` turns the missing cell into 0, same zeroes. Also checks the two NEWEST of three years win, and that every call site hands over the data year — a call that forgets it works on a year-named workbook and reads zero on a CY/PY one |
+| the QlikView sync's alias | six literal entries covering 2025 and 2026, then three patterns carrying the year across. Both are gone: aliasing is on the **base** — the name with its period removed — so one entry covers every year and both spellings of every year |
+| TP01's `iYearCol` | `headers.indexOf('2026 Volume')` → −1, every Additional Revenue to Post computed off a blank cell, and the workbook still downloads. `CY Volume`, `Volume - CY` and a bare `PY` column are checked alongside the year forms |
 | every year left in `app.html` | the check that stops it coming back. Comments are stripped first (with a state machine, because this file's block comments continue on lines starting with neither `/` nor `*`), ISO dates are dropped, and what remains must be a **guide sample row** — the QlikView walkthroughs' made-up `Jan-2026 · P100 · MAT-1` lines, which illustrate the shape of an export and are meant to stay put |
 
 Mutation-tested three ways, each caught by name: restoring FSC's literal `sum_(D, mk, 2026, …)`,

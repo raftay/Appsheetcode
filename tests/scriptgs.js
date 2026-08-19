@@ -12,10 +12,11 @@
  * a different one happens to contain the pattern. Slicing keeps every one of
  * those assertions exactly as sharp as it was.
  *
- * What makes this safe is tests/gsparity.js: it proves each region is still
- * byte-for-byte the file it came from, so slicing here and reading the old file
- * are the same thing. When gsparity retires, so does the guarantee — see its
- * header.
+ * The regions were byte-for-byte the files they came from, and gsparity.js
+ * proved it until a legitimate change landed inside one and it retired, as its
+ * own header said it should. What still holds is the shape this relies on: one
+ * `/* ---- <name>.gs -` banner per region, in ORDER, each running to the next
+ * §-section banner. Move one and the throw below names it.
  *
  *     const { region, whole, load } = require('./scriptgs.js');
  *     region('PV_Backend.gs')          // the merged text, minus its banner
@@ -23,13 +24,11 @@
  *
  * ONE REGION IS NO LONGER ONLY ITS FILE. Chunk 22 moved DECK_CONFIG and
  * DECK_RECIPE — the deck's two config objects — from §9 to the end of §1, so
- * region('Config.gs') is Config.gs *plus* those two declarations. gsparity.js
- * still proves the Config.gs half verbatim and declares the cut on the §9 side;
- * what changed is only that a caller wanting DECK_RECIPE now asks for
- * 'Config.gs' and one wanting DECK_getRecipe still asks for 'Deck_Recipe.gs'
- * (tests/deckstatic.js loads both, which is what the one-global-scope runtime
- * does anyway). A region ends at the next SECTION banner, so the block cannot
- * leak past §1.
+ * region('Config.gs') is Config.gs *plus* those two declarations. A caller
+ * wanting DECK_RECIPE asks for 'Config.gs'; one wanting DECK_getRecipe still
+ * asks for 'Deck_Recipe.gs' (tests/deckstatic.js loads both, which is what the
+ * one-global-scope runtime does anyway). A region ends at the next SECTION
+ * banner, so the block cannot leak past §1.
  */
 'use strict';
 const fs = require('fs');
@@ -61,7 +60,7 @@ const SPANS = [];
     const marker = '\n/* ---- ' + file + ' -';
     const at = APP.indexOf(marker, from);
     if (at === -1) throw new Error('scriptgs.js: no banner for ' + file + ' after offset ' + from +
-      '\n  script.gs does not have the shape this helper expects. Run tests/gsparity.js.');
+      '\n  script.gs does not have the shape this helper expects.');
     const bodyAt = APP.indexOf('*/\n', at);
     if (bodyAt === -1) throw new Error('scriptgs.js: unterminated banner for ' + file);
     SPANS.push({ file, start: bodyAt + 3 });

@@ -26,11 +26,9 @@
  and createTemplateFromFile('app') would be ambiguous. This file keeps the
  name 'app'; the server file is the one that moved.
 
- The repo this came from also holds README.md and a tests/ folder, and if you
- have them they are worth reading — README §7 is the domain rules, §9 is what
- must not be deleted and why. IF YOU DO NOT, everything you need in
- order not to break this file is below and in the section banners. They are
- documentation, not dependencies.
+ EVERYTHING YOU NEED IN ORDER NOT TO BREAK THIS FILE IS IN IT — below, and in
+ the section banners. The only other file it speaks to is script.gs, which is
+ the whole server and carries its own.
 
  HOW TO NAVIGATE THIS FILE
  -------------------------
@@ -41,11 +39,11 @@
    §A2  BASE .................. reset, typography, form controls, focus.
    §A3  COMPONENTS ............ every block used by MORE THAN ONE page.
    §A4  PAGE CSS .............. one block per page, scoped body[data-page="x"].
-   §B   SLIDE CSS ............. .slide-bare capture styles.        (chunk 10)
+   §B   SLIDE CSS ............. .slide-bare capture styles.
    §C   TUNABLES .............. AMR_TUNABLES: the slide frame, and where every
                                 page's whitespace sliders start. The settings
                                 that used to be buried in the module or the page
-                                that read them.                    (chunk 22)
+                                that read them.
    §D   RUNTIME ............... AMR core: logging, lib loader, nav, modals,
                                 the QlikView guide, the page registry.
    §E   SHARED MODULES ........ AmrProgress, AmrBoot, AmrFresh, AmrSlide,
@@ -709,7 +707,7 @@ table.cust tfoot td{background:#fff; font-weight:700; border-top:2px solid var(-
    33 selectors shared between the two pages, 27 of them byte-identical once
    whitespace is normalised. Every one of the 54 id-scoped declarations became
    a class here — the id stays on the element as the JS hook, exactly as the
-   third rule at the top of this file requires. Chunk 6 deletes its copy.
+   third rule at the top of this file requires, so the page keeps no copy.
    ========================================================================== */
 .mapHost .mapcard{padding:18px 18px 8px}
 .mapHost .mapcard.has-issue{border-color:#F0C9CF; box-shadow:0 0 0 3px rgba(178,58,72,.05), var(--shadow)}
@@ -798,7 +796,7 @@ body.map-open{overflow:hidden}
 .sugHost .sugbox-head a.mapbtn.pushright{margin-left:auto; align-self:center}
 .sugHost .sugbox-head .sugx{margin-left:8px}
 /* ---- the Ready-Mix report table (table.rtbl) --------------------------------
-   Shared with AmrRmxSlide (chunk 10), which renders the same table onto a deck
+   Shared with AmrRmxSlide, which renders the same table onto a deck
    slide, and mirrored under .slide-bare in §B for the bare captures. Ready-Mix
    Product Segment styles its tables the same way, so the look is one language.
 
@@ -841,7 +839,7 @@ body.rmx-yellow .rmx-export-block td.section{background:var(--blue-70)}
 body.rmx-yellow .rmx-export-block tr.subtotal td{background:#EEF3FB}
 
 /* ---- the suggestion dialog's Ready-Mix half ----
-   Chunk 5 promoted Price & Volume's copy as .sugHost; these are the parts only
+   Price & Volume's copy was promoted as .sugHost; these are the parts only
    Ready-Mix had. They are here rather than scoped because they belong to the
    component — a confidence chip is what a suggestion dialog shows — and the
    page that does not use them pays nothing for them. */
@@ -870,7 +868,7 @@ body.rmx-yellow .rmx-export-block tr.subtotal td{background:#EEF3FB}
    no longer drift apart: both are `table.gt`, emitted by the same renderer from
    the same descriptor. The only difference is FONT SIZE — the page card sits at
    a fixed readable size, while the fit pass grows the slide's font as large as
-   the 16:9 frame will take. tests/deckstatic.js fails if a second copy appears.
+   the 16:9 frame will take. A second copy of it must not appear.
 
    ALIGNMENT: the label columns are left-aligned; everything after them is
    right-aligned, header and value together.
@@ -1014,9 +1012,8 @@ body[data-page="pricevolume"] .shell{grid-template-columns:264px 1fr; max-width:
    (0,0,1). Scoped, the page rule drew LEVEL and won on source order, because
    §A4 comes after §A3. Headers rendered at 10.5px instead of 13px, every cell
    at 8/10px padding instead of 6/9px, and the grand total changed colour and
-   weight — 673 differing computed values, with pageparity.js green throughout,
-   because the markup never changed. tests/cssparity.js is what found it and
-   what holds the line. See README §3. */
+   weight — 673 differing computed values, and the markup never changed, so
+   nothing that compares markup could have seen it. */
 :where(body[data-page="rmx"]) .stamp{font:500 11px Inter; color:#A9C4E6; margin-right:10px; white-space:nowrap}
 
 /* Ready-Mix lays itself out with .wrap + bare aside/main rather than the
@@ -1034,8 +1031,8 @@ body[data-page="pricevolume"] .shell{grid-template-columns:264px 1fr; max-width:
        display:none — (0,1,2) against (0,1,0) — and the guide opened on load and
        would not close. Legacy's bare `aside{}` was (0,0,1) and lost to the
        class, which is why this could not exist before the merge.
-   tests/merge.js check 8 is the gate: a §A4 selector may not match anything
-   outside #appRoot, or #appRoot itself without naming it. */
+   THE RULE: a §A4 selector may not match anything outside #appRoot, or
+   #appRoot itself without naming it. */
 :where(body[data-page="rmx"]) .wrap > aside{width:248px; flex:none; display:flex;
   flex-direction:column; gap:14px}
 :where(body[data-page="rmx"]) .wrap > main{flex:1; min-width:0; display:flex;
@@ -1084,7 +1081,7 @@ body[data-page="pricevolume"] .shell{grid-template-columns:264px 1fr; max-width:
    .lk-* the data-quality sheet and its lookup editor, .xf-* the two
    cross-filter engines. Nothing on any other page wants a month-window slider
    or a cross-filter chip bar, so promoting them would only make §A3 harder to
-   change — the chunk 6 test, applied the other way round: these are a PAGE,
+   change — the shared-or-page-only test, the other way round: these are a PAGE,
    not a component.
 
    TWO rules did leave: the segmented control (§A3's .seg.pills) and .linkbtn.
@@ -1443,12 +1440,12 @@ body[data-page="overview"] .xf-dd .foot{margin-top:6px; font:600 10.5px Inter; c
 body[data-page="overview"] .xf-dd .clr1{margin-top:6px; border:0; background:transparent; color:var(--neg); font:700 11px Inter; cursor:pointer; padding:4px 6px}
 /* ---- §P deckbuilder --------------------------------------------------------
    70 rules, all .db-*, and not one of them collides with §A1-§A3 — so nothing
-   was promoted and nothing was dropped. That is the chunk 6 test answering
+   was promoted and nothing was dropped. That is the same test answering
    "this is a page, not a component": no other page has a slide-plan table, a
    three-stage bar or a geometry-driven preview mock.
 
    The 1080px media query maps onto --bp-mid. The 1180px one does NOT and is
-   kept as this page's own step, with the reason README §3 asks for: the slide
+   kept as this page's own step, for a stated reason: the slide
    rows degrade in two stages — drop the Layout column, then drop the Region
    picker and the thumbnail — and folding them together would put seven columns
    of grid, 668px of fixed tracks, into a 644px column at 1000px wide.       */
@@ -1691,8 +1688,8 @@ body[data-page="tp01"] .tpfoot{font:500 11px Inter; color:var(--muted); text-ali
 /* ---- §P inventoryreport --------------------------------------------------
    This page fills the viewport: the PDF frame takes whatever is left after the
    toolbar. That needs a height chain from <body> down, which is why these two
-   rules target body itself — the one case README §3 warns has to be
-   scoped by hand rather than by prefixing a class selector. */
+   rules target body itself — the one case that has to be scoped by hand
+   rather than by prefixing a class selector. */
 body[data-page="inventoryreport"],
 html:has(body[data-page="inventoryreport"]){height:100%}
 body[data-page="inventoryreport"]{display:flex; flex-direction:column}
@@ -1738,7 +1735,7 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
 
 <style>
 /* ============================================================================
-   §B  SLIDE CSS — what a bare capture cannot inherit  (chunk 16)
+   §B  SLIDE CSS — what a bare capture cannot inherit
    ----------------------------------------------------------------------------
    Was Deck_Styles.html, and it was 86 rules. It is 7.
 
@@ -1752,7 +1749,7 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
    WHY IT IS 7. After the merge there is one document. §A1–§A3 are already
    loaded when the capture box is attached to <body>, so a rule that merely
    restates a component rule is now saying something the cascade already says.
-   Chunk 16 measured it rather than eyeballing it — see below — and 79 of the 86
+   It was measured rather than eyeballed — see below — and 79 of the 86
    were doing exactly nothing.
 
    WHAT THE SURVIVORS HAVE IN COMMON, which is the rule to carry forward:
@@ -1765,13 +1762,12 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
    So the maintenance rule has changed, and in a useful direction. Change a
    slide table in §A3 and there is no longer a copy here to keep in step. But
    put a rule a SLIDE needs into §A4 or behind a page host class and the deck
-   silently loses it — restate it here, under .slide-bare, and let
-   tests/slidecss.js tell you whether it was needed.
+   silently loses it — restate it here, under .slide-bare.
 
    HOW THE 79 WERE PROVED DEAD, because "these look the same" is not the
-   standard for output nobody can restyle afterwards. tests/slidecss.js builds
+   standard for output nobody can restyle afterwards. Build
    the DOM each selector requires, in the real document with the real
-   stylesheet, and blanks ONE rule at a time under all ten data-page values —
+   stylesheet, and blank ONE rule at a time under all ten data-page values —
    the question that decides a deletion being "if this rule went, would any
    computed value move". It had to be iterated to a fixpoint: §B's rules masked
    each other, so a rule could look load-bearing only because a second redundant
@@ -1783,14 +1779,14 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
 
    THE FOUR LINES THAT USED TO SIT AT THE TOP OF THIS BLOCK WERE NOT A COMMENT.
    Deck_Styles.html explains itself in an HTML comment whose prose names a style
-   element by its tag, and the chunk-10 builder split that file on the FIRST such
+   element by its tag, and the builder split that file on the FIRST such
    token — the one inside the sentence, not the element. So this block opened
    with the tail of that sentence, a bare --> and a second opening tag, all of it
    inside a live style element. CSS error recovery reads garbage before the first
    { as a selector prelude and discards the rule that follows, so §B parsed as 85
    rules where the file had 86 and .slide-bare .tbl-card was silently gone.
    Writing the tag as a literal in THIS comment would reopen the same hole, which
-   is why it is named rather than spelled. tests/merge.js check 9 is the gate.
+   is why it is named rather than spelled, everywhere in this file.
    ========================================================================== */
 
 /* ---------------------------------------------------------------------------
@@ -1908,7 +1904,7 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
 /* ============================================================================
    §C  TUNABLES — the numbers you are meant to change
    ----------------------------------------------------------------------------
-   NEW IN CHUNK 22, and it holds nothing new: every value below was already in
+   IT HOLDS NOTHING NEW: every value below was already in
    this file, three to fourteen thousand lines down, inside the module or the
    page that reads it. A number sitting beside the code that uses it is fine
    while the only person who ever reads it is the person maintaining that code.
@@ -1944,7 +1940,7 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
      · THE CURRENT AND PRIOR YEAR, and this is the interesting one. They were
        written out by hand in about sixty places when this section was written,
        and the note here said a knob for half of them would be worse than none.
-       Chunk 23 did the sorted version instead: **the year is DATA, not a
+       The sorted version is what landed instead: **the year is DATA, not a
        setting.** Every backend reads it off the workbook's own column names
        ("2026 Vol", "#### Volume", "Total Revenue - ####") and sends cyYear /
        pyYear with the payload, and every heading, title and status line on
@@ -1952,8 +1948,7 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
        is why there is nothing here — a knob would only be a way to disagree
        with the data. What is left in the file is the QlikView guides' sample
        rows, which illustrate the SHAPE of an export beside made-up plant codes
-       and are meant to stay put; tests/yearroll.js runs the whole suite against
-       a 2031 workbook and holds the line.
+       and are meant to stay put.
      · TIMINGS. §E AmrFresh polls every 5 minutes (EVERY), §E AmrBoot gives up
        after 150 s (WATCHDOG), §E AmrProgress waits 400 ms before showing
        anything (GRACE). They are behaviour rather than configuration — each one
@@ -2043,7 +2038,7 @@ window.AMR_TUNABLES = {
    Everything here is shared by every page and runs once, on load. It replaces
    Shell.html. Ordered so each piece only depends on what is above it:
 
-     AMR.log        structured logging                        (README §10)
+     AMR.log        structured logging
      AMR.live       are we inside the real web app?
      AMR.lib        lazy CDN loader
      AMR.nav        top-window navigation (we are in a sandbox iframe)
@@ -2056,7 +2051,7 @@ window.AMR = (function(){
   'use strict';
 
   /* ==========================================================================
-     LOGGING  (README §10)
+     LOGGING
      --------------------------------------------------------------------------
      One helper, one format, one switch. Every function written for the merge
      logs through this. Rules that keep it useful rather than noisy:
@@ -2320,13 +2315,13 @@ window.AMR = (function(){
   }
 
   /* ==========================================================================
-     THE SASKATCHEWAN RATE TABLE, READ OUT  (chunk 19)
+     THE SASKATCHEWAN RATE TABLE, READ OUT
      --------------------------------------------------------------------------
      getSaskRatesStatus has existed since before the merge and NOTHING HAS EVER
      CALLED IT. Its own comment says it is there "so the Settings screen (and a
      quick manual run) can check the sheet without loading a whole page" — the
-     manual run is real and is why chunk 12 kept it, but the Settings screen half
-     of that sentence was simply untrue. Chunk 19's choice was to wire it or to
+     manual run is real and is why it was kept, but the Settings screen half
+     of that sentence was untrue. The choice was to wire it or to
      delete it and the sentence; wiring it is what makes the sentence true, and
      the function was being kept either way.
 
@@ -2499,7 +2494,7 @@ window.AMR = (function(){
     }
   };
   /* One delegated handler, on the document rather than the page, because the
-     buttons are written into tables that are rebuilt after every edit. Chunk 2
+     buttons are written into tables that are rebuilt after every edit. This
      ported AmrHint without this and nothing caught it: neither page in that
      chunk has a "?" button, so the first page that did would have been the
      first to find the button dead. */
@@ -2522,8 +2517,7 @@ window.AMR = (function(){
      `extra` is an optional DOM node the page owns — the fuel pages hang their
      "replace raw data" uploader off the bottom of the guide. It is MOVED here
      from the page's own <template>, not built from a config blob, so its ids
-     are declared where tests/merge.js can check them and the markup stays
-     diffable against the page it came from.
+     are declared in markup rather than assembled in JavaScript.
      ========================================================================== */
   var AmrQlikGuide = {
     mount: function(cfg){
@@ -2611,7 +2605,7 @@ window.AMR = (function(){
   };
 
   /* ==========================================================================
-     WHAT A MOUNTED PAGE LEAVES BEHIND  (chunk 14)
+     WHAT A MOUNTED PAGE LEAVES BEHIND
      --------------------------------------------------------------------------
      Switching pages without a reload means the previous page has to be taken
      apart, and emptying #appRoot does not do that. Three kinds of thing outlive
@@ -2732,8 +2726,7 @@ window.AMR = (function(){
     /* MODULES THAT OUTLIVE THE MOUNT BUT HOLD THIS PAGE'S STATE. Neither is
        reachable through the hooks above — one polls with a setTimeout chain and
        the other keeps a node §D is told to preserve — so each exposes one
-       method and teardown calls it. Both are declared edits in
-       tests/modparity.js; see the notes there for what each was costing. */
+       method and teardown calls it. */
     try { if (window.AmrFresh && AmrFresh.stop) AmrFresh.stop(); } catch (e) {}
     try { if (window.AmrProgress && AmrProgress.reset) AmrProgress.reset(); } catch (e) {}
     LISTENERS.forEach(function(l){
@@ -2811,12 +2804,11 @@ window.AMR = (function(){
        the same #syncBtn, #tablesHost, #titleIn and eighteen more. That only
        holds while exactly ONE page is ever in the document.
 
-       So the rule for chunk 14, written here rather than in a commit message:
-       a client-side page switch MUST replace the mounted page, never add a
-       second one beside it. Keeping pages mounted for speed would put two
-       #tablesHost in one document and every getElementById would start
-       answering for whichever page happened to be first.
-       tests/merge.js checks for this line. */
+       THE RULE, written here rather than in a commit message: a client-side
+       page switch MUST replace the mounted page, never add a second one beside
+       it. Keeping pages mounted for speed would put two #tablesHost in one
+       document and every getElementById would start answering for whichever
+       page happened to be first. */
     var mount = document.getElementById('appRoot');
     mount.innerHTML = '';
     mount.appendChild(tpl.content.cloneNode(true));
@@ -2892,7 +2884,7 @@ window.AMR = (function(){
   }
 
   /* ==========================================================================
-     GO — a page switch with no round trip  (chunk 14)
+     GO — a page switch with no round trip
      --------------------------------------------------------------------------
      The browser already has every page. Reloading to reach one costs a server
      round trip, a full parse of a 1.1 MB file, and every module re-evaluated,
@@ -2986,7 +2978,7 @@ window.AMR = (function(){
            /* What the mounted page is currently holding. The counts are the
               only external evidence that teardown ran, and a leak here is
               invisible in the DOM — eleven stacked keydown handlers look
-              exactly like one. tests/pageswitch.js asserts they do not grow. */
+              exactly like one, and these counts are the only way to see it. */
            held: function(){
              return { listeners: LISTENERS.length, intervals: INTERVALS.length,
                       generation: GENERATION };
@@ -3019,26 +3011,20 @@ window.AMR = (function(){
    AmrSlide, AmrDeckSource, AmrFuelExec, AmrPvSlide, AmrSegSlide, AmrRmxSlide.
    Thirteen — AmrKpiStore was the fourteenth and did not come across.
 
-   These land in the chunk of the first page that exercises them, not here:
-   porting a module blind, with no page to prove it against, is how a silent
-   break gets committed. AmrCache / AmrProgress / AmrBoot arrive in chunk 3
-   with AGG Fuel Recovery, which is the first page that reads report data.
-
-   AmrProgress / AmrBoot / AmrFresh / AmrSlide / AmrFuelExec arrived in chunk 3
-   with AGG Fuel Recovery, the first page that reads report data and the first
-   that builds a slide. AmrCache / AmrKpi / AmrCube / AmrPvSlide arrived in
-   chunk 5 with Price & Volume, which is the first caller of all four.
-
-   AmrSegSlide arrived in chunk 7 with Product Segment, the page that renders
-   its tables. AmrTick, AmrDeckSource and AmrRmxSlide arrived in chunk 10 with
-   the Deck Builder — the only page that calls any of them.
+   EACH ONE HAS A PAGE THAT PROVES IT, and that is how they should be changed:
+   AmrProgress / AmrBoot / AmrFresh / AmrSlide / AmrFuelExec against AGG Fuel
+   Recovery, the first page that reads report data and the first that builds a
+   slide; AmrCache / AmrKpi / AmrCube / AmrPvSlide against Price & Volume, the
+   first caller of all four; AmrSegSlide against Product Segment; AmrTick,
+   AmrDeckSource and AmrRmxSlide against the Deck Builder, the only page that
+   calls any of them. Changing a module with no page open to show it is how a
+   silent break gets committed.
 
    ORDER MATTERS FOR ONE OF THEM. AmrPvSlide, AmrFuelExec, AmrSegSlide and
    AmrRmxSlide each end with an AmrDeckSource.register() guarded by
    `if(!window.AmrDeckSource) return;`. AmrDeckSource has to be ABOVE all four
    or every guard falls through and the Deck Builder opens with an empty source
-   list and no error at all. tests/bgrender.js checks the registry from a real
-   browser for exactly that reason.
+   list and no error at all.
 
    **AmrKpiStore is gone.** It had no caller anywhere — the only hits across every
    .html and .gs were its own definition in Shell.html and two comments — and no
@@ -3051,9 +3037,8 @@ window.AMR = (function(){
 
 <script>
 /* ---- §E AmrTick — a timer a background tab cannot stop ---------------------
-   Was Shell.html. Chunk 8 settled that the Overview does not call it: the
-   callers are the Deck Builder's dbSoon and AmrSlide's capture settle, which
-   is why it comes across here rather than earlier. requestAnimationFrame does
+   The Overview does not call it: the callers are the Deck Builder's dbSoon and
+   AmrSlide's capture settle. requestAnimationFrame does
    not fire at all in a hidden tab, so without this a forty-slide render stops
    dead the moment somebody clicks onto another tab.                         */
 /* ==================================================================
@@ -4420,13 +4405,11 @@ var AmrDeckSource = (function(){
 
 <script>
 /* ---- §E AmrPvSlide — the AGG Price & Volume slide content -------------------
-   Was Deck_PV.html. Shared by this page and the deck. tests/slidefit.js drives
-   the fitter through real Chromium, and tests/modparity.js proves this copy is
-   the file it came from. (tests/pvcheck.js used to diff the non-chart paths
-   against the pre-lift page; it is gone — that page is behind a commit this
+   Shared by the Price & Volume page and the deck. (There used to be a second
+   copy to diff this against; it is gone — that page is behind a commit this
    repo no longer reaches, and the newest one it does reach delegates straight
    back to this module, so the diff proved nothing.)
-   Its pv / cust adapter registrations no-op until AmrDeckSource (chunk 10).  */
+   Its pv / cust adapter registrations no-op until AmrDeckSource exists.     */
 var AmrPvSlide = (function(){
 
   /* Page state for the call in flight. Never read this directly from outside;
@@ -6200,7 +6183,7 @@ window.AmrFresh = (function(){
       timer = setTimeout(check, EVERY);
     },
 
-    /* END THIS PAGE'S WATCH. Called by §D's teardown, because since chunk 14 a
+    /* END THIS PAGE'S WATCH. Called by §D's teardown, because a
        page switch is not a reload and this module is no longer re-evaluated
        between pages.
 
@@ -6556,13 +6539,10 @@ var AmrSlide = (function(){
 
 <script>
 /* ---- §E AmrFuelExec — the Fuel Recovery exec tables ------------------------
-   Was Deck_Fuel.html, and it is the reason chunk 3 goes first: this module is
-   shared by AGG Fuel Recovery, RMX Fuel Recovery and the deck. tests/modparity.js
-   proves this copy is the file it came from, with its edits declared, and is
-   now the only such proof — tests/regress.js diffed it against the
-   pre-extraction page and is gone, that page being behind a commit this repo
-   no longer reaches. The adapter registrations at the bottom no-op until
-   AmrDeckSource exists (chunk 10).                                          */
+   ONE module, shared by AGG Fuel Recovery, RMX Fuel Recovery and the deck.
+   That the three agree is a property of there being one copy, not of anything
+   comparing them. The adapter registrations at the bottom no-op until
+   AmrDeckSource exists.                                                     */
 var AmrFuelExec = (function(){
 
   /* ---- the only real difference between the two pages ---- */
@@ -6575,7 +6555,7 @@ var AmrFuelExec = (function(){
          the backend sends it keeps today's output identical and stops this
          being a silent landmine the next time the year rolls.
 
-         THE FALLBACK NAMED 2026 UNTIL CHUNK 23, which made it a landmine of its
+         THE FALLBACK ONCE NAMED 2026, which made it a landmine of its
          own: getFscData did not send cyYear at all until that chunk, so this
          line WAS the AGG page's year rather than a last resort. Both units read
          the calendar now, and only when a payload predates the field. */
@@ -6890,9 +6870,9 @@ var AmrFuelExec = (function(){
 <script>
 /* ---- §E AmrSegSlide — the RMX Product Segment slide content -----------------
    Was Deck_SEG.html. Renders the same table.gt markup the page shows, from the
-   same descriptor, so the card and the slide cannot drift; tests/deckstatic.js
-   fails if a second copy of that renderer appears. Its seg adapter registration
-   no-ops until AmrDeckSource (chunk 10).                                     */
+   same descriptor, so the card and the slide cannot drift. A second copy of
+   that renderer must not appear. Its seg adapter registration no-ops until
+   AmrDeckSource is defined.                                                  */
 var AmrSegSlide = (function(){
 
   var CTX = {};
@@ -6923,13 +6903,12 @@ var AmrSegSlide = (function(){
   var ALL_MKT = '__ALL__';
 
   /* THE YEAR IS THE DATA'S, NOT THE CALENDAR'S AND NOT A LITERAL.
-     Every payload from the server now says which two years it is about —
-     the backends read them off the workbook's own column names — so nothing
-     here spells a year out. The initial pair is only what to print if a
+     Every payload from the server says which two years it is about — the
+     backends read them off the workbook's own columns, or off its Year column
+     when those say CY/PY — so nothing here spells a year out. The initial pair is only what to print if a
      payload arrives without them, which today means one cached before this
      landed; today's calendar year is the least-wrong guess, and it is a
-     guess rather than a setting, which is why it is not in §C.
-     README §7, "the year is DATA". */
+     guess rather than a setting, which is why it is not in §C. */
   var CY_YEAR = new Date().getFullYear(), PY_YEAR = CY_YEAR - 1;
   function years_(d){
     var cy = d && Number(d.cyYear);
@@ -7583,7 +7562,7 @@ var AmrSegSlide = (function(){
 
 <script>
 /* ---- §E AmrRmxSlide — the Ready-Mix slide content --------------------------
-   Was Deck_RMX.html. It is the DECK BUILDER's, not Ready-Mix's: chunk 6 found
+   It is the DECK BUILDER's, not Ready-Mix's: it turned out
    Page_Rmx.html has zero references to it and removed the include, 603 lines
    off every Ready-Mix page load. It arrives with the page that does call it. */
 var AmrRmxSlide = (function(){
@@ -7802,9 +7781,10 @@ var AmrRmxSlide = (function(){
 
   /* THE YEAR IS THE DATA'S, NOT THE CALENDAR'S AND NOT A LITERAL. Every payload
      says which two years it is about — the backend reads them off the
-     workbook's own column names — so no heading here spells one out. The
+     workbook's own columns, or off the data when those say CY/PY — so no
+     heading here spells one out. The
      fallback is only for a payload cached before those fields existed, and
-     today's calendar year is the least-wrong guess. README §7, "the year is DATA". */
+     today's calendar year is the least-wrong guess. */
   function cyOf(d){ var y = d && Number(d.cyYear); return y > 0 ? y : new Date().getFullYear(); }
   function pyOf(d){ var y = d && Number(d.pyYear); return y > 0 ? y : cyOf(d) - 1; }
   function byTypeRow(r){
@@ -8273,7 +8253,7 @@ var AmrRmxSlide = (function(){
    The old page had a "QlikView sync status" panel (#qsPanel / #qsOut) with 17
    lines of CSS behind it. Nothing ever wrote to it — it was the display for a
    sync-status feature that was never built. Dropped; the sync is trigger-only
-   and stays that way (README §9).                                          */
+   and stays that way — script.gs §5 says why it has no UI.                  */
 AMR.page('landing', {
   title: 'Amrize Commercial Suite',
   help:
@@ -8460,7 +8440,7 @@ AMR.page('landing', {
      · the seven-times-copied QlikView guide became AmrQlikGuide.mount()
      · #previewHost lost its id-style rule (§A3 .previewHost carries it now)
      · the Saskatchewan notice's inline hex became the §A3 .notice component
-     · every entry point logs through AMR.log (README §10)
+     · every entry point logs through AMR.log
 
    The exec tables are NOT here and must not come back: AmrFuelExec (§E) owns
    the compute and the markup for them, shared with RMX Fuel Recovery and the
@@ -8503,10 +8483,10 @@ AMR.page('fuelsurcharge', {
 
   /* THE BACKEND NAMES ITS SLOTS 26/25 so this page and its Ready-Mix twin stay
      a straight clone of each other, but they mean CY and PY — the real years
-     travel with the payload (getFscData sends cyYear / pyYear now — README §7,
-     "the year is DATA"), so a year roll needs no edit here.
+     travel with the payload (getFscData sends cyYear / pyYear), so a year roll
+     needs no edit here.
 
-     UNTIL THAT CHUNK THIS PAGE SPELLED 2026 AND 2025 INTO ITS HEADINGS, its
+     THIS PAGE USED TO SPELL 2026 AND 2025 INTO ITS HEADINGS, its
      titles and its status line, and the backend summed the literal years too:
      on the first of January it would have published a full set of zeroes under
      headings naming a year that had gone. The twin has been written this way
@@ -8519,7 +8499,7 @@ AMR.page('fuelsurcharge', {
      in every read, so the whole payload - MTD, YTD and the by-month table - is
      for the month the picker names. */
   /* upload: TRUE while the page is running on a workbook the user dropped in.
-     It is the device cache's boundary (chunk 17) — session-only data that is
+     It is the device cache's boundary — session-only data that is
      not what the sheet holds must never be written to localStorage, and a
      cached payload must never be served over it. The page tracked upload mode
      in the DOM alone before; a flag is what the cache can actually ask. */
@@ -8864,7 +8844,7 @@ AMR.page('fuelsurcharge', {
       else   AmrProgress.fail('sheet', 'Could not read the sheet');
     }
 
-    /* THE DEVICE CACHE  (chunk 17)
+    /* THE DEVICE CACHE
        -------------------------------------------------------------------
        A repeat visit paints from localStorage instead of waiting on the
        sheet. Three things make that safe, and all three are decisions rather
@@ -9234,7 +9214,7 @@ AMR.page('fuelsurcharge', {
      AmrFresh starts watching it for free — which is new on these two pages, so
      an update landing while the page is open now greys it out here as well.
      If the call fails, loadData() still runs and the page simply has no cache.
-     Price & Volume does exactly this; see chunk 17. */
+     Price & Volume does exactly this. */
   if(window.AmrCache) AmrCache.boot(loadData); else loadData();
   }
 });
@@ -9242,8 +9222,8 @@ AMR.page('fuelsurcharge', {
 
 <!-- ===================== §P rmxfuel ===================== -->
 <!-- The Ready-Mix twin of §P fuelsurcharge: same screen, same ids, same
-     classes, m³ instead of tonnes. Ids are shared with it ON PURPOSE
-     (README §3) — only #upMain differs, because AGG needs two exports
+     classes, m³ instead of tonnes. Ids are shared with it ON PURPOSE, so the
+     two stay diffable — only #upMain differs, because AGG needs two exports
      and Ready-Mix needs one. Keep the two templates diffable. -->
 <template id="tpl-rmxfuel">
   <header class="bar">
@@ -9375,7 +9355,7 @@ AMR.page('fuelsurcharge', {
      · getRmxFuelData / getRmxFuelDataFromUpload, and ONE uploaded workbook
        (#upMain) instead of AGG's two — Ready-Mix exports CY/PY Fuel Surcharge
        as real columns, so there is nothing to spread from a second file
-     · no Saskatchewan notice: that is an Aggregates concern (README §7)
+     · no Saskatchewan notice: that is an Aggregates concern
      · its own help, its own source hint, its own auto-titles
 
    Everything else — STATE, the compute layer, the summary and by-month
@@ -9432,7 +9412,7 @@ AMR.page('rmxfuel', {
      in every read, so the whole payload - MTD, YTD and the by-month table - is
      for the month the picker names. */
   /* upload: TRUE while the page is running on a workbook the user dropped in.
-     It is the device cache's boundary (chunk 17) — session-only data that is
+     It is the device cache's boundary — session-only data that is
      not what the sheet holds must never be written to localStorage, and a
      cached payload must never be served over it. The page tracked upload mode
      in the DOM alone before; a flag is what the cache can actually ask. */
@@ -9442,7 +9422,7 @@ AMR.page('rmxfuel', {
   /* The backend names its slots 26/25 so this page can be a straight clone of
      the Aggregates one, but they mean CY and PY — the real years travel with
      the payload, so a year roll needs no edit here either. The Aggregates page
-     has the same two helpers since chunk 23; this stopped being a difference
+     has the same two helpers; this stopped being a difference
      between the twins. */
   function cyY(){ return (DATA && DATA.cyYear) || new Date().getFullYear(); }
   function pyY(){ return cyY()-1; }
@@ -9691,7 +9671,7 @@ AMR.page('rmxfuel', {
     var host = document.getElementById('tablesHost'); if(!host) return;
     if(!DATA) return;
     /* No Saskatchewan notice here: the mid-year price increase is an
-       Aggregates concern (README §7) and never reaches Ready-Mix. */
+       Aggregates concern and never reaches Ready-Mix. */
     host.innerHTML = '<div class="card" style="padding:14px">'+currentViewHTML()+'</div>';
   }
 
@@ -9767,7 +9747,7 @@ AMR.page('rmxfuel', {
       else   AmrProgress.fail('sheet', 'Could not read the sheet');
     }
 
-    /* THE DEVICE CACHE  (chunk 17)
+    /* THE DEVICE CACHE
        -------------------------------------------------------------------
        A repeat visit paints from localStorage instead of waiting on the
        sheet. Three things make that safe, and all three are decisions rather
@@ -10139,7 +10119,7 @@ AMR.page('rmxfuel', {
      AmrFresh starts watching it for free — which is new on these two pages, so
      an update landing while the page is open now greys it out here as well.
      If the call fails, loadData() still runs and the page simply has no cache.
-     Price & Volume does exactly this; see chunk 17. */
+     Price & Volume does exactly this. */
   if(window.AmrCache) AmrCache.boot(loadData); else loadData();
   }
 });
@@ -10365,8 +10345,8 @@ AMR.page('rmxfuel', {
   <div class="sugHost" id="sugHost"></div>
 
   <!-- The page's own panel inside the QlikView guide. It lives here, in the
-       template, so its ids are declared where tests/merge.js can see them;
-       AmrQlikGuide moves the node into the aside on mount. -->
+       template, so its ids are declared in markup rather than assembled in
+       JavaScript; AmrQlikGuide moves the node into the aside on mount. -->
   <div id="guideExtra">
     <p class="eyebrow" style="margin:0 0 8px">Replace raw data <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)">&middot; using downloaded QlikView files</span></p>
     <div class="field"><label class="lbl" for="upRaw">Combined Data CPI Raw (.xlsx)</label>
@@ -10400,7 +10380,7 @@ AMR.page('rmxfuel', {
        sliders is gone; §E is above §P, so AmrSlide is there by construction
      · #mapHost and #sugHost stopped carrying style — 54 declarations moved
        to §A3 as .mapHost / .sugHost, and the mapping check is now shared with
-       Ready-Mix rather than copied into it (chunk 6 deletes its copy)
+       Ready-Mix rather than copied into it
      · the QlikView guide became AmrQlikGuide.mount()
 
    NOT changed, deliberately: wirePvCube() still polls for AmrCube even though
@@ -10988,7 +10968,7 @@ MB Submarket, plus Region&rarr;Country.<br>
     if (!list.length){
       sel.innerHTML = '<option value="0">\u2014 unavailable \u2014</option>';
       sel.disabled = true;
-      /* Named script.gs, not PV_Backend.gs: chunk 12 merged the 16 server files into
+      /* Named script.gs: the whole server side is that one file, and
          one and deleted them, so the file this sentence used to name no longer
          exists to paste. */
       showBanner('The server sent no month list, so nothing is being filtered by month. '
@@ -12297,7 +12277,7 @@ MB Submarket, plus Region&rarr;Country.<br>
 <!-- ===================== §P rmx ===================== -->
 <!-- Ready-Mix. Its mapping check, add-row dialog, report table and export
      blocks are in §A3 — shared with Price & Volume and with AmrRmxSlide,
-     which the Deck Builder brings in at chunk 10. Its BARE ELEMENT rules
+     which the Deck Builder brings in. Its BARE ELEMENT rules
      (table, th/td, thead th, aside, main) are the one page block in §A4:
      unscoped they would repaint every other page. -->
 <template id="tpl-rmx">
@@ -12408,20 +12388,20 @@ MB Submarket, plus Region&rarr;Country.<br>
      · the DOMContentLoaded handler became rmxPageInit(), CALLED AT THE END of
        boot(). It sat near the top of the file with a thousand lines of
        declarations below it, so running it in place would hoist those names
-       without their values — the bug chunk 5 hit and wrote up
+       without their values — the bug written up
      · the header's inline on*= handlers became data-act delegation
      · #rmxPreviewHost -> #previewHost and #sugModalHost -> #sugHost: the same
        roles the pages above already have ids for, so they use the same ones
      · `.view on` -> `.view active`, matching §A3's modifier
      · #mapHost / the dialog stopped carrying style — §A3 owns both, promoted
-       from Price & Volume in chunk 5, so 65 of this page's 67 id-scoped
+       from Price & Volume, so 65 of this page's 67 id-scoped
        declarations were DELETED rather than ported
      · the QlikView guide became AmrQlikGuide.mount()
 
    NOT ported: AmrRmxSlide. Page_Rmx.html includes Deck_RMX.html and calls
    nothing in it — 603 lines on every page load to register an adapter that
    early-returns without AmrDeckSource. The module is the Deck Builder's and
-   arrives with it in chunk 10. include('Cube') was dead here too.          */
+   arrives with it. include('Cube') was dead here too.                      */
 AMR.page('rmx', {
   title: 'Amrize · RMX Price & Volume',
   /* html2canvas for the slide capture, SheetJS for the three uploaded
@@ -12597,9 +12577,8 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
          off it, leaves each finished payload in the server cache and hands this
          market's back in the same reply. So the page renders off one round trip
          and every later market switch is a small cache read. The measurement is
-         in the prepareAll block comment in RMX_Backend.gs and in
-         tests/rmxcost.js: the data bundle is 160 cache chunks, an answer taken
-         off it is one to five.
+         in the prepareAll block comment in script.gs §7: the data bundle is
+         160 cache chunks, an answer taken off it is one to five.
 
          It replaces RMX_getMarkets, which was never the cheap little call it read
          as: it opened with loadDataCached_() to fill the month picker, so the
@@ -13103,9 +13082,10 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
   }
   /* THE YEAR IS THE DATA'S, NOT THE CALENDAR'S AND NOT A LITERAL. Every payload
      says which two years it is about — the backend reads them off the
-     workbook's own column names — so no heading here spells one out. The
+     workbook's own columns, or off the data when those say CY/PY — so no
+     heading here spells one out. The
      fallback is only for a payload cached before those fields existed, and
-     today's calendar year is the least-wrong guess. README §7, "the year is DATA". */
+     today's calendar year is the least-wrong guess. */
   function cyOf(d){ var y = d && Number(d.cyYear); return y > 0 ? y : new Date().getFullYear(); }
   function pyOf(d){ var y = d && Number(d.pyYear); return y > 0 ? y : cyOf(d) - 1; }
   function byTypeRow(r){
@@ -13962,7 +13942,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
 
      · BOTH DOMContentLoaded handlers became named functions called at the end
        of boot(), in the order they were registered. segKpiInit sat at line 638
-       with five hundred lines of declarations below it — the chunk 5 rule
+       with five hundred lines of declarations below it — the same rule
      · the upload half of the page's tail IIFE moved inside this scope, because
        it reads STATE, CACHE, loadTables and setStat
      · the header's inline on*= handlers became data-act delegation
@@ -13971,12 +13951,12 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
        names three other pages already use
      · table.gt and the slide-body rows (.crow/.ccell/.ccap/.phold) went to §A3
        — AmrSegSlide emits the same markup for the deck, so they are shared by
-       construction, and tests/deckstatic.js fails if a second copy appears
+       construction, and a second copy must not appear
      · the QlikView guide became AmrQlikGuide.mount()
 
    This page needed no §A4 block: `.shell{max-width:1480px}` was already the
    §A3 default, and .logoName / .dzstat / .previewCard / .empty arrived with
-   the fuel pages in chunk 3.                                                */
+   the fuel pages.                                                          */
 AMR.page('segment', {
   title: 'Amrize · Commercial Product Segment',
   /* html2canvas for the capture, SheetJS for the KPI workbook and the three
@@ -14061,7 +14041,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
                        Manitoba:'Manitoba', North:'North', Saskatchewan:'Saskatchewan' };
 
   /* THE TWO YEARS THE READY-MIX BACKEND READS BY COLUMN NAME. It resolves them
-     by pattern since chunk 23 — whatever two years the columns carry — and
+     by pattern — whatever two periods the columns carry — and
      sends them with every payload, so this pair is set from the data rather
      than typed. What is left below is the fallback for a payload cached before
      those fields existed: today's calendar year, which is a guess rather than a
@@ -15391,11 +15371,11 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
    The edits:
 
      · the DOMContentLoaded handler became a direct boot() call at the END of
-       the body — the position the event gave it, and the chunk 5 rule
+       the body — the position the event gave it, and the same rule
      · the header's inline on*= handlers became data-act delegation
      · the script tag that printed window.APP_URL from the escaping scriptlet
        form is gone. §D reads the URL off a body data attribute instead; a
-       server value printed into JavaScript is the hazard chunk 2 wrote up,
+       server value printed into JavaScript is the hazard written up
        and naming the scriptlet in prose rather than writing one is the other
        half of it — Apps Script evaluates a scriptlet inside a comment too
      · eight class="seg" became class="seg pills" — this page's segmented
@@ -21969,7 +21949,7 @@ AMR.page('deckbuilder', {
        are appended to every market's email; markets with no recipient of their own still go out to
        just those addresses. Emails are sent from the account that <b>deployed</b> the app,
        not from yours &mdash; and the saved addresses are shared with everyone for the
-       same reason (see README &sect;1).</p>
+       same reason.</p>
     <div id="marketList"><div class="exc-empty" style="color:var(--muted)">Upload both files to see the per-market breakdown.</div></div>
   </div>
 
@@ -22022,8 +22002,8 @@ AMR.page('deckbuilder', {
        the port that is not a move. The page told users emails are sent "from
        your account" and that a typed recipient "will be remembered for your
        account". Neither has been true since appsscript.json pinned
-       "executeAs": "USER_DEPLOYING" — TP01_Backend.gs says so in its own
-       banner and README §1 says so; only the page said otherwise, and it is
+       "executeAs": "USER_DEPLOYING" — script.gs says so in §4 and in its own
+       TP01 banner; only the page said otherwise, and it is
        the sentence someone reads before typing a colleague's address.
      · 69 style rules became §A4, scoped to body[data-page="tp01"]           */
 AMR.page('tp01', {

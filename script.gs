@@ -16,11 +16,9 @@
  * makes HtmlService.createTemplateFromFile('app') ambiguous, which is the
  * call doGet depends on. Renaming this back to app.gs breaks the project.
  *
- * The repo this came from also holds README.md and a tests/ folder, and if you
- * have them they are worth reading — README §7 is the domain rules, §9 is what
- * must not be deleted and why. IF YOU DO NOT HAVE THEM, everything you actually
- * need in order not to break this file is below and in the section banners.
- * They are documentation, not dependencies.
+ * EVERYTHING YOU NEED IN ORDER NOT TO BREAK THIS FILE IS IN IT — below, and in
+ * the section banners. The only other file it speaks to is app.html, which is
+ * the whole client and carries its own.
  *
  * HOW TO NAVIGATE THIS FILE
  * -------------------------
@@ -32,7 +30,8 @@
  *                               constant in this file worth changing.
  *   §2   LOGGING .............. APP_log, and the LOG_LEVEL switch.
  *   §3   ROUTER + PLUMBING .... doGet, getLogo, the data-generation stamps,
- *                               the chunked cache, the SB reader.
+ *                               the chunked cache, the SB reader, and the
+ *                               period helpers every header read goes through.
  *   §4   PERMISSIONS .......... APP_verifyPermissions(). Read this before
  *                               adding a service to the project.
  *   §5   SYNC ................. the QlikView → Sheets engine.
@@ -45,7 +44,7 @@
  *                               the recipe checker. The template id, the folder
  *                               and the slide list are CONFIG, and live in §1.
  *   §10  SMALL PAGES .......... KPI workbooks, TP01 mail, Inventory Report.
- *   §11  TRIGGERS ............. everything reached from outside the repo.
+ *   §11  TRIGGERS ............. everything reached from outside this file.
  *
  * THE THINGS THAT WILL BITE YOU
  * -----------------------------
@@ -63,8 +62,8 @@
  *    service, add its scope by hand — nothing warns you, the call just throws
  *    for every user. §4 is how you find that out in one run.
  *
- * 4. toNum_ / norm_ / gk_ HAVE DRIFTED, AND CHUNK 15 SETTLED THAT THEY STAY
- *    THAT WAY. Not three copies — SIX toNum_, SIX norm_ and two gk_, across
+ * 4. toNum_ / norm_ / gk_ HAVE DRIFTED, AND THEY STAY THAT WAY. Not three
+ *    copies — SIX toNum_, SIX norm_ and two gk_, across
  *    SEVEN namespaces (QLIKSYNC, PV, PVLOOK, FSC, SASKRATES, RMX, RFSC), and
  *    four genuinely different dialects of each. The reason there is no safe
  *    direction to unify them in is that NEITHER DIALECT IS A SUPERSET:
@@ -77,10 +76,22 @@
  *        and PV drops the figure rather than mis-signing it.
  *
  *    Pick either and you silently break the other, under 144 call sites, with
- *    nothing failing. So: DO NOT UNIFY THEM. tests/helpers.js pins all fourteen
- *    definitions to a table of inputs, so a future tidy fails there with the
- *    input that moved. README §7 carries the rule and the two latent
- *    bugs it turned up.
+ *    nothing failing. So: DO NOT UNIFY THEM.
+ *
+ * 5. A COLUMN HEADER NAMES A PERIOD, AND IT NAMES IT FOUR DIFFERENT WAYS.
+ *    "2026 Volume", "CY Volume", "Total Revenue - 2025", "Total Revenue -PY" —
+ *    all four are live, the exports and the workbooks disagree with each other
+ *    right now, and both sides change without notice. Read a header through §3's
+ *    APP_period_ / APP_yearCols_ and never by naming a period back at it. A
+ *    lookup that names one returns -1 the day it changes, toNum_ turns the
+ *    missing cell into 0, and the page publishes a full set of zeroes under
+ *    correct-looking headings without failing.
+ *
+ *    AND WHICH YEAR IS CURRENT COMES FROM THE DATA. "CY" names no year, so a
+ *    reader keying cells by year has nothing to key on: it comes off the Year
+ *    column (Aggregates) or the year on a Bill Month (Ready-Mix). Never off the
+ *    calendar, and never off the header alone — an export can reuse last year's
+ *    template.
  *
  * 6. WHEN YOU DELETE CODE BY ANCHORED TEXT, DIFF THE SYMBOL TABLE — not just
  *    the syntax. A cut that takes one function too many is still perfectly
@@ -136,10 +147,9 @@
  *     DECK_RECIPE                                    WHICH slides the monthly deck
  *                                                    holds, and in what order
  *
- *   THE LAST TWO MOVED HERE FROM §9 IN CHUNK 22. They are the deck's two config
- *   objects and they used to sit behind the engine that reads them, ten thousand
- *   lines down. §9 still holds everything about the deck that is code.
- *   tests/gsparity.js declares the move.
+ *   THE LAST TWO ARE THE DECK'S CONFIG OBJECTS. They sit here rather than
+ *   behind the engine that reads them, ten thousand lines down. §9 still holds
+ *   everything about the deck that is code.
  *
  *   STILL BESIDE THE CODE THAT READS THEM, deliberately — changing one of these
  *   means understanding what it feeds, and the comment beside it is the half you
@@ -491,7 +501,7 @@ var APP_CONFIG = {
  * USED — and the "NOT USED" that stood here was wrong. getOverview (§8) reads
  * OVERVIEW.MARKETS on every Overview load, the page's footer reports any PV
  * market missing from it as "unmapped", and app.html names it by name in that
- * hint. Deleting it empties the Executive Overview. Corrected in chunk 22.
+ * hint. Deleting it empties the Executive Overview.
  * ------------------------------------------------------------------
  * EXECUTIVE OVERVIEW — canonical market list + PV/RMX name mapping.
  * The Overview page reads PV and RMX (never blends them). Each row maps
@@ -743,10 +753,9 @@ function extractSpreadsheetId_(input){
 
 
 /* ---- §1 DECK — the template, the folder, and the list of slides -------------
-   MOVED HERE FROM §9 IN CHUNK 22, unchanged. Both objects are read only from
-   inside functions in §9, so nothing depends on where they sit — which is why
-   they could come to the top at all, and the reason §1 is at the top in the
-   first place.
+   Both objects are read only from inside functions in §9, so nothing depends on
+   where they sit — which is why they can be at the top at all, and the reason
+   §1 is at the top in the first place.
 
    WHY THEY ARE NOT IN §9 ANY MORE. The Deck Builder is the one page whose
    configuration a business user is expected to edit: a new template, a new
@@ -1003,10 +1012,10 @@ var DECK_RECIPE = [
 /* ============================================================================
  * §2  LOGGING
  * ----------------------------------------------------------------------------
- * New in chunk 12. One helper, one output shape, one switch. Before the merge
- * there was no convention at all: 20 Logger.log calls, 15 console.log, 9
- * console.error, all hand-concatenated strings, no levels, no timings, and no way
- * to turn any of it down short of editing call sites.
+ * One helper, one output shape, one switch. What it replaced was no convention
+ * at all: 20 Logger.log calls, 15 console.log, 9 console.error, all
+ * hand-concatenated strings, no levels, no timings, and no way to turn any of
+ * it down short of editing call sites.
  *
  *     APP_log(level, where, msg, data)     'debug' | 'info' | 'warn' | 'error'
  *
@@ -1026,14 +1035,14 @@ var DECK_RECIPE = [
  *
  * WHY 'skip' IS ONE OF THE THREE. APP_cachePut_ bails silently above its chunk
  * ceiling, and a silent bail is indistinguishable from a cache that is simply
- * never warm. README §6 records the most expensive mistake this suite has had —
- * every RMX entry point pulling a 14 MB bundle through CacheService to produce a
- * 72 KB answer — and it hid for a long time because nothing about it looked
- * wrong. A line carrying ms and bytes would have shown a flat 15–24 s against a
- * varying question on the first read of the transcript.
+ * never warm. That is the most expensive mistake this suite has had — every RMX
+ * entry point pulling a 14 MB bundle through CacheService to produce a 72 KB
+ * answer — and it hid for a long time because nothing about it looked wrong. A
+ * line carrying ms and bytes would have shown a flat 15–24 s against a varying
+ * question on the first read of the transcript.
  *
  * ---------------------------------------------------------------------------
- * THE SILENT-CATCH CENSUS  (chunk 18) — 36 of them, every one decided.
+ * THE SILENT-CATCH CENSUS — 36 of them, every one decided.
  * ---------------------------------------------------------------------------
  * §7's rule is that silent is right for an OPTIONAL CACHE READ and wrong for
  * everything else. Applying it gave two groups, and the group a catch is in is
@@ -1086,17 +1095,15 @@ var DECK_RECIPE = [
  * on every call rather than captured, so changing it in §1 takes effect on the
  * next execution with nothing to redeploy.
  *
- * SCOPE NOTE, so the next agent does not read this section as a broken promise.
- * Chunk 12 moved 10,889 lines of working backend into this file and edited none
- * of them. The call sites that exist are in §4, the code chunk 12 WROTE. The
- * moved entry points do not log yet, and wiring them is its own chunk with its
- * own gate — README §11. Adding log lines to hot moved code that no
- * harness covers, inside the largest single change this codebase has had, is
- * exactly the two-changes-at-once trap README §10 exists to stop.
+ * NOT EVERY ENTRY POINT LOGS YET, and that is not an oversight. The call sites
+ * that exist are in §4 and in the sync; the older backends do not, and wiring
+ * them is its own change with its own review. Adding log lines to hot code
+ * while changing what that code does is two changes at once, which is how a
+ * regression stops being attributable to either of them.
  * ============================================================================ */
 
 /* ---- logging.gs --------------------------------------------------------------
-   New in chunk 12. Nothing was moved here.  */
+   APP_log and the LOG_LEVEL switch.  */
 
 var APP_LOG_LEVELS_ = { debug: 10, info: 20, warn: 30, error: 40, off: 99 };
 
@@ -1190,11 +1197,13 @@ function APP_logTimed(where, msg, fn, data) {
  * stamps every page watches for freshness, the chunked script cache, and the SB
  * reader the Overview's segment and product-category panels are built on.
  *
- * doGet is the one function Apps Script itself calls. It still reads ?page= and
- * still serves one page per load — README §3 is explicit that this merge does not
- * turn the suite into a single-page app, because a regression then could not be
- * told apart from a new router. Chunk 13 is where doGet starts serving app.html
- * for every route and the ?page=app scaffold goes.
+ * doGet is the one function Apps Script itself calls. It reads ?page= and serves
+ * ONE page per load: app.html mounts the page named on <body data-page>, and
+ * this is not a single-page app.
+ *
+ * §3 also holds the period helpers every reader and the sync go through —
+ * APP_period_ and the rest — because a header is read from more than one
+ * section and only one of them may decide what a period column looks like.
  * ============================================================================ */
 
 /* ========================================================================
@@ -1428,7 +1437,7 @@ function APP_periodFind_(tgt, base, p, srcRank) {
 }
 
 /* ---- Code.gs -----------------------------------------------------------------
-   Verbatim, less syncSlideData — see the hit-list note in README §9.  */
+   The router, the logo, the freshness stamps, the chunked cache, the SB reader.  */
 
 /*****************************************************************************
  * AMRIZE COMMERCIAL SUITE — main entry / router
@@ -1481,8 +1490,8 @@ function APP_periodFind_(tgt, base, p, srcRank) {
    AN UNKNOWN ?page= FALLS BACK TO THE LANDING PAGE rather than mounting nothing.
    app.html mounts by looking up data-page in its registry, and a name with no
    registration leaves #appRoot empty with no error — a blank screen, which reads
-   as an outage rather than as a typo. PAGES is the same list app.html's §D
-   switcher carries; the two are checked against each other by tests/merge.js. */
+   as an outage rather than as a typo. This is the same list app.html's §D
+   switcher carries, and the two have to stay identical. */
 var APP_PAGES = ['landing', 'overview', 'pricevolume', 'rmx', 'segment',
                  'fuelsurcharge', 'rmxfuel', 'tp01', 'inventoryreport', 'deckbuilder'];
 
@@ -1498,7 +1507,7 @@ function doGet(e) {
      iframe resolves against googleusercontent.com, not the web app — and it is
      read from a <body> data attribute rather than printed into JavaScript,
      because the printing scriptlet HTML-escapes and would break the script
-     block. README §11. */
+     block — see app.html's banner on the same trap. */
   var t = HtmlService.createTemplateFromFile('app');
   t.appUrl = getAppUrl_();
   t.page   = page;
@@ -1701,7 +1710,7 @@ function APP_cachePut_(key, obj) {
       /* THE SILENT BAIL THIS WHOLE FIELD EXISTS FOR. Above the chunk ceiling
          nothing is stored, so every later request recomputes — and from the
          outside that is indistinguishable from a cache that is simply never
-         warm. README §6 is what that costs: every Ready-Mix entry point pulled
+         warm. What that costs: every Ready-Mix entry point pulled
          a 14 MB bundle through CacheService to produce a 72 KB answer, for a
          long time, because nothing about it looked wrong. A flat elapsed time
          against a varying question is the tell, and it needs a line to be read
@@ -1929,8 +1938,8 @@ function getSlideData() {
 /* ============================================================================
  * §4  PERMISSIONS — the self-check
  * ----------------------------------------------------------------------------
- * New in chunk 12. Run APP_verifyPermissions() from the Apps Script editor after
- * pasting this file in. It prints one line per service and returns the same thing
+ * Run APP_verifyPermissions() from the Apps Script editor after pasting this
+ * file in. It prints one line per service and returns the same thing
  * as an object, so it is readable in the log and inspectable in the debugger.
  *
  * It has TWO jobs, and they are different problems.
@@ -1941,9 +1950,8 @@ function getSlideData() {
  *    on how the scan reads it. This function names every service the suite uses,
  *    in plain code the scan cannot miss.
  *
- *    It is belt-and-braces alongside the explicit "oauthScopes" array now in
- *    appsscript.json, which is the reliable mechanism and which this project did
- *    not have committed at all before chunk 12.
+ *    It is belt-and-braces alongside the explicit "oauthScopes" array in
+ *    appsscript.json, which is the reliable mechanism.
  *
  *    AN EXPLICIT oauthScopes ARRAY REPLACES AUTO-DETECTION. Adding a service to
  *    this project now means adding its scope to appsscript.json by hand. Nothing
@@ -1961,7 +1969,7 @@ function getSlideData() {
  * WHO IS RUNNING. appsscript.json pins "executeAs": "USER_DEPLOYING", which is
  * why TP01 mail is sent by the deployer and why getUserProperties() resolves to
  * the deployer for EVERYBODY — that is what makes the TP01 recipient map one
- * shared list (README §1). The check reports the effective user against the
+ * shared list (§1). The check reports the effective user against the
  * active user so a wrong deployment setting is one line to read rather than
  * something inferred from whose name is on an email.
  *
@@ -1995,7 +2003,7 @@ function getSlideData() {
  *                                Script sandbox iframe resolves against
  *                                googleusercontent.com — the page loads and then
  *                                navigates the user off the app. That failure
- *                                already shipped once (README §11). An
+ *                                already shipped once. An
  *                                extra line on the consent screen is the cheaper
  *                                side of that trade.
  *   auth/userinfo.email          Session.getActiveUser().getEmail(), which §10
@@ -2009,7 +2017,7 @@ function getSlideData() {
  * ============================================================================ */
 
 /* ---- permissions.gs ----------------------------------------------------------
-   New in chunk 12. Nothing was moved here.  */
+   APP_verifyPermissions and its two formatting helpers.  */
 
 function APP_verifyPermissions() {
   var t0 = Date.now();
@@ -2236,7 +2244,7 @@ function APP_permPad_(s, n) {
  *
  * IT HAS NO UI, AND THAT IS A DECISION. There is no ⇣ Pull from QlikView button
  * and there never was. A page that could start a sync would put a minutes-long
- * Drive job behind a button any user could press twice. See README §9.
+ * Drive job behind a button any user could press twice.
  * ============================================================================ */
 
 /* ---- QlikSync.gs -------------------------------------------------------------
@@ -3284,10 +3292,10 @@ var QLIKSYNC = (function () {
  * rate table Fuel Recovery reads through PV.
  *
  * PV, PV_Lookup, FSC and SASKRATES each keep their own private toNum_ / norm_ /
- * gk_, and so do §5's QLIKSYNC and §7's RMX and RFSC. They have drifted, chunk 15
- * diffed all fourteen definitions, and the verdict was DO NOT UNIFY — see the
- * file header, item 4. Two things found here specifically, both recorded as
- * findings rather than fixed inside a cleanup:
+ * gk_, and so do §5's QLIKSYNC and §7's RMX and RFSC. All fourteen definitions
+ * have been diffed and the verdict is DO NOT UNIFY — see the file header, item
+ * 4. Two things found here specifically, both recorded as findings rather than
+ * fixed inside a cleanup:
  *
  *   · PV.toNum_ reads an accounting negative "(1,234)" as ZERO. Its strip leaves
  *     the parentheses, parseFloat gives NaN, and NaN becomes 0. Every other copy
@@ -3298,13 +3306,12 @@ var QLIKSYNC = (function () {
  *     mixes in SCHEMA_. So bumping the schema invalidates one cache and leaves
  *     the other serving rows shaped the old way.
  *
- * tests/helpers.js is the gate on all of it.
  * ============================================================================ */
 
 /* ---- PV_Backend.gs -----------------------------------------------------------
    Aggregates Price & Volume. Its getReport returns the cached report BEFORE it
    touches the pivot — the thing the Ready-Mix side did not do, and the whole of
-   README §6.  */
+   §2's note on the 14 MB bundle.  */
 
 /*****************************************************************************
  * PRICE & VOLUME ANALYSIS — backend (namespaced as PV)
@@ -3388,11 +3395,11 @@ function toNum_(v) {
      gave NaN and NaN became 0, so the figure was DROPPED rather than mis-signed
      — which is why nothing ever looked wrong. Every other toNum_ in the suite
      (FSC, RFSC, RMX, SASKRATES) has always read it as -1234; this is that rule,
-     spelled the way they spell it, and it is the whole of README §7, the toNum_ family.
+     spelled the way they spell it — see the file header, item 4.
      It cannot touch a value that is not a parenthesised NUMBER: "(n/a)" still
      reads 0, because parseFloat still gives NaN. The percent rule above is
-     untouched — chunk 15's point was that PV is RIGHT about "5%" and the others
-     are wrong, and the two rules are about different inputs. */
+     untouched: PV is RIGHT about "5%" and the others are wrong, and the two
+     rules are about different inputs. */
   s = s.replace(/[$,%\s]/g, '').replace(/\(/g, '-').replace(/\)/g, '');
   if (s === '' || s === '-') return 0;
   var n = parseFloat(s);
@@ -4333,8 +4340,8 @@ function uploadData(payload) {
      year this required two columns the file no longer has and refused a
      perfectly good download with "Missing column(s): 2025 Volume, 2026 Volume".
      Loud rather than silent, which is why it survived, but wrong either way.
-     Same rule as everywhere else now (README §7, "the year is DATA"): find every
-     "#### Volume", keep them BY YEAR, and let each row pick its own. */
+     Same rule as everywhere else: the year is DATA. Find every volume column
+     however it is headed, keep them BY YEAR, and let each row pick its own. */
   var volCols = {};
   R.hdr.forEach(function (h, i) {
     var m = /^(\d{4})\s+volume$/.exec(norm_(h));
@@ -4728,7 +4735,7 @@ function getCrossData(opts) {
        argument as readTab directly above: two copies of one rule is how it
        keeps coming back. PV_Lookup caches a result COMPUTED FROM the rows this
        schema describes, so a bump that strands PV's tables has to strand its
-       check too — see README §11. Exported as a value: bumping it means
+       check too. Exported as a value: bumping it means
        editing the literal, which is what SCHEMA_'s own comment asks for. */
     SCHEMA:            SCHEMA_
   };
@@ -4836,11 +4843,11 @@ function toNum_(v){
      gave NaN and NaN became 0, so the figure was DROPPED rather than mis-signed
      — which is why nothing ever looked wrong. Every other toNum_ in the suite
      (FSC, RFSC, RMX, SASKRATES) has always read it as -1234; this is that rule,
-     spelled the way they spell it, and it is the whole of README §7, the toNum_ family.
+     spelled the way they spell it — see the file header, item 4.
      It cannot touch a value that is not a parenthesised NUMBER: "(n/a)" still
      reads 0, because parseFloat still gives NaN. The percent rule above is
-     untouched — chunk 15's point was that PV is RIGHT about "5%" and the others
-     are wrong, and the two rules are about different inputs. */
+     untouched: PV is RIGHT about "5%" and the others are wrong, and the two
+     rules are about different inputs. */
   s = s.replace(/[$,%\s]/g, '').replace(/\(/g, '-').replace(/\)/g, '');
   if (s === '' || s === '-') return 0;
   var n = parseFloat(s);
@@ -4862,7 +4869,7 @@ function code_(v){
  * already read this generation is free for the other.
  * Generation-keyed, so a sync invalidates it with everything else. */
 function gen_(){ return APP_getGen_('pricevolume'); }
-/* PV.SCHEMA IS IN THE KEY, AND CHUNK 21 IS WHY. It was not, and PV's own key
+/* PV.SCHEMA IS IN THE KEY. It was not, and PV's own key
    always had it — so bumping SCHEMA_ stranded every Price & Volume table and
    left this page's mapping check serving a result computed from rows of the old
    shape. Read at call time, never at construction: PV is above this IIFE, but
@@ -5160,7 +5167,7 @@ function applyPvLookupRows(p)  { return PVLOOK.applyRows(p); }
 
 /* ---- FSC_Backend.gs ----------------------------------------------------------
    AGG Fuel Recovery. Caches the sheet read AND the finished result, so one read
-   serves two identical calls (tests/fscheader.js proves it).  */
+   serves two identical calls.  */
 
 /*****************************************************************************
  * AMRIZE FUEL RECOVERY - backend
@@ -5483,7 +5490,7 @@ var FSC = (function () {
        first of January this page would have summed cells nothing had written
        and published a table of zeroes — silently, because zero is a number.
        RFSC_Backend.gs has carried cy/py since it was written; this is the
-       Aggregates half catching up (README §7, "the year is DATA"). */
+       Aggregates half doing the same. The year is DATA. */
     return { cells: cells, markets: markets, latest: latest || 1,
              monthList: monthList,
              cy: yMax, py: yMax - 1,
@@ -5913,9 +5920,8 @@ function getFscDataFromUpload(p){
 
 /* ---- Sask_Backend.gs ---------------------------------------------------------
    The Saskatchewan rate table, read through PV. getSaskRatesStatus is BOTH an
-   editor tool and, since chunk 19, the readout under the saskrates row in the
-   Settings modal — it took until then for the second half of its own comment to
-   become true. It follows APP_EXTRA_SOURCES rather than a page list, so it
+   editor tool and the readout under the saskrates row in the Settings modal.
+   It follows APP_EXTRA_SOURCES rather than a page list, so it
    appears on exactly the pages that read the sheet.  */
 
 /*****************************************************************************
@@ -6179,14 +6185,11 @@ function getSaskRatesStatus() { return SASKRATES.status(); }
  * strips zero-width characters and a BOM, drops the leading apostrophe Sheets
  * uses to mark a cell as text, and straightens curly quotes. Ready-Mix keys come
  * from hand-maintained mapping tabs, which is where all four of those actually
- * turn up. Do not "simplify" it to match §6's — see the file header, item 4, and
- * tests/helpers.js, which pins every one of those characters to an expected
- * answer.
+ * turn up. Do not "simplify" it to match §6's — see the file header, item 4.
  * ============================================================================ */
 
 /* ---- RMX_Backend.gs ----------------------------------------------------------
-   Verbatim, less the four debug functions and the three IIFE exports that existed
-   only to feed one of them. See README §10.  */
+   Ready-Mix: the loaders, the bundle, the PPI weights and the one pull.  */
 
 /*****************************************************************************
  * AMRIZE RMX — backend (namespaced as RMX)
@@ -6713,7 +6716,7 @@ function loadStream_(LK, sheetName, src, bag){
 function bundleOk_(b){
   return !!(b && b.main && b.months
             && Number(b.latestMonth) >= 1 && Number(b.latestMonth) <= 12
-            /* chunk 23: a bundle written before the years travelled with the
+            /* a bundle written before the years travelled with the
                data has none, and a page reading it would fall back to a
                hard-coded pair. Same rule as the months check above, for the same
                reason — rebuild it rather than repair it. */
@@ -7195,8 +7198,8 @@ function getMarkets(){
     var b = loadDataCached_(false);
     out.latestMonth = bundleMonth_(b);
     out.months = bundleMonths_(b);
-    /* the two years the data names, so the page's headings never spell one out
-       themselves (README §7, "the year is DATA") */
+    /* the two years the data names, so the page's headings never spell one
+       out themselves */
     out.cyYear = b.cyYear; out.pyYear = b.pyYear;
   } catch (e){ out.months = { all:[], cy:[] }; }
   return out;
@@ -7205,7 +7208,7 @@ function getMarkets(){
 /* =================== prepareAll - THE ONE PULL ===================
  * ONE CALL READS THE SHEET DATA. EVERYTHING ELSE READS A FINISHED ANSWER.
  *
- * The measurement that produced this (tests/rmxcost.js):
+ * The measurement that produced this:
  *
  *   the cached data bundle .................  14 MB  -> 160 cache chunks
  *   a finished getKeys payload, one market ..  72 KB  ->   1 cache chunk
@@ -7287,7 +7290,7 @@ function prepareAll(opts){
      cache, so this is one response instead of twelve, and after it the pages
      switch market with no server call at all.
 
-     Sizes, from tests/rmxcost.js: one market is ~72 KB, Central Canada ~361 KB,
+     Sizes: one market is ~72 KB, Central Canada ~361 KB,
      so both periods together are around a megabyte. That is a fine response and
      a poor localStorage entry - the pages keep them in memory and go on writing
      AmrCache one market at a time (it caps near 900 KB per entry). */
@@ -8037,7 +8040,7 @@ function RMX_prepare(opts) {
             force: !!(opts && opts.force) });
   try {
     var out = RMX_NS.prepareAll(opts);
-    /* ELAPSED MS IS THE FIELD THAT EARNS ITS PLACE HERE. README §6: every RMX
+    /* ELAPSED MS IS THE FIELD THAT EARNS ITS PLACE HERE. Every RMX
        entry point used to pull a 14 MB bundle through CacheService to produce a
        72 KB answer, and it hid for a long time because nothing about it looked
        wrong. A flat 15-24 s against a varying question is what a reader would
@@ -9611,7 +9614,7 @@ function getRmxFuelDataFromUpload(p){
  * ============================================================================ */
 
 /* ---- Ov_Backend.gs -----------------------------------------------------------
-   Verbatim, less CUBE_historyStatus — see the hit-list note in README §9.  */
+   The Executive Overview, the month cube and the history eras.  */
 
 /*****************************************************************************
  * EXECUTIVE OVERVIEW — backend  (page id: 'overview')
@@ -11154,10 +11157,8 @@ function OV_refreshLookups(){
    engine that reads them. The one part of the deck a business user is expected
    to change was the hardest part of the file to find.
 
-   NOTHING ELSE MOVED. Everything below is the reader, the writer and the
-   geometry: code, not configuration. tests/gsparity.js declares the cut, so
-   this region is still proved verbatim against the file it came from apart
-   from it. */
+   NOTHING ELSE IS UP THERE. Everything below is the reader, the writer and the
+   geometry: code, not configuration. */
 
 
 var DECK = (function () {
@@ -11886,9 +11887,9 @@ function DECK_resetLayouts() { return DECK.resetLayouts(); }
  *   business wants them, add the rows.
  *****************************************************************************/
 
-/* THE RECIPE ITSELF IS IN §1 — Ctrl+F "§1 DECK". The list of slides moved to
-   the top of the file in chunk 22; the checking below did not, because it is
-   code. */
+/* THE RECIPE ITSELF IS IN §1 — Ctrl+F "§1 DECK". The list of slides is
+   configuration and lives at the top; the checking below is code and lives
+   here. */
 
 
 /*****************************************************************************
@@ -11972,7 +11973,7 @@ function DECK_getRecipe() {
  * TP01 mail is sent by whoever DEPLOYED the app, because appsscript.json pins
  * "executeAs": "USER_DEPLOYING". That also makes getUserProperties() the
  * deployer's for everybody, which is why the market → email map is ONE shared
- * list. Chunk 11 corrected the page copy that said otherwise.
+ * list.
  * ============================================================================ */
 
 /* ---- Kpi_Backend.gs ----------------------------------------------------------
@@ -12340,7 +12341,6 @@ function IR_saveSource(input, label)  { return IR.saveSource(input, label); }
  *                    first firing has stamps to compare. Needed again whenever
  *                    the trigger is rebuilt.
  *   qlikStamps       what the next check will compare, and what it will do.
- *                    tests/qliksync.js exercises it — three checks.
  *   qlikSyncNow      the only manual recovery path when the trigger misfires.
  *
  * The other functions in this file that are run by hand rather than called are

@@ -159,7 +159,7 @@ internal file order is not something this repo controls. Entry points are prefix
 |---|---|
 | §1 | **CONFIG** — `APP_CONFIG`, `OVERVIEW`, `DECK_CONFIG`, `DECK_RECIPE`, `APP_EXTRA_SOURCES`, the Settings API. First on purpose; its banner is the map of every constant worth changing |
 | §2 | **LOGGING** — `APP_log`, the `LOG_LEVEL` switch, and the silent-catch census |
-| §3 | **ROUTER + PLUMBING** — `doGet`, `getLogo`, the data-generation stamps, the chunked cache, the SB reader |
+| §3 | **ROUTER + PLUMBING** — `doGet`, `getLogo`, the data-generation stamps, the chunked cache, the SB reader, and the **period helpers** (`APP_period_`, `APP_yearCols_`, `APP_periodMap_`) every header read goes through |
 | §4 | **PERMISSIONS** — `APP_verifyPermissions()`. Read before adding a service |
 | §5 | **SYNC** — the QlikView → Sheets engine |
 | §6 | **AGG** — Price & Volume, its mapping check, AGG Fuel Recovery, Saskatchewan rates |
@@ -256,9 +256,9 @@ knowing before touching a page:
   to one a second when the tab is hidden and one a *minute* after five minutes of it, which
   is exactly how deck rendering is normally used.
 
-`tests/modparity.js` proves every §E module is byte-for-byte the file it was ported from,
-with each deliberate edit declared and reasoned. It is the only surviving proof for
-`AmrFuelExec` and `AmrPvSlide`.
+§E used to be byte-for-byte the files it was ported from, and `tests/modparity.js` proved it.
+That gate has retired — see §10 — so a §E module is now proved by the harnesses that run it,
+not by a comparison with a deleted file.
 
 ---
 
@@ -306,6 +306,32 @@ bump anything, they just drop that 30-second copy so the next read sees the new 
 wanted — a sync is a minutes-long Drive job, not something to put behind a control a user can
 press twice. Set **one** time-driven trigger on `qlikSyncCheck`; 15 minutes costs three Drive
 lookups when nothing has changed.
+
+`qlikSyncCheck` skips a source whose file has not moved since it was last synced.
+**`qlikSyncNow` deliberately does not** — somebody running it by hand is there *because* the
+sheet is wrong and the file did not move (a bad write, a header renamed in the workbook, a
+cleared cache), so the trigger's optimisation must not reach them.
+
+**Columns are paired on the figure and the period, never on the literal header** — see §7. The
+sync writes data under the headers the workbook already has and never rewrites a header row,
+so a new year's column has to exist there before anything can be written into it. Until it
+does, the export's new column is reported unmatched rather than written somewhere wrong. There
+is **no positional fallback**: one existed, and it is how PY revenue was written into the
+wrong column for a whole run.
+
+### The `~qliksync temp` sheet
+
+Apps Script cannot read `.xls` / `.xlsx` — `SpreadsheetApp` opens a Google Sheet and nothing
+else — so Drive converts each export to a temporary one, which is read and then trashed. **An
+export saved in Drive as a Google Sheet skips the copy entirely**, which is the way to be rid
+of the temp file if it is unwanted.
+
+**It must not be shared with anybody.** A new Drive file takes its audience from the folder it
+is created in, so a copy made with no parent lands beside the export — in whatever shared
+folder that sits in, visible to everyone with access and turning up in their Drive activity
+mail. The copy is created in the script account's own Drive root and every non-owner
+permission on it is removed before anything is read. **Nothing in the codebase creates a Drive
+permission**, which is the only call that emails a person.
 
 ### Per-page sheet overrides
 
@@ -395,17 +421,40 @@ reconciles against Qlik.
 
 - **Always use `getDisplayValues()` for Bill Month.** Sheets parses `JUL-26` into a Date;
   only `getDisplayValues()` returns the literal string.
-- **The year is DATA, not a setting — do not add a knob for it.** Every backend reads the
-  current and prior year off the workbook's own column names (`"2026 Vol"`, `"#### Volume"`,
-  `"Total Revenue - ####"`) and sends `cyYear` / `pyYear` with the payload; every heading
-  prints what it was sent. Scan headers for a `####` pattern — larger is CY, smaller is PY.
-  Before chunk 23 four data contracts named the year and each failed **silently** on the first
-  export of a new year: a full table of zeroes under a heading naming the year that had gone.
-  `tests/yearroll.js` runs the suite against a 2031 workbook and is what keeps it that way.
-  The only years left in `app.html` are the QlikView guides' sample rows, which illustrate a
-  format and are meant to stay put.
-- **Never trust history headers.** The AGG history export reuses the live template, so headers
-  can read `2026 Volume` over actual 2025 data. Read the Year column.
+- **The period is DATA, not a setting — do not add a knob for it, and do not name one back at
+  a header.** The same figure is headed four different ways across the exports and the
+  workbooks, and all four are live: `2026 Volume`, `CY Volume`, `Total Revenue - 2025`,
+  `Total Revenue -PY`. The two sides do not have to agree and currently do not — the
+  Aggregates export still names years while its workbook has been moved to CY/PY — and either
+  can change again, in either direction.
+
+  **One place decides what a period column looks like: `script.gs` §3's `APP_period_` and the
+  helpers around it.** A header is split into the *figure* and the *period*; the period token
+  is CY, PY or a four-digit year, it can sit at either end of the name, and the dash before it
+  is optional. Everything that reads a header goes through them — the sync, all five readers,
+  and `iYearCol` in `app.html` (which is the one client-side copy of the rule, and says so).
+
+  A lookup that names a period back returns −1 the day the header changes, `toNum_` turns the
+  missing cell into 0, and the page publishes a full table of zeroes under correct-looking
+  headings without failing. That has now happened twice, for two different reasons: the year
+  rolling, and the workbook being re-headed.
+- **Which year is current comes from the DATA.** `CY` names no year at all, so a reader keying
+  its cells by year has nothing to key on: it is read off the **Year column** (Aggregates) or
+  the **year on a Bill Month** (Ready-Mix). Never off the calendar — a cap against "the
+  future" was tried in `APP_dataCyYear_` and taken out again, because it made the answer
+  depend on the day the code ran. And never off the header alone: the AGG history export
+  reuses the live template, so headers can read `2026 Volume` over actual 2025 data.
+
+  Payloads carry `cyYear` / `pyYear` and every heading prints what it was sent. The only years
+  left in `app.html` are the QlikView guides' sample rows, which illustrate a format and are
+  meant to stay put. `tests/yearroll.js` runs the suite against a 2031 workbook **and** against
+  a CY/PY-headed one.
+- **The header is folded, not matched literally.** `Fuel Surchage` is the Aggregates export's
+  own name for the column its workbook heads `Fuel Surcharge`; `ex Works` / `ex-Works` /
+  `exWorks` alternate freely on both sides. `APP_hdrNorm_` folds both. The surcharge typo is
+  not a footnote — one missing letter meant that single column matched nothing and was never
+  written, while every other column on the tab synced, so the tab looked healthy and the
+  surcharge sat at the previous export's figures.
 - **Duplicate column names** require first-unused matching.
 - **Bill Month has two header spellings and inconsistent values.** QlikView exports
   `bill_month`; the sheet header reads `Bill Month`. No `norm_` here folds underscores, so
@@ -769,7 +818,7 @@ genuinely top level, because the file does not indent IIFE bodies. Any analyser 
 comments, strings, template literals **and regex literals** — without the last case a `/[)]/`
 or a `/'/` unbalances the brace counter and whole regions read as nested — and then assert its
 brace, paren and bracket counters all return to zero. A counter that does not balance is
-telling you it misread the file. `tests/gsparity.js` carries a working implementation.
+telling you it misread the file.
 
 ---
 
@@ -832,7 +881,7 @@ elapsed ms; and no `APP_log` may sit inside a per-row loop.
   that takes one function too many is still valid JavaScript. The first build of `script.gs`
   lost `RMX_whoWins` that way — the anchor matched *uniquely*, `node --check` passed, every
   structural check passed, and the only thing that noticed was a before/after set difference of
-  top-level names. `tests/gsparity.js` checks it now.
+  top-level names.
 - **A comment that says code is dead is not evidence.** `OVERVIEW` carried a banner starting
   `NOT USED` for four chunks while `getOverview` read its market list on every Overview load —
   the label came across in a verbatim merge, which is exactly how a wrong comment outlives the
@@ -843,21 +892,28 @@ elapsed ms; and no `APP_log` may sit inside a per-row loop.
 
 ### Testing
 
-26 Node harnesses in `tests/`. `npm install playwright chart.js jsdom` at the repo root gets
+24 Node harnesses in `tests/`. `npm install playwright chart.js jsdom` at the repo root gets
 everything; Chromium is already at `/opt/pw-browsers`. Start with `tests/README.md` — it says
 what each one claims and, for the comparison harnesses, exactly how much of that claim still
 holds.
 
 **When a comparison stops being wholly true, narrow what it claims to exactly what is still
-provable and say so — do not soften the comparison itself, and do not throw away the part that
-still holds.** `gsparity.js` and `modparity.js` both carry declared edits for this reason: each
-deliberate change is listed with its rationale, and every other byte is still proved verbatim.
+provable and say so — do not soften the comparison itself.** `gsparity.js` and `modparity.js`
+carried declared edits for exactly that reason while they lived: each deliberate change listed
+with its rationale, every other byte still proved verbatim.
+
+**And when the claim stops being true at all, delete the harness rather than weaken it.** Both
+of those said so in their own headers, and both are now gone: the CY/PY header work changed
+code inside moved regions of `script.gs` and `app.html` on purpose, so neither file is a copy
+of anything and no version of those gates could pass honestly. What they protected — that a
+region sliced out of either file is the code that actually runs — is protected now by the
+harnesses that run that code.
 
 **A gate whose second side has to be assembled by hand is a gate that stops running.**
 `regress.js` and `pvcheck.js` were deleted for that: they wanted pre-extraction pages staged
 into a directory from commits this repo no longer reaches, and the newest copies it does reach
 delegate straight back to the modules under test — a comparison that passes whatever either
-side does. `gsparity.js` and `apphtml.js` stage from a *commit*, and both still work.
+side does. `apphtml.js` stages from a *commit*, and still works.
 
 **A harness that has never failed has not been tested.** Every gate here was mutation-tested
 before being trusted — unscoping one rule for `merge.js`, renaming a column header and
@@ -902,6 +958,9 @@ or was forgotten.**
 | 2026-08-19 | **The intermittent landing-page `Cannot read properties of null (reading 'style')` is diagnosed and fixed.** It was RMX's `renderUnmapped`: a `google.script.run` answer landing after the page had been unmounted, with no guard on `#mapHost`. The Price & Volume copy has carried that guard since the Inventory Report fix; this one was missed. Both failure handlers guarded too | ✅ |
 | 2026-08-19 | **`regress.js` and `pvcheck.js` deleted.** The pages they diffed against are behind commits this repo no longer reaches, and the newest copies it does reach are one-line delegations to the modules under test — so the diff was a tautology. `modparity.js` is what survives, and its header now says it is the only proof for `AmrFuelExec` and `AmrPvSlide` | ✅ |
 | 2026-08-19 | **Three documents became one.** `PLAN.md`'s durable half — the deletion proof rule and the keep-list, how ten pages live in one HTML file, the logging convention, the OAuth scope table, the harness rules — moved here; its 2,400 lines of merge narrative went with it, into the git history. `CLAUDE.md` is a pointer now rather than a second copy. **The cost that had to be paid first was the ~30 pointers in `script.gs`, `app.html` and `tests/` that named `PLAN.md` sections and chunk numbers**: leaving those dangling is precisely the trap this repo has been bitten by, so each was repointed, and the ones inside `gsparity`/`modparity` declared-edit text had to change on both sides at once or the parity gates fail | ✅ |
+| 2026-08-19 | **The period is data too.** The Aggregates workbook was re-headed from `2026 Volume` to `CY Volume` while its export still names years, so the sync silently stopped writing those columns. One rule now: split a header into the figure and its period (`APP_period_`), pair on that, and take the current year off the **data** — the Year column or a Bill Month. Two defects fell out of it: `Fuel Surchage` vs `Fuel Surcharge`, one missing letter that left that single column never written while the tab looked healthy; and the sync's positional fallback, which is how PY revenue once went into the wrong column for a whole run | ✅ |
+| 2026-08-19 | **The `~qliksync temp` sheet is contained.** A Drive copy made with no parent inherits the folder it lands in, so it was being born into the shared folder the export sits in. It is created in the script account's own Drive root now and has every non-owner permission stripped before it is read; nothing in the codebase creates a Drive permission, which is the only call that emails anybody | ✅ |
+| 2026-08-19 | **`gsparity.js` and `modparity.js` deleted**, on the rule their own headers gave: a legitimate change landed inside a moved region of both files, so neither is a copy of anything and the gates could only be weakened, never passed. `script.gs` and `app.html` also lost every reference to `README.md`, `PLAN.md`, `tests/` and chunk numbers — they explain themselves and each other now, and nothing outside | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |
