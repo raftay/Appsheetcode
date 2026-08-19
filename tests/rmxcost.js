@@ -124,6 +124,13 @@ const bundle = {
   assoc:  mkStream(Math.round(N * 0.15), 'VAP'),
   markets: MARKETS, latestMonth: 7,
   months: { all:[1,2,3,4,5,6,7], cy:[1,2,3,4,5,6,7] },
+  /* chunk 23: the bundle carries the two years its COLUMNS named, and
+     bundleOk_ rejects one that does not — a bundle written before the years
+     travelled with the data would otherwise be served to a page that now
+     labels its headings from them. Deliberately NOT 2026/2025: a fixture that
+     used this year's pair could not tell a payload that reads the data from
+     one that still assumes the calendar. */
+  cyYear: 2031, pyYear: 2030,
   unmapped: { product:[], extras:[], flag:[] }
 };
 

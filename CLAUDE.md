@@ -110,6 +110,14 @@ locator.
   that takes one function too many is still valid JavaScript. Chunk 12 lost `RMX_whoWins` that
   way — the anchor matched *uniquely*, `node --check` passed, every structural check passed,
   and the only thing that noticed was a before/after set difference of top-level names.
+- **The year is DATA, not a setting — do not add a knob for it.** Every backend reads the
+  current and prior year off the workbook's own column names ("2026 Vol", "#### Volume",
+  "Total Revenue - ####") and sends `cyYear` / `pyYear` with the payload; every heading and
+  title on every page prints what it was sent. Before chunk 23 four data contracts named the
+  year and each failed **silently** on the first export of a new year — a full table of
+  zeroes under a heading naming the year that had gone. `tests/yearroll.js` runs the suite
+  against a 2031 workbook and is what keeps it that way; the only years left in `app.html`
+  are the QlikView guides' sample rows, which illustrate a format and are meant to stay put.
 - **A comment that says code is dead is not evidence either.** `OVERVIEW` carried a banner
   starting `NOT USED` for four chunks while `getOverview` read its market list on every single
   Overview load — the label came across from `Config.gs` in a verbatim merge, which is exactly

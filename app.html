@@ -1921,13 +1921,19 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
        deck template and the deck's slide list live in script.gs §1. Nothing in
        this file reads them and nothing there reads this; they are two lists and
        they do not overlap.
-     · THE CURRENT AND PRIOR YEAR. 2026 / 2025 are still written out by hand, in
-       about sixty places: §E AmrSegSlide's CY_YEAR / PY_YEAR, AmrRmxSlide's and
-       AmrFuelExec's table headers, both fuel pages' titles and hint text, and
-       the sample tables in the QlikView guides — where they are ILLUSTRATIONS
-       and should not move with the calendar at all. Hoisting half of them would
-       leave one knob that changes some of the headings, which is worse than a
-       knob nobody expects. PLAN.md chunk 23 is the sorted version of that job.
+     · THE CURRENT AND PRIOR YEAR, and this is the interesting one. They were
+       written out by hand in about sixty places when this section was written,
+       and the note here said a knob for half of them would be worse than none.
+       Chunk 23 did the sorted version instead: **the year is DATA, not a
+       setting.** Every backend reads it off the workbook's own column names
+       ("2026 Vol", "#### Volume", "Total Revenue - ####") and sends cyYear /
+       pyYear with the payload, and every heading, title and status line on
+       every page prints what it was sent. There is nothing to configure, which
+       is why there is nothing here — a knob would only be a way to disagree
+       with the data. What is left in the file is the QlikView guides' sample
+       rows, which illustrate the SHAPE of an export beside made-up plant codes
+       and are meant to stay put; tests/yearroll.js runs the whole suite against
+       a 2031 workbook and holds the line.
      · TIMINGS. §E AmrFresh polls every 5 minutes (EVERY), §E AmrBoot gives up
        after 150 s (WATCHDOG), §E AmrProgress waits 400 ms before showing
        anything (GRACE). They are behaviour rather than configuration — each one
@@ -6543,8 +6549,13 @@ var AmrFuelExec = (function(){
       barApplied:'ON APPLIED TONNES ONLY', barAll:'OVER ALL TONNES',
       /* The AGG page hard-coded 2026/2025 in its headers. Reading cyYear when
          the backend sends it keeps today's output identical and stops this
-         being a silent landmine the next time the year rolls. */
-      cy: function(d){ return (d && d.cyYear) || 2026; }
+         being a silent landmine the next time the year rolls.
+
+         THE FALLBACK NAMED 2026 UNTIL CHUNK 23, which made it a landmine of its
+         own: getFscData did not send cyYear at all until that chunk, so this
+         line WAS the AGG page's year rather than a last resort. Both units read
+         the calendar now, and only when a payload predates the field. */
+      cy: function(d){ return (d && d.cyYear) || new Date().getFullYear(); }
     },
     /* RMX — cubic metres */
     rmx: {
@@ -6875,6 +6886,7 @@ var AmrSegSlide = (function(){
   }
   function withCtx(ctx, fn){
     var prev = CTX; CTX = ctx_(ctx);
+    years_(CTX.data);            /* the payload names its own two years */
     try { return fn(); } finally { CTX = prev; }
   }
 
@@ -6886,7 +6898,19 @@ var AmrSegSlide = (function(){
 
   var ALL_MKT = '__ALL__';
 
-  var CY_YEAR = 2026, PY_YEAR = 2025;
+  /* THE YEAR IS THE DATA'S, NOT THE CALENDAR'S AND NOT A LITERAL.
+     Every payload from the server now says which two years it is about —
+     the backends read them off the workbook's own column names — so nothing
+     here spells a year out. The initial pair is only what to print if a
+     payload arrives without them, which today means one cached before this
+     landed; today's calendar year is the least-wrong guess, and it is a
+     guess rather than a setting, which is why it is not in §C.
+     PLAN.md chunk 23. */
+  var CY_YEAR = new Date().getFullYear(), PY_YEAR = CY_YEAR - 1;
+  function years_(d){
+    var cy = d && Number(d.cyYear);
+    if(cy > 0){ CY_YEAR = cy; PY_YEAR = Number(d.pyYear) > 0 ? Number(d.pyYear) : cy - 1; }
+  }
 
   var MARKET_LABEL = { '__ALL__':'Central Canada', HNS_SW:'HNS', Innocon:'Innocon',
                        Manitoba:'Manitoba', North:'North', Saskatchewan:'Saskatchewan' };
@@ -7752,6 +7776,13 @@ var AmrRmxSlide = (function(){
       return '<col style="width:' + (x * 100 / sum).toFixed(3) + '%">'; }).join('') + '</colgroup>';
   }
 
+  /* THE YEAR IS THE DATA'S, NOT THE CALENDAR'S AND NOT A LITERAL. Every payload
+     says which two years it is about — the backend reads them off the
+     workbook's own column names — so no heading here spells one out. The
+     fallback is only for a payload cached before those fields existed, and
+     today's calendar year is the least-wrong guess. PLAN.md chunk 23. */
+  function cyOf(d){ var y = d && Number(d.cyYear); return y > 0 ? y : new Date().getFullYear(); }
+  function pyOf(d){ var y = d && Number(d.pyYear); return y > 0 ? y : cyOf(d) - 1; }
   function byTypeRow(r){
     return '<td class="tlbl">'+esc(r.label)+'</td>'
       +'<td class="tnum">'+f$0(r.cyRev)+'</td><td class="tnum">'+f$0(r.pyRev)+'</td>'
@@ -7775,8 +7806,8 @@ var AmrRmxSlide = (function(){
       +'<div class="right">'+(window.AmrHint?AmrHint.btn('rmx_extras'):'')+'</div></div>'
       +'<div class="tbl-scroll"><table class="rtbl">'+colsHtml(8, 1)+'<thead><tr>'
       +'<th class="tlbl">Stream</th><th class="tlbl">Type</th>'
-      +'<th class="gA">2026 Rev</th><th class="gA">2025 Rev</th><th class="gA">Rev % chg</th>'
-      +'<th class="gB">2026 ASP/m³</th><th class="gB">2025 ASP/m³</th><th class="gB">ASP change</th></tr></thead><tbody>';
+      +'<th class="gA">'+cyOf(d)+' Rev</th><th class="gA">'+pyOf(d)+' Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">'+cyOf(d)+' ASP/m³</th><th class="gB">'+pyOf(d)+' ASP/m³</th><th class="gB">ASP change</th></tr></thead><tbody>';
     var ex=d.byTypeExtras||[], vp=d.byTypeVap||[], body='';
     if(ex.length){
       body += '<tr><td class="section" rowspan="'+ex.length+'">EXTRAS</td>'+byTypeRow(ex[0])+'</tr>';
@@ -7809,10 +7840,10 @@ var AmrRmxSlide = (function(){
       +'<div class="right">'+(window.AmrHint?AmrHint.btn('rmx_extras'):'')+'</div></div>'
       +'<div class="tbl-scroll"><table class="rtbl">'+colsHtml(13, 1)+'<thead><tr>'
       +'<th class="tlbl">Stream</th><th class="tlbl">Type</th>'
-      +'<th class="gV">2026 vol applied</th><th class="gV">2026 appl. rate</th>'
-      +'<th class="gV">2025 vol applied</th><th class="gV">2025 appl. rate</th><th class="gV">Δ appl. rate</th>'
-      +'<th class="gA">2026 Rev</th><th class="gA">2025 Rev</th><th class="gA">Rev % chg</th>'
-      +'<th class="gB">2026 Applied ASP</th><th class="gB">2025 Applied ASP</th><th class="gB">ASP change</th></tr></thead><tbody>';
+      +'<th class="gV">'+cyOf(d)+' vol applied</th><th class="gV">'+cyOf(d)+' appl. rate</th>'
+      +'<th class="gV">'+pyOf(d)+' vol applied</th><th class="gV">'+pyOf(d)+' appl. rate</th><th class="gV">Δ appl. rate</th>'
+      +'<th class="gA">'+cyOf(d)+' Rev</th><th class="gA">'+pyOf(d)+' Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">'+cyOf(d)+' Applied ASP</th><th class="gB">'+pyOf(d)+' Applied ASP</th><th class="gB">ASP change</th></tr></thead><tbody>';
     var body='';
     if(d.extras.length){
       body += '<tr><td class="section" rowspan="'+(d.extras.length)+'">EXTRAS</td>'+detailRow(d.extras[0])+'</tr>';
@@ -8431,18 +8462,32 @@ AMR.page('fuelsurcharge', {
     '5. Adjust the blank comment bands (they only affect the slide). 6. <b>Download slide PNG</b>, or <b>Expand slide</b> to show it full screen without downloading anything.</p>' +
     '<h3>How the numbers are computed</h3>' +
     '<p><b>Exec Summary</b> replicates the Excel pivots: <b>Per Tonne = Fuel Recovery ÷ Tonnes</b> and ' +
-    '<b>YOY $/t = 2026 Per Tonne − 2025 Per Tonne</b>. “Over All Tonnes” uses every row; ' +
+    '<b>YOY $/t = this year’s Per Tonne − last year’s</b>. “Over All Tonnes” uses every row; ' +
     '“On Applied Tonnes Only” uses rows flagged <b>FSC Flag = Yes</b>. MTD is the latest month; ' +
     'YTD is Jan through the latest month. The Grand Total sums the components, then re-derives the ratios ' +
-    '(markets with no 2025 charge simply contribute $0)</p>' +
+    '(markets with no prior-year charge simply contribute $0)</p>' +
     '<p><b>Summary views:</b> <b>FSC/T = Total FSC ÷ Applied Volume</b>; the % columns only count the months a ' +
-    'market actually has applied tonnes; YOY compares 2026 vs the same months in 2025 (a market with no prior-year charge compares against $0.00).</p>',
+    'market actually has applied tonnes; YOY compares this year against the same months last year (a market with no prior-year charge compares against $0.00). ' +
+    'The two years are whichever the workbook’s own columns name — the page never assumes them.</p>',
 
   boot: function(root){
 
   /* ======================= STATE ======================= */
   var DATA = null;                    // model from getFscData()
   var NUM_OV = {};                    // cellKey -> user-typed NUMBER (raw inputs only)
+
+  /* THE BACKEND NAMES ITS SLOTS 26/25 so this page and its Ready-Mix twin stay
+     a straight clone of each other, but they mean CY and PY — the real years
+     travel with the payload (getFscData sends cyYear / pyYear since PLAN.md
+     chunk 23), so a year roll needs no edit here.
+
+     UNTIL THAT CHUNK THIS PAGE SPELLED 2026 AND 2025 INTO ITS HEADINGS, its
+     titles and its status line, and the backend summed the literal years too:
+     on the first of January it would have published a full set of zeroes under
+     headings naming a year that had gone. The twin has been written this way
+     since it was ported; this is the Aggregates half catching up. */
+  function cyY(){ return (DATA && DATA.cyYear) || new Date().getFullYear(); }
+  function pyY(){ return cyY()-1; }
   var TXT_OV = {};                    // cellKey -> user-typed TEXT   (labels only)
   var DERIVED = {};                   // cellKey -> {txt, cls} for every calculated cell
   /* month: 0 = last closed month (the backend decides), 1-12 pins it. It rides
@@ -8509,7 +8554,7 @@ AMR.page('fuelsurcharge', {
   /* ======================= CALCULATION LAYER =======================
      Recomputes every derived cell from (sheet value ⊕ user override).
      Same math as the backend / Excel:
-       Per Tonne = FSC ÷ Tonnes · YOY = 2026 $/t − 2025 $/t
+       Per Tonne = FSC ÷ Tonnes · YOY = CY $/t − PY $/t
        Totals sum the raw components, then re-derive the ratios.        */
   function sk(p,mk){  return 'SUM|'+p+'|'+mk+'|'; }
   function bk(mk,mo){ return 'BM|'+mk+'|'+mo+'|'; }
@@ -8541,7 +8586,7 @@ AMR.page('fuelsurcharge', {
 
       var tvol = effN(P+'tvol', r.totalVol),   tfsc = effN(P+'tfsc', r.totalFSC);
       var avol = effN(P+'avol', r.appliedVol), ans  = effN(P+'ans',  r.appliedNS);
-      var f25  = effN(P+'f25',  r.fscT2025);   // 2025 rate is an input (its parts aren't shown)
+      var f25  = effN(P+'f25',  r.fscT2025);   // the prior-year rate is an input (its parts aren't shown)
       var pvol = wV ? avol/wV : 0, pns = wN ? ans/wN : 0;
       var f26  = avol ? tfsc/avol : 0;
       DERIVED[P+'pvol'] = { txt:fPct(pvol) };
@@ -8551,7 +8596,7 @@ AMR.page('fuelsurcharge', {
 
       T.tvol+=tvol; T.tfsc+=tfsc; T.avol+=avol; T.ans+=ans; T.wv+=wV; T.wn+=wN;
       T.av25+=av25;
-      // if the user overrode a market's 2025 rate, its Total contribution becomes rate × 2025 applied vol
+      // if the user overrode a market's prior-year rate, its Total contribution becomes rate × PY applied vol
       T.f25c += (P+'f25' in NUM_OV) ? f25*av25 : f25c;
     });
     var G = sk(period, '__total');
@@ -8603,7 +8648,7 @@ AMR.page('fuelsurcharge', {
     var head = '<thead><tr>'
       +'<th>Market</th><th>Total Vol (t)</th><th>Total FSC ($)</th><th>Applied Vol (t)</th>'
       +'<th>% Vol</th><th>Applied Net Sales ($)</th><th>% NS</th>'
-      +'<th>FSC/T 2026</th><th>FSC/T 2025</th><th>YOY $/t</th></tr></thead>';
+      +'<th>FSC/T '+cyY()+'</th><th>FSC/T '+pyY()+'</th><th>YOY $/t</th></tr></thead>';
     var body = '';
     rows.forEach(function(r){
       if(r.isTotal) return;                       // TOTAL is rebuilt from the components below
@@ -8634,7 +8679,7 @@ AMR.page('fuelsurcharge', {
     var bm = DATA.byMonth && DATA.byMonth[mk];
     if(!bm) return '<div class="empty">No data for '+esc(mk)+'.</div>';
     var head = '<thead>'
-      +'<tr><th rowspan="2">Month</th><th colspan="3">2025</th><th colspan="3">2026</th><th rowspan="2">YOY</th></tr>'
+      +'<tr><th rowspan="2">Month</th><th colspan="3">'+pyY()+'</th><th colspan="3">'+cyY()+'</th><th rowspan="2">YOY</th></tr>'
       +'<tr><th>FSC/T</th><th>FSC $</th><th>Volume</th><th>FSC/T</th><th>FSC $</th><th>Volume</th></tr></thead>';
     var body = '';
     bm.rows.forEach(function(r){
@@ -8836,7 +8881,7 @@ AMR.page('fuelsurcharge', {
       buildMarketControls();
       autoTitle();
       if(st){ st.className='dzstat ok';
-        st.textContent='✓ Loaded · '+DATA.markets.length+' markets · through '+(DATA.latestMonth||'?')+' 2026'; }
+        st.textContent='✓ Loaded · '+DATA.markets.length+' markets · through '+(DATA.latestMonth||'?')+' '+cyY(); }
       renderAll();
     }
 
@@ -8923,16 +8968,16 @@ AMR.page('fuelsurcharge', {
 
   function autoTitle(){
     /* The preset follows the latest month present in the sheet (DATA.latestMonth,
-       the newest 2026 month with volume). Once the user types their own title we
+       the newest current-year month with volume). Once the user types their own title we
        stop overwriting it — clearing the box brings the automatic one back. */
     if(STATE.titleDirty) return;
     var lm = DATA ? DATA.latestMonth : '';
-    if(STATE.view==='EXEC')         STATE.title = lm+' 2026 — Fuel Recovery Analysis';
-    else if(STATE.view==='EXEC_MTD') STATE.title = 'AGG - Fuel Recovery MTD ('+lm+' 2026)';
-    else if(STATE.view==='EXEC_YTD') STATE.title = 'AGG - Fuel Recovery YTD (through '+lm+' 2026)';
-    else if(STATE.view==='MTD') STATE.title = 'Fuel Recovery — MTD ('+lm+' 2026)';
-    else if(STATE.view==='YTD') STATE.title = 'Fuel Recovery — YTD (through '+lm+' 2026)';
-    else                        STATE.title = STATE.byMonthMarket+' — Fuel Recovery by Month (2025 vs 2026)';
+    if(STATE.view==='EXEC')         STATE.title = lm+' '+cyY()+' — Fuel Recovery Analysis';
+    else if(STATE.view==='EXEC_MTD') STATE.title = 'AGG - Fuel Recovery MTD ('+lm+' '+cyY()+')';
+    else if(STATE.view==='EXEC_YTD') STATE.title = 'AGG - Fuel Recovery YTD (through '+lm+' '+cyY()+')';
+    else if(STATE.view==='MTD') STATE.title = 'Fuel Recovery — MTD ('+lm+' '+cyY()+')';
+    else if(STATE.view==='YTD') STATE.title = 'Fuel Recovery — YTD (through '+lm+' '+cyY()+')';
+    else                        STATE.title = STATE.byMonthMarket+' — Fuel Recovery by Month ('+pyY()+' vs '+cyY()+')';
     var ti=document.getElementById('titleIn'); if(ti) ti.value=STATE.title;
   }
 
@@ -9301,8 +9346,6 @@ AMR.page('fuelsurcharge', {
    instead of tonnes. Read the two registrations side by side — they are meant
    to stay diffable, and everything that differs is listed here:
 
-     · cyY() / pyY() — the years travel in the payload rather than being
-       written into the strings, so a year roll needs no edit on this page
      · AmrFuelExec is asked for the 'rmx' units descriptor, not 'agg'
      · getRmxFuelData / getRmxFuelDataFromUpload, and ONE uploaded workbook
        (#upMain) instead of AGG's two — Ready-Mix exports CY/PY Fuel Surcharge
@@ -9372,7 +9415,9 @@ AMR.page('rmxfuel', {
 
   /* The backend names its slots 26/25 so this page can be a straight clone of
      the Aggregates one, but they mean CY and PY — the real years travel with
-     the payload, so a year roll needs no edit here either. */
+     the payload, so a year roll needs no edit here either. The Aggregates page
+     has the same two helpers since chunk 23; this stopped being a difference
+     between the twins. */
   function cyY(){ return (DATA && DATA.cyYear) || new Date().getFullYear(); }
   function pyY(){ return cyY()-1; }
 
@@ -13028,6 +13073,13 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
       .withFailureHandler(function(e){ hideLoader(); showBanner('Error: '+(e&&e.message||e)); })
       .RMX_getExtras({ market:STATE.market, period:STATE.period, month:STATE.month, upload:STATE.upload });
   }
+  /* THE YEAR IS THE DATA'S, NOT THE CALENDAR'S AND NOT A LITERAL. Every payload
+     says which two years it is about — the backend reads them off the
+     workbook's own column names — so no heading here spells one out. The
+     fallback is only for a payload cached before those fields existed, and
+     today's calendar year is the least-wrong guess. PLAN.md chunk 23. */
+  function cyOf(d){ var y = d && Number(d.cyYear); return y > 0 ? y : new Date().getFullYear(); }
+  function pyOf(d){ var y = d && Number(d.pyYear); return y > 0 ? y : cyOf(d) - 1; }
   function byTypeRow(r){
     return '<td class="tlbl">'+esc(r.label)+'</td>'
       +'<td class="tnum">'+f$0(r.cyRev)+'</td><td class="tnum">'+f$0(r.pyRev)+'</td>'
@@ -13049,8 +13101,8 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
       +'<div class="right">'+(window.AmrHint?AmrHint.btn('rmx_extras'):'')+'</div></div>'
       +'<div class="tbl-scroll"><table class="rtbl">'+colsHtml(8, 1)+'<thead><tr>'
       +'<th class="tlbl">Stream</th><th class="tlbl">Type</th>'
-      +'<th class="gA">2026 Rev</th><th class="gA">2025 Rev</th><th class="gA">Rev % chg</th>'
-      +'<th class="gB">2026 ASP/m³</th><th class="gB">2025 ASP/m³</th><th class="gB">ASP change</th></tr></thead><tbody>';
+      +'<th class="gA">'+cyOf(d)+' Rev</th><th class="gA">'+pyOf(d)+' Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">'+cyOf(d)+' ASP/m³</th><th class="gB">'+pyOf(d)+' ASP/m³</th><th class="gB">ASP change</th></tr></thead><tbody>';
     var ex=d.byTypeExtras||[], vp=d.byTypeVap||[], body='';
     if(ex.length){
       body += '<tr><td class="section" rowspan="'+ex.length+'">EXTRAS</td>'+byTypeRow(ex[0])+'</tr>';
@@ -13090,10 +13142,10 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
       +'<div class="right">'+(window.AmrHint?AmrHint.btn('rmx_extras'):'')+'</div></div>'
       +'<div class="tbl-scroll"><table class="rtbl">'+colsHtml(13, 1)+'<thead><tr>'
       +'<th class="tlbl">Stream</th><th class="tlbl">Type</th>'
-      +'<th class="gV">2026 vol applied</th><th class="gV">2026 appl. rate</th>'
-      +'<th class="gV">2025 vol applied</th><th class="gV">2025 appl. rate</th><th class="gV">Δ appl. rate</th>'
-      +'<th class="gA">2026 Rev</th><th class="gA">2025 Rev</th><th class="gA">Rev % chg</th>'
-      +'<th class="gB">2026 Applied ASP</th><th class="gB">2025 Applied ASP</th><th class="gB">ASP change</th></tr></thead><tbody>';
+      +'<th class="gV">'+cyOf(d)+' vol applied</th><th class="gV">'+cyOf(d)+' appl. rate</th>'
+      +'<th class="gV">'+pyOf(d)+' vol applied</th><th class="gV">'+pyOf(d)+' appl. rate</th><th class="gV">Δ appl. rate</th>'
+      +'<th class="gA">'+cyOf(d)+' Rev</th><th class="gA">'+pyOf(d)+' Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">'+cyOf(d)+' Applied ASP</th><th class="gB">'+pyOf(d)+' Applied ASP</th><th class="gB">ASP change</th></tr></thead><tbody>';
     var body='';
     if(d.extras.length){
       body += '<tr><td class="section" rowspan="'+(d.extras.length)+'">EXTRAS</td>'+detailRow(d.extras[0])+'</tr>';
@@ -13317,7 +13369,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
       +   '<p class="hint">'+esc(M.note)+' They currently land in <b>'+esc(M.lands)+'</b>.</p>'
       +   '<div class="tbl-scroll"><table><thead><tr>'
       +   '<th>Value in the raw data</th><th>Times it appears</th><th>Market(s)</th>'
-      +   '<th>2026 m&sup3;</th><th>2026 revenue</th></tr></thead><tbody>'
+      +   '<th>'+cyOf(d)+' m&sup3;</th><th>'+cyOf(d)+' revenue</th></tr></thead><tbody>'
       +   rows + '</tbody></table></div>'
       + '</div></div>';
   }
@@ -13972,10 +14024,19 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
   var MARKET_LABEL = { '__ALL__':'Central Canada', HNS_SW:'HNS', Innocon:'Innocon',
                        Manitoba:'Manitoba', North:'North', Saskatchewan:'Saskatchewan' };
 
-  /* The two years the Ready-Mix backend reads by COLUMN NAME ("2026 Vol",
-     "2025 Net Sales ex VA (CAD)"). On a year roll these move together with the
+  /* THE TWO YEARS THE READY-MIX BACKEND READS BY COLUMN NAME. It resolves them
+     by pattern since chunk 23 — whatever two years the columns carry — and
+     sends them with every payload, so this pair is set from the data rather
+     than typed. What is left below is the fallback for a payload cached before
+     those fields existed: today's calendar year, which is a guess rather than a
+     setting, and is why it is not in §C.
+     The old note, still true of the sheet: these move together with the
      column names in RMX_Backend.gs — they are only used for table headers here. */
-  var CY_YEAR = 2026, PY_YEAR = 2025;
+  var CY_YEAR = new Date().getFullYear(), PY_YEAR = CY_YEAR - 1;
+  function years_(d){
+    var cy = d && Number(d.cyYear);
+    if(cy > 0){ CY_YEAR = cy; PY_YEAR = Number(d.pyYear) > 0 ? Number(d.pyYear) : cy - 1; }
+  }
 
   var MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -14623,6 +14684,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
 
   function applyData(d, note){
     DATA = d || null;
+    years_(DATA);                       /* the payload names its own two years */
     hideLoading();          // the ONE place the loading screen comes down
 
     /* the real market list, once we have it */
@@ -21668,8 +21730,8 @@ AMR.page('deckbuilder', {
   <div class="formula-box" id="formulaBox">
     <strong>&#128208; Calculated columns added:</strong>
     <div><b>SAP Transfer Price</b> &mdash; looked up from the SAP file via Concat Key</div>
-    <div><b>Additional Revenue to Post</b> = (SAP Transfer Price &minus; 2026 ASP ex-Works) &times; 2026 Volume</div>
-    <div><b>Total Corrected Revenue ex-Works</b> = Additional Revenue to Post + (2026 ASP ex-Works &times; 2026 Volume)</div>
+    <div><b>Additional Revenue to Post</b> = (SAP Transfer Price &minus; ASP ex-Works) &times; Volume</div>
+    <div><b>Total Corrected Revenue ex-Works</b> = Additional Revenue to Post + (ASP ex-Works &times; Volume)</div>
   </div>
 
   <div class="col-preview" id="colPreview">
@@ -21725,7 +21787,7 @@ AMR.page('deckbuilder', {
     </div>
     <p class="mkt-note">
       <b>How exceptions are found:</b> for every matched row we calculate
-      <b>TP &minus; ASP</b> = SAP Transfer Price &minus; 2026 ASP ex-Works (rounded to the cent).
+      <b>TP &minus; ASP</b> = SAP Transfer Price &minus; ASP ex-Works (rounded to the cent).
       A row is an exception only when this result is <b>negative by more than $0.01</b> &mdash;
       meaning the SAP price is <i>lower</i> than the ASP. Rows where the SAP price is higher,
       equal, or off by only &plusmn;$0.01 are ignored.
@@ -21774,7 +21836,7 @@ AMR.page('tp01', {
     '<h3>How to use it</h3><p><b>1.</b> Drop the weekly SAP file (must contain TP01 and ZIPR tabs).<br>'+
     '<b>2.</b> Drop the QlikView transfer pricing export.<br>'+
     'The comparison builds automatically. Download the full file, or use the market list to download / email one market at a time.</p>'+
-    '<h3>Exceptions</h3><p>Below the market breakdown, the Exceptions panel lists matched rows where the SAP Transfer Price is lower than the 2026 ASP ex-Works by more than a cent (higher prices and \u00b1$0.01 differences are ignored). Each market\u2019s exceptions can be downloaded or emailed separately, with its own remembered recipient. Exception files and previews are sorted by urgency &mdash; how many days the price has been at an incorrect value (report date minus the SAP price\u2019s Valid From).</p>'+
+    '<h3>Exceptions</h3><p>Below the market breakdown, the Exceptions panel lists matched rows where the SAP Transfer Price is lower than the ASP ex-Works by more than a cent (higher prices and \u00b1$0.01 differences are ignored). Each market\u2019s exceptions can be downloaded or emailed separately, with its own remembered recipient. Exception files and previews are sorted by urgency &mdash; how many days the price has been at an incorrect value (report date minus the SAP price\u2019s Valid From).</p>'+
     '<h3>Emailing</h3><p>Type each market\u2019s recipient once &mdash; it\u2019s remembered for your account. '+
     'The <b>always send to</b> box next to each Send All button appends its addresses (comma-separated) to every email in that panel; '+
     'markets with no recipient of their own still go out to just those addresses. '+
@@ -21887,6 +21949,28 @@ AMR.page('tp01', {
   }
 
   function norm(v) { return String(v ?? '').trim(); }
+
+  /* THE EXPORT NAMES THE YEAR IN TWO OF ITS COLUMNS — "2026 Volume" and
+     "2026 ASP ex-Works" — AND THIS PAGE USED TO NAME IT BACK, in six
+     indexOf() calls. On the first export of a new year every one of them
+     returns -1: the volume and ASP columns read as missing, every Additional
+     Revenue to Post comes out of a blank cell, and the workbook still builds
+     and still downloads. Nothing on the page says anything is wrong, which is
+     what makes it worth the eight lines below.
+
+     So the column is found by SHAPE — four digits, a space, the rest — and the
+     newest year wins if an export ever carries both. Everything downstream
+     already passes the export's own header through to the output file, so the
+     year needs naming in exactly one place: here, not at all.
+     PLAN.md chunk 23. */
+  function iYearCol(headers, suffix) {
+    var best = -1, bestY = -1;
+    for (var i = 0; i < headers.length; i++) {
+      var m = /^(\d{4})\s+(.+)$/.exec(String(headers[i] == null ? '' : headers[i]).trim());
+      if (m && m[2] === suffix && Number(m[1]) > bestY) { bestY = Number(m[1]); best = i; }
+    }
+    return best;
+  }
   function round4(n) { return Math.round(n * 10000) / 10000; }
 
   // SAP key: Plant + Ship-To Party (trim 1st char) + Material
@@ -22038,8 +22122,8 @@ AMR.page('tp01', {
       const iPlant   = qlkHeaders.indexOf('Plant');
       const iMat     = qlkHeaders.indexOf('Material');
       const iMonth   = qlkHeaders.indexOf('Month');
-      const iVolume  = qlkHeaders.indexOf('2026 Volume');
-      const iASP     = qlkHeaders.indexOf('2026 ASP ex-Works');
+      const iVolume  = iYearCol(qlkHeaders, 'Volume');
+      const iASP     = iYearCol(qlkHeaders, 'ASP ex-Works');
 
       const insertAfter = iMonth;
       let matched = 0, unmatched = 0;
@@ -22142,9 +22226,9 @@ AMR.page('tp01', {
 
   // Shared: volume as integer, $ columns as currency (used by comparison + per-market files)
   function applyNumberFormats(ws, headers, nRows) {
-    const iVol = headers.indexOf('2026 Volume');
+    const iVol = iYearCol(headers, 'Volume');
     const currCols = [
-      headers.indexOf('2026 ASP ex-Works'),
+      iYearCol(headers, 'ASP ex-Works'),
       headers.indexOf('Total Standard Production Costs'),
       headers.indexOf('SAP Transfer Price'),
       headers.indexOf('Additional Revenue to Post'),
@@ -22182,7 +22266,7 @@ AMR.page('tp01', {
 
   // ── Split by market + exceptions, then render both panels ──────────────────
   // Exception = row that MATCHED (has a SAP Transfer Price) where that price
-  // differs from 2026 ASP ex-Works. Both are rounded to cents first so the test
+  // differs from the export's ASP ex-Works. Both are rounded to cents first so the test
   // agrees with what's visibly displayed.
   function storeMarketData(outRows, outHeaders) {
     outHeadersG = outHeaders;
@@ -22190,7 +22274,7 @@ AMR.page('tp01', {
     excDataMap    = {};
     const iMarket = outHeaders.indexOf('Market');
     const iSAP    = outHeaders.indexOf('SAP Transfer Price');
-    const iASP    = outHeaders.indexOf('2026 ASP ex-Works');
+    const iASP    = iYearCol(outHeaders, 'ASP ex-Works');
     if (iMarket < 0) return;
     const cents = n => Math.round(Number(n) * 100);   // compare in whole cents
     for (const row of outRows) {
@@ -22307,10 +22391,10 @@ AMR.page('tp01', {
   // ── Email body (summary + top-20 preview; exceptions show aging + urgency) ──
   function buildEmailBody(kind, market, rows, outHeaders) {
     const isExc = kind === 'exc';
-    const iASP  = outHeaders.indexOf('2026 ASP ex-Works');
+    const iASP  = iYearCol(outHeaders, 'ASP ex-Works');
     const iSAP  = outHeaders.indexOf('SAP Transfer Price');
     const iAdd  = outHeaders.indexOf('Additional Revenue to Post');
-    const iVol  = outHeaders.indexOf('2026 Volume');
+    const iVol  = iYearCol(outHeaders, 'Volume');
     const iSold = outHeaders.indexOf('Sold To');
     const iMat  = outHeaders.indexOf('Material');
 
@@ -22616,7 +22700,7 @@ AMR.page('tp01', {
         <label class="amr-label">Google Drive link or file ID</label>
         <input class="amr-input" id="irInput" type="text"
                placeholder="https://drive.google.com/file/d/XXXXXXXX/view">
-        <label class="amr-label">Display name <span style="font-weight:500">(optional &mdash; shown above the report, e.g. &ldquo;Central Region &mdash; June 2026&rdquo;)</span></label>
+        <label class="amr-label">Display name <span style="font-weight:500">(optional &mdash; shown above the report, e.g. &ldquo;Central Region &mdash; June&rdquo;)</span></label>
         <input class="amr-input" id="irLabelInput" type="text" placeholder="Monthly Central Region Report">
         <button class="amr-save" id="irSaveBtn" style="margin-top:14px">Save &amp; display</button>
         <div class="amr-status muted" id="irStatus"></div>

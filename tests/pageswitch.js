@@ -289,7 +289,13 @@ const SNAPSHOT = () => ({
      twenty-one switches threw" is not a report anybody can act on. */
   let current = 'landing';
   const errs = [];
-  pg.on('pageerror', e => errs.push(current + ': ' + e.message));
+  /* THE STACK, NOT JUST THE MESSAGE. "Cannot read properties of null (reading
+     'style')" names neither the page that threw nor the line, and this check
+     has produced exactly that twice — under a full-suite run, where the machine
+     is loaded and the timing moves — and then refused to reproduce in twenty
+     runs on its own. A message with no stack is a report nobody can act on. */
+  pg.on('pageerror', e => errs.push(current + ': ' + e.message + '\n        ' +
+    String(e.stack || '').split('\n').slice(1, 6).join('\n        ')));
 
   const tmp = path.join(os.tmpdir(), 'amr_pageswitch.html');
   fs.writeFileSync(tmp, pageHtml('landing'));
@@ -477,7 +483,7 @@ const SNAPSHOT = () => ({
 
   if (errs.length) {
     /* Page code writes to the console on purpose; only real throws land here. */
-    errs.slice(0, 4).forEach(m => fail('pageerror', m.slice(0, 160)));
+    errs.slice(0, 4).forEach(m => fail('pageerror', m.slice(0, 900)));
   } else pass('pageerror', 'no uncaught errors across 21 switches');
 
   await browser.close();

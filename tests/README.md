@@ -969,3 +969,31 @@ are invariants, not comparisons; they stay.
 The values were also compared end to end in real Chromium when the move landed — all five
 pages mounted byte-identical slider values before and after — but that check lives in the
 session log rather than here, because it needs both trees at once.
+
+## `yearroll.js` — a 2031 workbook reads as 2031
+
+Every other fixture in this folder is a **2026** workbook, which is exactly why nothing here
+caught the bug chunk 23 fixed: the year was baked into four different data contracts, and a
+fixture from the year the code assumes cannot tell "reads the data" from "assumes the
+calendar".
+
+```bash
+node tests/yearroll.js            # no dependencies
+```
+
+So this one is from **2031**, and it runs the real code against it:
+
+| check | what would have happened without it |
+|---|---|
+| AGG Fuel Recovery, through `getFscData` | it summed `market\|2026\|month` buckets. A 2027 export writes 2027, every sum finds nothing, and the page publishes a **full table of zeroes** under headings naming a year that has gone — no error, no empty state |
+| Ready-Mix's `yearPair_` | it asked for `'2026 vol'` by name. `col_` returns −1, `toNum_` turns the missing cell into 0, same zeroes. Also checks the two NEWEST of three years win, and that no call site passes a `/g` regex — `exec` on one carries `lastIndex` and would skip every other column |
+| the QlikView sync's alias | six literal entries covering 2025 and 2026. The export names the year first and the sheet names it last, for any year, now |
+| TP01's `iYearCol` | `headers.indexOf('2026 Volume')` → −1, every Additional Revenue to Post computed off a blank cell, and the workbook still downloads |
+| every year left in `app.html` | the check that stops it coming back. Comments are stripped first (with a state machine, because this file's block comments continue on lines starting with neither `/` nor `*`), ISO dates are dropped, and what remains must be a **guide sample row** — the QlikView walkthroughs' made-up `Jan-2026 · P100 · MAT-1` lines, which illustrate the shape of an export and are meant to stay put |
+
+Mutation-tested three ways, each caught by name: restoring FSC's literal `sum_(D, mk, 2026, …)`,
+restoring TP01's `indexOf('2026 Volume')`, and letting one `2026` back into a table heading.
+
+**This one does not retire.** It is not a comparison against a previous version of anything —
+it is a property the suite has to keep, and the only harness in the folder that will still be
+saying something true in 2031.

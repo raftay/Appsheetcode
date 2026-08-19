@@ -181,6 +181,113 @@ const EDITS = {
       to:   `    var maxLR = opts.maxLR || T.MAX_LR, maxTB = opts.maxTB || T.MAX_TB;` },
   ],
 
+  AmrFuelExec: [
+    { kind: 'replace',
+      why: 'CHUNK 23 — the AGG fallback stopped naming a year. On the first of January this application went quietly wrong in ' +
+           'three places at once, and every one of them published ZEROES or a stale label rather than ' +
+           'failing. The years travel in every payload now (the backends read them off the workbook\'s ' +
+           'own column names), so nothing in the client spells one out. tests/yearroll.js runs the whole ' +
+           'thing against a 2031 workbook and is the standing gate. ' +
+           'This one line WAS the AGG page\'s year rather than a last resort: getFscData did not send ' +
+           'cyYear at all until chunk 23, so the || branch is what every AGG heading read. Both units ' +
+           'now fall back to the calendar, and only for a payload cached before the field existed.',
+      from: `      /* The AGG page hard-coded 2026/2025 in its headers. Reading cyYear when
+         the backend sends it keeps today's output identical and stops this
+         being a silent landmine the next time the year rolls. */
+      cy: function(d){ return (d && d.cyYear) || 2026; }`,
+      to: `      /* The AGG page hard-coded 2026/2025 in its headers. Reading cyYear when
+         the backend sends it keeps today's output identical and stops this
+         being a silent landmine the next time the year rolls.
+
+         THE FALLBACK NAMED 2026 UNTIL CHUNK 23, which made it a landmine of its
+         own: getFscData did not send cyYear at all until that chunk, so this
+         line WAS the AGG page's year rather than a last resort. Both units read
+         the calendar now, and only when a payload predates the field. */
+      cy: function(d){ return (d && d.cyYear) || new Date().getFullYear(); }` },
+  ],
+
+  AmrSegSlide: [
+    { kind: 'replace',
+      why: 'CHUNK 23 — the module takes its two years from the payload. On the first of January this application went quietly wrong in ' +
+           'three places at once, and every one of them published ZEROES or a stale label rather than ' +
+           'failing. The years travel in every payload now (the backends read them off the workbook\'s ' +
+           'own column names), so nothing in the client spells one out. tests/yearroll.js runs the whole ' +
+           'thing against a 2031 workbook and is the standing gate. ' +
+           'Its header arrays are built from CY_YEAR / PY_YEAR, which were two literals; they are ' +
+           'derived now, with today\'s calendar year as the fallback for a payload that predates the ' +
+           'fields — a guess rather than a setting, which is why it is not in §C.',
+      from: `  var ALL_MKT = '__ALL__';
+
+  var CY_YEAR = 2026, PY_YEAR = 2025;
+
+  var MARKET_LABEL = { '__ALL__':'Central Canada', HNS_SW:'HNS', Innocon:'Innocon',`,
+      to: `  var ALL_MKT = '__ALL__';
+
+  /* THE YEAR IS THE DATA'S, NOT THE CALENDAR'S AND NOT A LITERAL.
+     Every payload from the server now says which two years it is about —
+     the backends read them off the workbook's own column names — so nothing
+     here spells a year out. The initial pair is only what to print if a
+     payload arrives without them, which today means one cached before this
+     landed; today's calendar year is the least-wrong guess, and it is a
+     guess rather than a setting, which is why it is not in §C.
+     PLAN.md chunk 23. */
+  var CY_YEAR = new Date().getFullYear(), PY_YEAR = CY_YEAR - 1;
+  function years_(d){
+    var cy = d && Number(d.cyYear);
+    if(cy > 0){ CY_YEAR = cy; PY_YEAR = Number(d.pyYear) > 0 ? Number(d.pyYear) : cy - 1; }
+  }
+
+  var MARKET_LABEL = { '__ALL__':'Central Canada', HNS_SW:'HNS', Innocon:'Innocon',` },
+    { kind: 'replace',
+      why: 'and the one hook that keeps them current: withCtx is where a payload becomes the module\'s ' +
+           'own, so it is the only place that has to remember. ',
+      from: `  function withCtx(ctx, fn){
+    var prev = CTX; CTX = ctx_(ctx);
+    try { return fn(); } finally { CTX = prev; }
+  }`,
+      to: `  function withCtx(ctx, fn){
+    var prev = CTX; CTX = ctx_(ctx);
+    years_(CTX.data);            /* the payload names its own two years */
+    try { return fn(); } finally { CTX = prev; }
+  }` },
+  ],
+
+  AmrRmxSlide: [
+    { kind: 'insert',
+      why: 'CHUNK 23 — its table headings ask the payload instead of naming 2026 and 2025. On the first of January this application went quietly wrong in ' +
+           'three places at once, and every one of them published ZEROES or a stale label rather than ' +
+           'failing. The years travel in every payload now (the backends read them off the workbook\'s ' +
+           'own column names), so nothing in the client spells one out. tests/yearroll.js runs the whole ' +
+           'thing against a 2031 workbook and is the standing gate. ' +
+           'Stateless, because these builders already receive the payload — nothing here needs to ' +
+           'remember a year between calls.',
+      before: `  function byTypeRow(r){`,
+      text: `  /* THE YEAR IS THE DATA'S, NOT THE CALENDAR'S AND NOT A LITERAL. Every payload
+     says which two years it is about — the backend reads them off the
+     workbook's own column names — so no heading here spells one out. The
+     fallback is only for a payload cached before those fields existed, and
+     today's calendar year is the least-wrong guess. PLAN.md chunk 23. */
+  function cyOf(d){ var y = d && Number(d.cyYear); return y > 0 ? y : new Date().getFullYear(); }
+  function pyOf(d){ var y = d && Number(d.pyYear); return y > 0 ? y : cyOf(d) - 1; }
+` },
+    { kind: 'replace',
+      why: 'the by-type table\'s four year headings. ',
+      from: `      +'<th class="gA">2026 Rev</th><th class="gA">2025 Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">2026 ASP/m³</th><th class="gB">2025 ASP/m³</th><th class="gB">ASP change</th></tr></thead><tbody>';`,
+      to: `      +'<th class="gA">'+cyOf(d)+' Rev</th><th class="gA">'+pyOf(d)+' Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">'+cyOf(d)+' ASP/m³</th><th class="gB">'+pyOf(d)+' ASP/m³</th><th class="gB">ASP change</th></tr></thead><tbody>';` },
+    { kind: 'replace',
+      why: 'and the detail table\'s ten. ',
+      from: `      +'<th class="gV">2026 vol applied</th><th class="gV">2026 appl. rate</th>'
+      +'<th class="gV">2025 vol applied</th><th class="gV">2025 appl. rate</th><th class="gV">Δ appl. rate</th>'
+      +'<th class="gA">2026 Rev</th><th class="gA">2025 Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">2026 Applied ASP</th><th class="gB">2025 Applied ASP</th><th class="gB">ASP change</th></tr></thead><tbody>';`,
+      to: `      +'<th class="gV">'+cyOf(d)+' vol applied</th><th class="gV">'+cyOf(d)+' appl. rate</th>'
+      +'<th class="gV">'+pyOf(d)+' vol applied</th><th class="gV">'+pyOf(d)+' appl. rate</th><th class="gV">Δ appl. rate</th>'
+      +'<th class="gA">'+cyOf(d)+' Rev</th><th class="gA">'+pyOf(d)+' Rev</th><th class="gA">Rev % chg</th>'
+      +'<th class="gB">'+cyOf(d)+' Applied ASP</th><th class="gB">'+pyOf(d)+' Applied ASP</th><th class="gB">ASP change</th></tr></thead><tbody>';` },
+  ],
+
   AmrProgress: [
     { kind: 'replace',
       why: 'THE OVERLAY OUTLIVED THE PAGE THAT RAISED IT. #amrLoad is on §D\'s KEEP_ON_SWITCH ' +

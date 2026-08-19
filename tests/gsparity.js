@@ -354,6 +354,207 @@ function doGet(e) {
 
   'RMX_Backend.gs': [
 
+  /* ---- CHUNK 23: the year-named columns are found by shape ---------------------
+     13 hunk(s), all of them the same edit: a year that was typed out
+     becomes a year that was read. gone: [] on every one — nothing was deleted. */
+    { kind: 'replace', gone: [],
+      why: 'CHUNK 23 — READY-MIX ASKED FOR ITS COLUMNS BY YEAR NAME. col_(s, \'2026 vol\') returns -1 on a 2027 export, toNum_ turns the missing cell into 0, and every figure on the page reads zero without anything failing. The one new helper, yearPair_, finds the year-named columns by SHAPE and keeps the two newest — the same thing RFSC_Backend.gs\'s mainCols_ has always done. The years then travel out with the bundle and on every payload, so no page has to spell one out. bundleOk_ rejects a bundle written before they did, which rebuilds it once. ',
+      from: `function col_(sheet, name){ var i = sheet.idx[norm_(name)]; return (i==null?-1:i); }`,
+      to: `function col_(sheet, name){ var i = sheet.idx[norm_(name)]; return (i==null?-1:i); }
+
+/* ---- THE YEAR IS IN THE COLUMN NAME, AND IT IS THE DATA'S YEAR ------------
+   "2026 Vol", "2025 Net Sales ex VA (CAD)", "Total Revenue - 2026". This file
+   deliberately ignores the year on the ROW (see loadMain_'s header) and takes
+   current vs prior from the COLUMNS — which was right, and was then spelled out
+   as literals, so the two newest years were pinned to 2026 and 2025 in eight
+   places. On the first export of a new year every one of those lookups returns
+   -1, toNum_ turns the missing cell into 0, and the page publishes a full set
+   of zeroes without failing: the exact shape of bug this suite keeps paying for.
+
+   So the pattern is matched instead and the two NEWEST years found are CY and
+   PY. RFSC_Backend.gs's mainCols_ has always done it this way; this is the rest
+   of Ready-Mix catching up (PLAN.md chunk 23).
+
+   The regex must be non-global: exec on a /g regex carries lastIndex between calls
+   and would skip every other column. */
+function yearPair_(sheet, re){
+  var found = {}, k;
+  for (k in sheet.idx){
+    var m = re.exec(k);
+    if (m) found[Number(m[1])] = sheet.idx[k];
+  }
+  var ys = Object.keys(found).map(Number).sort(function(a,b){ return b-a; });
+  return { cy:    ys.length     ? ys[0] : 0,
+           py:    ys.length > 1 ? ys[1] : 0,
+           cyCol: ys.length     ? found[ys[0]] : -1,
+           pyCol: ys.length > 1 ? found[ys[1]] : -1,
+           years: ys };
+}
+/* (kept small on purpose: one place decides what a year column looks like) */
+function yearsInHeader_(sheet, re){ return yearPair_(sheet, re).years; }` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `      cPyV=col_(s,'2025 vol'), cPyR=col_(s,'2025 net sales ex va (cad)'),
+      cCyV=col_(s,'2026 vol'), cCyR=col_(s,'2026 net sales ex va (cad)'),`,
+      to: `      /* CY and PY are the two newest years the COLUMNS carry — see yearPair_.
+         Not 2026 and 2025, which is what these four lines used to say. */
+      vY=yearPair_(s, /^(\\d{4}) vol$/),
+      rY=yearPair_(s, /^(\\d{4}) net sales ex va \\(cad\\)$/),
+      cPyV=vY.pyCol, cPyR=rY.pyCol,
+      cCyV=vY.cyCol, cCyR=rY.cyCol,` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `      pyVol: pyV, pyRev: pyR, cyVol: cyV, cyRev: cyR,
+      cyFsc: (cCyF===-1?0:toNum_(row[cCyF])), pyFsc: (cPyF===-1?0:toNum_(row[cPyF])) });
+  }
+  return out;
+}`,
+      to: `      pyVol: pyV, pyRev: pyR, cyVol: cyV, cyRev: cyR,
+      cyFsc: (cCyF===-1?0:toNum_(row[cCyF])), pyFsc: (cPyF===-1?0:toNum_(row[cPyF])) });
+  }
+  /* WHICH TWO YEARS THESE ROWS ARE, carried on the array itself so the bundle
+     and then every payload can say so without re-reading the header.
+     PV_Backend.gs stamps getRawEnriched_'s array the same way. */
+  out.cyYear = vY.cy || rY.cy;
+  out.pyYear = vY.py || rY.py;
+  return out;
+}` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `      cPyR=col_(s,'total revenue - 2025'), cCyR=col_(s,'total revenue - 2026'),
+      cPyM=col_(s,'m3 applied to - 2025'), cCyM=col_(s,'m3 applied to - 2026');`,
+      to: `      /* the two newest years the columns carry, not two literals */
+      rY=yearPair_(s, /^total revenue - (\\d{4})$/),
+      mY=yearPair_(s, /^m3 applied to - (\\d{4})$/),
+      cPyR=rY.pyCol, cCyR=rY.cyCol,
+      cPyM=mY.pyCol, cCyM=mY.cyCol;` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `      pyRev: pyR, cyRev: cyR, pyM3: pyM, cyM3: cyM });
+  }
+  return out;
+}
+/* =================== data bundle (cached, period-agnostic) =================== */`,
+      to: `      pyRev: pyR, cyRev: cyR, pyM3: pyM, cyM3: cyM });
+  }
+  out.cyYear = rY.cy || mY.cy;
+  out.pyYear = rY.py || mY.py;
+  return out;
+}
+/* =================== data bundle (cached, period-agnostic) =================== */` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `  var bundle = {
+    main:   main,
+    extras: loadStream_(LK, CONFIG.SHEETS.EXTRA, null, bag),
+    assoc:  loadStream_(LK, CONFIG.SHEETS.ASSOC, null, bag),
+    markets: marketsOf_(LK),
+    latestMonth: latest,
+    months: monthsOf_(main),
+    unmapped: finishUnmapped_(bag)
+  };`,
+      to: `  var bundle = {
+    main:   main,
+    extras: loadStream_(LK, CONFIG.SHEETS.EXTRA, null, bag),
+    assoc:  loadStream_(LK, CONFIG.SHEETS.ASSOC, null, bag),
+    markets: marketsOf_(LK),
+    latestMonth: latest,
+    months: monthsOf_(main),
+    /* the two years the Main tab's columns carry, so every payload below can
+       label its own headings instead of the page spelling out a year */
+    cyYear: main.cyYear || 0,
+    pyYear: main.pyYear || 0,
+    unmapped: finishUnmapped_(bag)
+  };` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `function bundleOk_(b){
+  return !!(b && b.main && b.months
+            && Number(b.latestMonth) >= 1 && Number(b.latestMonth) <= 12);
+}`,
+      to: `function bundleOk_(b){
+  return !!(b && b.main && b.months
+            && Number(b.latestMonth) >= 1 && Number(b.latestMonth) <= 12
+            /* chunk 23: a bundle written before the years travelled with the
+               data has none, and a page reading it would fall back to a
+               hard-coded pair. Same rule as the months check above, for the same
+               reason — rebuild it rather than repair it. */
+            && Number(b.cyYear) > 0);
+}` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `    var b = loadDataCached_(false);
+    out.latestMonth = bundleMonth_(b);
+    out.months = bundleMonths_(b);`,
+      to: `    var b = loadDataCached_(false);
+    out.latestMonth = bundleMonth_(b);
+    out.months = bundleMonths_(b);
+    /* the two years the data names, so the page's headings never spell one out
+       themselves (PLAN.md chunk 23) */
+    out.cyYear = b.cyYear; out.pyYear = b.pyYear;` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `  function stamp(o){
+    o.month = month;
+    o.latestMonth = bundleMonth_(bundle);
+    o.months = bundleMonths_(bundle);`,
+      to: `  function stamp(o){
+    o.month = month;
+    o.latestMonth = bundleMonth_(bundle);
+    o.months = bundleMonths_(bundle);
+    o.cyYear = bundle.cyYear; o.pyYear = bundle.pyYear;` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `           month:month, latestMonth:bundleMonth_(bundle),
+           months:bundleMonths_(bundle),
+           build:BUILD, generation:generation_(),`,
+      to: `           month:month, latestMonth:bundleMonth_(bundle),
+           months:bundleMonths_(bundle),
+           cyYear:bundle.cyYear, pyYear:bundle.pyYear,
+           build:BUILD, generation:generation_(),` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `             month: monthSel_(bundle, opts.month),
+             latestMonth: bundleMonth_(bundle),
+             months: bundleMonths_(bundle),
+             build: BUILD,
+             breakdowns:CONFIG.BREAKDOWNS, generation:generation_() };`,
+      to: `             month: monthSel_(bundle, opts.month),
+             latestMonth: bundleMonth_(bundle),
+             months: bundleMonths_(bundle),
+             cyYear: bundle.cyYear, pyYear: bundle.pyYear,
+             build: BUILD,
+             breakdowns:CONFIG.BREAKDOWNS, generation:generation_() };` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `             month:       monthSel_(bundle, opts.month),
+             latestMonth: bundleMonth_(bundle),
+             months:      bundleMonths_(bundle),
+             markets:     bundle.markets || [],`,
+      to: `             month:       monthSel_(bundle, opts.month),
+             latestMonth: bundleMonth_(bundle),
+             months:      bundleMonths_(bundle),
+             cyYear:      bundle.cyYear, pyYear: bundle.pyYear,
+             markets:     bundle.markets || [],` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `    rowCount: full.length, latestMonth: bundleMonth_(bundle),`,
+      to: `    rowCount: full.length, latestMonth: bundleMonth_(bundle),
+    cyYear: bundle.cyYear, pyYear: bundle.pyYear,` },
+
+
   /* ---- DEAD CODE FOUND BY THE 404-NAME AUDIT ---------------------------------
      Not debug functions — those are all gone. These are IIFE-private helpers with
      zero readers anywhere in script.gs, app.html or tests/, which the trailing
@@ -623,6 +824,105 @@ var DECK = (function () {\n` },
 
   'FSC_Backend.gs': [
 
+  /* ---- CHUNK 23: the years come from the data, not from two literals -----------
+     9 hunk(s), all of them the same edit: a year that was typed out
+     becomes a year that was read. gone: [] on every one — nothing was deleted. */
+    { kind: 'replace', gone: [],
+      why: 'CHUNK 23 — THIS PAGE SUMMED TWO LITERAL YEARS AND WOULD HAVE PUBLISHED ZEROES. buildCells_ always keyed its buckets market|year|month with the year off the ROW, and always knew yMax — the newest year in the file — but every reader below compared against 2026 and 2025. On the first export of a new year every sum found nothing, and the page published a full table of zeroes under headings naming a year that had gone: no error, no empty state, just wrong numbers. RFSC_Backend.gs, the Ready-Mix twin, has carried cy/py since it was written; this is the Aggregates half catching up, hunk for hunk. tests/yearroll.js runs it against a 2031 workbook. ',
+      from: `    var un = Object.keys(unknown);
+    return { cells: cells, markets: markets, latest: latest || 1,
+             monthList: monthList,
+             unknownPlants: un.sort(), rows: used };`,
+      to: `    var un = Object.keys(unknown);
+    /* THE YEARS COME OUT WITH THE DATA. yMax is the newest year in the file and
+       it has always decided which Rev column a row belongs to; everything below
+       used to compare against the literals 2026 and 2025 instead, so on the
+       first of January this page would have summed cells nothing had written
+       and published a table of zeroes — silently, because zero is a number.
+       RFSC_Backend.gs has carried cy/py since it was written; this is the
+       Aggregates half catching up (PLAN.md chunk 23). */
+    return { cells: cells, markets: markets, latest: latest || 1,
+             monthList: monthList,
+             cy: yMax, py: yMax - 1,
+             unknownPlants: un.sort(), rows: used };` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `  function summaryFor_(D, months){
+    var rows = D.markets.map(function(mk){
+      var c = sum_(D, mk, 2026, months), p = sum_(D, mk, 2025, months);
+      var f26 = c.avol ? c.fsc / c.avol : 0;
+      var f25 = p.avol ? p.fsc / p.avol : 0;      // no 2025 charge → 0`,
+      to: `  function summaryFor_(D, months){
+    /* fscT2026 / fscT2025 ARE NOT YEARS, THEY ARE CY AND PY. The names are the
+       suite's convention — RFSC_Backend.gs's header states it and keeps them
+       for the same reason: the two fuel pages are clones and a field rename
+       here would have to be a rename there and in both pages. The actual years
+       travel as cyYear / pyYear in the payload. */
+    var rows = D.markets.map(function(mk){
+      var c = sum_(D, mk, D.cy, months), p = sum_(D, mk, D.py, months);
+      var f26 = c.avol ? c.fsc / c.avol : 0;
+      var f25 = p.avol ? p.fsc / p.avol : 0;      // no prior-year charge → 0` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `    var t = { totalVol:0, totalFSC:0, appliedVol:0, appliedNS:0, wv:0, wn:0, av25:0, fsc25:0 };
+    D.markets.forEach(function(mk){
+      var c = sum_(D, mk, 2026, months), p = sum_(D, mk, 2025, months);`,
+      to: `    var t = { totalVol:0, totalFSC:0, appliedVol:0, appliedNS:0, wv:0, wn:0, av25:0, fsc25:0 };
+    D.markets.forEach(function(mk){
+      var c = sum_(D, mk, D.cy, months), p = sum_(D, mk, D.py, months);` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `      var c = D.cells[mk + '|2026|' + mo] || { fsc:0, avol:0 };
+      var p = D.cells[mk + '|2025|' + mo] || { fsc:0, avol:0 };`,
+      to: `      var c = D.cells[mk + '|' + D.cy + '|' + mo] || { fsc:0, avol:0 };
+      var p = D.cells[mk + '|' + D.py + '|' + mo] || { fsc:0, avol:0 };` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `    var rows = months.map(line);
+    var c = sum_(D, mk, 2026, months), p = sum_(D, mk, 2025, months);`,
+      to: `    var rows = months.map(line);
+    var c = sum_(D, mk, D.cy, months), p = sum_(D, mk, D.py, months);` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `    var rows = execOrder_(D.markets).map(function(mk){
+      var c = sum_(D, mk, 2026, months), p = sum_(D, mk, 2025, months);`,
+      to: `    var rows = execOrder_(D.markets).map(function(mk){
+      var c = sum_(D, mk, D.cy, months), p = sum_(D, mk, D.py, months);` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `      // "New business": charged in 2026 but not 2025 → 2025 $/t and YOY show N/A,
+      // and this market is left out of the Grand Total's 2025 $/t.`,
+      to: `      // "New business": charged this year but not last → the prior-year $/t and
+      // YOY show N/A, and this market is left out of the Grand Total's PY $/t.` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `    var yr = newestYear_(D, mk) || 2026;`,
+      to: `    var yr = newestYear_(D, mk) || D.cy;` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `      months:      D.monthList || [],         // what the picker may offer
+      monthNames:  MONTHS,
+      summary: { MTD: summaryFor_(D, mtd), YTD: summaryFor_(D, ytd) },`,
+      to: `      months:      D.monthList || [],         // what the picker may offer
+      monthNames:  MONTHS,
+      /* THE TWO YEARS THIS PAYLOAD IS ABOUT, read off the data rather than the
+         calendar or a constant. Every heading and title on the page is labelled
+         from these — see app.html §C, which holds the fallback for a payload
+         that predates them. RMX Fuel Recovery has sent them since it was
+         written; this is the pair that lets the two pages stay clones. */
+      cyYear:      D.cy,
+      pyYear:      D.py,
+      summary: { MTD: summaryFor_(D, mtd), YTD: summaryFor_(D, ytd) },` },
+
+
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
      script.gs §2 carries the census and the rule each one was decided by. */
@@ -803,6 +1103,85 @@ function gk_(k){ return 'pv|g' + gen_() + '|' + PV.SCHEMA + '|' + k; }` },
   ],
 
   'QlikSync.gs': [
+
+  /* ---- CHUNK 23: the column alias knows any year, not two ----------------------
+     5 hunk(s), all of them the same edit: a year that was typed out
+     becomes a year that was read. gone: [] on every one — nothing was deleted. */
+    { kind: 'replace', gone: [],
+      why: 'CHUNK 23 — SIX ALIAS ENTRIES COVERED EXACTLY TWO YEARS. The export names the year first (\'2026 revenue\') and the sheet names it last (\'Total Revenue - 2026\'), and the map listed both spellings for 2025 and 2026 only. They are one pattern each now, so whatever year the export names finds the sheet\'s column of the same year. NOTE WHAT THIS DOES NOT DO: the sync writes data under the headers the SHEET already has and never rewrites a header row, so the workbook still has to gain the new year\'s columns before anything can be written into them — until it does, the export\'s new column matches nothing and is reported as unmatched rather than written somewhere wrong. ',
+      from: `  /* Extras + Associates: the export names the year first, the sheet last. */
+  var ALIAS_EXTRA = {
+    'plant_descr':                  'Plant',
+    '2025 revenue':                 'Total Revenue - 2025',
+    '2026 revenue':                 'Total Revenue - 2026',
+    '2025 revenue (m3 applied to)': 'Revenue (M3 Applied To) - 2025',
+    '2026 revenue (m3 applied to)': 'Revenue (M3 Applied To) - 2026',
+    '2025 m3 applied to':           'M3 Applied To - 2025',
+    '2026 m3 applied to':           'M3 Applied To - 2026'
+  };`,
+      to: `  /* Extras + Associates: the export names the year first, the sheet last.
+
+     THE SIX YEAR ENTRIES WERE LITERALS FOR 2025 AND 2026, and a rule that only
+     knows two years stops being a rule on the first of January. They are one
+     pattern each now (PLAN.md chunk 23): whatever year the export names, the
+     sheet's spelling of that same year is what it maps to.
+
+     THIS IS ONLY THIS HALF OF THE ROLL, and the other half is not in this repo.
+     The sync writes DATA under the headers the SHEET already has; it never
+     rewrites a header row. So a new year's column has to exist in the workbook
+     before anything can be written into it — until it does, the export's new
+     column matches nothing and is reported as unmatched rather than being
+     written somewhere wrong. What these patterns buy is that the moment the
+     workbook gains "Total Revenue - 2027", the export's "2027 revenue" finds
+     it, with no code change. */
+  var ALIAS_EXTRA = {
+    'plant_descr': 'Plant'
+  };
+  /* Tried in order, first match wins; each is anchored, so the "(m3 applied
+     to)" forms cannot be swallowed by the plain revenue one. */
+  var ALIAS_EXTRA_RE = [
+    [/^(\\d{4}) revenue \\(m3 applied to\\)$/i, 'Revenue (M3 Applied To) - $1'],
+    [/^(\\d{4}) m3 applied to$/i,               'M3 Applied To - $1'],
+    [/^(\\d{4}) revenue$/i,                     'Total Revenue - $1']
+  ];
+
+  /* One export column's name as the SHEET spells it: the exact map first, then
+     the patterns, then the name unchanged. */
+  function alias_(spec, raw) {
+    var name = String(raw == null ? '' : raw);
+    var hit = spec.alias && spec.alias[name];
+    if (hit) return hit;
+    var rules = spec.aliasRe || [];
+    for (var i = 0; i < rules.length; i++) {
+      if (rules[i][0].test(name)) return name.replace(rules[i][0], rules[i][1]);
+    }
+    return name;
+  }` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, Extra Raw Data. ',
+      from: `      { folder: 'RMX', page: 'rmx', tab: 'Extra Raw Data',
+        mode: 'columns', alias: ALIAS_EXTRA,`,
+      to: `      { folder: 'RMX', page: 'rmx', tab: 'Extra Raw Data',
+        mode: 'columns', alias: ALIAS_EXTRA, aliasRe: ALIAS_EXTRA_RE,` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, Associate Raw Data. ',
+      from: `      { folder: 'RMX', page: 'rmx', tab: 'Associate Raw Data',
+        mode: 'columns', alias: ALIAS_EXTRA,`,
+      to: `      { folder: 'RMX', page: 'rmx', tab: 'Associate Raw Data',
+        mode: 'columns', alias: ALIAS_EXTRA, aliasRe: ALIAS_EXTRA_RE,` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `      wanted[canon_(norm_(spec.alias[h] || h))] = 1;`,
+      to: `      wanted[canon_(norm_(alias_(spec, h)))] = 1;` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `      var name = canon_(norm_(spec.alias[raw] || raw));`,
+      to: `      var name = canon_(norm_(alias_(spec, raw)));` },
+
     { kind: 'replace',
       why: 'The two Logger.log calls left in the trigger target. §7\'s whole point is ONE ' +
            'convention and one switch: a Logger.log carries no level, so in Cloud Logging a ' +
@@ -975,6 +1354,58 @@ function gk_(k){ return 'pv|g' + gen_() + '|' + PV.SCHEMA + '|' + k; }` },
   ],
 
   'PV_Backend.gs': [
+
+  /* ---- CHUNK 23: the upload path stops naming the year the reader resolves -----
+     4 hunk(s), all of them the same edit: a year that was typed out
+     becomes a year that was read. gone: [] on every one — nothing was deleted. */
+    { kind: 'replace', gone: [],
+      why: 'CHUNK 23 — THE UPLOAD PATH NAMED THE YEARS THE READ PATH RESOLVES. readTab_ has matched \'#### Volume\' by pattern since it was written (\'the header carries the year, so nothing here has to be edited when the file rolls over\'), and uploadData listed \'2025 Volume\' and \'2026 Volume\' as required columns four lines away from it. On a new year\'s export that REFUSES a perfectly good download — loud rather than silent, which is why it lasted, and wrong either way. ',
+      from: `  need(R, ['Year', 'Month', 'Plant Type', 'Material Family', 'Product Class [Rock]', 'Cust Segment [Rock]',
+           'Product Application', 'Plant', 'Material', 'Customer Parent', 'Sold To',
+           '2025 Volume', '2026 Volume', 'PY Rev exWorks', 'CY Rev exWorks', 'Fuel Surchage'], 'Combined Data CPI Raw');`,
+      to: `  need(R, ['Year', 'Month', 'Plant Type', 'Material Family', 'Product Class [Rock]', 'Cust Segment [Rock]',
+           'Product Application', 'Plant', 'Material', 'Customer Parent', 'Sold To',
+           'PY Rev exWorks', 'CY Rev exWorks', 'Fuel Surchage'], 'Combined Data CPI Raw');
+
+  /* THE VOLUME COLUMNS CARRY THE YEAR, AND THIS LIST USED TO NAME 2026 AND 2025.
+     The read path has resolved them by pattern since it was written — "the
+     header carries the year, so nothing here has to be edited when the file
+     rolls over" — and the UPLOAD path did not, so on the first export of a new
+     year this required two columns the file no longer has and refused a
+     perfectly good download with "Missing column(s): 2025 Volume, 2026 Volume".
+     Loud rather than silent, which is why it survived, but wrong either way.
+     Same rule as everywhere else now (PLAN.md chunk 23): find every
+     "#### Volume", keep them BY YEAR, and let each row pick its own. */
+  var volCols = {};
+  R.hdr.forEach(function (h, i) {
+    var m = /^(\\d{4})\\s+volume$/.exec(norm_(h));
+    if (m && !(Number(m[1]) in volCols)) volCols[Number(m[1])] = i;
+  });
+  var volYears = Object.keys(volCols).map(Number).sort(function (a, b) { return b - a; });
+  if (volYears.length < 2)
+    throw new Error('Combined Data CPI Raw upload needs two "#### Volume" columns (e.g. "'
+      + ((new Date()).getFullYear()) + ' Volume" and the year before). Found: '
+      + (volYears.length ? volYears.join(', ') : 'none')
+      + '. Please re-download from QlikView without changing the columns.');` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `             v25: ci(R, '2025 Volume'), v26: ci(R, '2026 Volume'), fsc: ci(R, 'Fuel Surchage') };`,
+      to: `             vol: volCols, cy: volYears[0], py: volYears[1], fsc: ci(R, 'Fuel Surchage') };` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `  function volOf(r) { var y = toNum_(r[rp.yr]); return y === 2026 ? toNum_(r[rp.v26]) : y === 2025 ? toNum_(r[rp.v25]) : 0; }`,
+      to: `  /* the volume column named for THIS row's year; a row from a year the file has
+     no column for contributes nothing, which is what the two literals used to
+     say the long way round */
+  function volOf(r) { var c = rp.vol[Math.round(toNum_(r[rp.yr]))]; return c == null ? 0 : toNum_(r[c]); }` },
+
+    { kind: 'replace', gone: [],
+      why: '…the same edit, next hunk. ',
+      from: `    row.push(y === 2025 ? nf : 0, y === 2026 ? nf : 0);`,
+      to: `    row.push(y === rp.py ? nf : 0, y === rp.cy ? nf : 0);` },
+
 
   /* ---- CHUNK 20: PV.toNum_ stops dropping accounting negatives -------------
      THE FIRST EDIT IN THIS FILE THAT CHANGES AN ANSWER rather than a message or
