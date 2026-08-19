@@ -72,6 +72,11 @@ locator.
   pack contains; `app.html` §C holds `AMR_TUNABLES` — the slide frame and every page's
   whitespace defaults. Both banners also name the constants that deliberately stayed beside
   the code that reads them. Read those two banners before grepping for a number.
+- **`DECK_RECIPE`'s `layout` column is a DEFAULT, not the answer.** The Deck Builder's Plan
+  stage offers every report layout the template has as a per-row dropdown, and the choice is
+  saved shared in one Script Property — only the rows that DIFFER, so editing the array still
+  moves every row nobody overrode. Changing a row's layout also drops its rendered picture,
+  because the capture's shape comes from that layout's `{{IMAGE}}` box.
 - `appsscript.json` carries an explicit `oauthScopes` array, which **replaces** Apps Script's
   automatic scope detection. Add a service, add its scope by hand — nothing warns you, the
   call just throws for every user. `APP_verifyPermissions()` (`script.gs` §4) catches it in one
