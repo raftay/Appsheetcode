@@ -236,8 +236,9 @@ var APP_CONFIG = {
 
      A month can bring more than one mail — the data gets corrected and the
      report is re-sent — so this is not a once-a-month job: every message that
-     matches is published, newest last, and the page ends up showing the newest
-     one. */
+     matches is published, newest last, the page ends up showing the newest one,
+     and the folder keeps ONE file per month. A run that finds no new mail does
+     nothing at all. */
   INVENTORY_MAIL: {
 
     /* The Drive folder every published PDF is filed into. This is the folder
@@ -245,9 +246,11 @@ var APP_CONFIG = {
        runs as, with edit rights — the watch creates files in it. */
     FOLDER_ID: '1eF2SI9vCMtQ1x0lNNyCvRGrpIgvC_Znu',
 
-    /* What a report mail's subject STARTS WITH. The month follows it
-       ("… Report - Jun") and is read off the subject, never off the calendar:
-       June's report routinely lands in July. */
+    /* What a report mail's subject STARTS WITH. The period follows it
+       ("… Report - Jul, 2026") and is read off the subject, never off the
+       calendar: July's report routinely lands in August. When the subject names
+       no month at all, the fallback is the month BEFORE the mail's send date,
+       for the same reason. */
     SUBJECT_PREFIX: 'Monthly Central Region Qlik Sense Report',
 
     /* Who the mail is accepted from, as a Gmail `from:` term — a domain, an
@@ -263,9 +266,11 @@ var APP_CONFIG = {
        this has already published is skipped on its id. */
     WINDOW_DAYS: 45,
 
-    /* What the page shows above the report, with the month appended:
-       "Inventory Report - June". No year, deliberately — the heading names
-       the reporting month and the file it points at carries the rest. */
+    /* What the page shows above the report, with the period appended:
+       "Inventory Report - Jul, 2026". The period is always three letters, a
+       comma and the four-digit year — the same string the file in the folder is
+       named, which is what lets a re-issue find and replace the copy it is
+       replacing. */
     LABEL_PREFIX: 'Inventory Report - '
   },
 
@@ -12509,27 +12514,41 @@ function IR_saveSource(input, label)  { return IR.saveSource(input, label); }
  *
  *   1. search the mailbox for the report mail
  *   2. file its PDF into APP_CONFIG.INVENTORY_MAIL.FOLDER_ID
- *   3. name it for the month the SUBJECT names
+ *   3. name it for the period the SUBJECT names — "Jul, 2026"
  *   4. write it into the same Script Property the modal writes — IR.saveSource
  *
  * Step 4 is the whole reason there is no second setting anywhere. The page,
  * the modal and this all read and write one record, so a hand-set source and
  * an auto-set one are indistinguishable and either can override the other.
  *
- * THE MONTH COMES OFF THE SUBJECT, NEVER OFF THE CALENDAR. June's report is
- * mailed at the end of June or early in July, and a re-issue of it can land
- * weeks later still — so a watch that stamped new Date() onto the file would
- * label a June report "July" every time it ran late, which is the failure §7
- * describes for column headers in a different costume. The subject carries the
- * month; that is what is read. The received date is the fallback, and it warns
- * when it is used.
+ * A RUN THAT FINDS NO NEW MAIL DOES NOTHING AT ALL. It opens no folder, writes
+ * no file and touches no property — the Gmail search is the entire cost of an
+ * hour where nothing arrived, which is most hours. A message is "new" by its
+ * Gmail id, so a mail that has already been published is never pulled twice,
+ * however many times the trigger fires and whether or not its PDF is still in
+ * the folder.
  *
- * MORE THAN ONE MAIL A MONTH IS NORMAL, not an error — the data is corrected
- * and the report re-sent. Each message is published in the order it arrived,
- * so the newest is what the page ends up on. The one before it is not
- * overwritten and not deleted: the clean name always points at the newest copy
- * (that is what somebody opening the folder will click), and the copy it
- * replaced is renamed with the date it was superseded and kept.
+ * THE PERIOD COMES OFF THE SUBJECT, NEVER OFF THE CALENDAR. July's report is
+ * mailed at the end of July, early in August, or weeks later still when it is
+ * re-issued — so a watch that stamped today's date onto the file would label a
+ * late report with the wrong month every time, which is §7's rule about naming
+ * a period wearing different clothes. "Monthly Central Region Qlik Sense
+ * Report - Jul, 2026" gives Jul and 2026, and the heading and the filename both
+ * read "Jul, 2026".
+ *
+ * WHEN THE SUBJECT SAYS NOTHING, THE FALLBACK IS THE MONTH BEFORE THIS ONE —
+ * not this one. A report is published after the period it covers, so a mail
+ * with no month in it that lands in August is August's mail about July. It is
+ * still a guess and it warns; the point is that it is the guess that is right
+ * most of the time rather than the one that is never right.
+ *
+ * ONE FILE PER MONTH IN THE FOLDER. More than one mail a month is normal, not
+ * an error — the data gets corrected and the report re-sent — so each new copy
+ * for a period REPLACES the one before it: the newest is filed, the page is
+ * pointed at it, and only then is the previous copy trashed. Trashed, never
+ * deleted: it sits in Drive's bin, recoverable, and nothing in this codebase
+ * deletes permanently. Matched on that period's own name, so the other months
+ * in the folder are never touched.
  *
  * WHAT IT DOES NOT DO, DELIBERATELY:
  *   · it does not label, archive, read receipts on or otherwise touch the
@@ -12538,7 +12557,6 @@ function IR_saveSource(input, label)  { return IR.saveSource(input, label); }
  *   · it does not share the file it creates. A new file inherits the folder's
  *     sharing, and nothing in this codebase creates a Drive permission,
  *     because that is the one call that emails people.
- *   · it does not delete anything, ever.
  *****************************************************************************/
 var IRMAIL = (function () {
 
@@ -12551,6 +12569,15 @@ var IRMAIL = (function () {
 
   var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
                 'July', 'August', 'September', 'October', 'November', 'December'];
+  var ABBR   = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  /* A four-digit number in a subject line is only a year if it is inside this
+     range. Without a floor, "Report - Jul, 1200 tonnes" would publish as
+     "Jul, 1200" — a heading that is wrong in a way nobody would think to check
+     for, sitting under a report that is otherwise perfectly correct. */
+  var YEAR_FLOOR = 2005;
+  var YEAR_CEIL  = 2100;
 
   function cfg_() {
     var c = (typeof APP_CONFIG !== 'undefined' && APP_CONFIG.INVENTORY_MAIL) || {};
@@ -12592,27 +12619,59 @@ var IRMAIL = (function () {
     return stripMarkers_(subject).toLowerCase().indexOf(prefix.toLowerCase()) === 0;
   }
 
-  /* The month the report is FOR, read out of whatever follows the prefix:
-     "- Jun", "– June", "Jun 2026" and "- June 2026" all give June. Returns ''
-     when there is no month in it, which the caller reports rather than
-     guesses past silently.
+  /* The fallback period: THE MONTH BEFORE the one the mail arrived in, because
+     a report is published after the period it covers. Rolls the year back with
+     it, which is the whole reason this is a function and not an arithmetic
+     expression at the call site — a January mail falls back to December of the
+     PREVIOUS year, and getting that wrong produces a heading that is off by
+     twelve months exactly once a year. */
+  function previousMonth_(when) {
+    var m = when.getMonth() - 1, y = when.getFullYear();
+    if (m < 0) { m = 11; y -= 1; }
+    return { month: m, year: y };
+  }
 
+  /* The period the report is FOR, read out of whatever follows the prefix.
+     Returns { month: 0-11, year: 2026, guessed: 'no' | 'year' | 'all' } —
+     the caller warns on anything it had to guess.
+
+     "- Jul, 2026", "- July 2026", "– JUL-2026" and "- Jul" all read as July.
      Three letters is the shortest abbreviation accepted, because two is
      ambiguous: "Ma" is March or May and "Ju" is June or July. */
-  function monthFromSubject_(subject, prefix) {
+  function periodFromSubject_(subject, prefix, received) {
     var rest = stripMarkers_(subject);
     if (rest.toLowerCase().indexOf(prefix.toLowerCase()) === 0) rest = rest.slice(prefix.length);
+
+    var month = -1;
     var words = rest.replace(/[^A-Za-z]+/g, ' ').trim().split(' ');
-    for (var i = 0; i < words.length; i++) {
+    for (var i = 0; i < words.length && month < 0; i++) {
       var w = words[i].toLowerCase();
       if (w.length < 3) continue;
       for (var m = 0; m < MONTHS.length; m++) {
-        var full = MONTHS[m].toLowerCase();
-        if (full.indexOf(w) === 0) return MONTHS[m];
+        if (MONTHS[m].toLowerCase().indexOf(w) === 0) { month = m; break; }
       }
     }
-    return '';
+    if (month < 0) {
+      var p = previousMonth_(received);
+      return { month: p.month, year: p.year, guessed: 'all' };
+    }
+
+    var digits = rest.match(/\d{4}/g) || [];
+    for (var d = 0; d < digits.length; d++) {
+      var y = Number(digits[d]);
+      if (y >= YEAR_FLOOR && y <= YEAR_CEIL) return { month: month, year: y, guessed: 'no' };
+    }
+
+    /* A month with no year beside it. It is the year the mail arrived in,
+       unless that would put the report in the FUTURE — "Dec" arriving in
+       January is last December, not the one eleven months away. */
+    var year = received.getFullYear();
+    if (month > received.getMonth()) year -= 1;
+    return { month: month, year: year, guessed: 'year' };
   }
+
+  /* The period as the heading and the filename both spell it: "Jul, 2026". */
+  function code_(p) { return ABBR[p.month] + ', ' + p.year; }
 
   function stamp_(d, fmt) {
     return Utilities.formatDate(d, Session.getScriptTimeZone(), fmt);
@@ -12627,9 +12686,10 @@ var IRMAIL = (function () {
       /* NOT SILENT (§7). An unreadable list means every message still inside
          the search window looks new, so the next block republishes all of
          them: the page lands back on the newest one, which is where it
-         already was, and the folder gains a superseded copy per message. It
-         is recoverable and it is loud, because a folder quietly filling up
-         with duplicates is not something anybody would trace back to here. */
+         already was, and each month's folder copy is replaced by an identical
+         one. It is recoverable and it is loud, because a run that suddenly
+         does an hour's worth of work is not something anybody would trace
+         back to here. */
       APP_log('warn', 'IRMAIL.seen', 'the published-message list is unreadable — every ' +
               'message in the window will look new and be published again', { error: String(e) });
       return [];
@@ -12642,20 +12702,37 @@ var IRMAIL = (function () {
     PropertiesService.getScriptProperties().setProperty(SEEN_KEY, JSON.stringify(list));
   }
 
-  /* The clean name is kept pointing at the newest copy, so the file somebody
-     opens from the folder is the one the page is showing. Anything already
-     wearing that name is renamed, not replaced and not trashed — Drive is
-     perfectly happy to hold two files called the same thing, and that is worse
-     than either keeping or losing the old one. Returns how many were moved
-     aside, so the caller can log it. */
-  function supersede_(folder, name) {
-    var base = name.replace(/\.pdf$/i, '');
-    var it = folder.getFilesByName(name), old = [];
-    while (it.hasNext()) old.push(it.next());
-    for (var i = 0; i < old.length; i++) {
-      old[i].setName(base + ' (superseded ' + stamp_(new Date(), 'yyyy-MM-dd HHmm') + ').pdf');
+  /* ONE FILE PER MONTH. Everything already in the folder wearing this period's
+     name goes, so the copy that is left is the one the page is showing. Two
+     files for July, one of them stale, is a question somebody browsing the
+     folder should never have to answer.
+
+     TRASHED, NOT DELETED — it goes to Drive's bin and stays recoverable, which
+     is what every other destructive call in this file does too.
+
+     MATCHED ON THIS PERIOD'S NAME, never on "everything in the folder": the
+     other months live here as well, and they are the archive. */
+  function clearMonth_(folder, label, keepId) {
+    var it = folder.getFiles(), doomed = [];
+    while (it.hasNext()) {
+      var f = it.next();
+      if (f.getId() === keepId) continue;
+      if (String(f.getName() || '').indexOf(label) !== 0) continue;
+      doomed.push(f);
     }
-    return old.length;
+    var gone = 0;
+    for (var i = 0; i < doomed.length; i++) {
+      try { doomed[i].setTrashed(true); gone++; }
+      catch (e) {
+        /* NOT SILENT (§7). The new copy is filed and the page is already
+           pointing at it, so this is untidy rather than broken — but it is
+           also the only way the folder ends up holding two files for one
+           month, which is the single thing this function exists to prevent. */
+        APP_log('warn', 'IRMAIL.clearMonth', 'could not trash the previous copy for this period',
+                { file: doomed[i].getName(), error: String(e && e.message || e) });
+      }
+    }
+    return gone;
   }
 
   function pdfOf_(msg) {
@@ -12676,26 +12753,32 @@ var IRMAIL = (function () {
     var pdf = pdfOf_(msg);
     if (!pdf) return null;
 
-    var month = monthFromSubject_(msg.getSubject(), c.subject);
-    if (!month) {
-      month = MONTHS[msg.getDate().getMonth()];
+    var period = periodFromSubject_(msg.getSubject(), c.subject, msg.getDate());
+    if (period.guessed === 'all') {
       APP_log('warn', 'IRMAIL.publish', 'no month in the subject — falling back to the month ' +
-              'the mail arrived in, which is wrong whenever a report is late or re-issued',
-              { subject: String(msg.getSubject() || ''), month: month });
+              'before the one the mail arrived in, which is a guess',
+              { subject: String(msg.getSubject() || ''), period: code_(period) });
+    } else if (period.guessed === 'year') {
+      APP_log('warn', 'IRMAIL.publish', 'the subject named a month but no year — taking the year ' +
+              'from the send date', { subject: String(msg.getSubject() || ''), period: code_(period) });
     }
 
-    var label = c.labelPrefix + month;
+    var label = c.labelPrefix + code_(period);
     var name  = label + '.pdf';
 
     var folder = DriveApp.getFolderById(c.folderId);
-    var moved  = supersede_(folder, name);
     var file   = folder.createFile(pdf.copyBlob().setName(name));
 
     /* The same call the modal makes. Everything the page needs — the preview
-       URL, the heading, the "set on" line — is derived from this one record. */
-    IR.saveSource(file.getId(), label);
+       URL, the heading, the "set on" line — is derived from this one record.
 
-    return { fileId: file.getId(), name: name, label: label, superseded: moved,
+       IT HAPPENS BEFORE THE OLD COPY IS TRASHED, and that order is the safety
+       of the whole thing: trash-first would leave the page pointing into the
+       bin for as long as it took this line to fail. */
+    IR.saveSource(file.getId(), label);
+    var replaced = clearMonth_(folder, label, file.getId());
+
+    return { fileId: file.getId(), name: name, label: label, replaced: replaced,
              sent: stamp_(msg.getDate(), 'yyyy-MM-dd HH:mm') };
   }
 
@@ -12721,25 +12804,39 @@ var IRMAIL = (function () {
       return { ok: false, error: String(e && e.message || e) };
     }
 
-    var msgs = [];
-    for (var t = 0; t < threads.length; t++) {
-      var inThread = threads[t].getMessages();
-      for (var i = 0; i < inThread.length; i++) {
-        if (subjectMatches_(inThread[i].getSubject(), c.subject)) msgs.push(inThread[i]);
-      }
-    }
-    msgs.sort(function (a, b) { return a.getDate().getTime() - b.getDate().getTime(); });
-
     var order = readSeen_(), seen = {};
     for (var k = 0; k < order.length; k++) seen[order[k]] = true;
 
-    var out = { ok: true, published: [], alreadyDone: 0, ignored: [], failed: [] };
+    var fresh = [], matched = 0;
+    for (var t = 0; t < threads.length; t++) {
+      var inThread = threads[t].getMessages();
+      for (var i = 0; i < inThread.length; i++) {
+        var m = inThread[i];
+        if (!subjectMatches_(m.getSubject(), c.subject)) continue;
+        matched++;
+        if (!seen[m.getId()]) fresh.push(m);
+      }
+    }
 
-    for (var n = 0; n < msgs.length; n++) {
-      var msg = msgs[n], id = msg.getId();
-      if (seen[id]) { out.alreadyDone++; continue; }
+    /* THE ORDINARY HOUR, AND THE POINT OF THE ID LIST. Nothing new means
+       nothing happens: no folder opened, no file written, no property
+       touched. A mail that has already been published is never pulled again,
+       however many times this fires. */
+    if (!fresh.length) {
+      APP_log('info', 'IRMAIL.run', 'no new mail — nothing to do',
+              { ms: Date.now() - t0, matched: matched, alreadyDone: matched });
+      return { ok: true, published: [], alreadyDone: matched, ignored: [], failed: [] };
+    }
 
-      var rec = null;
+    fresh.sort(function (a, b) { return a.getDate().getTime() - b.getDate().getTime(); });
+
+    var out = { ok: true, published: [], alreadyDone: matched - fresh.length,
+                ignored: [], failed: [] };
+    var changed = false;
+
+    for (var n = 0; n < fresh.length; n++) {
+      var msg = fresh[n], id = msg.getId(), rec = null;
+
       try { rec = publish_(msg, c); }
       catch (e) {
         /* NOT marked as done, on purpose: a Drive hiccup or a folder that has
@@ -12756,7 +12853,7 @@ var IRMAIL = (function () {
       /* Marked done either way from here. A mail with no PDF on it will never
          grow one, so retrying it hourly forever would log the same warning
          until somebody deleted the message. */
-      order.push(id); seen[id] = true;
+      order.push(id); changed = true;
 
       if (!rec) {
         out.ignored.push(String(msg.getSubject() || '(no subject)'));
@@ -12767,13 +12864,13 @@ var IRMAIL = (function () {
 
       out.published.push(rec);
       APP_log('info', 'IRMAIL.run', 'published', { file: rec.name, label: rec.label,
-              fileId: rec.fileId, superseded: rec.superseded, sent: rec.sent });
+              fileId: rec.fileId, replaced: rec.replaced, sent: rec.sent });
     }
 
-    writeSeen_(order);
+    if (changed) writeSeen_(order);
 
     APP_log(out.failed.length ? 'error' : 'info', 'IRMAIL.run', 'done',
-            { ms: Date.now() - t0, matched: msgs.length, published: out.published.length,
+            { ms: Date.now() - t0, matched: matched, published: out.published.length,
               alreadyDone: out.alreadyDone, ignored: out.ignored.length,
               failed: out.failed.length,
               detail: out.failed.length ? out.failed.join(' | ') : '' });
@@ -12781,7 +12878,7 @@ var IRMAIL = (function () {
   }
 
   /* What the next check would see, for a look from the editor. Reads only:
-     it publishes nothing, files nothing and marks nothing. */
+     it publishes nothing, files nothing, trashes nothing and marks nothing. */
   function status() {
     var c = cfg_(), q = query();
     var out = { query: q, folder: '', showing: IR.getSettings(), published: 0, pending: [] };
@@ -12801,12 +12898,14 @@ var IRMAIL = (function () {
         var m = inThread[i];
         if (!subjectMatches_(m.getSubject(), c.subject)) continue;
         if (seen[m.getId()]) continue;
+        var p = periodFromSubject_(m.getSubject(), c.subject, m.getDate());
         out.pending.push({
           subject: String(m.getSubject() || ''),
           sent:    stamp_(m.getDate(), 'yyyy-MM-dd HH:mm'),
           from:    String(m.getFrom() || ''),
-          wouldBe: c.labelPrefix + (monthFromSubject_(m.getSubject(), c.subject) ||
-                                    MONTHS[m.getDate().getMonth()] + ' (guessed from the send date)'),
+          wouldBe: c.labelPrefix + code_(p) +
+                   (p.guessed === 'all'  ? '  (month GUESSED — the one before the send date)' :
+                    p.guessed === 'year' ? '  (year guessed from the send date)' : ''),
           hasPdf:  !!pdfOf_(m)
         });
       }
@@ -13053,10 +13152,13 @@ function qlikSyncNow(scope) {
  * ever have.
  *
  * It looks for the report mail, files the PDF it carries into
- * APP_CONFIG.INVENTORY_MAIL.FOLDER_ID, names it for the month the subject
- * names, and writes it into the Inventory Report's source setting. A message it
- * has already published is skipped on its id, so an hour where nothing arrived
- * costs one Gmail search and nothing else.
+ * APP_CONFIG.INVENTORY_MAIL.FOLDER_ID, names it for the period the subject
+ * names ("Inventory Report - Jul, 2026.pdf"), and writes it into the Inventory
+ * Report's source setting. A month's second report REPLACES its first: the
+ * folder holds one file per month, and the copy that goes is trashed rather
+ * than deleted. A message it has already published is skipped on its id, so an
+ * hour where nothing arrived costs one Gmail search and NOTHING else — no
+ * folder opened, no property written.
  *
  * Run inventoryReportMailStatus() from the editor first. It runs the same
  * search and reports what the check WOULD do — the query, the folder it can
@@ -13067,8 +13169,8 @@ function qlikSyncNow(scope) {
  * The first firing publishes everything inside WINDOW_DAYS that has not been
  * seen before, oldest first. That is one or two months of report mail on a
  * mailbox that has been receiving them, and the page lands on the newest — the
- * older ones are filed and superseded on the way past, which is tidy rather
- * than wrong.
+ * older ones are filed on the way past, one file per month, which is tidy
+ * rather than wrong.
  * ======================================================================== */
 function inventoryReportMailCheck()  { return IRMAIL.run(); }
 

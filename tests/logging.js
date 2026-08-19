@@ -189,6 +189,10 @@ const NOT_ROWS = {
      the data is corrected and the report re-sent, and the search window caps
      it well below that — a line per message IS the account of the run. */
   'IRMAIL.run':             'the unpublished report mails — normally none, at most a few',
+  /* The previous copies of ONE month, which is zero or one of them, and the
+     line only fires for a copy that will not trash — the one case that leaves
+     the folder holding two files for a month. */
+  'IRMAIL.clearMonth':      "one month's previous copies, and only when one will not trash",
 };
 const inLoop = [];
 LINES.forEach((l, i) => {

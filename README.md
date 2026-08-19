@@ -378,19 +378,33 @@ before it files the PDF attachment into `FOLDER_ID` and calls **`IR.saveSource` 
 call the page's modal makes**, which is why there is no second setting anywhere and why a
 hand-set source and an auto-set one are indistinguishable.
 
-Four things about it are decisions, not details:
+Five things about it are decisions, not details:
 
-- **The month comes off the subject, never off the calendar.** June's report is mailed at the
-  end of June, early in July, or weeks later if it is re-issued — so `new Date()` would label
-  it "July" exactly when it mattered. This is §7's rule about naming a period, in a different
-  costume. The received month is the fallback and it warns when it is used. The heading is
-  `LABEL_PREFIX` + the month with **no year**: `Inventory Report - June`.
-- **More than one mail a month is normal**, not an error — the data gets corrected and the
-  report re-sent. Messages are published oldest first so the page settles on the newest.
-- **Nothing is overwritten and nothing is deleted.** The clean name always points at the
-  newest copy, because that is what somebody opening the folder will click; the copy it
-  replaced is renamed `… (superseded <date>).pdf` and kept. Two files with one name is worse
-  than either keeping or losing the old one, and Drive would allow it.
+- **An hour with no new mail does nothing at all.** No folder opened, no file written, no
+  property touched — the Gmail search is the entire cost, and that is most hours. "New" is by
+  Gmail message id, so a mail that has already been published is never pulled again however
+  many times the trigger fires, and whether or not its PDF is still in the folder.
+- **The period comes off the subject, never off the calendar.** July's report is mailed at the
+  end of July, in August, or weeks later if it is re-issued — so `new Date()` would label it
+  with the wrong month exactly when a late report made the label worth having. This is §7's
+  rule about naming a period, in a different costume. `MMM, YYYY`, so
+  `Inventory Report - Jul, 2026` is both the heading and the filename: three letters, a comma
+  and the four-digit year. A four-digit number only counts as a year between **2005 and 2100**,
+  which is what stops `Report - Jul, 1200 tonnes` publishing as "Jul, 1200".
+- **The fallback is the month *before* the send date, not the month of it.** A report is
+  published after the period it covers, so a mail with no month in its subject landing in
+  August is August's mail about July. It rolls the year back with it — a January mail falls
+  back to *December of the previous year*, and getting that wrong is a heading twelve months
+  out, once a year. It is still a guess and it warns. A subject that names a month but no year
+  gets the send date's year, unless that would put the report in the future ("Dec" arriving in
+  January is *last* December).
+- **One file per month in the folder, and more than one mail a month is normal** — the data
+  gets corrected and the report re-sent. Each new copy for a period replaces the one before
+  it: the newest is filed, the page is pointed at it, **and only then** is the previous copy
+  trashed. That order is the safety of it — trash-first leaves the page pointing into the bin
+  for as long as it takes the save to fail. Trashed, never deleted: it is recoverable in
+  Drive's bin, and it is matched on *that period's* name, so the other months — the archive —
+  are never touched.
 - **It never writes to the mailbox.** Which messages are done is a Script Property
   (`INVENTORY_REPORT_MAIL_SEEN`, the last 300 ids), not a Gmail label — which is what keeps
   the grant at `gmail.readonly`. A message that fails on the Drive side is *not* marked, so it
@@ -1029,6 +1043,7 @@ or was forgotten.**
 | 2026-08-19 | **The `~qliksync temp` sheet is contained, and its strays are swept.** A Drive copy made with no parent inherits the folder it lands in, so it was being born into the shared folder the export sits in. It is created in the script account's own Drive root now and has every non-owner permission stripped before it is read; nothing in the codebase creates a Drive permission, which is the only call that emails anybody. **The exports are `.xls` and cannot be anything else, so a copy is made on every sync** — which turns the one case `finally` cannot cover, Apps Script killing the execution at the runtime limit, from a one-off into a leak. `sweepTemps_` clears it, guarded on the prefix, the mime type and an hour's age | ✅ |
 | 2026-08-19 | **`gsparity.js` and `modparity.js` deleted**, on the rule their own headers gave: a legitimate change landed inside a moved region of both files, so neither is a copy of anything and the gates could only be weakened, never passed. `script.gs` and `app.html` also lost every reference to `README.md`, `PLAN.md`, `tests/` and chunk numbers — they explain themselves and each other now, and nothing outside | ✅ |
 | 2026-08-19 | **The Inventory Report publishes itself.** A second hourly trigger (`inventoryReportMailCheck`) watches the mailbox for the Qlik Sense report mail, files its PDF into the Drive folder and calls the same `IR.saveSource` the modal calls — so there is still exactly one setting. **The month is read off the subject, never off the calendar**: June's report is mailed in July as often as not, and stamping `new Date()` on it would mislabel it precisely when a late report made it matter. Old copies are superseded by rename, never overwritten or trashed. The grant is `gmail.readonly` because the "already published" list is a Script Property rather than a Gmail label | ✅ |
+| 2026-08-19 | **The mail watch, second pass.** The folder keeps **one file per month** now — a re-issue replaces its predecessor rather than superseding it by rename, filed and pointed at before the old copy is trashed, and trashed rather than deleted. The heading and the filename are `MMM, YYYY` (`Inventory Report - Jul, 2026`), with a 2005–2100 floor so a four-digit figure in a subject cannot be read as a year. **The no-month fallback is the month BEFORE the send date**, year rolled back with it — a report is published after the period it covers, so a January mail with a bare subject means last December | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |
