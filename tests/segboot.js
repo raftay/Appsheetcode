@@ -50,7 +50,8 @@ function browserPath() {
   return null;
 }
 
-const read = f => fs.readFileSync(path.join(REPO, f), 'utf8');
+/* app.html off disk, the deleted legacy files out of git — see apphtml.js. */
+const read = require('./apphtml.js').source;
 /* resolve <?!= include('X') ?> the way Apps Script does, then drop the rest */
 function expand(src, depth) {
   return src.replace(/<\?!?=\s*include\('([^']+)'\)\s*\?>/g,

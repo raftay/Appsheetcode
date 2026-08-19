@@ -21,7 +21,10 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 
-const SRC = path.resolve(__dirname, '..', 'FSC_Backend.gs');
+const { region, attach } = require('./scriptgs.js');
+/* Was FSC_Backend.gs; it is script.gs §6 now, sliced back out by scriptgs.js so
+   this harness runs the code that actually runs. */
+const SRC = region('FSC_Backend.gs');
 
 /* ---- the tab, as the sheet really lays it out ---------------------------- */
 const HEADER = ['LOOKUP KEY', 'Plant', 'Year', 'Month', '2026 Volume', '2025 Volume',
@@ -74,8 +77,14 @@ function load(cpi) {
   ctx.APP_cacheGet_ = function(k){ return Object.prototype.hasOwnProperty.call(ctx.__cache, k)
     ? JSON.parse(ctx.__cache[k]) : null; };
   ctx.APP_cachePut_ = function(k, v){ ctx.__cache[k] = JSON.stringify(v); };
+  /* APP_log lives in §2 and this harness loads only §6's FSC region. Apps Script
+     puts every .gs in ONE global scope, so the helper really is reachable from
+     here at run time — chunk 18 added a log line to getFscData and this harness
+     died on "APP_log is not defined", which reads like a broken build and is a
+     missing global. attach() records the calls on ctx.__log. */
+  attach(ctx);
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(SRC, 'utf8'), ctx, { filename: 'FSC_Backend.gs' });
+  vm.runInContext(SRC, ctx, { filename: 'script.gs (FSC_Backend.gs)' });
   return ctx;
 }
 

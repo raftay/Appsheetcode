@@ -17,6 +17,7 @@
  *   node tests/pvlookup.js
  */
 const fs = require('fs'), vm = require('vm'), path = require('path');
+const { region, load: loadRegions } = require('./scriptgs.js');   // this file has its own load()
 const REPO = path.resolve(__dirname, '..');
 
 let fails = 0;
@@ -134,10 +135,9 @@ function load() {
   };
   ctx.global = ctx;
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(`${REPO}/Config.gs`, 'utf8'), ctx);
+  loadRegions(ctx, 'Config.gs');
   ctx.APP_openSpreadsheet_ = () => book;
-  vm.runInContext(fs.readFileSync(`${REPO}/PV_Backend.gs`, 'utf8'), ctx);
-  vm.runInContext(fs.readFileSync(`${REPO}/PV_Lookup.gs`, 'utf8'), ctx);
+  loadRegions(ctx, 'PV_Backend.gs', 'PV_Lookup.gs');
   return ctx;
 }
 
@@ -210,7 +210,10 @@ console.log('\nthere is one tab reader, and PV_Lookup uses it:');
   checkThat('...along with the names it scores against',
     Array.isArray(ctx.PV.RAW_HEADER_NAMES) && ctx.PV.RAW_HEADER_NAMES.length > 8);
 
-  const src = fs.readFileSync(`${REPO}/PV_Lookup.gs`, 'utf8');
+  /* The REGION, not the whole of script.gs: run against all eleven sections these
+     two negative regexes would match on any backend that happens to slice a
+     header off, and this check would pass while PV_Lookup regressed. */
+  const src = region('PV_Lookup.gs');
   checkThat('PV_Lookup keeps no header-row rule of its own',
     !/values\[0\]\s*\|\|\s*\[\]/.test(src) && !/\.slice\(1\)/.test(src),
     'a local "header is row 1" reader is back in PV_Lookup.gs');
@@ -226,6 +229,42 @@ console.log('\nthere is one tab reader, and PV_Lookup uses it:');
   checkThat('the mapping check adds no second copy of the raw tab',
     keysAfterPV.length > 0 && keysAfterPV.length === keysAfterBoth.length,
     `${keysAfterPV.length} key(s) after PV, ${keysAfterBoth.length} after both`);
+}
+
+/* ======================================================================
+ * 5. One schema token, and the check's own key carries it  (chunk 21)
+ * ======================================================================
+ * PV's key always mixed in SCHEMA_ and this file's never did, so bumping the
+ * schema stranded every Price & Volume table and left the mapping check
+ * serving a result computed from rows of the OLD shape — a stale answer that
+ * looks exactly like a correct one.
+ *
+ * Asserted here as well as in helpers.js, and the two are not the same claim.
+ * helpers.js reads the source: `PV.SCHEMA` appears in the key builder. This
+ * RUNS it, which is the half that can actually break — the read crosses an
+ * IIFE boundary, so a schema that is private, misspelled or not yet defined
+ * throws where the harness can see it instead of at a month end.
+ * ==================================================================== */
+console.log('\nthe mapping check is keyed on the same schema as the tables it reads:');
+{
+  const ctx = load();
+  const schema = ctx.PV.SCHEMA;
+  checkThat('PV exports the schema token', typeof schema === 'string' && schema.length > 0, schema);
+
+  ctx.getPvUnmapped({ force: true });
+  const mine = Object.keys(ctx._cache).filter(k => /lookupcheck/.test(k));
+  checkThat('the mapping check wrote an entry at all', mine.length > 0,
+    Object.keys(ctx._cache).join(', '));
+  checkThat('...and its key carries the schema',
+    mine.every(k => k.indexOf('|' + schema + '|') !== -1),
+    mine.join(', ') + '  (schema ' + JSON.stringify(schema) + ')');
+
+  /* The other direction, which is the one that made this a bug: PV's tables
+     and this check must move together, so both keys carry the same token. */
+  const tabs = Object.keys(ctx._cache).filter(k => /tab:/.test(k));
+  checkThat('the tables it is computed from carry the same one',
+    tabs.length > 0 && tabs.every(k => k.indexOf('|' + schema + '|') !== -1),
+    tabs.join(', '));
 }
 
 console.log(fails ? `\n${fails} failing check(s)` : '\nall checks passed');

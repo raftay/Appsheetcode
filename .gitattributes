@@ -1,0 +1,20 @@
+# THE REPO IS MIXED, AND THE THREE PROJECT FILES ARE NOT.
+#
+# script.gs and app.html are LF throughout and must stay that way. The 37 files
+# they were merged from were mixed THREE ways — most .html were CRLF, Code.gs
+# was LF, and two .gs carried a lone CR as a line terminator — and every tool
+# that has ever anchored on a spelled-out line ending in this repo has broken.
+#
+# `text eol=lf` makes git write LF into the working tree on every platform, so
+# an editor on Windows cannot quietly convert them back on the next save. This
+# is the mechanical form of a rule that was previously only written down.
+
+script.gs        text eol=lf
+app.html         text eol=lf
+appsscript.json  text eol=lf
+
+# Everything else keeps whatever it has: the harnesses read deleted files out
+# of git and normalise line endings themselves, and re-encoding history would
+# change what they compare against.
+*.md             text
+tests/*.js       text

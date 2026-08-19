@@ -22,6 +22,7 @@ try {
   process.exit(2);
 }
 const REPO = require('path').resolve(__dirname, '..');
+const { module: mod } = require('./apphtml.js');
 
 function scriptOf(f) {
   return (fs.readFileSync(`${REPO}/${f}`, 'utf8').match(/<script>([\s\S]*?)<\/script>/g) || [])
@@ -111,7 +112,7 @@ win.Chart = function(ctx, cfg){
 };
 
 vm.createContext(win);
-vm.runInContext(scriptOf('Deck_Sources.html'), win);
+vm.runInContext(mod('AmrDeckSource'), win);
 /* The real AmrKpi lives in KpiShared.html, which this harness does not load —
    the deck modules only ever touch this handful of it. Mirror the shape,
    including the two-workbook split: Manitoba and Saskatchewan read the 'mbsk'
@@ -149,10 +150,10 @@ Object.defineProperty(win, 'localStorage', { configurable:true, writable:true,
   value: (function(){ var m={}; return {
     getItem:k=>(k in m?m[k]:null), setItem:(k,v)=>{m[k]=String(v);},
     removeItem:k=>{delete m[k];} }; })() });
-vm.runInContext(scriptOf('Deck_Fuel.html'), win);
-vm.runInContext(scriptOf('Deck_PV.html'), win);
-vm.runInContext(scriptOf('Deck_SEG.html'), win);
-vm.runInContext(scriptOf('Deck_RMX.html'), win);
+vm.runInContext(mod('AmrFuelExec'), win);
+vm.runInContext(mod('AmrPvSlide'), win);
+vm.runInContext(mod('AmrSegSlide'), win);
+vm.runInContext(mod('AmrRmxSlide'), win);
 
 const R = win.AmrDeckSource;
 console.log('registered sources:', R.list().join(', '));

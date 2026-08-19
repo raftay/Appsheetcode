@@ -1,14 +1,25 @@
 # Amrize Commercial Suite
 
 A single Google Apps Script web app serving Central Canada commercial reporting for
-Aggregates (AGG) and Ready-Mix Concrete (RMX). It reads QlikView exports that have been
-landed into Google Sheets and renders interactive dashboards, editable executive tables,
-and slide-ready PNG exports.
+Aggregates (AGG) and Ready-Mix Concrete (RMX). It reads QlikView exports landed into Google
+Sheets and renders interactive dashboards, editable executive tables, slide-ready PNG
+exports, and a monthly Google Slides deck.
 
-This repository is a flat mirror of the Apps Script project. Every `.gs` and `.html` file
-here is one file in the script editor — there are no folders, no build step, and no
-package manager. Push the contents of this repo into the Apps Script project (or paste
-file by file) and it runs.
+**The script project is three files: `script.gs`, `app.html` and `appsscript.json`.** No
+folders, no build step, no package manager — paste those three into the script editor and it
+runs. `tests/` is Node-only and is **not** part of the project; `tests/threefiles.js` proves
+the claim by running the whole application out of a directory holding only those three.
+
+Navigate both merged files by section banner rather than by scrolling: `Ctrl+F` for `§7` in
+`script.gs`, `§P rmx` in `app.html`. Each region also carries the name of the file it was
+merged from as a locator (`/* ---- RMX_Backend.gs ----`), which is what the commit history
+refers to.
+
+> **`script.gs` must not be renamed back to `app.gs`.** Apps Script keys a file by its name
+> *without* the extension, so `app.gs` and `app.html` are both the file `app`: the project
+> cannot hold both, the editor refuses the second, `clasp push` is rejected, and
+> `HtmlService.createTemplateFromFile('app')` — the call `doGet` depends on — stops being
+> unambiguous.
 
 ---
 
@@ -22,183 +33,232 @@ file by file) and it runs.
 5. [Data sources and configuration](#5-data-sources-and-configuration)
 6. [Caching model](#6-caching-model)
 7. [Domain rules that must not drift](#7-domain-rules-that-must-not-drift)
-8. [Next major project — Deck Builder](#8-next-major-project--deck-builder)
-9. [Working conventions](#9-working-conventions)
-10. [Session log](#10-session-log)
+8. [The Deck Builder](#8-the-deck-builder)
+9. [Deleting things, and what must not be deleted](#9-deleting-things-and-what-must-not-be-deleted)
+10. [Working conventions](#10-working-conventions)
+11. [Session log](#11-session-log)
 
 ---
 
 ## Working on this repo — read first
 
-**Commit straight to `main`. Do not open pull requests.** Everything in this repo goes to
-`main` directly; a PR just adds a review step nobody is waiting on and leaves branches to
-clean up. If you are an agent picking this up: check out `main`, commit there, push there.
+> **Agents: this file is the whole brief. Read it at the start of every session.** Several
+> agents work here from different accounts with no shared memory, so this is the only context
+> they have in common. It used to be split three ways: `PLAN.md` carried the 37-file merge and
+> the evidence behind every rule, `CLAUDE.md` a summary of both. That merge is finished, so
+> `PLAN.md`'s durable half is here and its per-chunk narrative is in the git history, where it
+> belongs; `CLAUDE.md` is now a short pointer to this file rather than a second copy of it.
+> **Three documents describing one codebase is how the three of them drift apart**, and that
+> has already cost this repo real bugs — a `NOT USED` banner on live code, counts that had
+> moved, a documented object that never existed. One document, checked against the code.
 
-Two things that will bite you if you skip them:
+**All work happens on `merging-files`.** Never `main`, and no pull requests for it — the
+branch is the review surface. `git pull` before you start; another agent may have moved it.
+One commit per piece of work, so any of it can be reviewed or reverted on its own.
 
-- **Preserve CRLF line endings** in every `.gs` and `.html` file. Scripted edits must open
-  files with `newline=''` and write `\r\n`, or the whole file shows as changed.
-- **Run the harnesses in `tests/` before and after touching a report page.** They are the
-  only way to prove an extraction did not change what a page renders — see `tests/README.md`.
+**Leave the next agent a usable state.** Anything you learned that the next person would
+otherwise rediscover goes in *this file*, not in a commit message — nobody reads commit
+messages before starting. A half-finished job with no note beside it is the single most
+expensive thing you can leave behind.
+
+Four things that will bite you:
+
+- **`script.gs` and `app.html` are LF throughout — keep them that way.** The files they were
+  merged from were mixed three ways (most `.html` CRLF, `Code.gs` LF, and two `.gs` carried a
+  lone `\r` as a line terminator), and three harnesses still read them out of git. A scripted
+  edit that touches historical text must open with `newline=''`. `.gitattributes` pins the
+  three project files.
+- **Most of this cannot be tested off-platform.** Anything touching `SlidesApp`, `DriveApp`,
+  `CacheService` or a spreadsheet needs the live deployment. What *can* be checked is the
+  client-side compute and render layer — that is what `tests/` is for. Run the relevant
+  harnesses before and after touching a page; see `tests/README.md`.
+- **`node --check` does not accept `.gs`.** Copy to a `.js` path first.
+- **Nothing gets deleted on a hunch.** Every removal needs a repo-wide grep proving zero live
+  references, logged in §11 with what proved it. Several things that look dead are
+  load-bearing and several that look live are not — [§9](#9-deleting-things-and-what-must-not-be-deleted)
+  is the list and the proof rule.
+
+**Verify this document against the code before relying on it.** Repeated audits have each
+found real errors — stale identifiers, a documented object that never existed, counts that
+had drifted. If this file and the code disagree, the code wins; then fix this file.
 
 ---
 
 ## 1. How it runs
 
-**Not bound to a spreadsheet.** The project is a standalone script. Each page opens its
-own Google Sheet by ID, resolved at call time through `APP_openSpreadsheet_(page)` in
-`Config.gs`. IDs are set in code and can be overridden per page at runtime from the ⚙
-Settings modal (stored in Script Properties, so an override is shared by everyone).
+**Not bound to a spreadsheet.** The project is a standalone web app. Each page opens its own
+Google Sheet by id, resolved at call time — so one deployment serves workbooks that have no
+relationship to each other.
 
-**One deployment, many pages.** `doGet(e)` in `Code.gs` maps `?page=` to an HTML file and
-renders it through `HtmlService.createTemplateFromFile`, injecting `appUrl` so pages can
-link to each other without hard-coding the deployment URL.
+`doGet(e)` validates `?page=` against `APP_PAGES` and serves `app.html`, which mounts one
+`<template>` into `#appRoot`. An unknown page name serves the landing page rather than
+mounting nothing, and logs a warning. The ten route names are unchanged from the nine-file
+era, so old bookmarks still work.
 
-**Two deployments exist.** The main one executes as the owner. `?page=tp01` is served from
-a second deployment set to *Execute as: User accessing the web app*, so outgoing mail is
-sent as the person using the tool and each person keeps their own recipient list in User
-Properties. The Deck Builder will need the same execute-as-user deployment, so generated
-decks belong to whoever pressed the button.
+`appsscript.json` pins `executeAs: USER_DEPLOYING` — everything runs as the deploying
+account, which is also why `getUserProperties()` is effectively one shared store and why
+TP01's market → email map is a single list.
 
-**Scopes in use:** Sheets, Drive (KPI workbook folder, QlikView export folders, inventory
-PDF), Gmail (TP01 only). Slides will be added for the Deck Builder.
+**Its `oauthScopes` array replaces Apps Script's automatic scope detection.** Add a service,
+add its scope by hand — nothing warns you, the call just throws for every user.
+`APP_verifyPermissions()` (`script.gs` §4) catches it in one editor run, reporting one line
+per service rather than dying on the first failure, so a missing grant cannot hide the other
+six. Each of the seven scopes was traced to a real call:
+
+| Scope | What needs it |
+|---|---|
+| `auth/spreadsheets` | `SpreadsheetApp.openById` — the project is not bound to a sheet, so the narrower current-document scope is no use |
+| `auth/drive` | `DriveApp` get/create **and** the Drive v3 REST `files/copy` in §5 that converts a QlikView export. Full `drive`, not `drive.file`: the files were not created by this script |
+| `auth/presentations` | `SlidesApp.openById` — the Deck Builder |
+| `auth/script.send_mail` | `MailApp.sendEmail` — TP01. Note this is the narrow "send mail as you" grant, **not** a Gmail scope; nothing in the suite touches `GmailApp` or reads a mailbox |
+| `auth/script.external_request` | `UrlFetchApp` — the logo, and the Drive REST call above |
+| `auth/script.scriptapp` | `ScriptApp.getService().getUrl()`, which every page link is built from. Included deliberately even though it may be reachable without it: if that URL comes back empty every link goes **relative**, and a relative href inside the Apps Script sandbox iframe resolves against `googleusercontent.com`, navigating the user off the app. That shipped once |
+| `auth/userinfo.email` | `Session.getActiveUser().getEmail()` — who archived a KPI workbook, and the check's own report |
+
+`CacheService`, `PropertiesService`, `LockService`, `Utilities` and `HtmlService` need no
+scope. They are still checked and reported as `(none needed)` — a service that needs nothing
+is a different fact from a service nobody remembered. `script.gs` §4's `CHECKS` array holds
+the service → scope mapping in code beside the probe that proves it, so the table above and
+the manifest cannot quietly drift apart.
 
 ---
 
 ## 2. Pages and routes
 
-| `?page=` | HTML file | Backend | Reads from |
-|---|---|---|---|
-| *(none)* | `Landing.html` | — | — |
-| `overview` | `Page_Overview.html` | `Ov_Backend.gs` | no sheet of its own — reuses PV / RMX / Segment + history books |
-| `pricevolume` | `Page_PriceVolume.html` | `PV_Backend.gs`, `PV_Lookup.gs` | `PAGES.pricevolume` |
-| `rmx` | `Page_Rmx.html` | `RMX_Backend.gs`, `RMX_Suggest.gs` | `PAGES.rmx` |
-| `segment` | `Page_Segment.html` | `RMX_Backend.gs` (`RMX_getSlideTables`) | `PAGES.rmx` |
-| `fuelsurcharge` | `Page_FuelSurcharge.html` | `FSC_Backend.gs`, `Sask_Backend.gs` | `PAGES.pricevolume` + `PAGES.saskrates` |
-| `rmxfuel` | `Page_RmxFuel.html` | `RFSC_Backend.gs` | `PAGES.rmx` |
-| `tp01` | `Page_TP01.html` | `TP01_Backend.gs` | `PAGES.pricevolume` |
-| `inventoryreport` | `Page_InventoryReport.html` | `IR_Backend.gs` | a Drive PDF (file ID in Script Properties) |
-| `deckbuilder` | `Page_DeckBuilder.html` | `Deck_Backend.gs`, `Deck_Recipe.gs` | the other pages |
+Ten pages, one `<template>` and one `AMR.page()` registration each.
 
-> The Deck Builder runs, and 23 of the 43 recipe rows build end to end (Fuel Recovery, AGG
-> Price & Volume, Top 10 Customers). The `seg` and `rmx` adapters are Phase 4. See
-> [§8](#8-next-major-project--deck-builder).
+| Route | Page | Reads |
+|---|---|---|
+| `landing` | The suite home | nothing |
+| `overview` | Executive Overview | all three, read-only |
+| `pricevolume` | AGG Price & Volume | Price & Volume workbook |
+| `rmx` | Ready-Mix | Ready-Mix workbook |
+| `segment` | RMX Product Segment (Slide Builder) | Slide Builder workbook |
+| `fuelsurcharge` | AGG Fuel Recovery | Price & Volume workbook (`readsFrom`) |
+| `rmxfuel` | RMX Fuel Recovery | Ready-Mix workbook |
+| `tp01` | Transfer Price Tool | uploaded file + mail |
+| `inventoryreport` | Inventory Report viewer | a Drive PDF |
+| `deckbuilder` | Deck Builder | the recipe + every page's content |
 
-Three pages have **no sheet of their own** and read another page's: `fuelsurcharge` reads
-Price & Volume (`readsFrom: 'pricevolume'`), `rmxfuel` reads the Ready-Mix workbook, and
-`segment` reads the Ready-Mix workbook too. `APP_EXTRA_SOURCES` in `Config.gs` is what
-makes those borrowed sheets appear and be editable in each page's ⚙ panel.
+**Three lists must name the same ten pages** — `APP_PAGES` (`script.gs` §3), `AMR_PAGES`
+(`app.html` §D) and the `§P` templates. `tests/merge.js` check 10 is what holds them
+together, and `tests/pageswitch.js` proves switching between them leaves nothing behind.
 
 ---
 
 ## 3. File map
 
-### Server (`.gs`) — one shared global namespace
+### Server — `script.gs`, one file, one shared global scope
 
-Apps Script evaluates every `.gs` file into **one** global scope; the last writer wins.
-Entry points are therefore uniquely prefixed (`RMX_`, `PV`, `DECK_`, `TP_`, `IR`) and
-namespace objects are captured at evaluation time.
+Apps Script evaluates every `.gs` in a project into **one** global scope, which is why there
+is now only one file: whichever copy is evaluated last wins, silently, and the project's
+internal file order is not something this repo controls. Entry points are prefixed (`RMX_`,
+`PV`, `DECK_`, `TP_`, `IR`, `APP_`) and everything real lives inside a namespace IIFE.
 
-| File | Lines | Role |
-|---|---|---|
-| `Code.gs` | 339 | Router (`doGet`), `include()`, `getLogo()`, data-generation helpers, chunked cache helpers, `syncAll()`, and the `SB` Slide-Builder sheet reader |
-| `Config.gs` | 510 | `APP_CONFIG` — every sheet ID, tab name, market list, cube constants — plus the Settings API |
-| `PV_Backend.gs` | 1393 | AGG Price & Volume aggregation |
-| `PV_Lookup.gs` | 334 | REGION LOOKUP mapping-check for Price & Volume |
-| `RMX_Backend.gs` | 1901 | Ready-Mix PPI/ASP engine; also serves the Segment page via `RMX_getSlideTables`. **`RMX_prepare` is the one pull** — see [§6](#6-caching-model) |
-| `RMX_Suggest.gs` | 575 | Lookup-miss suggestions (PRODUCT MASTER / CUSTOM FLAG / EXTRAS), three independent models |
-| `Ov_Backend.gs` | 1453 | Executive Overview aggregator + the closed-year history cube |
-| `FSC_Backend.gs` | 581 | AGG fuel recovery |
-| `RFSC_Backend.gs` | 898 | RMX fuel recovery |
-| `Sask_Backend.gs` | 240 | Saskatchewan per-customer mid-year price increase (read + name matching only) |
-| `Kpi_Backend.gs` | 181 | Shared EBITDA KPI workbook values in a Drive folder |
-| `QlikSync.gs` | 1066 | Pulls QlikView exports out of Drive and replaces sheet tabs; scheduled triggers |
-| `TP01_Backend.gs` | 72 | Transfer Price — per-market email send, recipients in User Properties |
-| `IR_Backend.gs` | 76 | Inventory Report — stores/derives a Drive PDF file ID (never touches DriveApp) |
-| `Deck_Backend.gs` | 714 | Deck Builder server plumbing: template geometry, create/addSlide/finish/status, validator. See §8 |
-| `Deck_Recipe.gs` | 208 | **Config, not code** — which 43 slides the deck contains, in order, plus `DECK_getRecipe()` which checks them |
+| § | Holds |
+|---|---|
+| §1 | **CONFIG** — `APP_CONFIG`, `OVERVIEW`, `DECK_CONFIG`, `DECK_RECIPE`, `APP_EXTRA_SOURCES`, the Settings API. First on purpose; its banner is the map of every constant worth changing |
+| §2 | **LOGGING** — `APP_log`, the `LOG_LEVEL` switch, and the silent-catch census |
+| §3 | **ROUTER + PLUMBING** — `doGet`, `getLogo`, the data-generation stamps, the chunked cache, the SB reader, and the **period helpers** (`APP_period_`, `APP_yearCols_`, `APP_periodMap_`) every header read goes through |
+| §4 | **PERMISSIONS** — `APP_verifyPermissions()`. Read before adding a service |
+| §5 | **SYNC** — the QlikView → Sheets engine |
+| §6 | **AGG** — Price & Volume, its mapping check, AGG Fuel Recovery, Saskatchewan rates |
+| §7 | **RMX** — Ready-Mix, its lookup suggester, RMX Fuel Recovery |
+| §8 | **OVERVIEW** — the executive Overview and the month cube |
+| §9 | **DECK** — the Slides template reader, the deck writer, the recipe checker |
+| §10 | **SMALL PAGES** — KPI workbooks, TP01 mail, Inventory Report |
+| §11 | **TRIGGERS** — everything reached from outside the repo |
 
-### Client (`.html`)
+### Client — `app.html`, one file
 
-Shared partials, pulled in with `<?!= include('Name') ?>`:
+| § | Holds |
+|---|---|
+| §A1 | **TOKENS** — `:root` custom properties. The only place a colour is defined |
+| §A2 | **BASE** — reset, typography, form controls, focus |
+| §A3 | **COMPONENTS** — every block used by more than one page |
+| §A4 | **PAGE CSS** — one block per page, scoped `body[data-page="x"]` |
+| §B | **SLIDE CSS** — `.slide-bare` capture styles |
+| §C | **TUNABLES** — `AMR_TUNABLES`: the slide frame, every page's whitespace defaults. Runs before §D and §E, whose IIFEs read it while constructing |
+| §D | **RUNTIME** — the AMR core: logging, lib loader, nav, modals, the page switcher |
+| §E | **SHARED MODULES** — thirteen: `AmrTick`, `AmrCache`, `AmrKpi`, `AmrCube`, `AmrDeckSource`, `AmrPvSlide`, `AmrProgress`, `AmrBoot`, `AmrFresh`, `AmrSlide`, `AmrFuelExec`, `AmrSegSlide`, `AmrRmxSlide` |
+| §P | **PAGES** — one `<template>` + one registration per page |
 
-| File | Lines | Role |
-|---|---|---|
-| `Styles.html` | 215 | The one stylesheet — Amrize colour tokens (navy `#011E6A`), reset, every shared component. Goes in `<head>` |
-| `Shell.html` | 781 | Shared runtime: page switcher (`AMR_PAGES`), Help modal, ⚙ Settings modal, `AmrCache`, `AmrQlik`, `AmrProgress` |
-| `SlideExport.html` | 305 | `AmrSlide` — the 1600×900 slide frame, whitespace sliders, full-window viewer, html2canvas PNG export, and `captureBare` for the deck |
-| `KpiShared.html` | 373 | `AmrKpi` — upload/parse/share the EBITDA workbooks; used by three pages |
-| `Cube.html` | 622 | `AmrCube` — the month fact table in typed arrays, backed by IndexedDB |
-| `Deck_Sources.html` | 104 | `AmrDeckSource` — the content-source registry the Deck Builder asks for tables. Included **only** by the Deck Builder |
-| `Deck_Styles.html` | 152 | The slide CSS the deck's captures need — a mirror of the slide rules in each report page's own style block, every selector scoped under `.slide-bare`. Included **only** by the Deck Builder. See [§8](#the-css-the-deck-could-not-see) |
-| `Deck_Fuel.html` | 298 | `AmrFuelExec` — the Fuel Recovery exec tables, shared by **both** fuel pages and the deck. Also holds the `fsc` / `rfsc` adapters |
-| `Deck_SEG.html` | 535 | `AmrSegSlide` — RMX Product Segment slide content; holds the `seg` adapter |
-| `Deck_RMX.html` | 588 | `AmrRmxSlide` — RMX Price & Volume: the client-side compute layer, the table renderers, and the offscreen-host scrape; holds the `rmx` adapter |
-| `Deck_PV.html` | 869 | `AmrPvSlide` — the AGG Price & Volume slide content (KPI strip, dimension tables, waterfall charts) and the customer block. Shared by the PV page and the deck; holds the `pv` / `cust` adapters |
+**The settings live at the top of each file, and the top of each file says where the rest
+are.** `script.gs` §1 and `app.html` §C are the two banners to read before grepping for a
+number; both also name the constants that deliberately stayed beside the code that reads
+them.
 
-Page files: `Landing.html`, `Page_Overview.html` (5602 lines), `Page_PriceVolume.html`
-(2543), `Page_Rmx.html` (1666), `Page_Segment.html` (1381), `Page_FuelSurcharge.html`
-(1069), `Page_RmxFuel.html` (1067), `Page_TP01.html` (1097), `Page_InventoryReport.html`
-(239).
+### How ten pages live in one HTML file
 
-Third-party libraries are loaded from CDN per page: Chart.js, SheetJS (XLSX),
-html2canvas.
+Concatenating the pages breaks on two collisions. Both fixes are load-bearing and neither is
+obvious from the code alone.
+
+**Duplicate element ids.** `#syncBtn`, `#market`, `#banner` and dozens more exist on several
+pages, across ~350 `getElementById` / `querySelector` call sites. The fix is that **only one
+page's markup is ever in the document**: each page lives in a `<template id="tpl-rmx">`, and
+exactly one is cloned into `#appRoot`.
+
+`<template>` is the right container for a reason worth writing down — its contents are parsed
+into a **separate inert document fragment**, so `document.getElementById` cannot see them. Ten
+pages of markup sit in the file and only the mounted one is addressable, so every call site
+keeps working unchanged. The obvious alternative, `<script type="text/html">`, is worse here:
+the pages contain 2–7 literal closing-script tokens each, any one of which would terminate the
+block early and silently.
+
+> **Shared ids are the point, not a compromise.** 37 ids are declared by more than one page,
+> and the two fuel pages share all 21 of theirs — they are the same screen on different
+> numbers. **Where two pages do the same thing they use the same id and the same class; where
+> they differ, they differ.** RMX Fuel's single upload is `#upMain` because AGG's two are
+> `#upComb` and `#upOther`, and that is a real difference rather than a naming one. An early
+> rule forbidding shared ids outright would have forced a rename pass on nearly every page and
+> left the twins no longer diffable against each other, to buy a guarantee the mount already
+> provides.
+
+What keeps that safe is enforced rather than assumed: `AMR.start()` **empties `#appRoot`
+before mounting** and `tests/merge.js` fails if that line goes; `merge.js` checks the
+invariant that does matter — no id declared twice *inside one page's template*. **The
+switcher must replace the mounted page, never add a second beside it** — caching mounted
+pages for speed is the one implementation that breaks this, and it is ruled out. The QlikView
+guide and its FAB are appended to `<body>`, *outside* `#appRoot`, so they need their own
+teardown.
+
+**Duplicate JS globals.** Every page declared its own top-level `state`, `fmt`, `boot`,
+`render`. The fix is that **each page's JS is one IIFE that registers itself** —
+`AMR.page('rmx', { title, libs, boot })` — so everything the page declared at top level is a
+local inside it and **no page variable was renamed**. The only edits were the ~51 inline
+`on*="…"` handlers, which lose access to global scope and became `addEventListener` calls
+inside the IIFE. `merge.js` checks that no page registration leaks a global and that no page
+shadows a runtime one.
 
 ---
 
 ## 4. Shared runtime
 
-Everything below lives in `Shell.html` unless noted.
+`AMR` (§D) owns the shell: logging, the external-library loader, navigation, modals, and the
+page switcher that mounts a `<template>` into `#appRoot` instead of reloading.
 
-- **`AMR_PAGES`** — the page-switcher list. Adding a page means one line here, one line in
-  `doGet`, and (optionally) a card in `Landing.html`.
-- **`AmrCache`** — device-level report cache in `localStorage`, keyed by a data-generation
-  token. No expiry: entries stay valid until the token moves.
-- **`AmrQlik`** — the per-page ⇣ *Pull from QlikView* button, wired to `QlikSync.gs`.
-- **`AmrProgress`** — the shared progress pill.
-- **The Region memory is keyed by VIEW, in one place.** `pvKpiViewMap` in `localStorage`,
-  key = `MARKET:<market>` plus `:<refine>` when there is one. Southwest, Southwest·Land and
-  Southwest·Docks are three views of one market and each remembers its own region sheet; the
-  **period is deliberately not in the key**, so a view's MTD and YTD slides move together —
-  they read the same sheet in two places on it. `Page_PriceVolume.kpiViewKey` and
-  `Deck_PV.kpiViewKeyFor` must agree, or the deck reads a different slot from the one the
-  report page wrote. A view with nothing remembered falls back to its market's slot before
-  the first sheet on the list. Nothing may pin `spec.kpiSheet` over this map: a pin outranks
-  it and goes stale the moment the twin row is changed instead.
-- **`AmrTick`** — a timer a background tab cannot stop. `AmrTick(ms, fn)` is `setTimeout`
-  with the sleep done inside a one-line **Worker**, because a main-thread timer is clamped to
-  once a second in a hidden tab and to once a **minute** after five minutes of it.
-  `AmrTick.frames(fn)` is "after a frame or two" that still resolves when there are no
-  frames — `requestAnimationFrame` does not fire **at all** in a hidden tab, which is what
-  used to stop the Deck Builder dead on whatever slide it was rendering when somebody
-  clicked away. Both degrade to plain timers where a Worker cannot be created. Anything that
-  waits before photographing the DOM, or paces a long job, uses these rather than the
-  browser's own.
-- **`AmrKpi`** (`KpiShared.html`) — the two EBITDA workbooks, plus the on-page KPI strip:
-  `stripHtml(cards)` builds it, `fitStrip(row)` sizes it to the width it has, `stripPng`
-  photographs it from an off-screen clone for *Download KPI PNG*.
-- **`AmrCube`** (`Cube.html`) — the browser-side month fact table. Reads its column layout
-  from the server's manifest (`man.dims` / `man.vals`), never hardcoded. Persisted to
-  **IndexedDB**, not `localStorage` — the cube is a few MB and `localStorage` stores UTF-16,
-  so a 5 MB payload occupies ~10 MB and gets evicted.
-- **`AmrSlide`** (`SlideExport.html`) — builds a fixed 1600×900 slide off-screen: a header
-  with title/subtitle/logo, then the page's content node inside four adjustable blank
-  bands (left/right default 120px, top/bottom 30px). `previewInto` renders a scaled live
-  preview, `viewSlide` shows it full-window, `exportSlide` captures to PNG with
-  html2canvas.
+The thirteen §E modules are the code shared between a page and the deck. The ones worth
+knowing before touching a page:
 
-  `captureBare` waits for the layout to settle through `AmrTick.frames`, never on
-  `requestAnimationFrame` alone — see `AmrTick` above; `tests/bgrender.js` is the gate.
+- **`AmrSlide`** — the 16:9 slide frame, the whitespace sliders and every PNG export. Its
+  four frame numbers are in §C.
+- **`AmrFuelExec`** — the Fuel Recovery exec tables. Both fuel pages and the deck render from
+  this one copy, which is what makes them agree.
+- **`AmrPvSlide` / `AmrSegSlide` / `AmrRmxSlide`** — the slide content for Price & Volume,
+  Product Segment and Ready-Mix.
+- **`AmrCube`** — the month fact table, in IndexedDB. What the Overview's window mode is
+  computed from.
+- **`AmrKpi`** — the shared EBITDA workbooks and the KPI strip.
+- **`AmrDeckSource`** — the registry a page uses to offer its content to the Deck Builder.
+- **`AmrProgress` / `AmrBoot` / `AmrFresh`** — one loading screen, one boot gate, one "these
+  figures are out of date" poll.
+- **`AmrTick`** — a timer a background tab cannot throttle. A plain `setTimeout` is clamped
+  to one a second when the tab is hidden and one a *minute* after five minutes of it, which
+  is exactly how deck rendering is normally used.
 
-  Content that overflows is scaled down by a `transform` on `.slide-center`, measured on
-  `scrollHeight`. A page's own `fit(box)` callback must therefore fit by **layout**
-  (font-size), never by transform — a transform doesn't change `scrollHeight`, so the
-  content would be scaled twice.
-
-**Boot order matters.** `APP_URL` must live in its own isolated `<script>` tag *before*
-the includes. Because `Shell.html` (which defines `AmrCache`) is included *after* a page's
-main script, page boot must be deferred to `DOMContentLoaded`. `loadData()` must be called
-unconditionally, outside any `try`/`catch`.
+§E used to be byte-for-byte the files it was ported from, and `tests/modparity.js` proved it.
+That gate has retired — see §10 — so a §E module is now proved by the harnesses that run it,
+not by a comparison with a deleted file.
 
 ---
 
@@ -206,16 +266,23 @@ unconditionally, outside any `try`/`catch`.
 
 ### Where the data comes from
 
-QlikView exports (`.xlsx`) land in two Drive folders. `QlikSync.gs` opens **every** Excel
-file in the folder and identifies it by its contents, not its filename — re-exporting under
-a different name changes nothing. It writes into:
+QlikView exports land in Drive as `.xls`. The sync addresses **three of them by file id**
+(`APP_CONFIG.QLIK_SYNC`) — it does not scan a folder and does not identify a file by its
+contents. Each is converted to a temporary Google Sheet to be read, and that copy is thrown
+away afterwards.
+
+> **The filename does not matter; the file identity does.** Re-exporting *over* an existing
+> file is fine. Exporting to a *new* file — same path, same name — gives it a new id, and the
+> sync keeps reading the old one until `APP_CONFIG.QLIK_SYNC` is updated.
+
+It writes into:
 
 - **Price & Volume workbook** — `Combined Data CPI Raw`, `Combined Data CPI Other Revenue`,
   plus the typed `REGION LOOKUP` and `TOPLINE REV LOOKUP2` tabs.
 - **Ready-Mix workbook** — `Main Raw Data`, `Extra Raw Data`, `Associate Raw Data`, plus
-  the `PLANT LOOKUP`, `PRODUCT MASTER`, `EXTRAS LOOKUP`, `CUSTOM FLAG LOOKUP` tabs.
-- **Slide Builder workbook** — `Slide Segment MTD` / `Slide Segment YTD` and
-  `Slide Product <Market> MTD` / `YTD`, all pre-aggregated by QlikView.
+  `PLANT LOOKUP`, `PRODUCT MASTER`, `EXTRAS LOOKUP`, `CUSTOM FLAG LOOKUP`.
+- **Slide Builder workbook** — `Slide Segment MTD` / `YTD` and `Slide Product <Market> MTD` /
+  `YTD`, all pre-aggregated by QlikView.
 
 Alongside those: the EBITDA KPI workbooks in a shared Drive folder
 (`APP_CONFIG.KPI_FOLDER_ID`), the Saskatchewan rates sheet, the inventory PDF, and the
@@ -225,154 +292,62 @@ optional closed-year history books (`histagg`, `histrmx`, `histagg2`, `histrmx2`
 
 There is no cache counter to bump. `APP_getGen_(page)` is the **last-modified time of the
 workbook that page reads**, plus the code build stamp. Drive already tracks exactly what we
-mean, so the version moves when — and only when — the data actually changed:
+mean, so the version moves when — and only when — the data actually changed: QlikSync writes
+a raw tab, or somebody types a row into `REGION LOOKUP`. Nothing has to be told, and nobody
+has to remember to press anything.
 
-- QlikSync writes the raw tabs → moved.
-- Somebody types a row into `REGION LOOKUP`, or fixes a number by hand → moved. Nothing has
-  to be told; nobody has to remember to press anything.
-- Nothing happened → identical, and every cached table stays valid.
-
-The Drive lookup is cached for 30 seconds, so the pages' freshness check is cheap to run
-often. `APP_bumpGen_` / `bumpGeneration_` / `syncAll()` all still exist because a dozen call
-sites use them after writing to a sheet — they no longer bump anything, they just drop that
-30-second copy so the next read sees the new time. `PV_Backend` and `RMX_Backend` read the
-same stamp instead of their old `pv_cache_gen` / `cache_gen` counters.
+The Drive lookup is memoised for 30 seconds. `APP_bumpGen_` / `bumpGeneration_` / `syncAll()`
+still exist because a dozen call sites use them after writing to a sheet — they no longer
+bump anything, they just drop that 30-second copy so the next read sees the new time.
 
 ### Syncing: one trigger, and nothing else
 
-There is no ⇣ pull button. Set **one** time-driven trigger on `qlikSyncCheck`, at whatever
-interval suits — 15 minutes costs three Drive lookups when nothing has changed.
+**The sync is trigger-only by design and has no UI.** There is no pull button and one is not
+wanted — a sync is a minutes-long Drive job, not something to put behind a control a user can
+press twice. Set **one** time-driven trigger on `qlikSyncCheck`; 15 minutes costs three Drive
+lookups when nothing has changed.
 
-The three exports are named by **file id** in `APP_CONFIG.QLIK_SYNC`, one per page:
+`qlikSyncCheck` skips a source whose file has not moved since it was last synced.
+**`qlikSyncNow` deliberately does not** — somebody running it by hand is there *because* the
+sheet is wrong and the file did not move (a bad write, a header renamed in the workbook, a
+cleared cache), so the trigger's optimisation must not reach them.
 
-| file id | export | feeds |
-|---|---|---|
-| `AGG_FILE_ID` | Aggregates Margin Monitor | Price & Volume |
-| `RMX_FILE_ID` | CAN RMX Margin Monitor | Ready-Mix (main / extra / assoc) |
-| `SEG_FILE_ID` | Segment + Product | Slide Builder |
+**Columns are paired on the figure and the period, never on the literal header** — see §7. The
+sync writes data under the headers the workbook already has and never rewrites a header row,
+so a new year's column has to exist there before anything can be written into it. Until it
+does, the export's new column is reported unmatched rather than written somewhere wrong. There
+is **no positional fallback**: one existed, and it is how PY revenue was written into the
+wrong column for a whole run.
 
-Every firing compares each file's modified time with the one it last synced. Files that
-haven't moved are skipped entirely, and each is checked on its own — a re-exported
-Aggregates file costs an Aggregates sync and nothing else. An ordinary firing is three Drive
-lookups.
+### The `~qliksync temp` sheet
 
-**Run `qlikMarkCurrent()` once after setting the trigger up.** Without it the first firing has
-nothing to compare, treats all three exports as new, and syncs every one of them — minutes of
-work replacing data the sheet very likely already has. Harmless, just slow and pointless.
+Apps Script cannot read `.xls` / `.xlsx` — `SpreadsheetApp` opens a Google Sheet and nothing
+else — so Drive converts each export to a temporary one, which is read and then trashed.
+**QlikView delivers `.xls` and cannot deliver anything else, so this happens on every sync.**
+`readExport_` does skip the copy for an export that is already a Google Sheet, but that is not
+a route this pipeline can take.
 
-`qlikStamps()` shows what the next check will compare and what it will do.
+Because it happens every time, **`sweepTemps_` clears the strays**. The copy is trashed in a
+`finally`, which covers every way the read can fail except the runtime limit — Apps Script
+kills the execution and no `finally` runs. That kill is what the formula band's run-at-a-time
+batching exists to avoid, so it is not hypothetical, and one stranded copy per kill is a slow
+leak. The sweep runs inside the lock and trashes only files that carry the `~qliksync temp`
+prefix, are Google Sheets, and are **over an hour old** — so a copy another execution is
+reading can never be taken out from under it. Trashed, never permanently deleted.
 
-**The retry rule.** A run that could not happen at all — file unreadable, another sync holding
-the lock — keeps no stamp and is tried again next firing. A run that *finished* but wrote a
-bad tab keeps its stamp and logs the failure: that tab will be just as broken next time, and
-re-syncing forever neither fixes it nor tells anybody.
+**It must not be shared with anybody.** A new Drive file takes its audience from the folder it
+is created in, so a copy made with no parent lands beside the export — in whatever shared
+folder that sits in, visible to everyone with access and turning up in their Drive activity
+mail. The copy is created in the script account's own Drive root and every non-owner
+permission on it is removed before anything is read. **Nothing in the codebase creates a Drive
+permission**, which is the only call that emails a person.
 
-### What the user sees
+### Per-page sheet overrides
 
-`AmrFresh` in `Shell.html` asks every 5 minutes whether the version is still the one the page
-loaded with. When it isn't, the page greys out and offers one button that reloads it.
-
-**↻ Update from source** asks before it acts, on every page that has the button — Price &
-Volume, Ready-Mix, Segment, the Overview and both Fuel Recovery pages. If nothing behind the
-page has been touched it says *Already up to date* and throws nothing away; pressing it on an
-unchanged sheet used to make every user rebuild every table for nothing. The Deck Builder has
-no such button on purpose: it runs the same check inside Render, every time (below).
-
-**On the Deck Builder the check has more to clear.** Render does not re-read the sheets and never
-had to — every backend cache key is prefixed with the source workbook's modified time, so a
-sync strands the old entries by itself and the next Render picks up the new figures. What
-Render *does* reuse for the life of the page is what the **adapters** already fetched; that
-is the whole point of `prepare()` being cheap the second time. So a sheet that changes while
-the tab is open is invisible there, and pressing Render again will not do it either — a row
-that already has a picture is skipped. So it clears every adapter through
-`AmrDeckSource.resetAll()` and drops the rendered pictures, because they were photographed
-from figures that are now the old ones — the same reasoning as changing the report month.
-
-**And there is no button for it — it is the first half of Render.** The stages stay Plan →
-Render → Publish, and Render opens with the check every time. A deck built from figures the
-sheet replaced an hour ago is the one failure this page cannot show you: every slide builds,
-nothing goes red, and the pack is quietly last week's. A step that must never be skipped does
-not belong behind a button somebody has to remember, and a button that Render then repeats is
-one more thing to explain. The check costs one ask for the workbooks' modified time — the
-same number the caches are already keyed on — so when nothing has moved it says nothing,
-throws nothing away and renders exactly as before (`dbSourceCheck`).
-
-**The Region dropdown is answerable before any of that.** It lists the KPI workbook's region
-sheets, and that workbook was only ever fetched by `prepare()` — which runs during a render.
-So every row read *no workbook* until the first render had already happened, including rows
-whose workbook was uploaded, and the region could only be corrected after paying for a render
-that used the wrong one. Precisely backwards. The source contract grew `warm()`: load what the
-Deck Builder needs to DESCRIBE a row, called once after Plan via `AmrDeckSource.warmAll()`.
-Per-row data stays in `prepare()`.
-
-**One trap worth knowing if you call `AmrFresh.ifChanged` from a new page.** It raises the
-shell's full-screen `sync` job but only calls `AmrProgress.done` on the *nothing changed*
-path — every other caller had been a report page that goes straight into its own rebuild and
-owns the screen from there. A page that just prints a banner and stops has to call
-`AmrProgress.clear('sync')` itself, on every path including failure, or the overlay sits
-there saying *Checking the sheet…* over a page that finished seconds ago. Pinned by
-`tests/deckstatic.js`.
-
-A page's version covers **every workbook its figures depend on**, not just its own: the
-Overview reads Price & Volume, Ready-Mix and Segment, so its version moves when any of the
-three does. That comes from `APP_EXTRA_SOURCES` in `Config.gs`, which already listed exactly
-that. Without it a page with no sheet of its own would report a version that never moved and
-sit on stale figures with the button insisting there was nothing to do. The Deck Builder is
-the same case and is listed there too — its five sources reduce to four workbooks
-(`pricevolume`, `rmx`, `segment`, `saskrates`).
-
-**ONE loading screen, up until everything is ready.** `AmrBoot` (`Shell.html`) is a
-refcount over a single `AmrProgress` job. A page names what has to be true before it is worth
-looking at — `AmrBoot.need('data')`, `need('month history')` — and answers each with
-`AmrBoot.done(...)`; the screen goes up on the first `need()`, paints immediately (the page
-behind it is empty), and comes down exactly once, when the **last** step lands. After that
-boot is over and `need()` is ignored, so nothing can re-raise the opening screen.
-
-Two rules came with it, and both were bugs before:
-
-- **`AmrProgress` waits out a grace period (400 ms) before painting.** A screen that appears
-  and disappears inside half a second is worse than no screen — it reads as the page
-  stuttering. Jobs are registered immediately but only painted if they outlive the grace, so
-  anything quick shows nothing at all. `{ now:true }` and any failure paint at once.
-- **`AmrProgress.done()` is banned on report pages.** It flashes a tick for 1.2 s and is then
-  replaced by whatever goes up next, which *is* the flicker. Clear the job instead.
-  `tests/deckstatic.js` fails on a `done()` or on a page that opens without naming its boot
-  steps; `tests/segboot.js` drives the real thing in a browser.
-
-The failure mode of a refcount is a step that never reports, and its symptom is the worst one
-available: a loading screen over a finished page, forever. So `AmrBoot` has a watchdog that
-names what it is still waiting for. If you ever see that message, some path forgot its
-`done()`.
-
-**Loading is full-screen.** `AmrProgress` was a small pill in the corner, which was easy to
-miss — people read half-loaded tables without realising. Same API (`set` / `done` / `fail` /
-`clear` / `detail`), different chrome. The consequence worth knowing: work that used to run
-quietly in the background now covers the page while it runs.
-
-### `APP_CONFIG.PAGES` keys
-
-`pricevolume`, `rmx`, `segment`, `saskrates`, `fuelsurcharge` (no sheet — `readsFrom:
-'pricevolume'`), `histagg`, `histrmx`, and the one-book-back variants. Pages not listed
-(`overview`, `rmxfuel`, `tp01`, `inventoryreport`, `deckbuilder`) have no sheet of their
-own; `APP_EXTRA_SOURCES` gives their ⚙ panel the sheets they actually depend on.
-
-`APP_requirePage_` deliberately **fails loudly** on an unknown page id rather than
-defaulting — a blank id used to make RMX silently open the Price & Volume sheet.
-
-### The Slide Segment tabs still matter
-
-`Page_Segment.html` no longer reads them: it calls `RMX_getSlideTables` and computes from
-the Ready-Mix raw tabs. But `getSlideData()` in `Code.gs` — which reads
-`Slide Segment MTD/YTD` and the per-market `Slide Product` tabs — is **still live**, called
-by `Ov_Backend.gs` for the Overview's segment and product-category panels. Do not delete
-`SB`, `getSlideData`, or `APP_CONFIG.PAGES.segment.SHEETS` on the assumption they're dead.
-
-### Markets
-
-Canonical names differ per page. The set is: North, Saskatchewan, Manitoba, Southwest
-(`HNS_SW`), GTA Agg / Innocon. **Central Canada is an all-markets rollup with no sheet tab
-of its own** — it is merged browser-side. `APP_CONFIG.PAGES.segment.MARKETS` lists only the
-markets that have a product tab, which is why Central Canada is deliberately absent.
+A page's workbook can be repointed at runtime from its ⚙ panel, stored as a Script Property.
+`APP_sheetOwner_` redirects a `readsFrom` page to the owning page's key, so a save through a
+borrowing page cannot create an orphan; `clearRetiredOverrides()` deletes keys left behind by
+a page that no longer owns a workbook. `tests/configcheck.js` is the gate.
 
 ---
 
@@ -382,130 +357,133 @@ Four layers, each with a different job:
 
 | Layer | Where | Notes |
 |---|---|---|
-| `APP_cachePut_` / `APP_cacheGet_` | Apps Script `CacheService` | chunked at 90 KB, max 250 chunks, 6 h TTL. Silently skips payloads it can't fit |
-| `cachePutBig_` | `CacheService` | the chunked writer for large payloads — **required** for customer reports and raw tab caches |
-| `AmrCache` | `localStorage` | device-level report cache, no expiry, keyed by generation token. **Caps near 900 KB per entry** — write one market at a time, never a whole set |
+| `APP_cachePut_` / `APP_cacheGet_` | Apps Script `CacheService` | chunked at 90 KB, **max 250 chunks**, 6 h TTL |
+| `cachePutBig_` | `CacheService` | the chunked writer for large payloads — required for customer reports and raw tab caches |
+| `AmrCache` | `localStorage` | per-device report cache, no expiry, keyed by generation token. **Caps near 900 KB per entry** — write one market at a time, never a whole set |
 | `AmrCube` / `AmrKpiStore` | IndexedDB | multi-MB cube data |
 
-**Invalidation is by generation token, never by deletion.** Every server *and* browser
-cache key embeds a version string. Bumping the number strands every old copy on every
-device at once, with nothing to enumerate.
+**Invalidation is by generation token, never by deletion.** Every server *and* browser cache
+key embeds `APP_sourceStamp_(page) + '.' + APP_CODE_BUILD`. When it moves, every old copy on
+every device is stranded at once, with nothing to enumerate.
 
-```js
-APP_GEN_PROPS = { pricevolume:'pv_cache_gen', rmx:'cache_gen',
-                  segment:'sb_cache_gen', kpi:'kpi_cache_gen' }
-APP_CODE_BUILD = '2026-08-11a'
-```
+- **Data changes** move the first part on their own (§5).
+- **Code changes** move the second. `APP_CODE_BUILD` is a literal in §3. **Bump it whenever
+  backend logic changes** — without it a code fix leaves the data stamp untouched, every
+  device keeps serving figures the *old* code computed, and the fix looks like it did nothing.
 
-Two separate things move that token:
+`getDataVersions(pages)` returns several pages' tokens in one round trip. Apps Script runs one
+user's calls end to end, so the Overview's three separate calls cost most of a second of dead
+time before the page starts loading.
 
-- **Data changes** — pressing *Update from source* / `syncAll()` bumps the stored
-  generation number.
-- **Code changes** — `APP_CODE_BUILD` is folded into every token. **Bump it whenever
-  backend logic changes.** Without it, a code fix leaves the data generation untouched,
-  every device keeps serving figures the *old* code computed, and the fix looks like it did
-  nothing.
+### The 14 MB bundle, and the shape of the bug it caused
 
-`getDataVersions(pages)` returns several pages' tokens in one round trip — the Overview
-needs three, and Apps Script runs one user's calls end to end, so three separate calls cost
-most of a second of dead time before the page starts loading.
+**Never read the whole Ready-Mix bundle to answer one question.** This is the single most
+expensive mistake in the suite's history and it hid for a long time because nothing about it
+looked wrong. `loadDataCached_()` caching the whole dataset as one object is right — it is
+what stops forty thousand rows being pulled out of Sheets again. But `getKeys`, `getExtras`,
+`getSlideTables`, `getUnmapped` and `getMarkets` all *opened* with it, so a request producing
+a **72 KB** answer moved **14 MB** through `CacheService` to do it, again for the next market
+and again for the other period. The tell was a flat 15–24 s per call whatever was asked: the
+cost did not vary with the question because it was not the question.
 
-**The bundle is 14 MB — 160 cache chunks. Never read it to answer one question.**
-This is the single most expensive mistake in the suite's history, and it hid for a long time
-because nothing about it looks wrong. `loadDataCached_()` caches the whole Ready-Mix dataset
-as one object, which is right: it is what stops forty thousand rows being pulled out of
-Sheets again. But `getKeys`, `getExtras`, `getSlideTables`, `getUnmapped` and `getMarkets`
-all *opened* with it, so a request that produces a **72 KB** answer moved **14 MB** through
-`CacheService` to do it — and did it again for the next market, and again for the other
-period. The execution log showed a flat 15–24 s per call whatever was being asked for, which
-is the tell: the cost did not vary with the question because it was not the question.
-
-The grouping was never the cost. `tests/rmxcost.js` times it at **0.3 s for all twelve
-market × period selections**. And it is precisely why Aggregates has always felt instant next
-to Ready-Mix: `PV.getReport` returns its cached report *before* it touches the pivot.
-
-**`RMX_prepare` is the one pull.** One execution, one bundle read, every selection computed
-and cached under the key its own reader looks in — then every page call is a 1–5 chunk read.
-It changes no arithmetic: the compute functions are called with exactly the arguments the
-individual entry points pass them, and the harness compares every warmed payload
-byte-for-byte against the single-call result. Two rules came out of it:
+The grouping was never the cost — `tests/rmxcost.js` times it at 0.3 s for all twelve market ×
+period selections. **`RMX_prepare` is the one pull:** one execution, one bundle read, every
+selection computed and cached under the key its own reader looks in. Three rules came out of
+it:
 
 - **`selKey_()` is the only place a per-selection cache key is built.** Two copies of a cache
-  key is how you ship a warm pass that writes where nothing reads: every check passes, the
-  log looks healthy, and every request still recomputes.
-- **A client-side warm loop is not the answer to a slow call.** Both pages used to fetch
-  every market × period in the background. That is twelve of the expensive read, serially —
-  and because Apps Script runs one user's `google.script.run` calls end to end, they queue in
-  front of whatever the user does next. Warm on the server, in one execution, or not at all.
+  key is how you ship a warm pass that writes where nothing reads: every check passes, the log
+  looks healthy, and every request still recomputes.
+- **A client-side warm loop is not the answer to a slow call.** Twelve expensive reads,
+  serially, queued in front of whatever the user does next. Warm on the server, in one
+  execution, or not at all.
+- **Ship every market to the browser, not one per click.** Warming the server cache is half
+  the job; the page still pays a round trip per market otherwise. Aggregates never did that —
+  its opening call carries every market, which is why it always felt instant.
 
-**Ship every market to the browser, not one per click.** Warming the *server* cache is only
-half the job: the page still pays a round trip per market, which is what "pick GTA and it
-loads again" was. Aggregates never did that — its opening call carries every market, so
-switching is instant. `RMX_prepare` returns `payloads`, the same finished objects it just
-cached, keyed `<kind>|<market>|<period>`; both Ready-Mix pages seed their in-memory caches
-from it and a market switch costs **zero** server calls. `tests/segboot.js` fails on one.
-Seed under **both** the resolved month and whatever the picker is on — the RMX month picker
-opens on "Last closed month", whose value is `0`, so seeding only the resolved month files
-every payload under a name nothing ever looks up.
+### What the fuel pages' device cache must never do
 
-**Cache the ANSWER, not just the ingredients.** Every Ready-Mix page computes from
-`loadDataCached_()` — the whole dataset as one cached object. Caching that is right: it is
-what stops forty thousand rows being pulled out of Sheets again. But for a long time it was
-the *only* thing cached on that side, so every `getKeys` / `getExtras` / `getSlideTables`
-call — including one for a market somebody had looked at a minute earlier — paid for the
-chunked `CacheService` read, a `JSON.parse` of several megabytes, and `keyRows_` /
-`ppiMaps_` / `plantRows_` over every row of it. The Aggregates side has never done that:
-`PV.getReport` caches the FINISHED report for the exact selection and returns it before it
-touches the pivot, which is most of why Price & Volume feels instant next to Ready-Mix.
-Those three now do the same through `selCached_`, keyed on market + period + month.
-`getCrossReport` already did. **Uploads are never cached this way** — "run on my own
-QlikView files" is one user's session, and its payloads must not be handed to anybody else.
+Both Fuel Recovery pages cache the sheet on the device, and three invariants keep that honest.
+`tests/fuelcache.js` gates all three, mutation-tested three ways.
 
-**Known ceilings:** `cachePut_` silently bails above ~900 KB (customer reports exceed this
-— that is why `getCustomerReport` uses `cachePutBig_` while `getReport` still uses
-`cachePut_`). `CacheService` drops payloads beyond ~22.5 MB. Script Properties cap at
-500 KB and hold generation tokens only.
+- **The uploaded-workbook path is never cached.** Both pages can run on a file the user dropped
+  in. That is session-only by design and is not what the sheet holds; `upOff()` is the boundary.
+- **The month is part of the key.** Both pages send `{month}` with every read and the payload
+  differs per month. A cache keyed on the page alone would serve July's figures for May.
+- **A typed-over cell is not data.** `NUM_OV` / `TXT_OV` are the user's edits, and the month
+  picker already clears them for exactly this reason. Restoring a cached model must not
+  resurrect them.
+
+**A silent `catch` is a decision, not a style.** Silent is right for an optional cache read
+and wrong for everything else. `APP_cachePut_` bails above 250 chunks; that bail is logged at
+`warn` precisely because from the outside it is indistinguishable from a cache that is simply
+never warm. `tests/logging.js` holds every silent catch to account.
 
 ---
 
 ## 7. Domain rules that must not drift
 
-These are hard-won and expensive to rediscover. Changing any of them changes numbers the
-business reconciles against Qlik.
+Hard-won and expensive to rediscover. Changing any of these changes numbers the business
+reconciles against Qlik.
 
 ### Reading Google Sheets
 
-- **Always use `getDisplayValues()` for Bill Month.** Sheets parses `JUL-26` into a Date
-  object; only `getDisplayValues()` returns the literal string.
-- **Year determination for CY/PY:** scan header names for a `####` pattern; larger = CY,
-  smaller = PY. No code change needed at year rollover.
-- **Never trust history headers.** The AGG history export reuses the live template, so
-  headers can read `2026 Volume` over actual 2025 data. Read the Year column.
+- **Always use `getDisplayValues()` for Bill Month.** Sheets parses `JUL-26` into a Date;
+  only `getDisplayValues()` returns the literal string.
+- **The period is DATA, not a setting — do not add a knob for it, and do not name one back at
+  a header.** The same figure is headed four different ways across the exports and the
+  workbooks, and all four are live: `2026 Volume`, `CY Volume`, `Total Revenue - 2025`,
+  `Total Revenue -PY`. The two sides do not have to agree and currently do not — the
+  Aggregates export still names years while its workbook has been moved to CY/PY — and either
+  can change again, in either direction.
+
+  **One place decides what a period column looks like: `script.gs` §3's `APP_period_` and the
+  helpers around it.** A header is split into the *figure* and the *period*; the period token
+  is CY, PY or a four-digit year, it can sit at either end of the name, and the dash before it
+  is optional. Everything that reads a header goes through them — the sync, all five readers,
+  and `iYearCol` in `app.html` (which is the one client-side copy of the rule, and says so).
+
+  A lookup that names a period back returns −1 the day the header changes, `toNum_` turns the
+  missing cell into 0, and the page publishes a full table of zeroes under correct-looking
+  headings without failing. That has now happened twice, for two different reasons: the year
+  rolling, and the workbook being re-headed.
+- **Which year is current comes from the DATA.** `CY` names no year at all, so a reader keying
+  its cells by year has nothing to key on: it is read off the **Year column** (Aggregates) or
+  the **year on a Bill Month** (Ready-Mix). Never off the calendar — a cap against "the
+  future" was tried in `APP_dataCyYear_` and taken out again, because it made the answer
+  depend on the day the code ran. And never off the header alone: the AGG history export
+  reuses the live template, so headers can read `2026 Volume` over actual 2025 data.
+
+  Payloads carry `cyYear` / `pyYear` and every heading prints what it was sent. The only years
+  left in `app.html` are the QlikView guides' sample rows, which illustrate a format and are
+  meant to stay put. `tests/yearroll.js` runs the suite against a 2031 workbook **and** against
+  a CY/PY-headed one.
+- **The header is folded, not matched literally.** `Fuel Surchage` is the Aggregates export's
+  own name for the column its workbook heads `Fuel Surcharge`; `ex Works` / `ex-Works` /
+  `exWorks` alternate freely on both sides. `APP_hdrNorm_` folds both. The surcharge typo is
+  not a footnote — one missing letter meant that single column matched nothing and was never
+  written, while every other column on the tab synced, so the tab looked healthy and the
+  surcharge sat at the previous export's figures.
 - **Duplicate column names** require first-unused matching.
-- **Bill Month spelling is inconsistent** in QlikView (`Jul-26` vs `July-26`) and breaks
-  SUMIFS joins.
-- **Bill Month has two header spellings.** QlikView exports `bill_month`; the sheet header
-  reads `Bill Month`. No `norm_` in this codebase folds underscores, so both spellings are
-  listed explicitly wherever the column is resolved (`MONTH_COLS_` in `RMX_Backend.gs`,
-  `MONTH_NAMES_` in `RFSC_Backend.gs`, `SYNONYM` in `QlikSync.gs`, `ovcHistRmx_` in
-  `Ov_Backend.gs`).
-- **Bill Month splits each month across two rows** — `Jul-25` carries the prior-year
-  columns, `Jul-26` the current-year ones, with the off-year columns blank. Everything
-  downstream must therefore **sum into its bucket before taking any ratio**. It already
-  does: ASP, the PPI `covered_()` floors and the PPI weight are all computed on summed
-  plant × mix buckets, never on a single row. Any new per-row ratio would be a bug.
+- **Bill Month has two header spellings and inconsistent values.** QlikView exports
+  `bill_month`; the sheet header reads `Bill Month`. No `norm_` here folds underscores, so
+  both are listed explicitly wherever the column is resolved. Values vary too (`Jul-26` vs
+  `July-26`), which breaks SUMIFS joins.
+- **Bill Month splits each month across two rows** — `Jul-25` carries the prior-year columns,
+  `Jul-26` the current-year ones, off-year columns blank. Everything downstream must therefore
+  **sum into its bucket before taking any ratio**. ASP, the PPI `covered_()` floors and the PPI
+  weight all are. Any new per-row ratio is a bug.
 
 ### The reporting month
 
-Always **last calendar month** (current month − 1), computed from the clock — never derived
-from the data. The export carries every month of the *prior* year (`Dec-25` sitting against
-nothing this year), so a maximum-based scan always returns December. `latestMonth_` in
-`QlikSync.gs` takes the newest value literally and is **not** capped — a Bill Month names its
-own year, and the closed-year history workbooks legitimately end in December. That stamp
-(`QLIK_REPORT_MONTH`) is informational only; the pages compute the month from the calendar.
+Always **last calendar month** (current − 1), computed from the clock, never derived from the
+data: the export carries every month of the *prior* year, so a maximum-based scan always
+returns December. `latestMonth_` takes the newest value literally and is **not** capped — a
+Bill Month names its own year, and the closed-year books legitimately end in December. That
+stamp (`QLIK_REPORT_MONTH`) is informational only.
 
-Pre-aggregated tabs (Slide Segment, Slide Product) have **no month column at all** and
-cannot be re-sliced — whatever month the export was run for, both tabs are for that month.
+Pre-aggregated tabs (Slide Segment, Slide Product) have **no month column at all** and cannot
+be re-sliced: whatever month the export was run for, both tabs are for that month.
 
 ### RMX PPI
 
@@ -514,44 +492,41 @@ cannot be re-sliced — whatever month the export was run for, both tabs are for
 - The ±50% ASP% coverage cap and `COVERAGE_CAP` were **removed** to match Qlik.
 - The `#N/A` merge toggle moves labels only, never PPI numbers.
 - Group PPIs do **not** weight-average back to Total. This matches Qlik; it is not a bug.
-- Coverage floors come from `APP_CONFIG.CUBE.COVERAGE.rmx` (`pyVol > 1`, `cyVol > 1`,
-  `pyRev > 110`, `cyRev > 110`) — Qlik's actual floors, kept in config to prevent drift.
+- Coverage floors come from `APP_CONFIG.CUBE.COVERAGE.rmx` — two keys, `minVol: 1` and
+  `minRev: 110`, which `covered_()` applies to all four figures (both years' volume *and*
+  revenue must clear them). `COVERAGE.agg` is deliberately `0 / 0` until the Aggregates Qlik
+  expression is to hand.
 
 ### Fuel recovery
 
-- **AGG**: read from the Price & Volume sheet's `Combined Data CPI Raw`, where the surcharge
-  sits on the same row as the volume it was charged on. The old pre-summed Fuel Recovery
-  workbook forced applied tonnes to be inferred from a bucket, and they came out too high.
-  That workbook is **retired**: `PAGES.fuelsurcharge.readsFrom` is now enforced by
-  `APP_sheetOwner_`, so a leftover `DATA_SPREADSHEET_ID__fuelsurcharge` override can neither
-  be read nor shown in the ⚙ panel. `clearRetiredOverrides()` deletes the stale property.
-- **The header row on `Combined Data CPI Raw` is row 2, not row 1** — the tab sums *above*
-  its column names. `FSC_Backend.gs` scores the first rows and takes the best
-  (`headerRow_`), the same trick as `PV_Backend.tabHeaderRow_`. Reading row 1 blindly is
-  what produced "missing these column(s): Plant, Year, Month, "#### Volume", New Fuel
-  Surcharge" — five columns lost at once is always a misplaced header, never five renames.
-  Gate: `node tests/fscheader.js`.
-- **RMX**: applied m³ comes from the `M3 Applied To` columns in `Extra Raw Data`, matched via
-  `mat_prod_hier_3` containing "fuel surcharge". Coverage = applied m³ ÷ gross (delivered)
-  m³, **no cap**.
-- Both dollars *and* applied volume must come from **Extra Raw Data**. The Main Raw Data
-  volume-proportional spread is only accurate at the plant-month total level and misallocates
-  by segment.
-- "Applied" tonnes = customer-months with an actual FSC. Reversal/credit rows affect the
-  dollar total but **not** the denominator.
+- **AGG** reads the Price & Volume sheet's `Combined Data CPI Raw`, where the surcharge sits
+  on the same row as the volume it was charged on. The old pre-summed Fuel Recovery workbook
+  is **retired** — it forced applied tonnes to be inferred from a bucket and they came out too
+  high. `PAGES.fuelsurcharge.readsFrom` is enforced by `APP_sheetOwner_`.
+- **The header row on `Combined Data CPI Raw` is row 2, not row 1** — the tab sums *above* its
+  column names. `headerRow_` scores the first rows and takes the best. Reading row 1 blindly
+  produced "missing these column(s): Plant, Year, Month, "#### Volume", New Fuel Surcharge" —
+  **five columns lost at once is always a misplaced header, never five renames.** Gate:
+  `node tests/fscheader.js`.
+- **RMX** applied m³ comes from the `M3 Applied To` columns in `Extra Raw Data`, matched via
+  `mat_prod_hier_3` containing "fuel surcharge". Coverage = applied m³ ÷ gross m³, **no cap**.
+  Both dollars *and* applied volume must come from Extra Raw Data — the Main Raw Data
+  volume-proportional spread is only accurate at plant-month total level and misallocates by
+  segment.
+- "Applied" tonnes = customer-months with an actual FSC. Reversal/credit rows affect the dollar
+  total but **not** the denominator.
 - **Saskatchewan has no fuel surcharge.** It has a per-customer mid-year price increase
-  ($/tonne from a start date), tracked in its own sheet. Recovery = rate × tonnes billed on
-  or after the start date. `Sask_Backend.gs` reads and name-matches; the arithmetic happens
-  once, per raw row, in `PV_Backend.gs`.
-- Name normalization for matching: non-breaking spaces, en/em dashes, collapsed whitespace,
+  ($/tonne from a start date) in its own sheet. Recovery = rate × tonnes billed on or after
+  the start date. §6 reads and name-matches; the arithmetic happens once, per raw row.
+- Name normalisation for matching: non-breaking spaces, en/em dashes, collapsed whitespace,
   case, punctuation — with a fallback to unique trailing account codes.
 
 ### Extras / VAP
 
-- **Applied-to m³ is not addable across extra types** — the same physical pour is counted
-  under each hierarchy group it belongs to.
-- By-extra-type **summary** tables use total concrete m³ as the ASP denominator (additive).
-  **Detail** tables use applied m³ (per-applied-unit, explicitly labelled).
+- **Applied-to m³ is not addable across extra types** — the same physical pour is counted under
+  each hierarchy group it belongs to.
+- By-extra-type **summary** tables use total concrete m³ as the ASP denominator (additive);
+  **detail** tables use applied m³ (per-applied-unit, explicitly labelled).
 - Revenue-weighted apportionment *within* a single extra type is correct. The double-count
   reviewers flag is *between* types, not within them.
 
@@ -559,62 +534,63 @@ cannot be re-sliced — whatever month the export was run for, both tabs are for
 
 - **Match on SAP numeric codes, not descriptions.** Descriptions get renamed (WEATHERMIX →
   TEMPTECT); the numeric code prefix is stable.
-- **Strength class**: only assign when a number appears directly adjacent to an MPa marker.
+- **Strength class:** only assign when a number appears directly adjacent to an MPa marker.
   Bare numbers in product names or class tokens do not count — default to `Others`.
+
+### The `toNum_` / `norm_` / `gk_` family — do NOT unify them
+
+Not three copies: **six `toNum_`, six `norm_` and two `gk_`, across seven namespaces**
+(`QLIKSYNC`, `PV`, `PVLOOK`, `FSC`, `SASKRATES`, `RMX`, `RFSC`), in four genuinely different
+dialects. There is no safe direction to unify in because **neither dialect is a superset**:
+
+- `PV` reads the text `"5%"` as `0.05`; `FSC`/`RFSC`/`RMX`/`SASK` read it as `5`. PV is right —
+  a percent-*formatted* cell already arrives as 0.05, so a `"5%"` reaching `toNum_` is text.
+- `FSC`/`RFSC`/`RMX`/`SASK` read `"(1,234)"` as `-1234`. PV read it as **zero** until chunk 20
+  — the brackets survived the strip, `parseFloat` gave `NaN`, `NaN` became 0, so the figure was
+  *dropped from every sum rather than mis-signed*, which is exactly why nothing looked wrong.
+
+Pick either and you silently break the other under 144 call sites, with nothing failing.
+`tests/helpers.js` pins all fourteen definitions to a table of inputs, so a future tidy fails
+there with the input that moved.
 
 ### The Overview specifically
 
-- It is a **strictly read-only aggregator**. It never recomputes independently and always
-  defers to the base tools' caches. It never blends AGG and RMX lines.
+- It is a **strictly read-only aggregator**. It never recomputes independently, always defers
+  to the base tools' caches, and never blends AGG and RMX lines.
 - Customer data calls `getCustomerReport` **directly per selected market** and merges parent
-  rows client-side. An earlier attempt at a dedicated `getOverviewCustomers` server function
-  hung; the direct PV pattern fixed it.
+  rows client-side. A dedicated `getOverviewCustomers` server function hung; the direct PV
+  pattern fixed it.
 - PPI accuracy: RMX rows expose `rfiBase`/`facBase` for exact subset PPI. AGG all-markets
   returns the exact `aggAll.ppi`; a single market is exact; **2+ market subsets** use a
   CY-revenue-weighted blend labelled ⓘ *"Estimate for a mix of markets"*.
-- `pyStale()` grays out prior-year-derived metrics when the selected window exceeds 12 months.
-- **Period has FOUR settings, and only two of them exist on the server.** `MTD` and `YTD`
-  are what `PV.getReport` / `RMX_NS.getKeys` / the Product Segment tabs answer for. `PMTD`
-  and `PYTD` — *Prev month (MTD)* and *Prev month (YTD)* — are the same two shapes one month
-  back and are computed in the browser from the month cube. `STATE.pick` is the button;
-  `STATE.period` stays the SERVER period (`PICK_SERVER` maps `PMTD→MTD`, `PYTD→YTD`, so the
-  payload on the matching tab is still loaded); `STATE.win` is true for both Prev-month picks
-  and for any dragged span. `windowPeriod()` tests the Prev-month spans FIRST, against the
-  union's own last month — when Ready-Mix runs a month ahead of Aggregates a single month is
-  both "Aggregates' MTD" and "the previous month", and the two answers now drive different
-  panels.
-- **A panel with nothing in it is not shown.** There is one rule and no exceptions for
-  emptiness: no rows, no data, not computable for this window → `hidePanel(bodyId)`, which
-  clears the body and hides the card in `PANEL_OF`. `resetPanels()` runs at the top of
-  `renderTab()` so every card comes back before the painters decide again. Only genuine
-  FAULTS still speak — a sheet that has not been set, a call that failed — because those are
-  fixable and the message carries the link. The old `winExempt()` / `.ov-exempt` notices,
-  `kpiHint()`, `aspBlocked()` and `rfuelBlocked()` are gone.
-- **Product Category is a Prev-month panel.** The Slide tabs arrive already split into MTD
-  and YTD, already summed to segment × market, with no month column — and the month they are
-  for is `ovSegMonth_()`, the PREVIOUS calendar month, while the fact tables already run into
-  the current one. Under "This month" it was drawing July's tabs under an August heading.
-  `pcatFits()` shows it only when a Prev-month pick is active AND the month it lands on is
-  the tabs' own month; anywhere else the card is not on the page. It is also decided FIRST in
-  the Ready-Mix branch of `renderTab()`, so nothing later can throw and leave it showing.
-- **What the cube answers is not a short list.** The Aggregates fact table carries plant,
-  material, plant type, material family, product class, customer parent, customer segment,
-  the surcharge dollars (`fsc`) and the tonnes those dollars were charged on (`fv`); the
-  Ready-Mix one carries extras and VAP revenue (`ex` / `va`). So in window mode the browser
-  now builds the plant & material explorer, the customer table (segment split included),
-  both fuel-surcharge panels, the revenue and ASP-mix waterfalls and the Ready-Mix ASP
-  build-up. The ASP mix bridge is also the fallback on MTD / YTD for a **2+ market subset**,
-  which the server ships no pre-computed bridge for. What is genuinely absent:
-  the SAP / USGAAP cards (statement figures, per month or per year), extras BY TYPE and the
-  Ready-Mix fuel recovery (the type and the per-load surcharge are not columns), and the
-  surcharge panels outside the current book year (`winFscOk()` — the fsc columns are optional
-  in the closed-year books).
-- **In window mode the server reports must not paint.** `loadDims` / `loadPM` /
-  `paintRxfPanels` still run — they keep the filter option lists and the shared report cache
-  warm — but they are fetched for the SERVER period, so `srvOwnsAgg()` and an early return in
-  `paintRxfPanels()` stop them repainting a fifth of a second after the cube drew the window.
-  For the same reason `renderTab()` tests `winMode()` BEFORE `xfActive()`: the cube applies
-  the page's cross-filters itself, while the cross-report knows nothing about a window.
+- `pyStale()` greys out prior-year-derived metrics when the window exceeds 12 months.
+- **Period has four settings and only two exist on the server.** `MTD` and `YTD` are what the
+  backends answer for. `PMTD` / `PYTD` are the same two shapes one month back, computed in the
+  browser from the month cube. `STATE.pick` is the button; `STATE.period` stays the *server*
+  period; `STATE.win` is true for both Prev-month picks and any dragged span.
+  `windowPeriod()` tests the Prev-month spans FIRST, against the union's own last month — when
+  Ready-Mix runs a month ahead of Aggregates a single month is both "Aggregates' MTD" and "the
+  previous month", and the two answers drive different panels.
+- **A panel with nothing in it is not shown.** One rule, no exceptions: no rows, no data, not
+  computable for this window → `hidePanel(bodyId)`. `resetPanels()` runs at the top of
+  `renderTab()`. Only genuine *faults* still speak — a sheet that has not been set, a call that
+  failed — because those are fixable and the message carries the link.
+- **Product Category is a Prev-month panel.** The Slide tabs arrive pre-split, pre-summed, with
+  no month column, and the month they are for is the *previous* calendar month while the fact
+  tables already run into the current one. Under "This month" it drew July's tabs under an
+  August heading. `pcatFits()` shows it only when a Prev-month pick is active AND the month it
+  lands on is the tabs' own month, and it is decided FIRST in the Ready-Mix branch so nothing
+  later can throw and leave it showing.
+- **In window mode the server reports must not paint.** `loadDims` / `loadPM` / `paintRxfPanels`
+  still run — they keep the filter lists and the shared cache warm — but they fetch for the
+  *server* period, so `srvOwnsAgg()` and an early return stop them repainting a fifth of a
+  second after the cube drew the window. For the same reason `renderTab()` tests `winMode()`
+  BEFORE `xfActive()`: the cube applies the page's cross-filters itself.
+- **What the cube can answer is not a short list.** In window mode the browser builds the plant
+  & material explorer, the customer table, both fuel-surcharge panels, the revenue and ASP-mix
+  waterfalls and the Ready-Mix ASP build-up. Genuinely absent: the SAP / USGAAP cards, extras
+  BY TYPE, Ready-Mix fuel recovery (the type and per-load surcharge are not columns), and the
+  surcharge panels outside the current book year (`winFscOk()`).
 - History cube: era files are registered in `APP_EXTRA_SOURCES.overview`; `ERAS` is
   newest-first. History JSON is stamped with shape/dims/vals so stale files auto-rebuild. A
   **dictionary remap** is required when merging per-era files built with independent
@@ -622,718 +598,378 @@ cannot be re-sliced — whatever month the export was run for, both tabs are for
 - `cyMonths` and `pyMonths` passed to `AmrCube.query` must be **index-aligned**, and
   `groupBy:'ym'` must map prior-year rows onto their CY slot — otherwise the series returns
   twice as many points with PPI 0.
-- Numeric reconciliation tolerance is 1e-5 relative (measures are rounded to 2 dp on the
-  wire); the un-rounded path achieves 1e-15.
+- Numeric reconciliation tolerance is 1e-5 relative (measures are rounded to 2 dp on the wire);
+  the un-rounded path achieves 1e-15.
 
 ### Rendering traps
 
-- Chart instances are tracked in **per-section registries** (`CH.mkt`, `CH.cust`, `CH.fsc`,
-  `CH.fscc`) — not one global list. A single list means re-rendering one section destroys
+- **Scoping a CSS rule is not a neutral transformation of it.** `body[data-page="x"] ` narrows
+  what a selector matches AND raises its specificity by an attribute selector, so a prefixed
+  bare `th{}` can start beating shared `.class` rules the original lost to — that cost 673
+  computed values on Ready-Mix. Use `:where(body[data-page="x"])`, which adds no weight. And
+  the page is not the document: `#appRoot` is a `<main>` between `<body>` and the page, so a
+  bare `main{}` restyles the mount. `tests/merge.js` check 8 covers reach, `tests/cssparity.js`
+  covers weight.
+- **Apps Script runs every `<? … ?>` in an HTML file, comments included**, and its printing
+  scriptlet HTML-escapes — so one written as an example in a comment breaks the render, and one
+  printed into JavaScript can emit `&#39;` and kill the whole script block. Server values
+  belong in a `<body>` data attribute. `tests/merge.js` enforces both.
+- **A style element's content is text until its closing tag.** Anything that leaks in is parsed
+  as CSS, and CSS error recovery eats the rule after it without a word. §B shipped that way for
+  three chunks because a builder split a file on a style tag written in *prose* inside a
+  comment. Never write either tag as a literal when you mean to name it. `merge.js` check 9 is
+  the gate.
+- **The page switcher only unmounts what it can SEE, and a reload used to tear down
+  everything.** That is the whole class of bug switching introduced. The sharpest instance:
+  `setInterval` is wrapped so the runtime can cancel it, and `app.html` never calls it — not
+  once. The hook was written for `AmrFresh`'s five-minute poll, and `AmrFresh` reschedules with
+  `setTimeout`, so the poll **survived every switch**. What that cost was not a stray timer but
+  a *wrong answer*: the watch holds the data version of the page that started it, `page()` reads
+  `window.APP_PAGE` which the switch has already moved, and the generation token is **per
+  page** — so the poll compared two different pages' versions, never matched, and told the user
+  their figures were stale. Anything a page starts that the runtime cannot see needs its own
+  teardown; `tests/pageswitch.js` checks that no five-minute watch outlives the page that
+  started it.
+- **A server callback can outlive its page.** `google.script.run` handlers on a switcher-mounted
+  page land after `#appRoot` has been emptied, and an unguarded `el.style` throws out of a
+  callback nothing is catching. Look the element up and bail if it is gone — in the failure
+  handler too. `tests/pageswitch.js` catches these as uncaught page errors.
+- Chart instances are tracked in **per-section registries** — `CH` in §P `overview` holds
+  fifteen arrays, not one global list. A single list means re-rendering one section destroys
   another section's canvases.
-- Grid children default to `min-width:auto`. Panels inside grid containers need
-  `min-width:0`, and canvases need `max-width:100%`, or they overflow.
-- `Styles.html` sets `thead th` background to `--blue-80`. A page using a plain `<table>`
-  must set an explicit white background on `th`/`td` or it renders blue-on-blue.
-- Drive `/preview` embeds are cross-origin — custom zoom controls cannot coexist with
-  Drive's native ones.
+- Grid children default to `min-width:auto`. Panels inside grid containers need `min-width:0`,
+  and canvases need `max-width:100%`, or they overflow.
+- §A3 sets `thead th` background to `--blue-80`. A page using a plain `<table>` must set an
+  explicit white background on `th`/`td` or it renders blue-on-blue.
+- Drive `/preview` embeds are cross-origin — custom zoom controls cannot coexist with Drive's
+  native ones.
 - **A slide fitter must fit to the frame's HEIGHT as well as its width.** `AmrSlide.build`
-  scales the whole stack when it overflows — that is a last-resort clamp, not a layout. It
-  shrinks the type the fitter just chose, and because transform-origin is top *centre* it
-  also pulls the content away from the edges the fitter had just filled. A width-only fitter
-  therefore reads as "the tables are huge, everything else is a smear, and there is white
-  down both sides". That is exactly what the Product Segment slides looked like in the July
-  deck: the strip was fitted at its 10px base and then scaled to four effective pixels.
-  `tests/slidefit.js` fails on any content that still overflows its frame.
-- **One loading screen means one `AmrProgress` key.** It shows the lowest-order job and
-  lists the rest underneath, so several keys raised and cleared at their own moments is what
-  reads as a flicker of half-second screens — and `done()` adds a 1.2 s tick before the next
-  job goes up. Both Ready-Mix pages raise a single `LOAD_JOB` with one wording, pass the
-  varying part as the job's `note`, and clear it in exactly one place: where the tables
-  actually reach the page.
-- **There is no region to choose on an RMX slide.** `AmrKpi.rmx()` finds a market's block in
-  the workbook's `RMX Summary` tab **by name** and reads no sheet index at all; only the
-  Price & Volume cards read a per-region plant statement. The `seg` adapter used to declare a
-  `kpiPicker` built from the AGG region list anyway — `AmrSegSlide` ignored every field of it,
-  so it changed nothing and put *"AGG GTA"* on ten Ready-Mix rows in the Deck Builder. A
-  control that cannot affect its output does not belong on the page.
+  scales the whole stack when it overflows — a last-resort clamp, not a layout. It shrinks the
+  type the fitter just chose, and because transform-origin is top *centre* it also pulls content
+  away from the edges the fitter had just filled. A width-only fitter reads as "the tables are
+  huge, everything else is a smear, and there is white down both sides" — which is what the
+  Product Segment slides looked like in the July deck. `tests/slidefit.js` fails on any content
+  still overflowing its frame.
+- **One loading screen means one `AmrProgress` key.** It shows the lowest-order job and lists
+  the rest underneath, so several keys raised and cleared at their own moments reads as a
+  flicker of half-second screens. Both Ready-Mix pages raise a single `LOAD_JOB`, pass the
+  varying part as the job's `note`, and clear it in exactly one place.
+- **There is no region to choose on an RMX slide.** `AmrKpi.rmx()` finds a market's block in the
+  workbook's `RMX Summary` tab **by name** and reads no sheet index; only the Price & Volume
+  cards read a per-region plant statement. A control that cannot affect its output does not
+  belong on the page.
 - **Every size in a KPI card is `em`, so the row's font-size IS the card's size.** A strip
-  dropped into a bare flex row with no font-size inherits the 16px body font, and the cards
-  clip their own text (`overflow:hidden`) rather than spilling. `AmrKpi.stripHtml` /
-  `AmrKpi.fitStrip` build and size every on-page strip; the slide fitters size the slide's.
+  dropped into a bare flex row with no font-size inherits the 16px body font and clips its own
+  text rather than spilling.
 
 ---
 
-## 8. Next major project — Deck Builder
+## 8. The Deck Builder
 
-**Goal:** one button that produces the whole monthly Google Slides deck — roughly 45 slides
-across AGG P&V, RMX P&V, RMX Segment, Fuel Recovery and Top-10 Customers — where the **title
-is real editable Slides text**, the **comment box is a real empty text box**, and only the
-table or chart goes in as a picture.
-
-This is deliberately *not* the existing PNG export, which flattens the header, the title and
-the blank comment bands into one 1600×900 image.
+One button that produces the monthly Google Slides deck — 43 slides across AGG P&V, RMX P&V,
+RMX Segment, Fuel Recovery and Top-10 Customers — where the **title is real editable Slides
+text**, the **comment box is a real empty text box**, and only the table is a picture.
 
 ### Why an image at all
 
-Apps Script cannot render the page's HTML tables or Chart.js canvases — those only exist in
-the browser. So the picture still has to be captured client-side with html2canvas. What
-changes is *what* gets captured and *where it lands*.
-
-`SlidesApp.insertTable` would give genuinely editable text, but styling a 14-column table
-with merged header bands and per-cell colours costs one API call per cell — ~200 calls a
-slide, with real timeout risk over 20 slides. Images for the tables, native text for
-everything around them, is the right trade.
+The tables are the output of the pages' own compute and fitting, in the browser. Rebuilding
+them as native Slides tables would mean a second implementation of every layout rule, kept in
+step by hand. One picture per slide, captured by `html2canvas` at the slot's own aspect ratio,
+is the trade: the numbers come from one place, and everything a human edits afterwards stays
+native.
 
 ### The template contract
 
-Two deliberately dumb mechanisms, so a non-technical user can restyle the deck without a
-code change:
-
-1. **Layout id in the speaker notes** — `LAYOUT: L_FULL_IMAGE`. That is how a layout slide
-   is found. Reorder or restyle the template freely; nothing in the code cares about slide
-   order.
-2. **Tokens** — `{{TITLE}} {{COMMENT}} {{IMAGE}} {{IMAGE2}} {{LABEL1}} {{LABEL2}} {{PAGE}}
-   {{DECK_TITLE}} {{DECK_SUB}}`. Each token is the **text of a shape**, never a text box laid
-   over a rectangle. An image slot is *one* shape: the code reads its geometry, deletes it,
-   and fits the picture into exactly that rectangle.
-
-`{{IMAGE}}` is a **guide, not a frame**. Moving or resizing it in the template moves the
-picture. Scale is `min(boxW/imgW, boxH/imgH)`, then centred — a short wide table letterboxes
-rather than distorting, and the picture can never overlap the title or the comment panel.
-
-Seven layouts were designed against the sample deck:
-
-| Layout id | Use |
-|---|---|
-| `L_COVER` | deck cover |
-| `L_COMMENT_IMAGE` | comment panel + one table (AGG/RMX market slides) |
-| `L_FULL_IMAGE` | full-width single table (Fuel Recovery) |
-| `L_FULL_STACK` | two stacked tables, MTD over YTD (Top 10 Customers) |
-| `L_COMMENT_STACK` | comment panel + two stacked tables |
-| `L_SECTION` | AGG / RMX section dividers |
-| `L_README` | instructions; listed in `DOC_LAYOUTS`, deleted from every generated deck |
-
-Google Slides 16:9 is **720 × 405 points**, not pixels. `DECK_CONFIG.CAPTURE_PX_PER_PT = 4`
-and `CAPTURE_MAX_PX = 2400` — `DECK_readTemplate` returns a suggested capture width per slot
-so nobody has to guess.
-
-### What exists today — verified against the code
-
-| Piece | State |
-|---|---|
-| `Deck_Backend.gs` — all five server functions + validator + smoke test | ✅ written (664 lines) |
-| `?page=deckbuilder` route in `Code.gs` | ✅ wired |
-| Page-switcher entry in `Shell.html` `AMR_PAGES` | ✅ wired |
-| Two `Landing.html` cards | ✅ wired |
-| `fsc` + `rfsc` adapters | ✅ moved into `Deck_Fuel.html`, where the deck can actually reach them |
-| Shared exec-table engine (`AmrFuelExec`) | ✅ one copy serving both fuel pages and the deck |
-| Exec views (`EXEC` / `EXEC_MTD` / `EXEC_YTD`) on both fuel pages | ✅ built |
-| `Page_DeckBuilder.html` | ✅ built — Plan / Render / Publish, previews from template geometry |
-| `AmrDeckSource` registry (`Deck_Sources.html`) | ✅ built — the two guarded adapters now have something to register into |
-| `AmrSlide.captureBare` | ✅ built in `SlideExport.html` |
-| Recipe (`Deck_Recipe.gs`) | ✅ built — 43 rows, transcribed from the July 2026 pack |
-| `Amrize_Deck_Template.pptx` + sample-deck PDF | ✅ committed to the repo |
-| **`DECK_CONFIG.TEMPLATE_ID` / `FOLDER_ID`** | ❌ **still `PUT_..._HERE` placeholders — set these before anything runs** |
-| `pv` / `cust` adapters (`Deck_PV.html`) | ✅ live — 19 more rows build |
-| `seg` / `rmx` adapters | ✅ live — all 43 rows now build |
-
-So: the pipeline is complete end to end and all 43 rows build. The Plan stage still names
-any missing source up front rather than failing once per row.
-
-### What the first real deck got wrong (July 2026 build)
-
-The 43-slide deck published without an error and was wrong in six ways. Every one of them
-is the same shape of mistake — the deck reuses a page's builder but not the page's
-*context*, and nothing checked that the context came with it.
-
-#### The CSS the deck could not see
-
-The big one, and the cause of three separate complaints. Phases 2–4 lifted the slide
-builders into `Deck_*.html` but left the CSS they depend on in each report page's own style
-block. Report pages include their module **and** have the CSS; the Deck Builder includes the
-modules **without** the pages. So every slide was photographed with **46 classes unstyled**:
-
-- Ready-Mix headings (`By submarket`, `By extra type`) lost `.rmx-eb-title` and rendered as
-  unstyled lower-case body text, run straight into the mix badge — `.rmx-eb-badge`'s
-  `margin-left:auto` is what separates them.
-- Price & Volume tables lost `.exp table th, .exp table td{padding:4px 9px}` and fell back
-  to the generic `10px 12px`. That is ~40% more width than the fitter budgeted for, and the
-  fitter cannot recover it: `thead th` sets its size through a `font:` **shorthand**, which
-  beats the inherited `font-size` the shrink loop is setting, so the header never shrinks.
-  The PPI column was cut in half by the card's `overflow:hidden` on every AGG slide.
-- Product Segment and Fuel tables lost their header, subtotal and grand-total colours.
-
-Fixed by `Deck_Styles.html`, included by the Deck Builder only, every selector scoped under
-`.slide-bare` (the wrapper `captureBare` photographs) so it cannot reach a page. The rules
-are **mirrored, not moved**: moving a rule out of a page's style block changes that page's
-cascade order, and these pages are in daily use. `tests/deckstatic.js` is the gate.
-
-#### Southwest Land / Docks published a page of zeroes
-
-Land and Docks are not markets — they are the two values of the **MB SUBMARKET** column
-*inside* the Southwest market, which is what the Price & Volume page's refine chips toggle.
-The recipe said `market:'Southwest Land'`, which matched no market, so the backend returned
-an empty report and the slide published as a full page of `0`s rather than failing. Rows now
-say `market:'Southwest', refine:'Land'`, and the `pv` adapter resolves that **label** against
-the market's own `refineOptions` — the sheet's raw spelling is never written into the recipe.
-
-#### Central Canada was cut by submarket
-
-Inside one market the interesting cut is its submarkets. Central Canada is not a market, it
-is every market at once, so the slide listed fourteen submarkets from five different markets
-(West GTA next to Regina next to Sask AGG) and left the reader to reassemble them. The
-rollup is cut by `MARKET` now; every other market keeps `SUBMARKET1`.
-
-#### Rows and columns disappeared into the scaling
-
-The one that made the slides unusable, and the reason for the others being hard to see.
-
-A page photographs its content **inside the 1600×900 slide frame**: `AmrSlide.build()` puts
-it there, runs the page's `fitSlide` — which fits the tables to the height the frame gives
-it — then clamps anything still too tall, and captures at exactly 1600×900. Nothing
-overflows because everything was fitted against a real height.
-
-The deck did the opposite. `captureBare` dropped the content into an **unbounded** div and
-ran a second, width-only fitter (`fitBare`) that each module carried a copy of. Its premise,
-written in the comments, was that "height is free" because the picture gets scaled into the
-image box by ratio anyway. Height was free in the wrong direction: the stack ran as tall as
-its content, and `fitRect_` then shrank the whole picture — a 1971×2048 image into a
-553×229 pt box — to get it in. Everything shrank together, and what did not survive was
-rows and columns. Worse, the two customer fitters open with `if(!center) return`, so on a
-frame with no `.slide-center` the Top 10 slides were never fitted at all.
-
-`captureBare` now builds the same frame through the same `build()`, in **bare** mode: no
-header, no logo, no whitespace bands (on a generated slide the title and the comment box are
-real Slides text), and everything else identical. It is sized to the **shape of the image
-box** — 1600 wide, `1600 × slotH/slotW` tall — so the picture fills its slot with no
-letterboxing and the fitter gets the real height to fit into.
-
-`fitBare` is gone from all four modules; `fitSlide` is the only fitter, which is what makes
-"change the format in one place" true. `tests/deckstatic.js` fails if a second one appears.
-
-#### Every picture was resampled on the way out
-
-Whatever resolution is inserted, an exported deck comes back with every picture capped at
-**2048 px on its longest side** — 21 of the 43 pictures were exactly 2048 wide or exactly
-2048 tall. Capturing at 2400 therefore never bought 2400: it bought a canvas Google then
-resampled, so text rendered at one scale was squeezed to another and every slide came out
-softer than the same table screenshotted by hand. `CAPTURE_MAX_PX` is 2048 now and
-`captureBare` clamps **both** dimensions to it, so html2canvas renders the text at its final
-size — one sampling, not two. The height matters as much as the width: the cap is on the
-longest side, so a tall table that overshot had its width dragged down with it.
-
-#### The Land / Docks chips listed the whole dataset
-
-Seven chips, five of which filtered to nothing. The cube path fed them
-`AmrCube.dict('agg','mb')` — every MB SUBMARKET value in the cube — and the chips label them
-all as just `Land` or `Docks`, so the other markets' values were indistinguishable from
-Southwest's. The server has always scoped that list to the market being viewed; the cube path
-now does too, grouped **without** the mb filter so the selected chip does not become the only
-one left to select.
-
-#### The Ready-Mix slides carried five tables and raw dimension keys
-
-Two things, one `ctx`. `extraCards:['BYTYPE','DETAIL']` added *By extra type* and *Extras &
-VAP detail* on top of the three dimension tables, so a five-table stack was squeezed into
-one image slot — and those two belong on the Product Segment slide, which is where the
-Segment page puts them. And `breakdowns:[]` left `labelForDim()` falling back to the **raw
-dimension key**, which is why the slides read `By SUBMARKET` / `By STRENGTH` / `PLANT` where
-the page reads `By Submarket` / `By Strength Class` / `Top 10 Plants`. `RMX_getKeys` returns
-the label list; the adapter passes it through now. The slide is the page's three tables:
-Submarket, Strength Class, Top 10 Plants. `RMX_getExtras` is no longer fetched.
-
-#### The Product Segment slides carried one table
-
-`exportSel:{}` reads as "each table's default", and two of the three default **off**
-(`EXPORT_DEFAULT_OFF`), so the slide was the Segment table alone. The deck names what it
-wants now — Segment **and** By extra type, the pair the Segment page ticks for its own
-export. `Extras & VAP detail` stays off: it is the EXTRAS LOOKUP working view, too wide to
-read at slide size.
-
-#### The template slides were deleted
-
-`finish()` removed every slide without a `SLIDE: <id>` note, which threw away the one copy
-of each layout the deck was built from — so a slide that came out wrong could not be rebuilt
-by hand from the layout beside it. They are **moved to the end** now, in template order.
-Only built slides are numbered: a parked layout is not page 44, and leaving its `{{PAGE}}`
-token unfilled is what keeps it usable as a template. `finish()` returns
-`templateSlidesParked`, and `slides` is the count of the deck proper.
-
-#### The deck could not be built for a chosen month
-
-A deck is normally built *after* a month closes and all its data is in, so it needs to be
-buildable for whichever month you name — and every slide has to agree. Each adapter
-hard-coded `month: 0` in its server call, which meant "whatever the backend calls the last
-closed month" and could not be steered.
-
-The Deck Builder now has a **Report month** picker: one month for the whole deck, defaulting
-to **last month**, offering the running month but never defaulting to it (it is only
-part-billed, and a half-month reads as a collapse). The chosen month is stamped onto each
-spec, keys every adapter's cache, and rides in every backend call — so MTD is that month
-alone and YTD is January through it, on all four backends at once. Changing it invalidates
-anything already rendered. The list is months of the current reporting year only: the
-backends take a month 1-12 with no year and read it against the export's current year, so
-offering "August last year" would silently be read as August *this* year.
-`tests/deckstatic.js` fails on any `month: 0` left in an adapter.
-
-#### AGG Fuel Recovery reported a different month from everything else
-
-`FSC_Backend` resolved its report month to the **newest month in the file**, so on a sheet
-already carrying a part-billed August it published August while Price & Volume, Ready-Mix
-and RMX Fuel Recovery all published July — one deck, two months. The other three all resolve
-to **last calendar month**, falling back to the newest month present if last month is not in
-the export yet (`pvReportMonth_`, `reportMonth_`, `buildCells_`). This is the fourth catching
-up. It also gained the month argument the other three already took, a `months` /
-`defaultMonth` payload, and the **Report month** picker its page never had — the same picker,
-same wording, as the RMX Fuel Recovery page.
-
-So across every page the default is now last month, with the running month selectable.
-
-#### Table titles came out lower-case
-
-`fieldLabel()` lower-cased because its first caller put it mid-sentence ("all markets"), and
-it later became the heading over a table. So the cube path titled its cards `submarket` while
-the identical card built through the server path said `Submarket`. It returns the label as
-written now; the one sentence context lower-cases at the call site.
-
-### Bugs found and fixed
-
-Found by reading the code and by validating the committed template offline against the
-same contract `DECK_validateTemplate` enforces.
-
-1. **`addSlide` read the presentation after `saveAndClose()`** — the return statement called
-   `pres.getSlides().length - 1` on a closed presentation. Now the index is captured before
-   closing. *(Defensive: the smoke test reportedly ran fine, so this may not throw in
-   practice — but reading a closed handle is not something to rely on.)*
-2. **Unfilled tokens shipped as literal text.** `L_SECTION` carries `{{DECK_SUB}}`, which
-   only `create()` fills and only on the cover — so a divider slide put the raw text
-   `{{DECK_SUB}}` in front of the meeting. `addSlide` now accepts `spec.subtitle` for it and
-   then blanks every token the recipe did not fill. `{{PAGE}}` is the one exception; `finish()`
-   still stamps it once the slide order is final.
-3. **`DECK_smokeTest` logged `out.layoutsRemoved`**, but `finish()` returns
-   `templateSlidesRemoved` — it printed `undefined`.
-4. **`readTemplate` returned `L_COVER` as a usable layout.** Layouts now carry
-   `role: 'cover' | 'report'`; the page builds its recipe picker from `report` only, and
-   `readTemplate` fails loudly if a template has a cover but no report layouts.
-5. **`validateTemplate` judged the cover by the wrong checklist** — warning it had no
-   `{{TITLE}}` and no `{{PAGE}}`, neither of which a cover should have. It now checks the
-   cover for `{{DECK_TITLE}}` and warns if it carries a stray `{{IMAGE}}` box.
-6. **`Code.gs` defined `readTab_` twice** inside `SB`; the dead first copy is gone and the
-   survivor's error message no longer names a config key (`PAGES.slidebuilder`) that does
-   not exist.
-
-### What the committed template actually contains
-
-Validated offline with python-pptx against the same two contracts the builder relies on:
-
-- **720 × 405 pt** — exactly Google Slides 16:9. ✅
-- **Five tagged layouts**: `L_COVER`, `L_COMMENT_IMAGE`, `L_FULL_IMAGE`, `L_SECTION`,
-  `L_README`. Every token sits in exactly one top-level shape, so nothing is nested in a
-  group where `SlidesApp.getShapes()` could not reach it. ✅
-- **`L_FULL_STACK` and `L_COMMENT_STACK` are NOT in the template** (the plan assumed seven
-  layouts; five shipped). The recipe therefore routes the five Top-10 Customer slides to
-  `L_FULL_IMAGE` as one image containing both tables — which is what the Price & Volume PNG
-  export already produces. Every layout the recipe asks for exists. ✅
-- One cosmetic nit: in `L_COMMENT_IMAGE` the `{{IMAGE}}` box starts 0.8 pt above the bottom
-  of `{{TITLE}}`. Pictures are fitted and centred inside the box, so a normal wide table
-  never reaches that edge — but nudging the image box down a point in the template removes
-  the overlap entirely.
-
-Slot geometry, for reference:
-
-The **live** template (`DECK_CONFIG.TEMPLATE_ID`) carries four content layouts. The `.pptx`
-committed here is the older five-layout starter and is now **out of date** — treat the Slides
-file as the authority and run `DECK_validateTemplate()` after any edit.
-
-| Layout | Used by | Why |
-|---|---|---|
-| `L_COMMENT_IMAGE` | AGG P&V (14) | comment panel + image; the captured block includes the KPI strip |
-| `L_COMMENT_IMAGE_NO_KPI` | RMX Segment (10) | same, but the image box is smaller and sits lower — that content has no KPI strip, and the gap left at the top is where KPI cards can be added by hand |
-| `L_FULL_IMAGE` | RMX P&V (10), Top 10 customers (4) | full-width block |
-| `L_FULL_IMAGE_SMALL_OR_FSC` | Fuel Recovery (4), North customers (1) | a smaller image box, for content that is much shorter than a full market table |
-
-### Architecture — three stages, never one shot
-
-Deck building cannot be a single function: 45 slides of client-side rendering plus 45 Slides
-API round trips will not fit in one execution, and a failure at slide 40 must not cost the
-first 39.
-
-1. **Plan** — build the slide list from the recipe. No data, instant. The user gets a
-   checklist and can untick slides they don't want this month.
-2. **Render** — walk the list *one slide at a time*: fetch that market/period's data → build
-   the content block off-screen → `html2canvas` → thumbnail appears in the row. All the
-   compute lives here, and one slide per tick keeps the browser responsive. *"Rendering 12 of
-   45 · AGG – Manitoba – YTD."*
-3. **Publish** — one `google.script.run` per slide. The server duplicates the layout, fills
-   the tokens, inserts the image. ~2–4 s each, well inside the 6-minute limit because no call
-   ever handles more than one slide.
-
-A slide that fails is marked red and retried once; if it fails again the deck completes
-without it and that row can be re-rendered alone. Nothing is ever redone from scratch.
-`DECK_addSlide` overwrites the duplicated slide's speaker notes with `SLIDE: <recipeId>`,
-which is what makes `DECK_finish` (delete everything still untagged) and `DECK_status`
-(what already landed → resume) work.
-
-**One slide per call is deliberate. Do not "optimise" it into a batch.**
-
-### The one real refactor
-
-The deck builder must not re-implement a single table. Every report page already has a
-slide-content builder feeding `AmrSlide`. Those need to become shared includes
-(`Deck_PV.html`, `Deck_RMX.html`, `Deck_SEG.html`, `Deck_FSC.html`, `Deck_RFSC.html`), each
-pulled in by both its own page and the deck builder, each exposing the same adapter:
-
-```js
-AmrDeckSource.register('pv', {
-  prepare(spec) -> Promise,      // load that market/period's data (cached)
-  content(spec) -> DOM element   // the block: no header, no logo, no margins
-});
-```
-
-Because `include()` inlines into the same document, moved functions still see the page's
-globals — the extraction is mechanical, not a rewrite. It was agreed to extract the **pure
-compute + render layer only**; the deck path has no user edits to honour, so the editable-cell
-override layer (`NUM_OV`, `TXT_OV`, `DERIVED`) stays on the page.
-
-**Each extraction has a hard pass/fail test: the page's existing PNG export must look
-identical before and after.** One page at a time, verified before moving on.
-
-### The in-website preview
-
-`DECK_readTemplate` already returns real slot geometry in points. The page draws each preview
-as a 16:9 div scaling those points down — comment panel, title and image rect exactly where
-the template puts them — with the captured PNG dropped in at `object-fit:contain`. So the
-preview is a faithful mock, it is instant, it needs no deck to exist yet, and moving a box in
-the template moves the previews after a *Reload template*. No Slides thumbnail round-trip.
-
-### Open questions
-
-Three of the four are now answered by a default that is cheap to change. The first still
-needs a decision.
-
-1. **Where do decks land?** ❓ Still open. `DECK_CONFIG.FOLDER_ID` is a placeholder and
-   `create()` refuses to run until it is set — deliberately, so a half-built deck never
-   lands in a random My Drive. Set it to a shared folder (Editor access for everyone who
-   builds decks), or change `create()` to skip the `moveTo`.
-2. **Top-10 customer slides?** ✅ **One image**, matching what the Price & Volume PNG export
-   already produces. North uses `L_FULL_IMAGE_SMALL_OR_FSC` because its customer table is
-   much smaller than the other markets'; the rest use `L_FULL_IMAGE`.
-3. **SW Land / SW Docks?** ✅ In the recipe, flagged `optional:true` — listed in the Plan
-   stage but **unticked by default**, so they are built only when someone asks. Default deck
-   is 39 slides; all 43 if both are ticked.
-4. **Live data or page cache?** ✅ Whatever the source page already has. `prepare(spec)`
-   returns `null` when the data is loaded, so the deck reuses the page's cache and never
-   re-reads a sheet it does not have to.
-
-### Order of work
-
-| Phase | Scope | State |
-|---|---|---|
-| 0 | `Deck_Backend.gs`; template into Drive; `DECK_validateTemplate` + `DECK_smokeTest` pass | ✅ code written; smoke test run by Rafay |
-| 0b | Fix the known bugs; commit the `.pptx` template | ✅ done — six fixed, template validated offline |
-| 1 | `Page_DeckBuilder.html` + `AmrDeckSource` + `AmrSlide.captureBare` + `Deck_Recipe.gs`; previews from template geometry, no data yet | ✅ done |
-| 2 | Fuel Recovery adapters into shared `Deck_Fuel.html` → first 4 slides end to end | ✅ done |
-| 3 | AGG P&V adapter (`pv` + `cust`) → 14 summary + 5 customer slides | ✅ done |
-| 4 | RMX P&V + Segment adapters (`rmx` + `seg`) → 20 slides | ✅ done — with one caveat, below |
-| 5 | Optional: remember last month's comment text per slide id and pre-fill | ☐ |
-
-### Phase 3 — done
-
-`Deck_PV.html` holds the Price & Volume slide-content path; the page delegates to it and the
-`pv` + `cust` adapters are live, so 19 more recipe rows build.
-
-- The closure was **computed, not eyeballed**. `buildPvSlideContent(d)` and `slideTitle(d)`
-  turned out to touch no page state at all; the whole closure reads only **14** context
-  fields, listed on `ctx_()`.
-- ~480 lines were lifted **mechanically** (a script pulled each definition verbatim and
-  applied two uniform rewrites, `STATE.x → CTX.x` and `CONFIG.slide → CTX.slide`), then
-  wrapped in an `AmrPvSlide` module with a `withCtx` entry layer so the lifted bodies stay
-  byte-for-byte unchanged.
-- **Delegate, do not delete.** A first pass at deleting the lifted definitions from the page
-  was wrong: `esc` alone has 30 call sites, most outside the slide path, and a nested `esc`
-  definition fooled the span finder. The page therefore keeps every name and signature and
-  only the slide-content *entry points* were repointed. The page's own `esc`/formatters stay;
-  the module carries private copies. That duplication is deliberate — trivial pure functions,
-  versus breaking a working page.
-- **Charts.** The page photographs its visible `#revChart` / `#aspChart`;
-  `renderChartsOffscreen()` gives the deck a throwaway pair, draws, captures, destroys. The
-  canvases are parked off-screen, **not** `display:none` — Chart.js draws nothing into a
-  zero-size canvas.
-- **The KPI region picker is now on the Deck Builder too.** Which EBITDA region sheet a
-  market's KPI cards read is a per-device choice in `localStorage` under `pvKpiViewMap`,
-  keyed by `filterField:filterValue`. The Deck Builder shows a Region dropdown on any row
-  whose source declares a `kpiPicker`, reads and writes **that same map**, and drops the
-  row's rendered picture when it changes — so a market whose region was never set, or set
-  wrong, is fixed without leaving the page, and the report page sees the change too.
-- **The picker follows the row's own workbook.** There are **two** EBITDA workbooks:
-  Manitoba and Saskatchewan are the whole of the second one (`mbsk`), everything else is on
-  the main one. The dropdown used to be the merged list from both, so a Saskatchewan row was
-  offered Ontario's regions and defaulted to the first of them — a real region sheet,
-  silently the wrong one. It showed no wrong numbers only because `kpiMissingBook()`
-  suppresses the KPI strip for those two markets while their workbook is absent; the moment
-  that file is uploaded the guard stops firing and the stale default would have gone onto
-  the slide. `AmrKpi.plantIndex(vals, book)` now takes a book, `AmrKpi.bookFor(market)` says
-  which one a market reads, and `kpiSheets` / `kpiFor` scope **both the offered list and the
-  fallback default** to it. A row whose workbook is missing reads *no workbook* instead of a
-  dropdown, and the dropdown appears on its own when the file is uploaded — no code change.
-  Labels are worked out from the merged set before filtering, so the `· MB/SK` suffix means
-  the same thing either way and the remembered choice is never stranded.
-- **Central Canada** resolves to the backend's `__ALL__`; it is a rollup with no market tab.
-
-**Verified:** `tests/pvcheck.js` — 11/11 byte-identical between old page code and the module
-across `tableInnerHtml`, `monthTag_`, `slideTitle` and `buildCustTable` for every secondary
-dimension, sort direction and top-N. `tests/deckpath.js` — all four sources register and all
-seven sampled slides build, with the KPI strip populated (5 cards), both waterfalls captured,
-and the customer slide carrying its two stacked blocks; each backend is called once per
-market+period, not once per slide.
-
-**A bug the harness caught:** `buildPvSlideContent` captured the hardcoded `revChart` /
-`aspChart` ids, so deck slides came out with **no charts at all** — the offscreen canvases
-have generated ids. The ids now travel on the ctx.
-
-### Phase 4 — done, with one debt to pay
-
-`Deck_SEG.html` and `Deck_RMX.html` complete the set. **All 43 recipe rows now have a
-content source.**
-
-- **Segment (`seg`)** was the easy half: `buildSlideContent()` builds from `DATA` and a
-  `TABLES` config array, so it lifted cleanly. Five context fields.
-- **RMX (`rmx`) was structurally different** and worth knowing about. `buildRmxContent()`
-  does not build from data at all — it **scrapes the rendered DOM**, walking
-  `#tablesHost .card` / `#extrasHost .card` and keeping whichever have their export
-  checkbox ticked. And the page does not get finished tables from the server either:
-  `RMX_getKeys` sends key rows and the **browser** builds every table via `buildTables()`.
-  So the deck needed the compute layer *and* the renderers *and* a stage to render onto.
-  `renderOffscreen()` builds the two hosts the renderers expect, parked off-screen, runs
-  them, ticks every export checkbox, scrapes, and tears the hosts down — the same shape as
-  the offscreen canvases in `Deck_PV.html`.
-
-**The debt: the two pages do not delegate yet.** Phases 2 and 3 rewired their pages so there
-is exactly one copy of each algorithm. Phase 4 did **not** — `Page_Segment.html` and
-`Page_Rmx.html` still hold their own copies, so `Deck_SEG.html` / `Deck_RMX.html` are
-currently *duplicates* rather than the single source of truth. A formatting or maths fix now
-has to be applied twice, and that is exactly the drift the earlier phases existed to prevent.
-
-That was a deliberate trade at the end of a long session: rewiring two more large working
-pages without a before/after harness for them is the riskiest thing in this project, and the
-harness is what makes it safe. **Pay it down next**, in this order:
-
-1. Extend `tests/` with a SEG and an RMX before/after comparison, the way `pvcheck.js` works.
-2. Then delegate, entry points only — `delegate, do not delete` (see Phase 3; `esc` and the
-   formatters have call sites all over both pages).
-
-**A bug the harness caught:** `renderReport()` and `renderExtras()` both end by refreshing the
-report page's live slide preview. On the Deck Builder there is nothing to refresh, and every
-RMX slide died on `renderRmxPreview is not defined`. It is now a guarded no-op in the module.
-
-### How Phase 2 was done — the pattern Phases 3–4 should copy
-
-The plan called for two files, `Deck_FSC.html` and `Deck_RFSC.html`. It shipped as **one**,
-`Deck_Fuel.html`, because the two pages' exec paths turned out to be near-identical: same key
-scheme, same maths, same markup, differing only in the units in the column headings and where
-the year came from. Two files would have meant two copies of one algorithm and a standing
-invitation to fix a bug in one and not the other. The differences now live in a **UNITS
-descriptor** — two small objects, `agg` (tonnes) and `rmx` (m³).
-
-The extraction pattern, which Phases 3–4 should follow:
-
-1. **Everything moved is pure.** No global reads. Page state arrives as one `ctx` object —
-   `{ numOv, txtOv, hidden, derived }`. That is exactly what lets the report page render
-   *with* the user's typed overrides and the deck render *without* them, from one copy of
-   the code.
-2. **The page keeps its function names and signatures** (`computeExec`, `buildExecTable`,
-   `buildExecTables`, `fscFit`) and delegates the body. The blast radius is four one-line
-   function bodies per page, not a rewrite of a file that already works.
-3. **The module fetches its own data.** On the Deck Builder there is no page `DATA` to
-   borrow, so each adapter calls its own backend once and both of its slides reuse it —
-   which is why `prepare()` returns `null` on the second call.
-4. **Only the exec path moved.** The pages keep their own `STATE`, editable-cell overrides,
-   summary and by-month tables, and all UI wiring. The deck wants none of it.
-5. **`fit` comes in two flavours.** `fitSlide(box)` for the 1600×900 PNG frame (what the
-   pages always used) and `fitBare(box)` for the deck's capture, which has no `.slide-center`
-   and no imposed height — only width has to fit, so the type stays large. The adapter
-   exposes `fit`, and `captureBare` calls it exactly as `AmrSlide.build()` does.
-
-One thing that came out in the wash: the old adapters were guarded on
-`if(window.AmrDeckSource)` inside the report pages — a registry those pages never create. So
-they had never actually run. Moving them into a file the Deck Builder includes is what made
-them live.
-
-**Pass/fail test — and it passed.** A Node harness ran the pre-extraction page code and the
-post-extraction module over the same model and diffed the HTML: **12 comparisons byte-identical**
-(both pages × both periods and "both" × clean and edited state, where "edited" means typed
-numeric overrides, a renamed label, and a hidden market). See §10.
-
-### Recipe shape
-
-One config array — adding, removing or reordering slides is a config edit, not code:
-
-```js
-{ id:'pv_gta_mtd', source:'pv', market:'GTA', period:'MTD',
-  layout:'L_COMMENT_IMAGE', title:'AGG - GTA COMMERCIAL - MTD' }
-```
-
-Roughly 45 slides, matching the sample deck:
-
-| Block | Count | Layout |
-|---|---|---|
-| Fuel Recovery — AGG/RMX × MTD/YTD | 4 | `L_FULL_IMAGE` |
-| AGG P&V — Central, SK, MB, GTA, SW, SW Land, SW Docks × MTD/YTD | 14 | `L_COMMENT_IMAGE` |
-| AGG Top 10 customers — 5 markets, MTD over YTD | 5 | `L_FULL_STACK` |
-| RMX P&V — 5 markets × MTD/YTD | 10 | `L_COMMENT_IMAGE` |
-| RMX Segment / Product — 5 markets × MTD/YTD | 10 | `L_COMMENT_IMAGE` |
-
-### Setup checklist (once, before Phase 1)
-
-1. Upload `Amrize_Deck_Template.pptx` to Drive and open it with Google Slides
-   (*Open with → Google Slides*) so it becomes a real Slides file, not an unconverted `.pptx`.
-2. Put that file's ID in `DECK_CONFIG.TEMPLATE_ID` (or the `DECK_TEMPLATE_ID` Script Property).
-3. Put the destination folder's ID in `DECK_CONFIG.FOLDER_ID`. Share that folder as **Editor**
-   with everyone who will build decks.
-4. Add the **Slides** and **Drive** scopes.
-5. Run `DECK_validateTemplate()`, then `DECK_smokeTest()`. The second prints a deck URL —
-   open it and check: the title is real clickable text, the comment box is empty and typeable,
-   the blue rectangle never crosses the title or the comment panel, and the README and layout
-   slides are gone.
-6. Serve `?page=deckbuilder` from the **execute-as-user** deployment (the one TP01 uses).
-
-### Payload notes
-
-A flat-colour table PNG at scale 2 is ~250–450 KB base64. One slide per
-`google.script.run` call stays well clear of any limit — **do not batch the whole deck into
-one call**. Chart.js canvases capture fine, but call `chart.resize()` and let a frame pass
-before `html2canvas`, or the canvas comes back blank.
+The deck template is a **Google Slides file in Drive** (`DECK_CONFIG.TEMPLATE_ID`), never a
+project file. Each layout slide declares itself in its **speaker notes**:
+
+- `LAYOUT: <id>` names the layout. `L_README` is documentation and is skipped; `L_COVER` is
+  filled in place by `create()` rather than duplicated, so no recipe row can point at it.
+- Token text boxes mark the slots: `{{TITLE}}`, `{{COMMENT}}`, `{{IMAGE}}`, `{{IMAGE2}}`,
+  `{{LABEL1}}`, `{{LABEL2}}`, `{{PAGE}}`, `{{DECK_TITLE}}`, `{{DECK_SUB}}`.
+- Generated slides are stamped `SLIDE: <recipeId>` in their own notes, which is how a re-run
+  knows what already landed and how one failed slide is retried without rebuilding the deck.
+
+`DECK_readTemplate` returns real slot geometry in points, so the in-page preview is a faithful
+mock and follows the template when somebody moves a box. **`CAPTURE_MAX_PX: 2048` is not an
+arbitrary round number** — it is where Google resamples. Whatever is inserted, an exported deck
+comes back with every picture capped at 2048px on its longest side, so asking for 2400 buys a
+2400px canvas that Google then bilinear-resamples down, and text rendered at one scale is
+squeezed to another. Capturing at the ceiling means the text is rendered once, at final size.
+
+### Three stages, never one shot
+
+Forty-three slides of Slides API round trips do not fit in one execution, and a failure at
+slide 40 must not cost the first 39.
+
+1. **Plan** — read the recipe. No data, instant. Untick what this month skips.
+2. **Render** — check the source sheets first, then one slide at a time in the browser: ask the
+   source for its content block, photograph it, keep the PNG. All the compute is here. The
+   source check is *part of* Render rather than a fourth button, because photographing 43
+   slides from figures the sheet replaced an hour ago is the one failure this page cannot show
+   you — every slide builds, nothing goes red, and the deck is quietly last week's.
+3. **Publish** — one `google.script.run` per slide. ~2–4 s each, well inside the 6-minute limit
+   because no call ever handles more than one slide.
+
+A row that fails is marked red and left alone; pressing Render again retries only the
+unfinished rows.
+
+### The recipe, and changing it
+
+`DECK_RECIPE` (§1) is 43 rows, transcribed from the July 2026 pack. Each row names an `id`
+(stable — it is what a retry targets), a `source` registered with `AmrDeckSource`, a `market`
+spelled **the way that page spells it**, an optional `refine` (the Southwest Land / Docks
+split), a `period`, a `layout`, a `title` and an `optional` flag. `DECK_getRecipe` rejects a
+duplicate id or a row with no layout before the build starts rather than at slide 30 of 43.
+
+**Which layout a row uses is editable from the page.** The Plan stage offers every report
+layout the template has as a per-row dropdown, and the choice is saved **shared** — one Script
+Property (`DECK_CONFIG.PROP_LAYOUTS`), so it is the default everybody gets until somebody
+changes it again. Three things about it are deliberate:
+
+- **Only the differences are stored.** A row on its recipe layout has no key. Copying all 43
+  rows in the first time anyone touched one would freeze the recipe, and the next person to
+  re-point a slide in the code would change nothing and have no way to see why.
+- **Changing a layout drops that row's picture** and puts it back on the live render queue. The
+  capture's height and pixel width come from the layout's `{{IMAGE}}` box, so a picture taken
+  for a full-width slot is the wrong shape for a half-width one — and nothing downstream would
+  notice.
+- **Validation is at the point of saving, not reading.** `DECK_getRecipe` is Plan's only request
+  and must stay instant, so it makes no Slides call; `DECK_setLayout` already has a reason to
+  open the template. An override for a row that has left `DECK_RECIPE` is reported rather than
+  silently ignored, and an unparseable store falls back to the recipe instead of locking the
+  page out of Plan.
+
+Adding, dropping or reordering a slide is still an edit to `DECK_RECIPE` and nothing else.
+
+**Market coverage note:** the source pack has no AGG summary slide for North and no Top 10
+slide for Central Canada. That is copied faithfully rather than "corrected".
+
+### Still owed
+
+Nothing off-platform can do any of these. **A real end-to-end build has never been run against
+the live deployment** — every adapter is registered and the path is exercised offline, but
+`DECK_create` / `addSlide` / `finish` have not run for real, and no capture has gone through
+`html2canvas` outside a harness. `DECK_status` is kept until that build says whether the
+Publish stage needs it.
 
 ---
 
-## 9. Working conventions
+## 9. Deleting things, and what must not be deleted
+
+Everything unused should come out. **But "unused" has to be proved, and in Apps Script a grep
+does not prove it.**
+
+> ### What counts as proof, and the trap that nearly cost the data pipeline
+>
+> Grep **is** reliable for one thing: every client → server call here uses a literal function
+> name (`google.script.run.someFunction(…)`). There is no dynamic dispatch anywhere —
+> `google.script.run[name]` appears zero times — so if nothing in `app.html` names a server
+> function, no page calls it.
+>
+> **But a function with no caller in the repo can still be load-bearing**, because three kinds
+> of caller live outside it:
+>
+> 1. **Time-driven triggers**, configured by hand in the Apps Script UI. Nothing in the repo
+>    references them — there is not one `ScriptApp.newTrigger` in the codebase.
+> 2. **Editor-run tools**, invoked by a human from the Run menu.
+> 3. **`doGet`**, called by Apps Script itself.
+>
+> This is not hypothetical. An earlier draft of the merge plan described the sync's four entry
+> points as having "no client caller" — true, and badly misleading: **`qlikSyncCheck` is the
+> time-driven trigger that runs the entire QlikView → Sheets pipeline.** Deleting it on a
+> zero-caller count would have silently stopped every page's data from updating again, and
+> nothing would have errored.
+>
+> So: **before deleting a top-level function, check the trigger list in the Apps Script UI and
+> check whether its own comment says it is run from the editor.** Both are outside the repo.
+> Only then does zero callers mean dead.
+
+Client-side modules are the one place grep *is* conclusive — no dynamic dispatch, and a
+browser module cannot be reached by a trigger or the Run menu.
+
+**And a comment claiming code is dead is not evidence either.** `OVERVIEW` carried a banner
+starting `NOT USED` for four chunks while `getOverview` read its market list on every Overview
+load. The candidate was not a function nobody could find a caller for — it was a `var` that
+*announced itself as dead*, in a comment that survived a verbatim merge precisely because the
+merge moved everything without editing it. A grep for the name answers it in one second, and
+the banner still stood for four chunks. **Read the code, not the label.**
+
+### Things that look deletable and are not
+
+| | |
+|---|---|
+| `qlikSyncCheck` | **Load-bearing.** The time-driven trigger target; the whole data pipeline runs through it |
+| `qlikMarkCurrent` | Run once from the editor after the trigger is set up, so the first firing has stamps to compare. Needed again any time the trigger is rebuilt |
+| `qlikSyncNow(scope)` | The only manual recovery path when the trigger misfires or a sync has to be forced |
+| `qlikStamps` | A diagnostic worth having, and firmer than that: `tests/qliksync.js` exercises it in **three** checks. Deleting it fails a green harness |
+| `clearRetiredOverrides` | Its own comment says "run from the Apps Script editor", and it is idempotent. An editor tool, not dead code |
+| `getSaskRatesStatus` | Its comment says "so the Settings screen **(and a quick manual run)** can check the sheet" — that parenthetical is the editor-tool criterion. The Settings screen never calls it; wiring it would be a behaviour change, not a cleanup |
+| `DECK_status` | A real deck build has still never run against the live deployment, and that is what decides whether the Publish stage needs it. **Do not delete before then** |
+| `SB` · `getSlideData` | Live — the Overview's segment and product-category panels read them |
+| `RMX_getCrossReport` · `getRmxUnmapped` · `uploadRmxData` · `getMarkets` · `getKeys` · `getExtras` · `syncData` | The **legacy-name wrappers**. Zero callers is not the test: they exist so a stale deployment still resolves, and removing one changes what that deployment does. `getMarkets` / `getKeys` / `getExtras` are exactly the generic names the `RMX_NS` capture protects against. Treat as its own piece of work |
+| `doGet` | Apps Script itself is the caller |
+
+**All seven debug functions are already gone**, and a repo-wide audit of every top-level
+declaration found no others: every remaining callerless name is either a deliberate keep above
+or was dead code rather than a diagnostic.
+
+### Still worth auditing
+
+- The CUSTOM FLAG LOOKUP path in the Ready-Mix suggester. The Product Segment page's own help
+  text says neither Extras table groups on it any more.
+- The legacy-name wrappers in the table above — find each caller, then decide as a unit.
+
+### If you do audit the symbol table, use a scope-aware analyser
+
+A naive column-0 grep reports **330** functions in `script.gs`; scope-aware says **154** are
+genuinely top level, because the file does not indent IIFE bodies. Any analyser has to blank
+comments, strings, template literals **and regex literals** — without the last case a `/[)]/`
+or a `/'/` unbalances the brace counter and whole regions read as nested — and then assert its
+brace, paren and bracket counters all return to zero. A counter that does not balance is
+telling you it misread the file.
+
+---
+
+## 10. Working conventions
 
 ### Delivery
 
-- **Complete files, never patches.** When a file changes substantially, deliver the whole
-  file as a drop-in replacement. Surgical edits are fine only for small, clearly scoped
-  changes.
-- **Fix all instances**, not just the reported one.
-- **Single-pass execution** — do all related changes at once.
-- **Plan before code** on anything structural; no implementation until the plan is approved.
-- **Scope reductions require pre-approval.** Any feature omitted, period model restricted or
-  export dropped must be raised *as a question before building*, not announced after delivery.
-- Don't over-engineer. The users of this app are non-technical.
-- Follow how the proven equivalent already works in the codebase rather than inventing a new
-  pattern.
+Work on `merging-files`, commit with a message that says *why*, and add a row to
+[§11](#11-session-log) at the end of every session that changed anything.
+
+### One change at a time
+
+**If two changes land together and something breaks, you cannot tell which one broke it.**
+That is why the 37-file merge carried no behaviour changes inside it, and why each of the
+things that *were* wanted — client-side page switching, the fuel pages' device cache, the §B
+reduction — landed afterwards as its own piece of work with its own gate. A new feature
+wearing a port's clothes is the specific shape to watch for: if a merged page then paints a
+stale figure, "the merge broke it" and "the new cache broke it" look identical.
+
+The same rule is why a deliberate edit inside a moved region gets **declared** to the parity
+harnesses rather than waved through — see Testing below.
+
+### Logging
+
+Both files have one logging helper, with the same signature and the same output shape:
+
+```js
+APP_log(level, where, msg, data)   // script.gs — 'debug' | 'info' | 'warn' | 'error'
+AMR.log (level, where, msg, data)  // app.html  — same
+```
+
+One helper means one place to change the format and **one switch to turn the noise down** —
+`APP_CONFIG.LOG_LEVEL` for the server, read fresh on every call so changing it takes effect on
+the next execution with nothing to redeploy, and a `localStorage` key for the browser.
+
+A line carries enough to answer "what was asked, what came back, how long, and did it come
+from cache" without a second line: `where` (the function, not the file), the arguments that
+*select* data (market, period, month — not whole payloads), the size of the answer, **elapsed
+ms**, and the cache verdict.
+
+- **Log at entry points and phase boundaries. Never inside a per-row loop.** The Ready-Mix
+  bundle is 40,000 rows; a line per row would cost more than the work it describes and bury
+  the line that matters.
+- **Elapsed ms is the only field that catches a regression nobody reported.**
+- **The cache field earns its place** because of §6's 14 MB bundle: a log line carrying elapsed
+  ms and bytes-read would have shown a flat 15–24 s against a varying question on the first
+  read of the transcript. Every cache read logs which of `hit` / `miss` / `skip` it was —
+  `skip` included, because a silent bail is indistinguishable from a cache that is never warm.
+- **Errors log the context, not just the message** — `where` plus the selecting arguments.
+
+`tests/logging.js` enforces all of it: every silent `catch` is listed with its reason, so a new
+one fails with "decide it"; the named entry points must log arrival, answer, failure and
+elapsed ms; and no `APP_log` may sit inside a per-row loop.
 
 ### Code hygiene
 
-- **Preserve CRLF line endings** in all `.gs` and `.html` files.
-- Every inline `<script>` block must pass `node --check` before delivery.
-- **Bump `APP_CODE_BUILD` whenever backend logic changes**, and bump `CACHE_VER` whenever a
-  cache shape changes.
-- Prefix every server entry point uniquely — one global namespace, last writer wins.
-- Ship diagnostics that make future failures self-explanatory (`RMX_debugMonths()`,
-  `debugNaOthers`, `DECK_validateTemplate`). **Replace silent fallbacks with loud banners.**
+- One global scope on the server; one `AMR` namespace on the client. Entry points are
+  prefixed; everything else lives inside an IIFE.
+- **When you delete code by anchored text, diff the symbol table, not just the syntax.** A cut
+  that takes one function too many is still valid JavaScript. The first build of `script.gs`
+  lost `RMX_whoWins` that way — the anchor matched *uniquely*, `node --check` passed, every
+  structural check passed, and the only thing that noticed was a before/after set difference of
+  top-level names.
+- **A comment that says code is dead is not evidence.** `OVERVIEW` carried a banner starting
+  `NOT USED` for four chunks while `getOverview` read its market list on every Overview load —
+  the label came across in a verbatim merge, which is exactly how a wrong comment outlives the
+  thing that made it wrong. Read the code, not the label.
+- **A function with no caller in the repo can still be load-bearing.** Three kinds of caller
+  live outside it: the time-driven trigger (§11), the editor's Run menu, and Apps Script itself
+  calling `doGet`.
 
 ### Testing
 
-This is Apps Script: it needs live Google Sheets and Slides, so most of it cannot be run
-outside the deployment. What *can* be done off-platform:
+24 Node harnesses in `tests/`. `npm install playwright chart.js jsdom` at the repo root gets
+everything; Chromium is already at `/opt/pw-browsers`. Start with `tests/README.md` — it says
+what each one claims and, for the comparison harnesses, exactly how much of that claim still
+holds.
 
-- `node --check` on every inline script block.
-- Node harnesses running real backend code against real workbook data (dumped to JSON with
-  Python/openpyxl), with jsdom driving real page HTML for render tests.
-- Regression suites confirming an existing model produces identical output after a change.
+**When a comparison stops being wholly true, narrow what it claims to exactly what is still
+provable and say so — do not soften the comparison itself.** `gsparity.js` and `modparity.js`
+carried declared edits for exactly that reason while they lived: each deliberate change listed
+with its rationale, every other byte still proved verbatim.
 
-Anything needing SlidesApp, DriveApp, CacheService or a real spreadsheet has to be verified
-in the deployment by hand.
+**And when the claim stops being true at all, delete the harness rather than weaken it.** Both
+of those said so in their own headers, and both are now gone: the CY/PY header work changed
+code inside moved regions of `script.gs` and `app.html` on purpose, so neither file is a copy
+of anything and no version of those gates could pass honestly. What they protected — that a
+region sliced out of either file is the code that actually runs — is protected now by the
+harnesses that run that code.
 
-### Communication
+**A gate whose second side has to be assembled by hand is a gate that stops running.**
+`regress.js` and `pvcheck.js` were deleted for that: they wanted pre-extraction pages staged
+into a directory from commits this repo no longer reaches, and the newest copies it does reach
+delegate straight back to the modules under test — a comparison that passes whatever either
+side does. `apphtml.js` stages from a *commit*, and still works.
 
-Terse and direct. Brief corrections expected and given; absorb a correction and continue
-without re-litigating it. Ask only the minimum necessary clarifying questions, and use
-structured multiple-choice prompts for design decisions.
+**A harness that has never failed has not been tested.** Every gate here was mutation-tested
+before being trusted — unscoping one rule for `merge.js`, renaming a column header and
+disabling a click handler for `pageparity.js`, restoring the year literal for `yearroll.js`.
+`pageparity.js` passed clean on its first run **for the wrong reason**: both sides had died
+identically. That is exactly the bug this rule exists to catch.
+
+**Add your page's case to `pageparity.js` before you touch the page**, so you find out on the
+first run rather than the last. And **do not anchor a harness on a spelled-out line ending** —
+that broke `rmxcost.js` once, and the failure read as though the code had moved.
+
+**Nothing in `tests/` is uploaded to Apps Script.** `.claspignore` is what stops `clasp push`
+carrying it into the script project.
 
 ---
 
-## 10. Session log
+## 11. Session log
 
-Before each coding session, add a row with what you intend to do. Mark it complete when it
-is done. **An unmarked row means the task is either incomplete or was forgotten — check it
-before assuming it is finished.**
+One row per session: what was done, and the finding worth keeping. The blow-by-blow of how
+each was reached is in the commit that made it. **An unmarked row means the task is incomplete
+or was forgotten.**
 
 | Date | Task | Status |
 |---|---|---|
-| 2026-08-13 | Audit repo against the chat-memory README; rewrite it as a project document reflecting the actual code | ✅ done |
-| 2026-08-13 | Deck Builder Phase 0b — fix the `Deck_Backend.gs` bugs (6 found, 6 fixed); validate the committed template offline | ✅ done |
-| 2026-08-13 | Deck Builder Phase 1 — `Page_DeckBuilder.html`, `Deck_Sources.html`, `AmrSlide.captureBare`, `Deck_Recipe.gs` (43 rows) | ✅ done |
-| 2026-08-13 | Deck Builder Phase 2 — extract the fuel exec tables into shared `Deck_Fuel.html`; both fuel pages delegate; `fsc` + `rfsc` adapters live | ✅ done |
-| 2026-08-13 | Deck Builder Phase 3 — `Deck_PV.html`; PV page delegates; `pv` + `cust` adapters live; per-row KPI Region picker on the Deck Builder | ✅ done |
-| 2026-08-13 | Deck Builder Phase 4 — `Deck_SEG.html` + `Deck_RMX.html`; `seg` + `rmx` adapters live; template/folder IDs set; recipe mapped onto the four content layouts | ✅ done |
-| 2026-08-14 | **Half of the Phase 4 debt paid** — `Page_Segment.html` delegates its slide content, KPI cards and fitter to `AmrSegSlide`; `tests/deckstatic.js` fails if a second copy comes back | ✅ done |
-| | **The other half** — make `Page_Rmx.html` delegate to `AmrRmxSlide` instead of holding a duplicate copy | ☐ |
-| 2026-08-13 | `DECK_CONFIG.TEMPLATE_ID` + `FOLDER_ID` set to the live template and deck folder | ✅ done |
-| | **Add the Slides + Drive scopes and serve `?page=deckbuilder` from the execute-as-user deployment**, then run `DECK_validateTemplate()` | ☐ |
-| | Deck Builder Phase 3 — `pv` + `cust` adapters (19 slides) | ☐ |
-| | Deck Builder Phase 4 — `rmx` + `seg` adapters (20 slides) | ☐ |
-| 2026-08-13 | AGG slide layout — fill the frame: bigger charts, bigger table type, KPI strip grown without clipping, and `tests/slidefit.js` to hold it there | ✅ done |
-| 2026-08-14 | Product Segment slide — the same treatment: fit to the frame instead of letting `build()` scale the stack, so the KPI strip is readable on a deck slide | ✅ done |
-| 2026-08-14 | The on-page KPI strip (Price & Volume + Segment) and *Download KPI PNG* — sized by `AmrKpi`, one clean row, nothing clipped | ✅ done |
-| 2026-08-14 | Ready-Mix speed — `getKeys` / `getExtras` / `getSlideTables` cache their finished payload per market+period+month, the way `PV.getReport` always has | ✅ done |
-| 2026-08-14 | The Segment page warms every market in the background; Ready-Mix shows its loading screen before the call that is slow, not after | ✅ done — **superseded 08-17**, see below |
-| 2026-08-17 | **Found the real cost**: every RMX call re-read the 14 MB bundle (160 cache chunks) to produce a 72 KB answer. `RMX_prepare` does it once; `tests/rmxcost.js` is the evidence and the gate | ✅ done |
-| 2026-08-17 | Both Ready-Mix pages open on ONE call, with ONE loading screen, and no client-side warm loop; `RMX_getMarkets` and the boot-time Mapping check are off the critical path (`tests/segboot.js`) | ✅ done |
-| 2026-08-17 | The RMX Segment deck rows lose their KPI Region dropdown — `AmrKpi.rmx` resolves by market name and reads no region sheet, so the control did nothing | ✅ done |
-| 2026-08-17 | **Audited the other backends** for the same shape. PV and the Overview already answer from a cached result before touching their pivot — nothing to do. **FSC and RFSC cached nothing at all**: a full `getDataRange()` of the raw tab on every call, no result cache. Both layers cached now (`tests/fscheader.js` proves one sheet read for two identical calls) | ✅ done |
-| 2026-08-17 | `RMX_prepare` returns **every** market's payload, so a market switch costs no server call — the way Aggregates already worked | ✅ done |
-| 2026-08-17 | **One loading screen** across the suite: `AmrBoot` holds it until every named step lands, `AmrProgress` gained a 400 ms grace so quick work paints nothing, and `done()` ticks are gone from every report page | ✅ done |
-| | TP01, the Inventory Report and the Landing page have no boot screen wired — they read no report data, so there may be nothing to do. Check before adding one | ☐ |
-
-### What has and has not been run
-
-This is Apps Script, so nothing touching SlidesApp, DriveApp or a spreadsheet can be
-executed outside the deployment. What was actually verified for the work above:
-
-- ✅ `node --check` on every changed `.gs` file and every inline `<script>` block.
-- ✅ `DECK_getRecipe()` executed in Node: 43 rows, no duplicate ids, no missing fields.
-- ✅ The committed `.pptx` parsed with python-pptx and checked against the same contract
-  `DECK_validateTemplate` enforces — page size, layout tags, token uniqueness, no tokens
-  nested inside groups, slot geometry.
-- ✅ Every layout the recipe asks for confirmed present in the template.
-- ✅ **Phase 2 extraction proved behaviour-preserving.** Pre- and post-extraction code run
-  over the same model, HTML diffed: 12/12 byte-identical, across both pages, all three period
-  modes, with and without user overrides + a hidden market.
-- ✅ **The deck's own path exercised under jsdom** (`Deck_Sources` → `Deck_Fuel` →
-  `AmrDeckSource.build`): both adapters register, all four fuel slides produce two exec
-  tables with `contenteditable` stripped and the right period heading, an unregistered
-  source rejects with a readable sentence, and each backend is called exactly **once**
-  across its two slides.
-- ✅ Every `include('X')` in every page resolves to a file that exists.
-- ✅ **The AGG slide laid out in real Chromium** (`tests/slidefit.js`): the deck's own block,
-  in the deck's own frame, through the deck's own fitter, over six frame shapes and payloads
-  — nothing clipped, nothing overflowing, no white band under either column. The same run
-  against the pre-change fitter fails four of the six cases, which is the point of it.
-- ❌ **Not run:** `DECK_create` / `addSlide` / `finish`, the pages themselves in a real
-  browser, and any capture through html2canvas. Those need the live deployment.
-
-The two harnesses are worth keeping — they are the regression gate for Phases 3–4. Rebuild
-them as `regress.js` (pre/post HTML diff) and `deckpath.js` (jsdom adapter run); both take a
-synthetic model and need no Google access.
-
-### Corrections made to the previous README
-
-The old README was a paste of two chat-memory summaries. These points were wrong or stale:
-
-- **"Deck Builder (planned but not yet built)"** — the server half (`Deck_Backend.gs`, 664
-  lines) *is* built, the route and nav are wired, and two page adapters are registered. What
-  is missing is the page, the registry, `captureBare`, and the recipe.
-- **"Five server-side functions planned"** — all five exist, plus `DECK_validateTemplate` and
-  `DECK_smokeTest`. They have never been run.
-- **"pptxgenjs (deck template generation)"** listed as a frontend lib — it is not loaded by
-  any page. The template was generated once, in chat, outside this project.
-- **"Carrier Scorecard"** was listed as a page — there is no such page or route.
-- **"Slide Builder"** as a distinct page — `?page=segment` is the *Commercial Product Segment*
-  page, and it reads the Ready-Mix workbook via `RMX_getSlideTables`, not the pre-summed Slide
-  Segment tabs. Those tabs are still read by `getSlideData()` in `Code.gs`, but only for the
-  Overview.
-- **`KPI_Backend.gs`** — the file is `Kpi_Backend.gs` (lowercase `pi`).
-- The "on the horizon" note about rebuilding RMX Fuel Recovery to mirror the AGG page is
-  **done**: both pages now carry the same exec views, `buildExecTables(period)`,
-  `buildContentFor(period)` and a deck adapter.
+| 2026-08-13 | Audit the repo against the chat-memory README and rewrite it as a project document | ✅ |
+| 2026-08-13 | Deck Builder phases 0b–3 — fix six `Deck_Backend` bugs, build the page, the recipe (43 rows), the fuel and PV extractions, the per-row KPI Region picker | ✅ |
+| 2026-08-14 | The Overview's window mode, the month cube, and the panel-emptiness rule | ✅ |
+| 2026-08-17 | Chunks 1–11 of the merge — the three audits, the runtime, §A1–§A4, and nine pages ported | ✅ |
+| 2026-08-18 | **Chunk 12** — 16 `.gs` collapsed into one file. Lost `RMX_whoWins` to a uniquely-matching anchor and caught it only on a symbol-table diff; `gsparity.js` exists because of it | ✅ |
+| 2026-08-18 | **Chunk 13, the cutover** — `doGet` serves `app.html` for every route; the 21 legacy `.html` deleted. 37 files are 3 | ✅ |
+| 2026-08-18 | **The Ready-Mix specificity audit** — 673 computed values had moved, because scoping a rule raises its specificity. `:where()` and `cssparity.js` | ✅ |
+| 2026-08-18 | **§B was malformed from chunk 10** and one rule was silently gone — a builder split a file on a style tag written in prose. `merge.js` check 9 | ✅ |
+| 2026-08-18 | Every repointed harness proved green twice — once with the legacy files present, then again with them hidden. Four failed the second run, each with a read the first pass had missed. **Hide before you delete** | ✅ |
+| 2026-08-19 | **Chunk 14** — the nav mounts a page instead of reloading; `pageswitch.js` proves it leaves nothing behind | ✅ |
+| 2026-08-19 | **Chunk 15** — the `toNum_` / `norm_` / `gk_` census: six, six and two across seven namespaces, four dialects, no safe unification. `helpers.js` pins all fourteen | ✅ |
+| 2026-08-19 | **Chunks 16–19** — §B narrowed to what a capture cannot inherit; the fuel pages' cache; `slidecss.js`, `fuelcache.js`, `logging.js`, `settings.js` | ✅ |
+| 2026-08-19 | **Chunk 22** — the settings a user changes moved to the top of both files: `script.gs` §1 and `app.html` §C. `tunables.js` proves §C is what the pages said | ✅ |
+| 2026-08-19 | **Chunk 20** — `PV.toNum_` stopped dropping accounting negatives. `'(1,234)'` read as **0**, not −1234, so the figure was dropped from every sum rather than mis-signed — which is why nothing ever looked wrong | ✅ |
+| 2026-08-19 | **Chunk 21** — the mapping check is keyed on the schema it depends on. `PV.gk_` mixed `SCHEMA_` in and `PVLOOK.gk_` did not, so a schema bump left the check serving a result computed from rows of the old shape | ✅ |
+| 2026-08-19 | **Chunk 23 — the year is data, not a setting.** Four data contracts named it and each failed *silently* on the first export of a new year: a complete table of zeroes under last year's heading. `yearroll.js` runs the suite against a 2031 workbook | ✅ |
+| 2026-08-19 | **Chunk 24 — which layout each slide uses is a dropdown, not a code push.** Per-row layout picker on the Plan stage, stored shared in one Script Property, differences only. Changing a layout drops that row's picture, because the capture's shape comes from the layout's image box | ✅ |
+| 2026-08-19 | **The intermittent landing-page `Cannot read properties of null (reading 'style')` is diagnosed and fixed.** It was RMX's `renderUnmapped`: a `google.script.run` answer landing after the page had been unmounted, with no guard on `#mapHost`. The Price & Volume copy has carried that guard since the Inventory Report fix; this one was missed. Both failure handlers guarded too | ✅ |
+| 2026-08-19 | **`regress.js` and `pvcheck.js` deleted.** The pages they diffed against are behind commits this repo no longer reaches, and the newest copies it does reach are one-line delegations to the modules under test — so the diff was a tautology. `modparity.js` is what survives, and its header now says it is the only proof for `AmrFuelExec` and `AmrPvSlide` | ✅ |
+| 2026-08-19 | **Three documents became one.** `PLAN.md`'s durable half — the deletion proof rule and the keep-list, how ten pages live in one HTML file, the logging convention, the OAuth scope table, the harness rules — moved here; its 2,400 lines of merge narrative went with it, into the git history. `CLAUDE.md` is a pointer now rather than a second copy. **The cost that had to be paid first was the ~30 pointers in `script.gs`, `app.html` and `tests/` that named `PLAN.md` sections and chunk numbers**: leaving those dangling is precisely the trap this repo has been bitten by, so each was repointed, and the ones inside `gsparity`/`modparity` declared-edit text had to change on both sides at once or the parity gates fail | ✅ |
+| 2026-08-19 | **The period is data too.** The Aggregates workbook was re-headed from `2026 Volume` to `CY Volume` while its export still names years, so the sync silently stopped writing those columns. One rule now: split a header into the figure and its period (`APP_period_`), pair on that, and take the current year off the **data** — the Year column or a Bill Month. Two defects fell out of it: `Fuel Surchage` vs `Fuel Surcharge`, one missing letter that left that single column never written while the tab looked healthy; and the sync's positional fallback, which is how PY revenue once went into the wrong column for a whole run | ✅ |
+| 2026-08-19 | **The `~qliksync temp` sheet is contained, and its strays are swept.** A Drive copy made with no parent inherits the folder it lands in, so it was being born into the shared folder the export sits in. It is created in the script account's own Drive root now and has every non-owner permission stripped before it is read; nothing in the codebase creates a Drive permission, which is the only call that emails anybody. **The exports are `.xls` and cannot be anything else, so a copy is made on every sync** — which turns the one case `finally` cannot cover, Apps Script killing the execution at the runtime limit, from a one-off into a leak. `sweepTemps_` clears it, guarded on the prefix, the mime type and an hour's age | ✅ |
+| 2026-08-19 | **`gsparity.js` and `modparity.js` deleted**, on the rule their own headers gave: a legitimate change landed inside a moved region of both files, so neither is a copy of anything and the gates could only be weakened, never passed. `script.gs` and `app.html` also lost every reference to `README.md`, `PLAN.md`, `tests/` and chunk numbers — they explain themselves and each other now, and nothing outside | ✅ |
+| | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
+| | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
+| | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |

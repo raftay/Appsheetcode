@@ -33,6 +33,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const REPO = path.resolve(__dirname, '..');
+const { region } = require('./scriptgs.js');
 
 /* ---- the Apps Script globals RMX_Backend.gs touches --------------------- */
 const CACHE = {};                       // a CacheService that counts its traffic
@@ -57,19 +58,25 @@ global.APP_forgetStamp_ = () => {};
 global.APP_openSpreadsheet_ = () => { throw new Error('rmxcost never opens a sheet'); };
 global.APP_CONFIG = { CUBE: { COVERAGE: { rmx: { pyVol:1, cyVol:1, pyRev:110, cyRev:110 } } } };
 
-/* RMX_Backend.gs is one IIFE, so its helpers are private. One extra key is
-   spliced onto the object it returns; nothing else about the file is touched. */
-let src = fs.readFileSync(path.join(REPO, 'RMX_Backend.gs'), 'utf8');
-const RET = '  // Surface what the front end / Code.gs need.\r\n  return {';
-if (src.indexOf(RET) === -1) {
-  console.error('could not find the IIFE return in RMX_Backend.gs'); process.exit(2);
+/* script.gs §7 (was RMX_Backend.gs) is one IIFE, so its helpers are private. One
+   extra key is spliced onto the object it returns; nothing else is touched.
+
+   The anchor used to carry a literal \r\n, because RMX_Backend.gs was CRLF like
+   most of the repo. script.gs is LF throughout (README §10), so the line ending
+   is matched rather than spelled — otherwise this harness fails at the splice
+   with "could not find the IIFE return", which reads like the return moved. */
+let src = region('RMX_Backend.gs');
+const RET_RE = /  \/\/ Surface what the front end \/ Code\.gs need\.\r?\n  return \{/;
+const RET = (src.match(RET_RE) || [])[0];
+if (!RET) {
+  console.error('could not find the IIFE return in script.gs §7 (RMX_Backend.gs)'); process.exit(2);
 }
 src = src.replace(RET, RET + '\n    __t: { keyRows_:keyRows_, plantRows_:plantRows_,' +
   ' ppiMaps_:ppiMaps_, slideSegment_:slideSegment_, extrasPayload_:extrasPayload_,' +
   ' scopeMonth_:scopeMonth_, inMonth_:inMonth_, monthFor_:monthFor_,' +
   ' selKey_:selKey_, cacheKey_:cacheKey_, cacheGet_:cacheGet_, cachePut_:cachePut_,' +
   ' loadDataCached_:loadDataCached_, ALL_MARKETS:ALL_MARKETS, CONFIG:CONFIG },');
-vm.runInThisContext(src, { filename: 'RMX_Backend.gs' });
+vm.runInThisContext(src, { filename: 'script.gs (RMX_Backend.gs)' });
 const T = RMX.__t;
 
 /* ---- a bundle the shape of the live one -------------------------------- */
@@ -117,6 +124,13 @@ const bundle = {
   assoc:  mkStream(Math.round(N * 0.15), 'VAP'),
   markets: MARKETS, latestMonth: 7,
   months: { all:[1,2,3,4,5,6,7], cy:[1,2,3,4,5,6,7] },
+  /* chunk 23: the bundle carries the two years its COLUMNS named, and
+     bundleOk_ rejects one that does not — a bundle written before the years
+     travelled with the data would otherwise be served to a page that now
+     labels its headings from them. Deliberately NOT 2026/2025: a fixture that
+     used this year's pair could not tell a payload that reads the data from
+     one that still assumes the calendar. */
+  cyYear: 2031, pyYear: 2030,
   unmapped: { product:[], extras:[], flag:[] }
 };
 

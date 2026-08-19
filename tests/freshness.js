@@ -16,7 +16,14 @@
  *   node tests/freshness.js
  */
 const fs = require('fs'), vm = require('vm'), path = require('path');
+const { region, load: loadRegions } = require('./scriptgs.js');   // this file has its own load()
 const REPO = path.resolve(__dirname, '..');
+const APPHTML = require('./apphtml.js');
+/* the legacy filenames these checks were written against, and the app.html page
+   ids they became. Kept as a map so the check reads the same as it always did. */
+const PAGE_ID = { Page_PriceVolume:'pricevolume', Page_Rmx:'rmx', Page_Segment:'segment',
+                  Page_Overview:'overview', Page_FuelSurcharge:'fuelsurcharge',
+                  Page_RmxFuel:'rmxfuel' };
 
 let fails = 0;
 function check(name, got, want) {
@@ -73,8 +80,7 @@ function load() {
   };
   ctx.global = ctx;
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(`${REPO}/Config.gs`, 'utf8'), ctx);
-  vm.runInContext(fs.readFileSync(`${REPO}/Code.gs`, 'utf8'), ctx);
+  loadRegions(ctx, 'Config.gs', 'Code.gs');
   ctx.PV = { clearCache: () => {} };
   ctx.RMX_NS = { bumpGeneration: () => {} };
 
@@ -258,8 +264,12 @@ console.log('\nit always reads Drive again rather than trusting the cached copy:
  * ==================================================================== */
 console.log('\nPrice & Volume and Ready-Mix read the same stamp:');
 {
-  const src = fs.readFileSync(`${REPO}/PV_Backend.gs`, 'utf8');
-  const rmx = fs.readFileSync(`${REPO}/RMX_Backend.gs`, 'utf8');
+  /* Each backend's own REGION of script.gs, not the whole file: these four checks
+     are about PV and RMX agreeing with each other, and run against all eleven
+     sections at once every one of them would pass as long as SOMETHING in the
+     file matched — which is the opposite of what they are for. */
+  const src = region('PV_Backend.gs');
+  const rmx = region('RMX_Backend.gs');
   checkThat('PV takes its generation from the sheet',
     /APP_sourceStamp_\('pricevolume'\)/.test(src));
   checkThat('RMX takes its generation from the sheet',
@@ -273,13 +283,16 @@ console.log('\nPrice & Volume and Ready-Mix read the same stamp:');
 
 console.log('\nthe loading screen is full-screen, not a corner pill:');
 {
-  const shell = fs.readFileSync(`${REPO}/Shell.html`, 'utf8');
-  const styles = fs.readFileSync(`${REPO}/Styles.html`, 'utf8');
+  /* Shell.html and Styles.html were deleted at the cutover; these assertions are
+     about the code they became, so they read app.html's §E and §A3 instead. */
+  const shell = APPHTML.module('AmrProgress');
+  const styles = APPHTML.styleBlock('A3');
   checkThat('AmrProgress builds the big one', /class = 'amr-load'|className = 'amr-load'/.test(shell));
   /* Every page with the button must ask before rebuilding for everyone. */
   ['Page_PriceVolume', 'Page_Rmx', 'Page_Segment', 'Page_Overview',
    'Page_FuelSurcharge', 'Page_RmxFuel'].forEach(function(f){
-    const src = fs.readFileSync(`${REPO}/${f}.html`, 'utf8');
+    /* the page is a region of app.html now, not a file */
+    const src = APPHTML.pageOf(PAGE_ID[f]).tpl + APPHTML.pageOf(PAGE_ID[f]).js;
     if (!/id="syncBtn"/.test(src)) return;
     checkThat(f + ' asks before rebuilding', /AmrFresh\.ifChanged\(/.test(src),
       'the button rebuilds unconditionally');
