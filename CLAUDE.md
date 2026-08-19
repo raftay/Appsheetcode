@@ -23,12 +23,17 @@ it since anyone last looked.
 
 ## What this repo is
 
-A flat mirror of one Google Apps Script project. **The project is three files** — `app.gs`,
+A flat mirror of one Google Apps Script project. **The project is three files** — `script.gs`,
 `app.html` and `appsscript.json` — with no folders, no build step and no package manager.
 `tests/` is Node-only and is **not** part of the script project.
 
+**The server file is `script.gs`, and renaming it back to `app.gs` breaks the project.** Apps
+Script keys a file by its name *without* the extension, so `app.gs` and `app.html` would both be
+the file `app` — the editor refuses the second, `clasp push` is rejected, and
+`createTemplateFromFile('app')` stops being unambiguous. The HTML keeps the name `app`.
+
 **Those three files are the whole application, and that is tested rather than asserted.**
-`tests/threefiles.js` copies them into an empty directory, evaluates `app.gs` whole in one
+`tests/threefiles.js` copies them into an empty directory, evaluates `script.gs` whole in one
 scope, calls `doGet` for all twelve routes, checks the only file it ever asks `HtmlService`
 for is `app`, and boots what it serves in real Chromium. Nothing else on disk.
 
@@ -38,16 +43,16 @@ shaped this way and the traps that have already been paid for once each; `README
 domain rules; `tests/` is the only proof available off-platform that a page still renders what
 it rendered. The survival-critical half of `PLAN.md` — the scoping trap, the scriptlet trap, the
 style-element trap, the one-global-scope rule, the symbol-table rule — is duplicated into the
-headers of `app.gs` and `app.html`, deliberately, so that a copy of the three files carries its
+headers of `script.gs` and `app.html`, deliberately, so that a copy of the three files carries its
 own warnings. **What is not duplicated is the evidence**: every one of those rules is there
 because something broke, and the account of what broke is in `PLAN.md`.
 
 `.claspignore` is what stops `clasp push` uploading `tests/*.js` into the script project;
 `.gitattributes` pins the three files to LF, which is the repo's most-repeated hazard.
 
-The merge that got here is finished. Chunk 12 collapsed 16 `.gs` into `app.gs`; chunk 13 was
+The merge that got here is finished. Chunk 12 collapsed 16 `.gs` into `script.gs`; chunk 13 was
 the cutover — `doGet` serves `app.html` for every route and the 21 legacy `.html` are gone.
-Navigate both files by section banner (`Ctrl+F "§7"` in `app.gs`, `"§P rmx"` in `app.html`),
+Navigate both files by section banner (`Ctrl+F "§7"` in `script.gs`, `"§P rmx"` in `app.html`),
 or by the original filename, which each region still carries as a `/* ---- RMX_Backend.gs ----`
 locator.
 
@@ -63,14 +68,14 @@ locator.
   everything real still lives inside a namespace IIFE; the reasons outlived the file count.
 - `appsscript.json` carries an explicit `oauthScopes` array, which **replaces** Apps Script's
   automatic scope detection. Add a service, add its scope by hand — nothing warns you, the
-  call just throws for every user. `APP_verifyPermissions()` (`app.gs` §4) catches it in one
+  call just throws for every user. `APP_verifyPermissions()` (`script.gs` §4) catches it in one
   editor run.
 - `appsscript.json` pins `executeAs: USER_DEPLOYING` — everything runs as the deploying
   account.
 
 ## Things that will bite you
 
-- **`app.gs` and `app.html` are LF throughout — keep them that way.** The deleted files were
+- **`script.gs` and `app.html` are LF throughout — keep them that way.** The deleted files were
   mixed **three ways** (most `.html` CRLF, `Code.gs` LF, and two `.gs` carried a lone `\r` as
   a line terminator), and three harnesses still read them out of git. Never anchor a test on
   a spelled-out `\r\n`.

@@ -31,7 +31,7 @@
  *      bare `aside{}` with body[data-page="x"] also raises its specificity by
  *      an attribute selector, so it starts winning cascades the original lost.
  *      Ready-Mix shipped both halves of that — see the check for what broke.
- *  10. app.gs's APP_PAGES, §D's switcher list and §P's templates name the same
+ *  10. script.gs's APP_PAGES, §D's switcher list and §P's templates name the same
  *      pages. Nothing else makes those three agree, and drift is silent.
  *   9. Every style element is opened once, closed once, and holds only CSS.
  *      A style element's content is text until its closing tag, so anything
@@ -531,19 +531,19 @@ const scopedPage = sel => {
 
 /* ------------------------------- 10. the routes and the switcher are one list */
 {
-  /* Two lists name the pages: APP_PAGES in app.gs, which decides what ?page=
+  /* Two lists name the pages: APP_PAGES in script.gs, which decides what ?page=
      serves, and AMR_PAGES in §D, which is the switcher in the header. They are
      in different files and different languages, and nothing makes them agree.
      Drift either way is silent and asymmetric:
-       · in app.gs only  — the switcher cannot reach a page that works
+       · in script.gs only  — the switcher cannot reach a page that works
        · in app.html only — the switcher offers a link that serves the landing
                             page instead, which reads as the click being ignored
      A page also needs a <template> and a registration, so all three are checked
      against each other here rather than pairwise. */
-  const gs = fs.readFileSync(path.join(ROOT, 'app.gs'), 'utf8');
+  const gs = fs.readFileSync(path.join(ROOT, 'script.gs'), 'utf8');
   const m = gs.match(/var APP_PAGES = \[([\s\S]*?)\];/);
   if (!m) {
-    fail('routes', 'app.gs has no APP_PAGES array — doGet decides routes some other way now');
+    fail('routes', 'script.gs has no APP_PAGES array — doGet decides routes some other way now');
   } else {
     const routes = [...m[1].matchAll(/'([\w-]+)'/g)].map(x => x[1]);
     const swMatch = NO_COMMENTS.match(/var AMR_PAGES = \[([\s\S]*?)\];/);
@@ -552,18 +552,18 @@ const scopedPage = sel => {
     if (!switcher) { bad++; fail('routes', 'app.html has no AMR_PAGES switcher list'); }
     else {
       for (const p of routes) {
-        if (!switcher.includes(p)) { bad++; fail('routes', `app.gs routes ?page=${p} but the switcher never offers it`); }
-        if (!templates.includes(p)) { bad++; fail('routes', `app.gs routes ?page=${p} but there is no template tpl-${p}`); }
+        if (!switcher.includes(p)) { bad++; fail('routes', `script.gs routes ?page=${p} but the switcher never offers it`); }
+        if (!templates.includes(p)) { bad++; fail('routes', `script.gs routes ?page=${p} but there is no template tpl-${p}`); }
       }
       for (const p of switcher) {
         if (!routes.includes(p)) {
           bad++;
-          fail('routes', `the switcher offers ${p} but app.gs does not route it — ` +
+          fail('routes', `the switcher offers ${p} but script.gs does not route it — ` +
                          `doGet falls back to the landing page, so the click looks ignored`);
         }
       }
     }
-    if (!bad) pass('routes', `${routes.length} pages, and app.gs, the switcher and §P all agree`);
+    if (!bad) pass('routes', `${routes.length} pages, and script.gs, the switcher and §P all agree`);
   }
 }
 

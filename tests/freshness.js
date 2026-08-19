@@ -16,7 +16,7 @@
  *   node tests/freshness.js
  */
 const fs = require('fs'), vm = require('vm'), path = require('path');
-const { region, load: loadRegions } = require('./appgs.js');   // this file has its own load()
+const { region, load: loadRegions } = require('./scriptgs.js');   // this file has its own load()
 const REPO = path.resolve(__dirname, '..');
 const APPHTML = require('./apphtml.js');
 /* the legacy filenames these checks were written against, and the app.html page
@@ -264,7 +264,7 @@ console.log('\nit always reads Drive again rather than trusting the cached copy:
  * ==================================================================== */
 console.log('\nPrice & Volume and Ready-Mix read the same stamp:');
 {
-  /* Each backend's own REGION of app.gs, not the whole file: these four checks
+  /* Each backend's own REGION of script.gs, not the whole file: these four checks
      are about PV and RMX agreeing with each other, and run against all eleven
      sections at once every one of them would pass as long as SOMETHING in the
      file matched — which is the opposite of what they are for. */

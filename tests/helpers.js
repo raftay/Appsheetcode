@@ -35,12 +35,12 @@
  * and this fails with the input that moved, which is precisely the warning that
  * did not exist while they were "three small private helpers nobody touches".
  *
- * The definitions are read out of app.gs by namespace, so a copy that is quietly
+ * The definitions are read out of script.gs by namespace, so a copy that is quietly
  * deleted, renamed or re-pointed fails here rather than at a customer's month
  * end.
  * ===========================================================================*/
 'use strict';
-const { region } = require('./appgs.js');
+const { region } = require('./scriptgs.js');
 
 let failures = 0;
 const fail = (what, msg) => { failures++; console.log(`  ✗ ${what}: ${msg}`); };

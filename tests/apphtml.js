@@ -1,6 +1,6 @@
 /* apphtml.js — read a merged region out of app.html, or a deleted file out of git.
  * ---------------------------------------------------------------------------
- * The client-side twin of appgs.js. Chunk 13 deleted the 20 legacy .html files,
+ * The client-side twin of scriptgs.js. Chunk 13 deleted the 20 legacy .html files,
  * and ten harnesses read one by name. They read one of two things now, and
  * which one they want is a real distinction rather than a detail:
  *
@@ -69,7 +69,7 @@ function legacy(file) {
    and comes out of git. Harnesses that splice pages together — resolving
    include('Shell') and the rest — swap their one `read` helper for this and keep
    every check they had. */
-const ON_DISK = new Set(['app.html', 'app.gs', 'appsscript.json']);
+const ON_DISK = new Set(['app.html', 'script.gs', 'appsscript.json']);
 function source(file) {
   if (ON_DISK.has(file)) return fs.readFileSync(path.join(REPO, file), 'utf8');
   return legacy(file);

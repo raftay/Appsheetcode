@@ -31,10 +31,10 @@
 const fs = require('fs');
 const path = require('path');
 const REPO = path.resolve(__dirname, '..');
-/* .gs names resolve to a region of app.gs; .html names to app.html off disk or,
+/* .gs names resolve to a region of script.gs; .html names to app.html off disk or,
    for the files the cutover deleted, to the commit before it. Both indirections
    exist so the checks below keep reading what they always read. */
-const read = f => (f.endsWith('.gs') ? require('./appgs.js').region(f)
+const read = f => (f.endsWith('.gs') ? require('./scriptgs.js').region(f)
                                     : require('./apphtml.js').source(f));
 
 let failed = 0;
@@ -370,7 +370,7 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
 /* ---- the recipe ---------------------------------------------------------- */
 {
   const ctx = {};
-  require('vm').runInNewContext(read('Deck_Recipe.gs'), ctx, { filename: 'app.gs (Deck_Recipe.gs)' });
+  require('vm').runInNewContext(read('Deck_Recipe.gs'), ctx, { filename: 'script.gs (Deck_Recipe.gs)' });
   const out = ctx.DECK_getRecipe();
 
   check('recipe · no structural problems', out.problems.length === 0, out.problems.join('; '));

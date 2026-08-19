@@ -19,7 +19,7 @@
  *
  * IT ALSO PINS THE RULE THE WIRING FOLLOWS. The readout attaches to the
  * `saskrates` row, and which pages have that row is decided by
- * APP_EXTRA_SOURCES in app.gs — not by a list in app.html. So a page that reads
+ * APP_EXTRA_SOURCES in script.gs — not by a list in app.html. So a page that reads
  * the Saskatchewan sheet gets the readout automatically, and a page that does
  * not must not ask for it at all. Both directions are checked, because "it
  * appears everywhere" and "it appears where it should" look identical from one
@@ -58,7 +58,7 @@ let failures = 0;
 const fail = (what, msg) => { failures++; console.log(`  ✗ ${what}: ${msg}`); };
 const pass = (what, msg) => console.log(`  ✓ ${what}${msg ? ': ' + msg : ''}`);
 
-/* getSettingsFor's answer is taken from app.gs's own APP_EXTRA_SOURCES, so the
+/* getSettingsFor's answer is taken from script.gs's own APP_EXTRA_SOURCES, so the
    fixture models the real thing: AGG Fuel Recovery reads its own sheet, Price &
    Volume's, and saskrates. RMX Fuel Recovery reads none of them. */
 const STUB = ok => `<script>
@@ -225,7 +225,7 @@ const BOOM  = `{ __fail:true }`;
   }
 
   /* 6 — and it must NOT be asked for where the page has no such source.
-         Which pages those are is APP_EXTRA_SOURCES' decision, in app.gs; if
+         Which pages those are is APP_EXTRA_SOURCES' decision, in script.gs; if
          this ever starts asking everywhere, a second list has grown. */
   {
     const t = await open('rmxfuel', GOOD);

@@ -1,4 +1,4 @@
-/* gsparity.js — app.gs still holds each of the 16 .gs files, verbatim.
+/* gsparity.js — script.gs still holds each of the 16 .gs files, verbatim.
  * ---------------------------------------------------------------------------
  * Chunk 12 merged 10,889 lines of working backend into one file. The argument
  * that made that safe was that it is a MOVE — ordered concatenation, no
@@ -6,7 +6,7 @@
  * §1a). This harness is what turns that argument into something checkable.
  *
  * It reads the 16 originals out of GIT rather than off disk, because chunk 12
- * deleted them in the same commit that added app.gs — they cannot coexist in an
+ * deleted them in the same commit that added script.gs — they cannot coexist in an
  * Apps Script project (PLAN.md §2). That is the same staging trick regress.js
  * and pvcheck.js already use, just pointed at a commit instead of a directory.
  *
@@ -14,7 +14,7 @@
  *     REF=<commit> node tests/gsparity.js
  *
  * WHAT IT CHECKS
- *   1. every source file appears in app.gs verbatim, after the edits declared
+ *   1. every source file appears in script.gs verbatim, after the edits declared
  *      in EDITS below and nothing else;
  *   2. the sections appear in the PLAN.md §5 order;
  *   3. the top-level name set changed by EXACTLY the declared deletions and
@@ -32,9 +32,9 @@
  * before/after diff of the top-level names named it immediately.
  *
  * WHEN TO RETIRE THIS. The moment a legitimate change lands inside a moved
- * region, app.gs stops being a copy of anything and this harness starts failing
+ * region, script.gs stops being a copy of anything and this harness starts failing
  * for the right reason. It is the server-side twin of modparity.js and has the
- * same end of life: keep it while app.gs is still provably the 16 files, delete
+ * same end of life: keep it while script.gs is still provably the 16 files, delete
  * it — do not weaken it — when it is not. Until then it is the only proof that
  * a half-million-byte concatenation did not corrupt anything in the middle.
  */
@@ -57,7 +57,7 @@ function check(what, cond, detail) {
 /* Line endings: the repo is mixed — 15 of the 16 .gs were CRLF, Code.gs was LF,
    and FSC_Backend.gs and RFSC_Backend.gs each carried one LONE CR used as a
    line terminator (old-Mac style, between cPut_ and cachedRead_). All three
-   forms normalise to LF, which is what PLAN.md §12 pins app.gs to. */
+   forms normalise to LF, which is what PLAN.md §12 pins script.gs to. */
 const lf = s => s.replace(/\r\n?/g, '\n');
 
 const gitShow = f => lf(execFileSync('git', ['show', REF + ':' + f],
@@ -74,7 +74,7 @@ const EDITS = {
       text: `
   /* How much the server logs. One of 'debug' | 'info' | 'warn' | 'error', or
      'off'. Read fresh on every APP_log call, so changing it here takes effect
-     on the next execution with nothing to redeploy. See app.gs §2.
+     on the next execution with nothing to redeploy. See script.gs §2.
      'info' is the production setting: entry points and phase boundaries, and
      every error with its context. 'debug' adds the detail you only want while
      something is being investigated. */
@@ -86,7 +86,7 @@ const EDITS = {
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
-     app.gs §2 carries the census and the rule each one was decided by. */
+     script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
       why: 'PLAN §7 and §18: THE SILENT SKIP IS WHY THE cache FIELD EXISTS. APP_cachePut_ bails ' +
            'above 250 chunks and says nothing, and a silent bail is indistinguishable from a ' +
@@ -339,7 +339,7 @@ function doGet(e) {
 
   /* ---- DEAD CODE FOUND BY THE 404-NAME AUDIT ---------------------------------
      Not debug functions — those are all gone. These are IIFE-private helpers with
-     zero readers anywhere in app.gs, app.html or tests/, which the trailing
+     zero readers anywhere in script.gs, app.html or tests/, which the trailing
      underscore also puts out of reach of google.script.run. */
     /* gone: [] — the scope-aware analyser puts this INSIDE the namespace IIFE, so it
        was never one of the top-level names check 3 tracks. That is a stronger
@@ -366,7 +366,7 @@ function doGet(e) {
            'RMX and winning\', by comparing RMX with RMX_NS, by printing the live source of ' +
            'getKeys, and by forcing a throw so the stack names the FILE that owns the winning ' +
            'copy. Since chunk 12 there is ONE .gs and there cannot be a second: RMX === RMX_NS ' +
-           'by construction, and every stack names app.gs. The fourth thing, the backend build ' +
+           'by construction, and every stack names script.gs. The fourth thing, the backend build ' +
            'stamp, already rides in every payload as `build` and is printed in the very banner ' +
            'that used to tell the user to run this. So it is not a diagnostic that has been ' +
            'superseded — it is one that can no longer observe anything. ',
@@ -403,7 +403,7 @@ function RMX_whoWins(){
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
-     app.gs §2 carries the census and the rule each one was decided by. */
+     script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
       why: 'PLAN §18 names this as one of the four, and README §6 is why: RMX_prepare is the one ' +
            'big read the whole Ready-Mix side hangs off, and the bug that hid there for months ' +
@@ -499,7 +499,7 @@ function RMX_whoWins(){
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
-     app.gs §2 carries the census and the rule each one was decided by. */
+     script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
       why: 'A fallback read, not a cache read: cyYear stays null and the Overview then labels ' +
            'its columns with no year. §7\'s exemption is for optional CACHE reads — this one ' +
@@ -545,7 +545,7 @@ function RMX_whoWins(){
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
-     app.gs §2 carries the census and the rule each one was decided by. */
+     script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
       why: 'PLAN §7: this wrapper is the "no convention at all" the chunk was written against — ' +
            'two hand-concatenated console.log strings, no level, no elapsed ms, no cache ' +
@@ -600,7 +600,7 @@ function RMX_whoWins(){
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
-     app.gs §2 carries the census and the rule each one was decided by. */
+     script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
       why: 'PLAN §18 names this as one of the four, because tests/pvlookup.js already covers it. ' +
            'The three lists are what the Mapping check card renders, so their sizes are the ' +
@@ -699,7 +699,7 @@ function RMX_whoWins(){
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
-     app.gs §2 carries the census and the rule each one was decided by. */
+     script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
       why: 'PLAN §18 names this as one of the four. It is the TIME-DRIVEN TRIGGER TARGET — the ' +
            'whole QlikView pipeline runs through it and NOBODY IS WATCHING WHEN IT RUNS, so the ' +
@@ -842,7 +842,7 @@ function RMX_whoWins(){
 
   /* ---- DEAD CODE FOUND BY THE 404-NAME AUDIT ---------------------------------
      Not debug functions — those are all gone. These are IIFE-private helpers with
-     zero readers anywhere in app.gs, app.html or tests/, which the trailing
+     zero readers anywhere in script.gs, app.html or tests/, which the trailing
      underscore also puts out of reach of google.script.run. */
     /* gone: [] — the scope-aware analyser puts this INSIDE the namespace IIFE, so it
        was never one of the top-level names check 3 tracks. That is a stronger
@@ -877,7 +877,7 @@ function pvMonthFor_(rows, period, sel) {
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
-     app.gs §2 carries the census and the rule each one was decided by. */
+     script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
       why: 'bumpGeneration_ exists to make every cached answer unreachable. Dropping the stamp ' +
            'is half of that, and a silent failure leaves the two halves disagreeing: a new ' +
@@ -892,7 +892,7 @@ function pvMonthFor_(rows, period, sel) {
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
-     app.gs §2 carries the census and the rule each one was decided by. */
+     script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
       why: 'THE GENERATION IS PART OF THE CACHE KEY, so falling back to \'0\' does not disable the ' +
            'cache — it makes every generation share one key. A stale entry written under \'0\' is ' +
@@ -912,7 +912,7 @@ function pvMonthFor_(rows, period, sel) {
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
-     app.gs §2 carries the census and the rule each one was decided by. */
+     script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
       why: 'A lock that is not released blocks the next writer until the service times it out. ' +
            'It is in a finally, so the write itself has already succeeded or failed on its own ' +
@@ -937,7 +937,7 @@ function pvMonthFor_(rows, period, sel) {
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
-     app.gs §2 carries the census and the rule each one was decided by. */
+     script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
       why: 'Same as APP_trashFile_: litter rather than corruption, and the same one line is what ' +
            'stops a folder filling up unexplained. ',
@@ -953,7 +953,7 @@ function pvMonthFor_(rows, period, sel) {
 };
 
 /* The nine names chunk 12 WROTE: §2 logging and §4 permissions. */
-/* Top-level names app.gs has that no source file did. The chunk-12 nine are the
+/* Top-level names script.gs has that no source file did. The chunk-12 nine are the
    logging switch and the permissions self-check; APP_PAGES is chunk 13's, the
    route list doGet validates against. Anything else appearing here is a name the
    merge invented without saying so. */
@@ -988,7 +988,7 @@ function applyEdits(file, src) {
       /* A span of the source REPLACED by new text, rather than moved. `replace`
          swaps one exact string; this swaps everything from `from` through the end
          of `to`, which is what a rewritten function needs. The new text is a
-         literal here on purpose — reading it back out of app.gs would make the
+         literal here on purpose — reading it back out of script.gs would make the
          check unable to fail. */
       const i = src.indexOf(op.from);
       if (i === -1 || src.indexOf(op.from, i + 1) !== -1)
@@ -1085,13 +1085,13 @@ function topLevel(src) {
 }
 
 /* ========================================================================= */
-const app = fs.readFileSync(path.join(REPO, 'app.gs'), 'utf8');
+const app = fs.readFileSync(path.join(REPO, 'script.gs'), 'utf8');
 
-console.log('app.gs against the 16 .gs files at ' + REF + ':\n');
+console.log('script.gs against the 16 .gs files at ' + REF + ':\n');
 
 /* ---- 5. line endings ---------------------------------------------------- */
 check('LF throughout — no CR survived the merge', app.indexOf('\r') === -1,
-  'PLAN.md §12 pins app.gs to LF. An editor has flipped it.');
+  'PLAN.md §12 pins script.gs to LF. An editor has flipped it.');
 
 /* ---- 1 + 2. every region present, verbatim, in order -------------------- */
 let cursor = 0;
@@ -1155,7 +1155,7 @@ for (const [section, file] of ORDER) {
     topLevel(gitShow(f)).names.forEach(n => before.add(n));
   }
   const after = topLevel(app);
-  check('the brace/paren/bracket count balances — the analyser read app.gs correctly',
+  check('the brace/paren/bracket count balances — the analyser read script.gs correctly',
     after.balanced);
 
   const now = new Set(after.names);

@@ -1,6 +1,15 @@
-# PLAN — one `app.html`, one `app.gs`
+# PLAN — one `app.html`, one `script.gs`
 
-**Status: ALL NINETEEN CHUNKS ARE DONE on `merging-files`. The script project is `app.gs`, `app.html` and `appsscript.json`, and nothing else — and that is now *tested* rather than asserted: `tests/threefiles.js` runs the whole application out of a directory holding only those three.** 37 files became 3. `app.html` is 1.14 MB and holds the runtime, thirteen shared modules and all ten pages; `app.gs` is 547 KB in eleven sections. All **26** harnesses run and are green.
+**Status: ALL NINETEEN CHUNKS ARE DONE on `merging-files`. The script project is `script.gs`, `app.html` and `appsscript.json`, and nothing else — and that is now *tested* rather than asserted: `tests/threefiles.js` runs the whole application out of a directory holding only those three.** 37 files became 3. `app.html` is 1.14 MB and holds the runtime, thirteen shared modules and all ten pages; `script.gs` is 547 KB in eleven sections. All **26** harnesses run and are green.
+
+> **The server file is `script.gs`, not `app.gs`, and it must not be renamed back.** An Apps
+> Script project keys a file by its **name without the extension**, so `app.gs` and `app.html`
+> are both the file `app`: the project cannot hold both, the editor refuses the second, a
+> `clasp push` is rejected, and `HtmlService.createTemplateFromFile('app')` — the call `doGet`
+> depends on — becomes ambiguous. The plan below was written when this file was called
+> `app.gs`; every reference has been updated, and the title's "one `app.html`, one `app.gs`"
+> is the same two files under the name the platform allows. The HTML keeps `app`; the server
+> side is the one that moved.
 
 **There is no next chunk.** [§8](#8-the-chunks) is complete through 19; chunks **20 and 21** are findings chunk 15 turned up and deliberately did not fix inside a cleanup, and they are the only open code in this file. Everything else below is the record of how this got here.
 
@@ -73,7 +82,7 @@
 2. [The thing that would have broken it](#2-the-thing-that-would-have-broken-it)
 3. [How the pages live inside one HTML file](#3-how-the-pages-live-inside-one-html-file)
 4. [The shape of `app.html`](#4-the-shape-of-apphtml)
-5. [The shape of `app.gs`](#5-the-shape-of-appgs)
+5. [The shape of `script.gs`](#5-the-shape-of-scriptgs)
 6. [The permissions self-check](#6-the-permissions-self-check)
 7. [Logging, and the debug functions it replaces](#7-logging-and-the-debug-functions-it-replaces)
 8. [The chunks](#8-the-chunks) — including [what the gap after chunk 12 settled](#what-the-gap-after-chunk-12-settled)
@@ -91,7 +100,7 @@ The Apps Script project is **37 files** — 16 `.gs` and 21 `.html`. Every chang
 the right file in the editor, and moving the project in or out of the script editor means
 copying 37 files one at a time. The goal is:
 
-> **one `app.html` and one `app.gs`,** plus `appsscript.json`. Nothing else.
+> **one `app.html` and one `script.gs`,** plus `appsscript.json`. Nothing else.
 
 An Apps Script project holds only `.gs`, `.html` and `appsscript.json` — so `appsscript.json`
 is the one unavoidable third file. It is now committed, and it is **not** disposable: it pins
@@ -144,7 +153,7 @@ Zero. Not one name is declared twice at genuine top level across all sixteen fil
 "collisions" a plain grep reports are all IIFE-internal — `PV`'s `getReport` and `RMX`'s
 `getReport` are private to their own namespaces and never shared a scope.
 
-**Re-confirmed at chunk 12 against all 181 names, and again against the merged `app.gs`: still
+**Re-confirmed at chunk 12 against all 181 names, and again against the merged `script.gs`: still
 zero.** The merge really was ordered concatenation. `tests/gsparity.js` now checks this on
 every run, so a future edit that reintroduces a duplicate top-level name fails there rather
 than silently losing whichever copy Apps Script evaluates first.
@@ -190,12 +199,12 @@ layer without fighting it.
 
 ## 2. The thing that would have broken it
 
-**`app.gs` cannot sit in the live script project next to the files it replaces.**
+**`script.gs` cannot sit in the live script project next to the files it replaces.**
 
 Apps Script evaluates every `.gs` file into one shared global scope. Two files both declaring
 `doGet`, `include`, `getLogo` or `var APP_CONFIG` do not coexist — the last file evaluated
 wins, and which one is "last" is the project's internal file order, not something the repo
-controls. Dropping a complete `app.gs` into the live project would silently re-point the live
+controls. Dropping a complete `script.gs` into the live project would silently re-point the live
 router and the live config at half-built code.
 
 `app.html` has no such problem. HTML files are inert until something serves them, so an
@@ -209,7 +218,7 @@ points at it.
    keeps working untouched throughout, and each ported page can be diffed against its
    original live (`?page=rmx` against `?page=app&view=rmx`).
 2. Merge the `.gs` files **last**, as a single atomic cutover commit — delete all 16, add
-   `app.gs` — at a point where `app.html` is already known good.
+   `script.gs` — at a point where `app.html` is already known good.
 
 The only edit to legacy code before cutover is **one line in `Code.gs`'s `doGet`** adding the
 `app` route. Deleting that line reverts it.
@@ -457,7 +466,7 @@ before `boot()`. The Landing page and Inventory Report end up **faster than they
 
 ---
 
-## 5. The shape of `app.gs`
+## 5. The shape of `script.gs`
 
 The `.gs` merge is far less risky than it looks, and this is worth knowing before starting:
 **almost everything is already namespaced.** Twelve of the sixteen files are a single
@@ -513,7 +522,7 @@ knowing before editing:
 
 ## 6. The permissions self-check
 
-`app.gs` gains `APP_verifyPermissions()` — run it from the editor after pasting the file in,
+`script.gs` gains `APP_verifyPermissions()` — run it from the editor after pasting the file in,
 and it reports one line per service.
 
 It has two jobs, and they are different problems:
@@ -568,7 +577,7 @@ Each entry was traced to a real call, not guessed:
 
 > **An explicit `oauthScopes` array REPLACES auto-detection.** Adding a service to this project
 > now means adding its scope by hand. Nothing warns you; the call throws at runtime for every
-> user. `APP_verifyPermissions()` turns that into one editor run, and `app.gs` §4's `CHECKS`
+> user. `APP_verifyPermissions()` turns that into one editor run, and `script.gs` §4's `CHECKS`
 > array holds the service→scope mapping in code beside the probe that proves it, so the table
 > above and the manifest cannot quietly drift apart.
 
@@ -588,7 +597,7 @@ uses it. Today there is no convention at all: 20 `Logger.log` calls, 15 `console
 it down.
 
 ```js
-APP_log(level, where, msg, data)   // app.gs   — 'debug' | 'info' | 'warn' | 'error'
+APP_log(level, where, msg, data)   // script.gs   — 'debug' | 'info' | 'warn' | 'error'
 AMR.log (level, where, msg, data)  // app.html — same signature, same output shape
 ```
 
@@ -674,14 +683,14 @@ debug functions and are not:
   `RMX` and winning"* — by comparing `RMX` with `RMX_NS`, printing the live source of `getKeys`,
   and forcing a throw so the stack names the FILE that owns the winning copy. **Since chunk 12
   there is one `.gs` and there cannot be a second**, so three of those four are impossible by
-  construction and every stack names `app.gs`. The fourth, the backend build stamp, already
+  construction and every stack names `script.gs`. The fourth, the backend build stamp, already
   rides in every payload and was printed at the end of the very banner that told the user to go
   and run this. A diagnostic that can no longer observe anything is not superseded — it is
   unreachable. The banner no longer names it, and `RMX_NS.build` went with it (`BUILD` itself
   stays: it is in the payload).
 
   It is still worth reading [chunk 12's notes](#what-chunk-12-settled) on it: the first build of
-  `app.gs` deleted this function **by accident**, and every syntax and structural check passed.
+  `script.gs` deleted this function **by accident**, and every syntax and structural check passed.
   The deletion above was made with the same symbol-table diff that caught it — asserted to
   remove exactly one name.
 - **`qlikStamps` stays.** [§11](#11-legacy-hit-list) listed it as a candidate on the grounds
@@ -724,7 +733,7 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 
 | # | Chunk | What lands | Review by | |
 |---|---|---|---|---|
-| 12 | **`app.gs`** | All 16 `.gs` merged in the [§5](#5-the-shape-of-appgs) order — **542 KB, 11,388 lines, eleven sections, zero top-level collisions.** `APP_log()` + `APP_CONFIG.LOG_LEVEL`, `APP_verifyPermissions()`, and seven explicit `oauthScopes` in `appsscript.json`. Six debug functions deleted, plus `CUBE_historyStatus` and `syncSlideData`; `qlikStamps` and `getSaskRatesStatus` kept, with reasons. Old `.gs` deleted **in this same commit** ([§2](#2-the-thing-that-would-have-broken-it)). The seven harnesses that read a `.gs` now read a **region** of `app.gs` through the new `tests/appgs.js`, and `tests/gsparity.js` proves every region is still byte-for-byte its source. | `tests/gsparity.js` (mutation-tested four ways), `configcheck`, `qliksync`, `fscheader`, `pvlookup`, `rmxcost`, `freshness`, `deckstatic`, `node --check` **on a `.js` copy** — plus the whole 18-harness suite, all green. **`APP_verifyPermissions()` in the editor is still owed**: nothing off-platform can run it | ✅ |
+| 12 | **`script.gs`** | All 16 `.gs` merged in the [§5](#5-the-shape-of-scriptgs) order — **542 KB, 11,388 lines, eleven sections, zero top-level collisions.** `APP_log()` + `APP_CONFIG.LOG_LEVEL`, `APP_verifyPermissions()`, and seven explicit `oauthScopes` in `appsscript.json`. Six debug functions deleted, plus `CUBE_historyStatus` and `syncSlideData`; `qlikStamps` and `getSaskRatesStatus` kept, with reasons. Old `.gs` deleted **in this same commit** ([§2](#2-the-thing-that-would-have-broken-it)). The seven harnesses that read a `.gs` now read a **region** of `script.gs` through the new `tests/scriptgs.js`, and `tests/gsparity.js` proves every region is still byte-for-byte its source. | `tests/gsparity.js` (mutation-tested four ways), `configcheck`, `qliksync`, `fscheader`, `pvlookup`, `rmxcost`, `freshness`, `deckstatic`, `node --check` **on a `.js` copy** — plus the whole 18-harness suite, all green. **`APP_verifyPermissions()` in the editor is still owed**: nothing off-platform can run it | ✅ |
 | 13 | **Cutover** | `doGet` validates `?page=` against the new `APP_PAGES` and serves `app.html` for every route; the `?page=app` scaffold and its `&view=` are gone, and so is `hrefFor`'s branch. **All 21 legacy `.html` deleted**, plus `include()` (47 call sites, every one in a deleted file) and `AmrKpiStore` (zero callers, went with `Shell.html`). The two untrue sentences fixed. `README.md` and `CLAUDE.md` rewritten around three files. **Ten harnesses repointed through the new `tests/apphtml.js`** rather than retired — see the notes below, the plan was wrong about three of them. `merge.js` gains check 10 (the three page lists agree). | the whole suite (19 green) + every route driven through `doGet` in a real browser, including the unknown-page fallback | ✅ |
 
 ### After the merge is proven — see [§10](#10-four-things-this-merge-does-not-touch)
@@ -820,7 +829,7 @@ shell, so they are installed once in `start()`, **before** `MOUNTED` goes true.
   So the real choice was between making the sentence true and retreating from it, and wiring it
   costs one `google.script.run` on a modal that already makes one.
 
-- **It follows `APP_EXTRA_SOURCES`, not a list of pages.** `app.gs` already declares which pages
+- **It follows `APP_EXTRA_SOURCES`, not a list of pages.** `script.gs` already declares which pages
   read the Saskatchewan sheet — Price & Volume, AGG Fuel Recovery, the Deck Builder — and
   `getSettingsFor` returns a row per source, so **the `saskrates` row was already in that modal on
   exactly those pages.** Attaching the readout to that row means there is no second list to drift
@@ -869,14 +878,14 @@ shell, so they are installed once in `start()`, **before** `MOUNTED` goes true.
   cache write, the permissions probe removing its own test key, and two that are already
   reported through the value the function returns (`qlikStamps` prints `(never)` in its own
   answer; `APP_permAnySheetId_`'s inner loop, where a page with no sheet configured is an
-  expected miss). The census lives in `app.gs` §2, beside the helper, not in a commit message.
+  expected miss). The census lives in `script.gs` §2, beside the helper, not in a commit message.
 
-- **A harness that slices one region out of `app.gs` was modelling the scope wrongly, and this
+- **A harness that slices one region out of `script.gs` was modelling the scope wrongly, and this
   is the chunk where that stopped being theoretical.** Apps Script evaluates every `.gs` into
   **one** global scope — the entire premise of the file — so `APP_log` in §2 is reachable from
   §6 at run time. Three harnesses build a `vm` context from a single region, and the moment a
   moved backend gained a log line they died on *"APP_log is not defined"*: a failure that reads
-  like a broken build and is a missing global. `tests/appgs.js` installs it now, through `load()`
+  like a broken build and is a missing global. `tests/scriptgs.js` installs it now, through `load()`
   and through an exported `attach()` for harnesses that build their own context — and it
   **records** rather than discarding, so a harness that wants to assert on what was logged can
   read `ctx.__log` without arranging anything.
@@ -1076,7 +1085,7 @@ cleanup is the exact move this chunk exists to prevent. Both are written up as c
   old way.
 
 **What landed instead of a merge: `tests/helpers.js`.** It reads all fourteen definitions out
-of `app.gs` by namespace and runs each against a table of inputs, recording *what the suite
+of `script.gs` by namespace and runs each against a table of inputs, recording *what the suite
 does today* rather than what it ought to do. Change one on purpose and it fails with the input
 that moved. Mutation-tested by doing the forbidden tidy — giving `FSC.toNum_` PV's percent rule
 — which fails naming `"5%"` and `"-12.5%"`.
@@ -1155,7 +1164,7 @@ that moved. Mutation-tested by doing the forbidden tidy — giving `FSC.toNum_` 
   > slicing is only trustworthy while §E is still a verbatim copy. modparity is what proves
   > it. Removing it would have taken away the proof underneath its own replacement.
 
-- **`tests/apphtml.js` is the client-side twin of `appgs.js`,** and it draws the same
+- **`tests/apphtml.js` is the client-side twin of `scriptgs.js`,** and it draws the same
   distinction that one does. A harness reading a MODULE wants `module('AmrFuelExec')` — §E is
   the code that ships, and pointing it at a git copy of `Deck_Fuel.html` would leave it
   testing a file nobody serves. A harness that IS a comparison wants `legacy('Page_Rmx.html')`
@@ -1171,9 +1180,9 @@ that moved. Mutation-tested by doing the forbidden tidy — giving `FSC.toNum_` 
   leaves `#appRoot` empty with no error at all — a blank screen, which reads as an outage
   rather than as a typo.
 
-- **Three lists now have to name the same ten pages** — `APP_PAGES` in `app.gs`, `AMR_PAGES`
+- **Three lists now have to name the same ten pages** — `APP_PAGES` in `script.gs`, `AMR_PAGES`
   in §D, and the `§P` templates — and nothing made them agree. `merge.js` check 10 does.
-  Drift is silent and asymmetric: missing from `app.gs` and the switcher offers a link that
+  Drift is silent and asymmetric: missing from `script.gs` and the switcher offers a link that
   quietly serves the landing page, which reads as the click being ignored; missing from
   `app.html` and a working route has no way to reach it.
 
@@ -1185,7 +1194,7 @@ that moved. Mutation-tested by doing the forbidden tidy — giving `FSC.toNum_` 
 
 - **`gsparity.js` needed a new edit kind.** `replace` swaps one exact string; a rewritten
   function needs a span. `rewrite` takes a start anchor, an end anchor and the new text as a
-  **literal** — reading it back out of `app.gs` would make the check unable to fail. `doGet`
+  **literal** — reading it back out of `script.gs` would make the check unable to fail. `doGet`
   and `include()` are both declared that way, so the other 10,880 lines are still proved
   verbatim.
 
@@ -1287,7 +1296,7 @@ a neutral transformation of it.**
   Zero top-level collisions across all 181 names, re-confirmed against the merged file.
   `tests/gsparity.js` reads the 16 originals **out of git** — they were deleted in the same
   commit, so there is nothing on disk to compare against — applies the ten declared edits, and
-  checks each region appears in `app.gs` verbatim and in the [§5](#5-the-shape-of-appgs) order.
+  checks each region appears in `script.gs` verbatim and in the [§5](#5-the-shape-of-scriptgs) order.
   It is the server-side twin of `modparity.js` and retires at chunk 13 for the same reason.
 
 - **The check that earned its place was the one nobody planned: a before/after diff of the
@@ -1323,7 +1332,7 @@ a neutral transformation of it.**
   `RFSC_Backend.gs` each have one, between `cPut_` and `cachedRead_` — old-Mac line endings.
   JavaScript treats a lone `CR` as a line break so the code always worked, but `wc -l`
   undercounts those files by one and any line-based tool sees two statements on one line. The
-  repo was "mixed CRLF/LF"; it was actually mixed three ways. `app.gs` normalises all three to
+  repo was "mixed CRLF/LF"; it was actually mixed three ways. `script.gs` normalises all three to
   LF per [§12](#12-rules-for-whoever-does-the-work), and `gsparity.js` normalises the same way
   so the comparison still holds.
 
@@ -1336,10 +1345,10 @@ a neutral transformation of it.**
   resolve `QLIKSYNC` at call time, not evaluation time, so the split is safe; `gsparity.js`
   checks the two halves rejoin to the whole file with nothing lost at the seam.
 
-- **The seven harnesses that read a `.gs` read a REGION of `app.gs` now, not the whole file**,
-  through the new `tests/appgs.js`. That distinction is the point. Several of them assert on
+- **The seven harnesses that read a `.gs` read a REGION of `script.gs` now, not the whole file**,
+  through the new `tests/scriptgs.js`. That distinction is the point. Several of them assert on
   *source text* — "PV takes its generation from the sheet", "no local header-is-row-1 reader is
-  back in `PV_Lookup`" — and against the whole of `app.gs` those regexes pass if **any** of the
+  back in `PV_Lookup`" — and against the whole of `script.gs` those regexes pass if **any** of the
   eleven sections satisfies them. Repointing them at the file would have left eight checks that
   could no longer fail. Slicing keeps every one as sharp as it was.
 
@@ -1349,7 +1358,7 @@ a neutral transformation of it.**
   the builder's exact section-banner shape now.
 
 - **`tests/rmxcost.js` spliced a key onto the RMX IIFE's return using an anchor with a literal
-  `\r\n` in it.** `RMX_Backend.gs` was CRLF; `app.gs` is LF, so that anchor stopped matching
+  `\r\n` in it.** `RMX_Backend.gs` was CRLF; `script.gs` is LF, so that anchor stopped matching
   and the harness exited with *"could not find the IIFE return"* — which reads like the return
   moved rather than like a line ending changed. It matches the line ending now instead of
   spelling it. **Anywhere a harness anchors on source text, assume the line ending will change
@@ -1360,7 +1369,7 @@ a neutral transformation of it.**
   `GmailApp`" and notes "the Gmail scope is requested from every user"; the scope that is
   actually needed is `auth/script.send_mail`, which is narrower and covers sending with
   attachments. The seven scopes now in `appsscript.json` were each traced to a real call, and
-  the reasoning for every one is in `app.gs` §4's banner, because JSON takes no comments.
+  the reasoning for every one is in `script.gs` §4's banner, because JSON takes no comments.
 
   > **`oauthScopes` REPLACES auto-detection.** Adding a service to the project now means adding
   > its scope by hand; nothing warns you, the call just throws for every user.
@@ -1386,7 +1395,7 @@ a neutral transformation of it.**
     After the merge there is no second file and there cannot be one. `RMX_whoWins` itself still
     works and is still worth keeping — what it reports has simply become impossible.
   - the Price & Volume cross-year notice tells the user to "paste the current `PV_Backend.gs`
-    into the Apps Script" — a file that no longer exists. It is `app.gs` now.
+    into the Apps Script" — a file that no longer exists. It is `script.gs` now.
 
 - **`node --check` does not accept a `.gs` path** — it errors with `ERR_UNKNOWN_FILE_EXTENSION`
   before reading a byte, so it is easy to think you have syntax-checked the file when you have
@@ -1507,8 +1516,8 @@ a neutral transformation of it.**
   It goes at chunk 13.
 
 - **What is left is the server.** Chunk 12 merges the 16 `.gs` files, and §2's asymmetry is
-  why it comes last: `app.gs` cannot coexist with the files it replaces, so it is one atomic
-  commit — delete all 16, add `app.gs` — taken at a point where `app.html` is already known
+  why it comes last: `script.gs` cannot coexist with the files it replaces, so it is one atomic
+  commit — delete all 16, add `script.gs` — taken at a point where `app.html` is already known
   good. It is now known good for all ten pages.
 
 ### What chunk 10 settled
@@ -2000,7 +2009,7 @@ Stated up front so nobody is surprised later:
   legacy sweep would take more than it has: the sweep is real (~720 lines of guide, ~1,225
   lines of dead includes, the id-styling collapse, four spinner keyframes down to one) but the
   pages themselves port close to one-for-one, and §E grew by three modules the original count
-  did not include. ~~**`app.gs` ~515 KB.**~~ **Measured at chunk 12: 542,273 bytes, 11,388
+  did not include. ~~**`script.gs` ~515 KB.**~~ **Measured at chunk 12: 542,273 bytes, 11,388
   lines.** The 16 sources were 528,246 bytes, so the merge *added* ~14 KB net — about 21 KB of
   section banners, the table of contents and the two new sections, less the ~7 KB of debug
   functions deleted. Both files are far inside Apps Script's limits, but the script editor gets
@@ -2178,13 +2187,13 @@ from a page:
 | `qlikSyncNow(scope)` | **Keep.** The only manual recovery path when the trigger misfires or a sync has to be forced |
 | `qlikStamps` | ✅ **Keep — settled in chunk 12, and for a firmer reason than the one listed here.** It is not merely a diagnostic worth having: `tests/qliksync.js` exercises it in **three checks** (one row per export, the moved one flagged, and the page it feeds). Deleting it fails a green harness |
 
-All four now live in `app.gs` **§11**, split off from the `QLIKSYNC` engine in §5 on the file's
+All four now live in `script.gs` **§11**, split off from the `QLIKSYNC` engine in §5 on the file's
 own trigger banner. Nothing in the repo can point at a hand-configured trigger, so a section
 you can `Ctrl+F` is the substitute for the reference that cannot exist.
 
 ### Confirmed dead by the 404-name audit, and removed
 
-Run after chunk 19, over every top-level declaration in `app.gs`, with comments and string
+Run after chunk 19, over every top-level declaration in `script.gs`, with comments and string
 literals blanked so a mention in prose does not count as a caller, and cross-checked against
 `app.html` and `tests/`. **Seven names have no caller anywhere. Three are gone, four stay, and
 the four are the interesting half.**
@@ -2215,13 +2224,13 @@ reach of `google.script.run` as well.
   text that neither Extras table groups on it any more.
 - The `RMX_Backend.gs` "legacy names" wrappers — `getMarkets`, `getKeys`, `getExtras`,
   `syncData`, `uploadRmxData`. Find each caller. **Still open, and now easier to answer wrong:
-  they are all in `app.gs` §7 and read as ordinary top-level functions.** They cannot simply be
+  they are all in `script.gs` §7 and read as ordinary top-level functions.** They cannot simply be
   deleted on a zero-caller count either — `getMarkets` / `getKeys` / `getExtras` are exactly
   the generic names the `RMX_NS` capture exists to protect against, so removing them changes
   what a stale deployment does. Treat as its own chunk.
 - The dead nav hook in `Shell.html`, which says in a comment that it is dead.
 - The `EXECUTIVE OVERVIEW — canonical market list + PV/RMX name mapping` block in `Config.gs`
-  (now `app.gs` §1), whose own banner comment starts `NOT USED`. **Not touched by chunk 12** —
+  (now `script.gs` §1), whose own banner comment starts `NOT USED`. **Not touched by chunk 12** —
   the merge moved it verbatim like everything else. It is a `var OVERVIEW` at top level, so it
   is one of the 181 audited names and collides with nothing.
 - ✅ **Done, chunk 12.** Every `.gs` top-level function with no caller anywhere. All seven from
@@ -2242,7 +2251,7 @@ reach of `google.script.run` as well.
   unused" is not evidence.
 - **Do not flip a file's line endings.** The repo is mixed **three ways**, not two: most
   `.html` are CRLF, `Code.gs` was LF, and `FSC_Backend.gs` and `RFSC_Backend.gs` each carried a
-  **lone `\r`** as a line terminator. `app.html` and `app.gs` are written fresh and are **LF**
+  **lone `\r`** as a line terminator. `app.html` and `script.gs` are written fresh and are **LF**
   throughout — keep it. Scripted edits to existing files must open with `newline=''` and write
   back what was there. And **do not anchor a harness on a spelled-out line ending**: chunk 12
   broke `rmxcost.js` that way, and the failure read as though the code had moved.
@@ -2283,13 +2292,13 @@ reach of `google.script.run` as well.
   - `tests/rmxfixture.js` *(after chunk 12)* — not a harness; the one Ready-Mix model the two
     above share, because cssparity's guarantee only holds while both sides render the same
     markup.
-  - `tests/gsparity.js` *(chunk 12, retires at chunk 13)* — every region of `app.gs` is
+  - `tests/gsparity.js` *(chunk 12, retires at chunk 13)* — every region of `script.gs` is
     byte-for-byte the `.gs` it came from, read out of git because the sources were deleted in
     the same commit. Also checks no top-level name is declared twice, and that the name set
     moved by exactly the declared deletions — **that last check is the one that caught a cut
     silently deleting `RMX_whoWins` while every syntax check still passed.**
-  - `tests/threefiles.js` — the project really is three files. Copies `app.gs`, `app.html` and
-    `appsscript.json` into an empty directory and runs the app out of THAT: evaluates `app.gs`
+  - `tests/threefiles.js` — the project really is three files. Copies `script.gs`, `app.html` and
+    `appsscript.json` into an empty directory and runs the app out of THAT: evaluates `script.gs`
     whole in one scope the way Apps Script does, serves all twelve routes, checks the only file
     `HtmlService` is ever asked for is `app`, and boots the served HTML in real Chromium with no
     `google.script` present. It is the standing answer to "can I delete everything else".
@@ -2298,7 +2307,7 @@ reach of `google.script.run` as well.
     not, that unmatched customers are named rather than counted, and that a failing readout still
     leaves every sheet repointable.
   - `tests/logging.js` *(chunk 18)* — the silent-catch census and the entry points. Every
-    `catch (…) {}` left in `app.gs` is listed with its reason, so a new one fails with "decide
+    `catch (…) {}` left in `script.gs` is listed with its reason, so a new one fails with "decide
     it"; the four named entry points must log arrival, answer, failure and elapsed ms; the cache
     helpers must report all three verdicts; and no `APP_log` may sit inside a per-row loop.
   - `tests/fuelcache.js` *(chunk 17)* — the fuel pages cache the sheet and only the sheet.
@@ -2314,8 +2323,8 @@ reach of `google.script.run` as well.
     table of inputs. A **characterisation** test: it records what each dialect answers today,
     not what it ought to. It is what makes "do not unify these" enforceable rather than a
     comment somebody will eventually disagree with.
-  - `tests/appgs.js` *(chunk 12)* — not a harness; the shared slicer the seven `.gs`-reading
-    harnesses use to read **one region** of `app.gs`. Read its header before repointing
+  - `tests/scriptgs.js` *(chunk 12)* — not a harness; the shared slicer the seven `.gs`-reading
+    harnesses use to read **one region** of `script.gs`. Read its header before repointing
     anything else: several of those harnesses assert on source text, and running those regexes
     against the whole merged file makes them unable to fail.
   - `tests/ovperiod.js` *(pointed at `app.html` in chunk 8)* and `tests/bgrender.js`
@@ -2344,7 +2353,7 @@ Every number above was measured against the code on 2026-08-17, not recalled.
 | Claim | How it was checked |
 |---|---|
 | 37 script-project files; ~1.13 MB HTML, ~527 KB `.gs` | `git ls-files` and `wc -c` |
-| **`app.gs` is 542,273 bytes / 11,388 lines; the 16 sources were 528,246** *(chunk 12)* | `wc -c` before and after |
+| **`script.gs` is 542,273 bytes / 11,388 lines; the 16 sources were 528,246** *(chunk 12)* | `wc -c` before and after |
 | **181 top-level declarations — 154 functions, 27 `var`/`const` — and zero collisions** *(chunk 12, correcting the 127 above)* | a scope-aware analyser that blanks comments, strings, template literals **and regex literals**, and asserts its brace/paren/bracket counters return to zero. A naive column-0 grep says 330 functions |
 | **`GmailApp` is referenced zero times; only `MailApp`** *(chunk 12)* | every Apps Script service name grepped across all 16 `.gs`, with a per-call inventory behind it |
 | **Two `.gs` files carry a lone `\r` line terminator** *(chunk 12)* | `CRLF` stripped, then the remaining `\r` counted per file |

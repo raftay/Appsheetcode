@@ -1,13 +1,13 @@
-/* appgs.js — read one merged region out of app.gs.
+/* scriptgs.js — read one merged region out of script.gs.
  * ---------------------------------------------------------------------------
- * Chunk 12 merged the 16 .gs files into one app.gs and deleted them. Seven
- * harnesses used to read a .gs file by name; they read a REGION of app.gs now,
+ * Chunk 12 merged the 16 .gs files into one script.gs and deleted them. Seven
+ * harnesses used to read a .gs file by name; they read a REGION of script.gs now,
  * and this is the one place that knows how to find one.
  *
  * Why regions rather than just loading the whole file: several of these
  * harnesses assert on source text — "PV takes its generation from the sheet",
  * "no local header-is-row-1 reader is back in PV_Lookup". Run against the whole
- * of app.gs those regexes match if ANY of the eleven sections satisfies them,
+ * of script.gs those regexes match if ANY of the eleven sections satisfies them,
  * so a check that used to pin one backend would quietly start passing because
  * a different one happens to contain the pattern. Slicing keeps every one of
  * those assertions exactly as sharp as it was.
@@ -17,7 +17,7 @@
  * are the same thing. When gsparity retires, so does the guarantee — see its
  * header.
  *
- *     const { region, whole, load } = require('./appgs.js');
+ *     const { region, whole, load } = require('./scriptgs.js');
  *     region('PV_Backend.gs')          // the merged text, minus its banner
  *     load(ctx, 'Config.gs')           // …evaluated into a vm context
  */
@@ -27,7 +27,7 @@ const path = require('path');
 const vm = require('vm');
 
 const REPO = path.resolve(__dirname, '..');
-const APP = fs.readFileSync(path.join(REPO, 'app.gs'), 'utf8');
+const APP = fs.readFileSync(path.join(REPO, 'script.gs'), 'utf8');
 
 /* The merged files, in the order they appear. QlikSync.gs is listed twice —
    the engine in §5, its trigger and editor entry points in §11 — so callers
@@ -50,10 +50,10 @@ const SPANS = [];
   for (const file of ORDER) {
     const marker = '\n/* ---- ' + file + ' -';
     const at = APP.indexOf(marker, from);
-    if (at === -1) throw new Error('appgs.js: no banner for ' + file + ' after offset ' + from +
-      '\n  app.gs does not have the shape this helper expects. Run tests/gsparity.js.');
+    if (at === -1) throw new Error('scriptgs.js: no banner for ' + file + ' after offset ' + from +
+      '\n  script.gs does not have the shape this helper expects. Run tests/gsparity.js.');
     const bodyAt = APP.indexOf('*/\n', at);
-    if (bodyAt === -1) throw new Error('appgs.js: unterminated banner for ' + file);
+    if (bodyAt === -1) throw new Error('scriptgs.js: unterminated banner for ' + file);
     SPANS.push({ file, start: bodyAt + 3 });
     from = bodyAt;
   }
@@ -77,7 +77,7 @@ const SPANS = [];
 
 function spansFor(file) {
   const hits = SPANS.filter(s => s.file === file);
-  if (!hits.length) throw new Error('appgs.js: ' + file + ' is not one of the merged files');
+  if (!hits.length) throw new Error('scriptgs.js: ' + file + ' is not one of the merged files');
   return hits;
 }
 
@@ -92,7 +92,7 @@ function region(file, which) {
  *
  * APP_log IS INSTALLED FIRST, AND THAT IS MODELLING RATHER THAN CONVENIENCE.
  * Apps Script evaluates every .gs into ONE global scope — the whole reason this
- * file exists — so app.gs §2's helper is reachable from every other section at
+ * file exists — so script.gs §2's helper is reachable from every other section at
  * run time. A harness that slices out one region and does not provide it is
  * modelling the scope wrongly, and chunk 18 is where that stopped being
  * theoretical: the moment a moved backend gained a log line, three harnesses
@@ -105,7 +105,7 @@ function region(file, which) {
  */
 function load(ctx, ...files) {
   attach(ctx);
-  for (const f of files) vm.runInContext(region(f), ctx, { filename: 'app.gs (' + f + ')' });
+  for (const f of files) vm.runInContext(region(f), ctx, { filename: 'script.gs (' + f + ')' });
   return ctx;
 }
 
@@ -124,4 +124,4 @@ function attach(ctx) {
 const whole = () => APP;
 
 module.exports = { region, load, attach, whole, ORDER, REPO,
-                   APP_PATH: path.join(REPO, 'app.gs') };
+                   APP_PATH: path.join(REPO, 'script.gs') };
