@@ -22,7 +22,7 @@
  * the DOM is byte-identical while the pixels are not. Ready-Mix shipped exactly
  * that: `aside{}` at (0,0,1) lost to `.qlikGuide{display:none}` at (0,1,0);
  * scoped to (0,1,2) it won, and the QlikView guide opened on load and would not
- * close. Nothing in the suite could see it — see PLAN.md §3.
+ * close. Nothing in the suite could see it — see README §3.
  *
  * Ready-Mix is the page that needs this, because it is the only one whose §A4
  * block styles BARE ELEMENTS — `table`, `th`, `td`, `thead th`, `tfoot td`,

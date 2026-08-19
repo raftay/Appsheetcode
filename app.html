@@ -26,8 +26,9 @@
  and createTemplateFromFile('app') would be ambiguous. This file keeps the
  name 'app'; the server file is the one that moved.
 
- The repo this came from also holds PLAN.md, README.md and a tests/ folder, and
- if you have them they are worth reading. IF YOU DO NOT, everything you need in
+ The repo this came from also holds README.md and a tests/ folder, and if you
+ have them they are worth reading — README §7 is the domain rules, §9 is what
+ must not be deleted and why. IF YOU DO NOT, everything you need in
  order not to break this file is below and in the section banners. They are
  documentation, not dependencies.
 
@@ -1015,7 +1016,7 @@ body[data-page="pricevolume"] .shell{grid-template-columns:264px 1fr; max-width:
    at 8/10px padding instead of 6/9px, and the grand total changed colour and
    weight — 673 differing computed values, with pageparity.js green throughout,
    because the markup never changed. tests/cssparity.js is what found it and
-   what holds the line. See PLAN.md §3. */
+   what holds the line. See README §3. */
 :where(body[data-page="rmx"]) .stamp{font:500 11px Inter; color:#A9C4E6; margin-right:10px; white-space:nowrap}
 
 /* Ready-Mix lays itself out with .wrap + bare aside/main rather than the
@@ -1447,7 +1448,7 @@ body[data-page="overview"] .xf-dd .clr1{margin-top:6px; border:0; background:tra
    three-stage bar or a geometry-driven preview mock.
 
    The 1080px media query maps onto --bp-mid. The 1180px one does NOT and is
-   kept as this page's own step, with the reason PLAN.md §3 asks for: the slide
+   kept as this page's own step, with the reason README §3 asks for: the slide
    rows degrade in two stages — drop the Layout column, then drop the Region
    picker and the thumbnail — and folding them together would put seven columns
    of grid, 668px of fixed tracks, into a 644px column at 1000px wide.       */
@@ -1690,7 +1691,7 @@ body[data-page="tp01"] .tpfoot{font:500 11px Inter; color:var(--muted); text-ali
 /* ---- §P inventoryreport --------------------------------------------------
    This page fills the viewport: the PDF frame takes whatever is left after the
    toolbar. That needs a height chain from <body> down, which is why these two
-   rules target body itself — the one case §3 of PLAN.md warns has to be
+   rules target body itself — the one case README §3 warns has to be
    scoped by hand rather than by prefixing a class selector. */
 body[data-page="inventoryreport"],
 html:has(body[data-page="inventoryreport"]){height:100%}
@@ -2042,7 +2043,7 @@ window.AMR_TUNABLES = {
    Everything here is shared by every page and runs once, on load. It replaces
    Shell.html. Ordered so each piece only depends on what is above it:
 
-     AMR.log        structured logging                        (PLAN.md §7)
+     AMR.log        structured logging                        (README §10)
      AMR.live       are we inside the real web app?
      AMR.lib        lazy CDN loader
      AMR.nav        top-window navigation (we are in a sandbox iframe)
@@ -2055,7 +2056,7 @@ window.AMR = (function(){
   'use strict';
 
   /* ==========================================================================
-     LOGGING  (PLAN.md §7)
+     LOGGING  (README §10)
      --------------------------------------------------------------------------
      One helper, one format, one switch. Every function written for the merge
      logs through this. Rules that keep it useful rather than noisy:
@@ -6928,7 +6929,7 @@ var AmrSegSlide = (function(){
      payload arrives without them, which today means one cached before this
      landed; today's calendar year is the least-wrong guess, and it is a
      guess rather than a setting, which is why it is not in §C.
-     PLAN.md chunk 23. */
+     README §7, "the year is DATA". */
   var CY_YEAR = new Date().getFullYear(), PY_YEAR = CY_YEAR - 1;
   function years_(d){
     var cy = d && Number(d.cyYear);
@@ -7803,7 +7804,7 @@ var AmrRmxSlide = (function(){
      says which two years it is about — the backend reads them off the
      workbook's own column names — so no heading here spells one out. The
      fallback is only for a payload cached before those fields existed, and
-     today's calendar year is the least-wrong guess. PLAN.md chunk 23. */
+     today's calendar year is the least-wrong guess. README §7, "the year is DATA". */
   function cyOf(d){ var y = d && Number(d.cyYear); return y > 0 ? y : new Date().getFullYear(); }
   function pyOf(d){ var y = d && Number(d.pyYear); return y > 0 ? y : cyOf(d) - 1; }
   function byTypeRow(r){
@@ -8272,7 +8273,7 @@ var AmrRmxSlide = (function(){
    The old page had a "QlikView sync status" panel (#qsPanel / #qsOut) with 17
    lines of CSS behind it. Nothing ever wrote to it — it was the display for a
    sync-status feature that was never built. Dropped; the sync is trigger-only
-   and stays that way (PLAN.md §11).                                          */
+   and stays that way (README §9).                                          */
 AMR.page('landing', {
   title: 'Amrize Commercial Suite',
   help:
@@ -8459,7 +8460,7 @@ AMR.page('landing', {
      · the seven-times-copied QlikView guide became AmrQlikGuide.mount()
      · #previewHost lost its id-style rule (§A3 .previewHost carries it now)
      · the Saskatchewan notice's inline hex became the §A3 .notice component
-     · every entry point logs through AMR.log (PLAN.md §7)
+     · every entry point logs through AMR.log (README §10)
 
    The exec tables are NOT here and must not come back: AmrFuelExec (§E) owns
    the compute and the markup for them, shared with RMX Fuel Recovery and the
@@ -8502,8 +8503,8 @@ AMR.page('fuelsurcharge', {
 
   /* THE BACKEND NAMES ITS SLOTS 26/25 so this page and its Ready-Mix twin stay
      a straight clone of each other, but they mean CY and PY — the real years
-     travel with the payload (getFscData sends cyYear / pyYear since PLAN.md
-     chunk 23), so a year roll needs no edit here.
+     travel with the payload (getFscData sends cyYear / pyYear now — README §7,
+     "the year is DATA"), so a year roll needs no edit here.
 
      UNTIL THAT CHUNK THIS PAGE SPELLED 2026 AND 2025 INTO ITS HEADINGS, its
      titles and its status line, and the backend summed the literal years too:
@@ -9242,7 +9243,7 @@ AMR.page('fuelsurcharge', {
 <!-- ===================== §P rmxfuel ===================== -->
 <!-- The Ready-Mix twin of §P fuelsurcharge: same screen, same ids, same
      classes, m³ instead of tonnes. Ids are shared with it ON PURPOSE
-     (PLAN.md §3) — only #upMain differs, because AGG needs two exports
+     (README §3) — only #upMain differs, because AGG needs two exports
      and Ready-Mix needs one. Keep the two templates diffable. -->
 <template id="tpl-rmxfuel">
   <header class="bar">
@@ -13104,7 +13105,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
      says which two years it is about — the backend reads them off the
      workbook's own column names — so no heading here spells one out. The
      fallback is only for a payload cached before those fields existed, and
-     today's calendar year is the least-wrong guess. PLAN.md chunk 23. */
+     today's calendar year is the least-wrong guess. README §7, "the year is DATA". */
   function cyOf(d){ var y = d && Number(d.cyYear); return y > 0 ? y : new Date().getFullYear(); }
   function pyOf(d){ var y = d && Number(d.pyYear); return y > 0 ? y : cyOf(d) - 1; }
   function byTypeRow(r){
@@ -22161,7 +22162,7 @@ AMR.page('tp01', {
      newest year wins if an export ever carries both. Everything downstream
      already passes the export's own header through to the output file, so the
      year needs naming in exactly one place: here, not at all.
-     PLAN.md chunk 23. */
+     README §7, "the year is DATA". */
   function iYearCol(headers, suffix) {
     var best = -1, bestY = -1;
     for (var i = 0; i < headers.length; i++) {

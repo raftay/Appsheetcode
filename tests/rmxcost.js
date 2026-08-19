@@ -62,7 +62,7 @@ global.APP_CONFIG = { CUBE: { COVERAGE: { rmx: { pyVol:1, cyVol:1, pyRev:110, cy
    extra key is spliced onto the object it returns; nothing else is touched.
 
    The anchor used to carry a literal \r\n, because RMX_Backend.gs was CRLF like
-   most of the repo. script.gs is LF throughout (PLAN.md §12), so the line ending
+   most of the repo. script.gs is LF throughout (README §10), so the line ending
    is matched rather than spelled — otherwise this harness fails at the splice
    with "could not find the IIFE return", which reads like the return moved. */
 let src = region('RMX_Backend.gs');

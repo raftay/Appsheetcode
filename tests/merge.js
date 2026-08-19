@@ -14,13 +14,13 @@
  *      #appRoot before mounting. Ids ARE shared between pages on purpose —
  *      the twin pages are the same screen on different numbers and reuse each
  *      other's — which is only safe while exactly one page is in the document.
- *      That is the invariant checked here; see PLAN.md §3.
+ *      That is the invariant checked here; see README §3.
  *   5. Every rule in the §A4 page block is scoped to body[data-page="…"].
  *      An unscoped rule there leaks onto every other page. `:where(body[…])`
  *      counts as scoped and is the preferred form where a page block styles
  *      BARE ELEMENTS: :where() narrows without adding specificity, which is
  *      what a page prefix was always assumed to do and does not. Ready-Mix is
- *      written that way — see check 8 and PLAN.md §3.
+ *      written that way — see check 8 and README §3.
  *   6. No page's boot() leaks a global: no bare assignment to window.* beyond
  *      the short allow-list the runtime itself sets.
  *   7. No page declares a local that SHADOWS one of the runtime's globals.
@@ -262,7 +262,7 @@ const SHARED_IDS = new Set([
     if (clears) pass('single-mount', 'mount() empties #appRoot before mounting');
     else fail('single-mount',
               'mount() does not clear #appRoot before appending — two mounted pages ' +
-              'would share ids. See PLAN.md §3.');
+              'would share ids. See README §3.');
   }
 }
 
@@ -270,7 +270,7 @@ const SHARED_IDS = new Set([
    is the specificity-neutral one: it narrows what the rule matches without
    adding an attribute selector's weight, which is the ONLY form that makes
    "scoping a page's style block" the neutral transformation the merge assumed
-   it was. PLAN.md §3 has what went wrong when it was not. */
+   it was. README §3 has what went wrong when it was not. */
 const SCOPED = /^(?::where\(\s*)?(?:body\[data-page=|html:has\(\s*body\[data-page=)/;
 /* the page id a selector is scoped to, whichever form it used */
 const scopedPage = sel => {

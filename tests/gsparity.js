@@ -2,12 +2,12 @@
  * ---------------------------------------------------------------------------
  * Chunk 12 merged 10,889 lines of working backend into one file. The argument
  * that made that safe was that it is a MOVE — ordered concatenation, no
- * renaming, no reconciliation (PLAN.md §5, and the zero-collision audit in
+ * renaming, no reconciliation (README §3, and the zero-collision audit in
  * §1a). This harness is what turns that argument into something checkable.
  *
  * It reads the 16 originals out of GIT rather than off disk, because chunk 12
  * deleted them in the same commit that added script.gs — they cannot coexist in an
- * Apps Script project (PLAN.md §2). regress.js and pvcheck.js staged their
+ * Apps Script project (README §3). regress.js and pvcheck.js staged their
  * comparand the same way and are gone: they wanted a directory somebody had
  * filled in by hand, from commits this repo no longer reaches. A gate whose
  * second side has to be assembled by hand is a gate that stops running.
@@ -19,12 +19,12 @@
  * WHAT IT CHECKS
  *   1. every source file appears in script.gs verbatim, after the edits declared
  *      in EDITS below and nothing else;
- *   2. the sections appear in the PLAN.md §5 order;
+ *   2. the sections appear in the README §3 order;
  *   3. the top-level name set changed by EXACTLY the declared deletions and
  *      additions — this is the check that earns its place, see below;
  *   4. no top-level name is declared twice (one global scope, last one wins,
  *      silently — the whole reason this file is one file);
- *   5. LF throughout, per PLAN.md §12.
+ *   5. LF throughout, per README §10.
  *
  * WHY CHECK 3 EXISTS. The build's anchored cuts each have to match exactly
  * once, which sounds like enough and is not. The RMX_debugMonths cut ran from
@@ -60,7 +60,7 @@ function check(what, cond, detail) {
 /* Line endings: the repo is mixed — 15 of the 16 .gs were CRLF, Code.gs was LF,
    and FSC_Backend.gs and RFSC_Backend.gs each carried one LONE CR used as a
    line terminator (old-Mac style, between cPut_ and cachedRead_). All three
-   forms normalise to LF, which is what PLAN.md §12 pins script.gs to. */
+   forms normalise to LF, which is what README §10 pins script.gs to. */
 const lf = s => s.replace(/\r\n?/g, '\n');
 
 const gitShow = f => lf(execFileSync('git', ['show', REF + ':' + f],
@@ -186,7 +186,7 @@ const DECK_LAYOUT_STORE = `  function templateId_() { return cfg_('TEMPLATE_ID',
  * ======================================================================== */
 const EDITS = {
   'Config.gs': [
-    { kind: 'insert', why: 'PLAN §7 — the server half of the LOG_LEVEL switch.',
+    { kind: 'insert', why: 'README §10 — the server half of the LOG_LEVEL switch.',
       after: "  PROP_PREFIX: 'DATA_SPREADSHEET_ID__',\n",
       text: `
   /* How much the server logs. One of 'debug' | 'info' | 'warn' | 'error', or
@@ -204,7 +204,7 @@ const EDITS = {
            '(§8) takes its market list from OVERVIEW.MARKETS, the page footer reports any PV ' +
            'market missing from it as unmapped, and app.html names the object by name in that ' +
            'hint. The label came across from Config.gs verbatim, which is exactly how a wrong ' +
-           'comment survives a merge — and PLAN.md §11\'s rule is that nothing is deleted on a ' +
+           'comment survives a merge — and README §9\'s rule is that nothing is deleted on a ' +
            'hunch, so the one thing that could have made this dangerous was a future reader ' +
            'believing the banner. Only the comment changed.',
       from: ` * NOT USED \n * EXECUTIVE OVERVIEW — canonical market list + PV/RMX name mapping.`,
@@ -222,7 +222,7 @@ const EDITS = {
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
      script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
-      why: 'PLAN §7 and §18: THE SILENT SKIP IS WHY THE cache FIELD EXISTS. APP_cachePut_ bails ' +
+      why: 'README §10: THE SILENT SKIP IS WHY THE cache FIELD EXISTS. APP_cachePut_ bails ' +
            'above 250 chunks and says nothing, and a silent bail is indistinguishable from a ' +
            'cache that is simply never warm — which is exactly the shape of README §6\'s most ' +
            'expensive bug, where every RMX entry point pulled a 14 MB bundle to produce a 72 KB ' +
@@ -272,7 +272,7 @@ const EDITS = {
   }
 }` },
     { kind: 'replace',
-      why: 'PLAN §7 and §18: hit/miss, and the third case nobody names. A chunked entry whose ' +
+      why: 'README §10: hit/miss, and the third case nobody names. A chunked entry whose ' +
            'middle chunk has expired is not a miss — the meta says n chunks and one of them is ' +
            'gone, so the entry is unusable AND was recently big enough to be worth caching. It ' +
            'reads as a cache that never warms, exactly like the bail in APP_cachePut_. ',
@@ -436,7 +436,7 @@ function doGet(e) {
      iframe resolves against googleusercontent.com, not the web app — and it is
      read from a <body> data attribute rather than printed into JavaScript,
      because the printing scriptlet HTML-escapes and would break the script
-     block. PLAN.md §8, chunk 2. */
+     block. README §11. */
   var t = HtmlService.createTemplateFromFile('app');
   t.appUrl = getAppUrl_();
   t.page   = page;
@@ -490,7 +490,7 @@ function doGet(e) {
 
    So the pattern is matched instead and the two NEWEST years found are CY and
    PY. RFSC_Backend.gs's mainCols_ has always done it this way; this is the rest
-   of Ready-Mix catching up (PLAN.md chunk 23).
+   of Ready-Mix catching up (README §7, "the year is DATA").
 
    The regex must be non-global: exec on a /g regex carries lastIndex between calls
    and would skip every other column. */
@@ -614,7 +614,7 @@ function yearsInHeader_(sheet, re){ return yearPair_(sheet, re).years; }` },
     out.latestMonth = bundleMonth_(b);
     out.months = bundleMonths_(b);
     /* the two years the data names, so the page's headings never spell one out
-       themselves (PLAN.md chunk 23) */
+       themselves (README §7, "the year is DATA") */
     out.cyYear = b.cyYear; out.pyYear = b.pyYear;` },
 
     { kind: 'replace', gone: [],
@@ -740,7 +740,7 @@ function RMX_whoWins(){
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
      script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
-      why: 'PLAN §18 names this as one of the four, and README §6 is why: RMX_prepare is the one ' +
+      why: 'README §10 names this as one of the four, and README §6 is why: RMX_prepare is the one ' +
            'big read the whole Ready-Mix side hangs off, and the bug that hid there for months ' +
            'was a flat elapsed time against a varying question. tests/rmxcost.js is the gate ' +
            'that already covers it. ',
@@ -781,13 +781,13 @@ function RMX_whoWins(){
                       'freshness checks will disagree with the cache', { error: String(e) }); }` },
 
     { kind: 'cut', gone: [],
-      why: 'PLAN §7 debug function (IIFE-private, so not a top-level name). Logger-only ' +
+      why: 'a debug function (IIFE-private, so not a top-level name). Logger-only ' +
            'diagnostic from a past Others-vs-#N/A investigation. No caller.',
       from: '/* Run from the Apps Script editor (View > Logs). Lists the rows most likely to\n',
       to: "  return 'Logged ' + Object.keys(revOnly).length + ' revenue-only lines, ' + Object.keys(naMix).length + ' #N/A mixes. See View > Logs.';\n}\n\n" },
 
     { kind: 'cut', gone: [],
-      why: 'PLAN §7 debug function — and THIS is the one that writes a CSV to Drive; the plan ' +
+      why: 'a debug function — and THIS is the one that writes a CSV to Drive; the plan ' +
            'attributed that to debugNaOthers. §7 required a check before deleting it, and the ' +
            'check passes: the live Mapping check covers it and better. getUnmapped -> ' +
            'unmappedOf_ -> finishUnmapped_ returns every lookup miss per distinct value with ' +
@@ -818,7 +818,7 @@ function RMX_whoWins(){
       to: `  };` },
 
     { kind: 'cut', gone: ['RMX_debugMonths'],
-      why: 'PLAN §7 debug function. Editor-run month diagnostic, no caller. The end anchor is ' +
+      why: 'a debug function. Editor-run month diagnostic, no caller. The end anchor is ' +
            "this function's own last line and not a generic one: an earlier `  return s;` " +
            'anchor matched RMX_whoWins instead and silently deleted it.',
       from: '/* ==========================================================================\n * RMX_debugMonths - run this from the Apps Script editor, then View > Logs.\n',
@@ -904,7 +904,7 @@ function RMX_whoWins(){
 var DECK = (function () {\n` },
 
     { kind: 'cut', gone: ['DECK_smokeTest'],
-      why: 'PLAN §7 debug function. Builds a throwaway 3-slide deck to eyeball image geometry. ' +
+      why: 'a debug function. Builds a throwaway 3-slide deck to eyeball image geometry. ' +
            'No caller.',
       from: '/*****************************************************************************\n * DECK_smokeTest - run this from the Apps Script editor, before any UI exists.\n',
       to: 'EOF' },
@@ -1089,7 +1089,7 @@ function DECK_resetLayouts() { return DECK.resetLayouts(); }` },
        first of January this page would have summed cells nothing had written
        and published a table of zeroes — silently, because zero is a number.
        RFSC_Backend.gs has carried cy/py since it was written; this is the
-       Aggregates half catching up (PLAN.md chunk 23). */
+       Aggregates half catching up (README §7, "the year is DATA"). */
     return { cells: cells, markets: markets, latest: latest || 1,
              monthList: monthList,
              cy: yMax, py: yMax - 1,
@@ -1176,7 +1176,7 @@ function DECK_resetLayouts() { return DECK.resetLayouts(); }` },
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
      script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
-      why: 'PLAN §7: this wrapper is the "no convention at all" the chunk was written against — ' +
+      why: 'README §10: this wrapper is the "no convention at all" the chunk was written against — ' +
            'two hand-concatenated console.log strings, no level, no elapsed ms, no cache ' +
            'verdict. One of the four entry points chunk 18 names, chosen because ' +
            'tests/fscheader.js already covers it. ',
@@ -1246,7 +1246,7 @@ function DECK_resetLayouts() { return DECK.resetLayouts(); }` },
      gave NaN and NaN became 0, so the figure was DROPPED rather than mis-signed
      — which is why nothing ever looked wrong. Every other toNum_ in the suite
      (FSC, RFSC, RMX, SASKRATES) has always read it as -1234; this is that rule,
-     spelled the way they spell it, and it is the whole of PLAN.md chunk 20.
+     spelled the way they spell it, and it is the whole of README §7, the toNum_ family.
      It cannot touch a value that is not a parenthesised NUMBER: "(n/a)" still
      reads 0, because parseFloat still gives NaN. The percent rule above is
      untouched — chunk 15's point was that PV is RIGHT about "5%" and the others
@@ -1287,7 +1287,7 @@ function gk_(k){ return 'pv|g' + gen_() + '|' + PV.SCHEMA + '|' + k; }` },
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
      script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
-      why: 'PLAN §18 names this as one of the four, because tests/pvlookup.js already covers it. ' +
+      why: 'README §10 names this as one of the four, because tests/pvlookup.js already covers it. ' +
            'The three lists are what the Mapping check card renders, so their sizes are the ' +
            'answer size. ',
       from: `function getPvUnmapped(opts)   { return PVLOOK.getUnmapped(opts); }`,
@@ -1372,7 +1372,7 @@ function gk_(k){ return 'pv|g' + gen_() + '|' + PV.SCHEMA + '|' + k; }` },
 
      THE SIX YEAR ENTRIES WERE LITERALS FOR 2025 AND 2026, and a rule that only
      knows two years stops being a rule on the first of January. They are one
-     pattern each now (PLAN.md chunk 23): whatever year the export names, the
+     pattern each now (README §7, "the year is DATA"): whatever year the export names, the
      sheet's spelling of that same year is what it maps to.
 
      THIS IS ONLY THIS HALF OF THE ROLL, and the other half is not in this repo.
@@ -1465,7 +1465,7 @@ function gk_(k){ return 'pv|g' + gen_() + '|' + PV.SCHEMA + '|' + k; }` },
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
      script.gs §2 carries the census and the rule each one was decided by. */
     { kind: 'replace',
-      why: 'PLAN §18 names this as one of the four. It is the TIME-DRIVEN TRIGGER TARGET — the ' +
+      why: 'README §10 names this as one of the four. It is the TIME-DRIVEN TRIGGER TARGET — the ' +
            'whole QlikView pipeline runs through it and NOBODY IS WATCHING WHEN IT RUNS, so the ' +
            'log line is the only account of it that will ever exist. The Logger.log it replaces ' +
            'carried no level, so a failed pipeline run and a routine one read the same in Cloud ' +
@@ -1623,7 +1623,7 @@ function gk_(k){ return 'pv|g' + gen_() + '|' + PV.SCHEMA + '|' + k; }` },
      year this required two columns the file no longer has and refused a
      perfectly good download with "Missing column(s): 2025 Volume, 2026 Volume".
      Loud rather than silent, which is why it survived, but wrong either way.
-     Same rule as everywhere else now (PLAN.md chunk 23): find every
+     Same rule as everywhere else now (README §7, "the year is DATA"): find every
      "#### Volume", keep them BY YEAR, and let each row pick its own. */
   var volCols = {};
   R.hdr.forEach(function (h, i) {
@@ -1683,7 +1683,7 @@ function gk_(k){ return 'pv|g' + gen_() + '|' + PV.SCHEMA + '|' + k; }` },
      gave NaN and NaN became 0, so the figure was DROPPED rather than mis-signed
      — which is why nothing ever looked wrong. Every other toNum_ in the suite
      (FSC, RFSC, RMX, SASKRATES) has always read it as -1234; this is that rule,
-     spelled the way they spell it, and it is the whole of PLAN.md chunk 20.
+     spelled the way they spell it, and it is the whole of README §7, the toNum_ family.
      It cannot touch a value that is not a parenthesised NUMBER: "(n/a)" still
      reads 0, because parseFloat still gives NaN. The percent rule above is
      untouched — chunk 15's point was that PV is RIGHT about "5%" and the others
@@ -1707,7 +1707,7 @@ function gk_(k){ return 'pv|g' + gen_() + '|' + PV.SCHEMA + '|' + k; }` },
        argument as readTab directly above: two copies of one rule is how it
        keeps coming back. PV_Lookup caches a result COMPUTED FROM the rows this
        schema describes, so a bump that strands PV's tables has to strand its
-       check too — see PLAN.md chunk 21. Exported as a value: bumping it means
+       check too — see README §11. Exported as a value: bumping it means
        editing the literal, which is what SCHEMA_'s own comment asks for. */
     SCHEMA:            SCHEMA_
   };` },
@@ -1835,7 +1835,7 @@ const ADDED = ['APP_LOG_LEVELS_', 'APP_logLevel_', 'APP_logData_', 'APP_log', 'A
                /* the deck's layout map — the page writes it, DECK_getRecipe reads it */
                'DECK_setLayout', 'DECK_resetLayouts'];
 
-/* PLAN.md §5 order. QlikSync.gs is NOT in this list: it is the one file that
+/* README §3 order. QlikSync.gs is NOT in this list: it is the one file that
    lands in two places — the engine in §5, its trigger and editor entry points
    in §11 — so it gets its own block below, which also checks it sits between
    Code.gs and PV_Backend.gs where §5 says it should. */
@@ -1965,7 +1965,7 @@ console.log('script.gs against the 16 .gs files at ' + REF + ':\n');
 
 /* ---- 5. line endings ---------------------------------------------------- */
 check('LF throughout — no CR survived the merge', app.indexOf('\r') === -1,
-  'PLAN.md §12 pins script.gs to LF. An editor has flipped it.');
+  'README pins script.gs to LF. An editor has flipped it.');
 
 /* ---- 1 + 2. every region present, verbatim, in order -------------------- */
 let cursor = 0;
@@ -2006,7 +2006,7 @@ for (const [section, file] of ORDER) {
     check('§5  the QLIKSYNC engine is verbatim  (' + engine.length.toLocaleString() + ' bytes)', a !== -1);
     check('§11 the four entry points are verbatim  (' + triggers.length.toLocaleString() + ' bytes)', b !== -1);
     check('§11 comes after §5 — the engine is built before the trigger names it', a !== -1 && b > a);
-    check('§5  sits between Code.gs and PV_Backend.gs, where PLAN §5 puts it',
+    check('§5  sits between Code.gs and PV_Backend.gs, where README §3 puts it',
       a > foundAt['Code.gs'] && a < foundAt['PV_Backend.gs']);
     check('§11 comes last — after IR_Backend.gs, the end of §10', b > foundAt['IR_Backend.gs']);
 

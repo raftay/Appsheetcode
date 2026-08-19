@@ -102,7 +102,7 @@ if (undecided.length) {
 }
 
 /* -------------------------------------------------- 2. the four entry points
- * PLAN §18 names these four and the order it names them in is the order of the
+ * README §10 names these four and the order it names them in is the order of the
  * payoff. Each must log its arrival, its answer and its failure — and carry
  * elapsed ms, which §7 calls the only field that catches a regression nobody
  * reported. */
@@ -161,7 +161,7 @@ const bailEnd = cacheSrc.indexOf('return;', bailAt);
 if (bailAt === -1 || bailEnd === -1 ||
     !/APP_log\('warn'/.test(cacheSrc.slice(bailAt, bailEnd)))
   fail('cache-verdict', `APP_cachePut_'s "too big to cache" bail does not warn. It is the ` +
-    `single highest-value log line in the file and PLAN §18 says to do it first.`);
+    `single highest-value log line in the file and README §10 says to do it first.`);
 else pass('cache-verdict', "hit / miss / skip all reported, and the n > 250 bail warns");
 
 /* ------------------------------------------------------- 4. never in a loop

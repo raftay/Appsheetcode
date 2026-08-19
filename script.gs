@@ -16,11 +16,11 @@
  * makes HtmlService.createTemplateFromFile('app') ambiguous, which is the
  * call doGet depends on. Renaming this back to app.gs breaks the project.
  *
- * The repo this came from also holds PLAN.md, README.md and a tests/ folder,
- * and if you have them they are worth reading — PLAN.md describes the merge
- * that produced this file, README §7 the domain rules. IF YOU DO NOT HAVE THEM,
- * everything you actually need in order not to break this file is below and in
- * the section banners. They are documentation, not dependencies.
+ * The repo this came from also holds README.md and a tests/ folder, and if you
+ * have them they are worth reading — README §7 is the domain rules, §9 is what
+ * must not be deleted and why. IF YOU DO NOT HAVE THEM, everything you actually
+ * need in order not to break this file is below and in the section banners.
+ * They are documentation, not dependencies.
  *
  * HOW TO NAVIGATE THIS FILE
  * -------------------------
@@ -79,7 +79,7 @@
  *    Pick either and you silently break the other, under 144 call sites, with
  *    nothing failing. So: DO NOT UNIFY THEM. tests/helpers.js pins all fourteen
  *    definitions to a table of inputs, so a future tidy fails there with the
- *    input that moved. PLAN.md chunk 15 has the full diff and the two latent
+ *    input that moved. README §7 carries the rule and the two latent
  *    bugs it turned up.
  *
  * 6. WHEN YOU DELETE CODE BY ANCHORED TEXT, DIFF THE SYMBOL TABLE — not just
@@ -1090,9 +1090,9 @@ var DECK_RECIPE = [
  * Chunk 12 moved 10,889 lines of working backend into this file and edited none
  * of them. The call sites that exist are in §4, the code chunk 12 WROTE. The
  * moved entry points do not log yet, and wiring them is its own chunk with its
- * own gate — PLAN.md §8, chunk 18. Adding log lines to hot moved code that no
+ * own gate — README §11. Adding log lines to hot moved code that no
  * harness covers, inside the largest single change this codebase has had, is
- * exactly the two-changes-at-once trap PLAN.md §10 exists to stop.
+ * exactly the two-changes-at-once trap README §10 exists to stop.
  * ============================================================================ */
 
 /* ---- logging.gs --------------------------------------------------------------
@@ -1191,14 +1191,14 @@ function APP_logTimed(where, msg, fn, data) {
  * reader the Overview's segment and product-category panels are built on.
  *
  * doGet is the one function Apps Script itself calls. It still reads ?page= and
- * still serves one page per load — PLAN.md §3 is explicit that this merge does not
+ * still serves one page per load — README §3 is explicit that this merge does not
  * turn the suite into a single-page app, because a regression then could not be
  * told apart from a new router. Chunk 13 is where doGet starts serving app.html
  * for every route and the ?page=app scaffold goes.
  * ============================================================================ */
 
 /* ---- Code.gs -----------------------------------------------------------------
-   Verbatim, less syncSlideData — see the hit-list note in PLAN.md §11.  */
+   Verbatim, less syncSlideData — see the hit-list note in README §9.  */
 
 /*****************************************************************************
  * AMRIZE COMMERCIAL SUITE — main entry / router
@@ -1268,7 +1268,7 @@ function doGet(e) {
      iframe resolves against googleusercontent.com, not the web app — and it is
      read from a <body> data attribute rather than printed into JavaScript,
      because the printing scriptlet HTML-escapes and would break the script
-     block. PLAN.md §8, chunk 2. */
+     block. README §11. */
   var t = HtmlService.createTemplateFromFile('app');
   t.appUrl = getAppUrl_();
   t.page   = page;
@@ -1765,7 +1765,7 @@ function getSlideData() {
  *                                Script sandbox iframe resolves against
  *                                googleusercontent.com — the page loads and then
  *                                navigates the user off the app. That failure
- *                                already shipped once (PLAN.md §8, chunk 2). An
+ *                                already shipped once (README §11). An
  *                                extra line on the consent screen is the cheaper
  *                                side of that trade.
  *   auth/userinfo.email          Session.getActiveUser().getEmail(), which §10
@@ -1981,7 +1981,7 @@ function APP_permPad_(s, n) {
  *
  * IT HAS NO UI, AND THAT IS A DECISION. There is no ⇣ Pull from QlikView button
  * and there never was. A page that could start a sync would put a minutes-long
- * Drive job behind a button any user could press twice. See PLAN.md §11.
+ * Drive job behind a button any user could press twice. See README §9.
  * ============================================================================ */
 
 /* ---- QlikSync.gs -------------------------------------------------------------
@@ -2140,7 +2140,7 @@ var QLIKSYNC = (function () {
 
      THE SIX YEAR ENTRIES WERE LITERALS FOR 2025 AND 2026, and a rule that only
      knows two years stops being a rule on the first of January. They are one
-     pattern each now (PLAN.md chunk 23): whatever year the export names, the
+     pattern each now (README §7, "the year is DATA"): whatever year the export names, the
      sheet's spelling of that same year is what it maps to.
 
      THIS IS ONLY THIS HALF OF THE ROLL, and the other half is not in this repo.
@@ -3028,7 +3028,7 @@ function toNum_(v) {
      gave NaN and NaN became 0, so the figure was DROPPED rather than mis-signed
      — which is why nothing ever looked wrong. Every other toNum_ in the suite
      (FSC, RFSC, RMX, SASKRATES) has always read it as -1234; this is that rule,
-     spelled the way they spell it, and it is the whole of PLAN.md chunk 20.
+     spelled the way they spell it, and it is the whole of README §7, the toNum_ family.
      It cannot touch a value that is not a parenthesised NUMBER: "(n/a)" still
      reads 0, because parseFloat still gives NaN. The percent rule above is
      untouched — chunk 15's point was that PV is RIGHT about "5%" and the others
@@ -3974,7 +3974,7 @@ function uploadData(payload) {
      year this required two columns the file no longer has and refused a
      perfectly good download with "Missing column(s): 2025 Volume, 2026 Volume".
      Loud rather than silent, which is why it survived, but wrong either way.
-     Same rule as everywhere else now (PLAN.md chunk 23): find every
+     Same rule as everywhere else now (README §7, "the year is DATA"): find every
      "#### Volume", keep them BY YEAR, and let each row pick its own. */
   var volCols = {};
   R.hdr.forEach(function (h, i) {
@@ -4369,7 +4369,7 @@ function getCrossData(opts) {
        argument as readTab directly above: two copies of one rule is how it
        keeps coming back. PV_Lookup caches a result COMPUTED FROM the rows this
        schema describes, so a bump that strands PV's tables has to strand its
-       check too — see PLAN.md chunk 21. Exported as a value: bumping it means
+       check too — see README §11. Exported as a value: bumping it means
        editing the literal, which is what SCHEMA_'s own comment asks for. */
     SCHEMA:            SCHEMA_
   };
@@ -4477,7 +4477,7 @@ function toNum_(v){
      gave NaN and NaN became 0, so the figure was DROPPED rather than mis-signed
      — which is why nothing ever looked wrong. Every other toNum_ in the suite
      (FSC, RFSC, RMX, SASKRATES) has always read it as -1234; this is that rule,
-     spelled the way they spell it, and it is the whole of PLAN.md chunk 20.
+     spelled the way they spell it, and it is the whole of README §7, the toNum_ family.
      It cannot touch a value that is not a parenthesised NUMBER: "(n/a)" still
      reads 0, because parseFloat still gives NaN. The percent rule above is
      untouched — chunk 15's point was that PV is RIGHT about "5%" and the others
@@ -5119,7 +5119,7 @@ var FSC = (function () {
        first of January this page would have summed cells nothing had written
        and published a table of zeroes — silently, because zero is a number.
        RFSC_Backend.gs has carried cy/py since it was written; this is the
-       Aggregates half catching up (PLAN.md chunk 23). */
+       Aggregates half catching up (README §7, "the year is DATA"). */
     return { cells: cells, markets: markets, latest: latest || 1,
              monthList: monthList,
              cy: yMax, py: yMax - 1,
@@ -5822,7 +5822,7 @@ function getSaskRatesStatus() { return SASKRATES.status(); }
 
 /* ---- RMX_Backend.gs ----------------------------------------------------------
    Verbatim, less the four debug functions and the three IIFE exports that existed
-   only to feed one of them. See PLAN.md §7.  */
+   only to feed one of them. See README §10.  */
 
 /*****************************************************************************
  * AMRIZE RMX — backend (namespaced as RMX)
@@ -5959,7 +5959,7 @@ function col_(sheet, name){ var i = sheet.idx[norm_(name)]; return (i==null?-1:i
 
    So the pattern is matched instead and the two NEWEST years found are CY and
    PY. RFSC_Backend.gs's mainCols_ has always done it this way; this is the rest
-   of Ready-Mix catching up (PLAN.md chunk 23).
+   of Ready-Mix catching up (README §7, "the year is DATA").
 
    The regex must be non-global: exec on a /g regex carries lastIndex between calls
    and would skip every other column. */
@@ -6838,7 +6838,7 @@ function getMarkets(){
     out.latestMonth = bundleMonth_(b);
     out.months = bundleMonths_(b);
     /* the two years the data names, so the page's headings never spell one out
-       themselves (PLAN.md chunk 23) */
+       themselves (README §7, "the year is DATA") */
     out.cyYear = b.cyYear; out.pyYear = b.pyYear;
   } catch (e){ out.months = { all:[], cy:[] }; }
   return out;
@@ -9245,7 +9245,7 @@ function getRmxFuelDataFromUpload(p){
  * ============================================================================ */
 
 /* ---- Ov_Backend.gs -----------------------------------------------------------
-   Verbatim, less CUBE_historyStatus — see the hit-list note in PLAN.md §11.  */
+   Verbatim, less CUBE_historyStatus — see the hit-list note in README §9.  */
 
 /*****************************************************************************
  * EXECUTIVE OVERVIEW — backend  (page id: 'overview')

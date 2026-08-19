@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* =============================================================================
- * tests/fuelcache.js — the fuel pages' device cache  (PLAN.md chunk 17)
+ * tests/fuelcache.js — the fuel pages' device cache  
  * -----------------------------------------------------------------------------
  *   npm install playwright
  *   node tests/fuelcache.js
@@ -9,7 +9,7 @@
  * WHY THIS EXISTS
  *
  * Chunk 17 wired AmrCache into AGG Fuel Recovery and RMX Fuel Recovery, so a
- * repeat visit paints from localStorage instead of waiting on the sheet. PLAN.md
+ * repeat visit paints from localStorage instead of waiting on the sheet. README
  * §10 was explicit that this is **new behaviour, not a port** — which is exactly
  * why it was kept out of the merge — and it named the three things the chunk
  * must not guess at. All three are checks below, on BOTH pages:

@@ -64,7 +64,7 @@ Ten invariants that nothing enforces at runtime: every inline script parses, eve
 in that page's own template, no id is declared by two pages, every §A4 rule is scoped, no
 page registration leaks a global, no page shadows a runtime global, and **no §A4 rule reaches
 outside its own page's markup** (check 8, `css-reach`). Plus the three Apps Script templating
-traps that have each shipped once — see `PLAN.md` §8.
+traps that have each shipped once — see `README.md` §7.
 
 Check 9, `style-blocks`, is why §B stopped losing a rule: a style element's content is text
 until its closing tag, so anything that leaks in is parsed as CSS, and CSS error recovery eats
@@ -279,7 +279,7 @@ node tests/threefiles.js
 
 ## `fuelcache.js` — the fuel pages cache the sheet, and only the sheet
 
-Chunk 17 wired `AmrCache` into both Fuel Recovery pages. `PLAN.md` §10 named three things the
+Chunk 17 wired `AmrCache` into both Fuel Recovery pages. `README.md` §10 named three things the
 chunk must not guess at, and each is a check here, on both pages:
 
 | check | what it would catch |
@@ -344,7 +344,7 @@ SLIDECSS_LIST=1 node tests/slidecss.js     # what each rule is worth
 ## `helpers.js` — the drifted helpers, pinned as they are
 
 `toNum_`, `norm_` and `gk_` are duplicated across seven namespaces and have drifted. Chunk 15
-diffed all fourteen definitions and decided they **stay** — the full reasoning is in `PLAN.md`,
+diffed all fourteen definitions and decided they **stay** — the full reasoning is in `README.md` §7,
 and the one line of it is: **neither dialect is a superset. Each is right exactly where the
 other is wrong.** PV reads the text `"5%"` as `0.05` and `"(1,234)"` as `0`; the other four
 read them as `5` and `-1234`. Both readings are defensible, so unifying has no safe direction,
@@ -385,7 +385,7 @@ and `pvcheck.js` staged their comparand the same way but from a hand-filled dire
 is what eventually killed them — see the top of this file. Point at a commit.
 
 Five checks: every source appears verbatim after the ten edits declared in the file and no
-others; the sections are in `PLAN.md` §5 order; the top-level name set moved by exactly the
+others; the sections are in `README.md` §3 order; the top-level name set moved by exactly the
 declared deletions and additions; no top-level name is declared twice; LF throughout.
 
 **The third check is the one that earns its place.** Every cut in the build had to match its
@@ -436,7 +436,7 @@ is what let `slidefit.js` and `deckpath.js` count as proof about `app.html` whil
 pointed at the *old* files, and what makes `apphtml.js`'s slicing trustworthy now that they
 point at §E. Since `regress.js` and `pvcheck.js` were deleted it is also the **only** proof
 that `AmrFuelExec` and `AmrPvSlide` are what they were. Line endings are normalised, because the repo is
-mixed and `app.html` is LF throughout by `PLAN.md` §12.
+mixed and `app.html` is LF throughout by `README.md` §10.
 
 ```bash
 node tests/modparity.js

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* =============================================================================
- * tests/slidecss.js — what §B still does that §A1–§A3 do not  (PLAN.md chunk 16)
+ * tests/slidecss.js — what §B still does that §A1–§A3 do not  
  * -----------------------------------------------------------------------------
  *   npm install playwright
  *   node tests/slidecss.js
@@ -12,7 +12,7 @@
  * `.slide-bare`. It was written when the deck and the pages were SEPARATE
  * DOCUMENTS — the Deck Builder included the slide modules without the pages
  * those modules normally live on, so every rule their markup depended on had to
- * be restated. PLAN.md §10 kept it out of the merge and asked chunk 16 to fold
+ * be restated. README §10 kept it out of the merge and a later chunk folded
  * it into the component layer "only against real captures: the deck's output is
  * a picture nobody can restyle afterwards, so 'these look the same' is not the
  * standard."

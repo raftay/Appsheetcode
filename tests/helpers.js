@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /* =============================================================================
- * tests/helpers.js — the drifted helpers, pinned  (PLAN.md chunk 15)
+ * tests/helpers.js — the drifted helpers, pinned  
  * -----------------------------------------------------------------------------
  *   node tests/helpers.js
  *
  * WHY THIS EXISTS, AND WHY IT IS NOT A REFACTOR
  *
- * PLAN.md §10 held `toNum_` / `norm_` / `gk_` out of the merge because they had
+ * README §10 held `toNum_` / `norm_` / `gk_` out of the merge because they had
  * drifted and they "sit under every number the business reconciles against
  * Qlik". Chunk 15 was to diff them and unify only what is provably equivalent.
  *
- * The diff is in PLAN.md. The short version is that there are not three copies,
+ * The short version is that there are not three copies,
  * there are FOURTEEN definitions across seven namespaces, and — this is the part
  * that decided the chunk — **neither dialect is a superset of the other. Each is
  * right exactly where the other is wrong.**
@@ -204,7 +204,7 @@ function runTable(label, defs, table) {
         fail(label, `${fns[i].ns}.${label}(${show(input)}) is ${show(got)}, was ${show(want)}.\n` +
              `        This helper's behaviour changed. It is not a style question: ${label} sits ` +
              `under\n        every number the suite reconciles against Qlik. If the change is ` +
-             `deliberate, update\n        the table AND say in PLAN.md what moved and why.`);
+             `deliberate, update\n        the table AND say in README §11 what moved and why.`);
         bad++;
       }
     }
@@ -264,7 +264,7 @@ const nm = runTable('norm_',  NORM,  NORM_TABLE);
 }
 
 /* ------------------------------------------------- the census cannot drift
-   PLAN.md §10 said "three namespaces". It is seven, and being wrong about that
+   An early draft said "three namespaces". It is seven, and being wrong about that
    is what made "just unify them" sound cheap. */
 if (tn && nm) {
   if (tn.length !== 6 || nm.length !== 6)

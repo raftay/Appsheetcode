@@ -13,7 +13,7 @@ the claim by running the whole application out of a directory holding only those
 Navigate both merged files by section banner rather than by scrolling: `Ctrl+F` for `§7` in
 `script.gs`, `§P rmx` in `app.html`. Each region also carries the name of the file it was
 merged from as a locator (`/* ---- RMX_Backend.gs ----`), which is what the commit history
-and `PLAN.md` refer to.
+refers to.
 
 > **`script.gs` must not be renamed back to `app.gs`.** Apps Script keys a file by its name
 > *without* the extension, so `app.gs` and `app.html` are both the file `app`: the project
@@ -34,21 +34,32 @@ and `PLAN.md` refer to.
 6. [Caching model](#6-caching-model)
 7. [Domain rules that must not drift](#7-domain-rules-that-must-not-drift)
 8. [The Deck Builder](#8-the-deck-builder)
-9. [Working conventions](#9-working-conventions)
-10. [Session log](#10-session-log)
+9. [Deleting things, and what must not be deleted](#9-deleting-things-and-what-must-not-be-deleted)
+10. [Working conventions](#10-working-conventions)
+11. [Session log](#11-session-log)
 
 ---
 
 ## Working on this repo — read first
 
-> **Agents: read [`PLAN.md`](PLAN.md) at the start of every session.** Several agents work
-> here from different accounts with no shared memory; that file is the only context they
-> have in common, and it opens with a session-start and session-end protocol. It carries the
-> evidence behind every rule below — this document states the rules, `PLAN.md` says what
-> broke to produce them. [`CLAUDE.md`](CLAUDE.md) is the short version of both.
+> **Agents: this file is the whole brief. Read it at the start of every session.** Several
+> agents work here from different accounts with no shared memory, so this is the only context
+> they have in common. It used to be split three ways: `PLAN.md` carried the 37-file merge and
+> the evidence behind every rule, `CLAUDE.md` a summary of both. That merge is finished, so
+> `PLAN.md`'s durable half is here and its per-chunk narrative is in the git history, where it
+> belongs; `CLAUDE.md` is now a short pointer to this file rather than a second copy of it.
+> **Three documents describing one codebase is how the three of them drift apart**, and that
+> has already cost this repo real bugs — a `NOT USED` banner on live code, counts that had
+> moved, a documented object that never existed. One document, checked against the code.
 
 **All work happens on `merging-files`.** Never `main`, and no pull requests for it — the
 branch is the review surface. `git pull` before you start; another agent may have moved it.
+One commit per piece of work, so any of it can be reviewed or reverted on its own.
+
+**Leave the next agent a usable state.** Anything you learned that the next person would
+otherwise rediscover goes in *this file*, not in a commit message — nobody reads commit
+messages before starting. A half-finished job with no note beside it is the single most
+expensive thing you can leave behind.
 
 Four things that will bite you:
 
@@ -63,8 +74,9 @@ Four things that will bite you:
   harnesses before and after touching a page; see `tests/README.md`.
 - **`node --check` does not accept `.gs`.** Copy to a `.js` path first.
 - **Nothing gets deleted on a hunch.** Every removal needs a repo-wide grep proving zero live
-  references, logged in §10 with what proved it. Several things that look dead are
-  load-bearing; several that look live are not. Both lists are in `PLAN.md` §11.
+  references, logged in §11 with what proved it. Several things that look dead are
+  load-bearing and several that look live are not — [§9](#9-deleting-things-and-what-must-not-be-deleted)
+  is the list and the proof rule.
 
 **Verify this document against the code before relying on it.** Repeated audits have each
 found real errors — stale identifiers, a documented object that never existed, counts that
@@ -89,9 +101,25 @@ TP01's market → email map is a single list.
 
 **Its `oauthScopes` array replaces Apps Script's automatic scope detection.** Add a service,
 add its scope by hand — nothing warns you, the call just throws for every user.
-`APP_verifyPermissions()` (`script.gs` §4) catches it in one editor run. The seven scopes
-today are spreadsheets, drive, presentations, script.send_mail, script.external_request,
-script.scriptapp and userinfo.email.
+`APP_verifyPermissions()` (`script.gs` §4) catches it in one editor run, reporting one line
+per service rather than dying on the first failure, so a missing grant cannot hide the other
+six. Each of the seven scopes was traced to a real call:
+
+| Scope | What needs it |
+|---|---|
+| `auth/spreadsheets` | `SpreadsheetApp.openById` — the project is not bound to a sheet, so the narrower current-document scope is no use |
+| `auth/drive` | `DriveApp` get/create **and** the Drive v3 REST `files/copy` in §5 that converts a QlikView export. Full `drive`, not `drive.file`: the files were not created by this script |
+| `auth/presentations` | `SlidesApp.openById` — the Deck Builder |
+| `auth/script.send_mail` | `MailApp.sendEmail` — TP01. Note this is the narrow "send mail as you" grant, **not** a Gmail scope; nothing in the suite touches `GmailApp` or reads a mailbox |
+| `auth/script.external_request` | `UrlFetchApp` — the logo, and the Drive REST call above |
+| `auth/script.scriptapp` | `ScriptApp.getService().getUrl()`, which every page link is built from. Included deliberately even though it may be reachable without it: if that URL comes back empty every link goes **relative**, and a relative href inside the Apps Script sandbox iframe resolves against `googleusercontent.com`, navigating the user off the app. That shipped once |
+| `auth/userinfo.email` | `Session.getActiveUser().getEmail()` — who archived a KPI workbook, and the check's own report |
+
+`CacheService`, `PropertiesService`, `LockService`, `Utilities` and `HtmlService` need no
+scope. They are still checked and reported as `(none needed)` — a service that needs nothing
+is a different fact from a service nobody remembered. `script.gs` §4's `CHECKS` array holds
+the service → scope mapping in code beside the probe that proves it, so the table above and
+the manifest cannot quietly drift apart.
 
 ---
 
@@ -159,6 +187,48 @@ internal file order is not something this repo controls. Entry points are prefix
 are.** `script.gs` §1 and `app.html` §C are the two banners to read before grepping for a
 number; both also name the constants that deliberately stayed beside the code that reads
 them.
+
+### How ten pages live in one HTML file
+
+Concatenating the pages breaks on two collisions. Both fixes are load-bearing and neither is
+obvious from the code alone.
+
+**Duplicate element ids.** `#syncBtn`, `#market`, `#banner` and dozens more exist on several
+pages, across ~350 `getElementById` / `querySelector` call sites. The fix is that **only one
+page's markup is ever in the document**: each page lives in a `<template id="tpl-rmx">`, and
+exactly one is cloned into `#appRoot`.
+
+`<template>` is the right container for a reason worth writing down — its contents are parsed
+into a **separate inert document fragment**, so `document.getElementById` cannot see them. Ten
+pages of markup sit in the file and only the mounted one is addressable, so every call site
+keeps working unchanged. The obvious alternative, `<script type="text/html">`, is worse here:
+the pages contain 2–7 literal closing-script tokens each, any one of which would terminate the
+block early and silently.
+
+> **Shared ids are the point, not a compromise.** 37 ids are declared by more than one page,
+> and the two fuel pages share all 21 of theirs — they are the same screen on different
+> numbers. **Where two pages do the same thing they use the same id and the same class; where
+> they differ, they differ.** RMX Fuel's single upload is `#upMain` because AGG's two are
+> `#upComb` and `#upOther`, and that is a real difference rather than a naming one. An early
+> rule forbidding shared ids outright would have forced a rename pass on nearly every page and
+> left the twins no longer diffable against each other, to buy a guarantee the mount already
+> provides.
+
+What keeps that safe is enforced rather than assumed: `AMR.start()` **empties `#appRoot`
+before mounting** and `tests/merge.js` fails if that line goes; `merge.js` checks the
+invariant that does matter — no id declared twice *inside one page's template*. **The
+switcher must replace the mounted page, never add a second beside it** — caching mounted
+pages for speed is the one implementation that breaks this, and it is ruled out. The QlikView
+guide and its FAB are appended to `<body>`, *outside* `#appRoot`, so they need their own
+teardown.
+
+**Duplicate JS globals.** Every page declared its own top-level `state`, `fmt`, `boot`,
+`render`. The fix is that **each page's JS is one IIFE that registers itself** —
+`AMR.page('rmx', { title, libs, boot })` — so everything the page declared at top level is a
+local inside it and **no page variable was renamed**. The only edits were the ~51 inline
+`on*="…"` handlers, which lose access to global scope and became `addEventListener` calls
+inside the IIFE. `merge.js` checks that no page registration leaks a global and that no page
+shadows a runtime one.
 
 ---
 
@@ -295,6 +365,19 @@ it:
 - **Ship every market to the browser, not one per click.** Warming the server cache is half
   the job; the page still pays a round trip per market otherwise. Aggregates never did that —
   its opening call carries every market, which is why it always felt instant.
+
+### What the fuel pages' device cache must never do
+
+Both Fuel Recovery pages cache the sheet on the device, and three invariants keep that honest.
+`tests/fuelcache.js` gates all three, mutation-tested three ways.
+
+- **The uploaded-workbook path is never cached.** Both pages can run on a file the user dropped
+  in. That is session-only by design and is not what the sheet holds; `upOff()` is the boundary.
+- **The month is part of the key.** Both pages send `{month}` with every read and the payload
+  differs per month. A cache keyed on the page alone would serve July's figures for May.
+- **A typed-over cell is not data.** `NUM_OV` / `TXT_OV` are the user's edits, and the month
+  picker already clears them for exactly this reason. Restoring a cached model must not
+  resurrect them.
 
 **A silent `catch` is a decision, not a style.** Silent is right for an optional cache read
 and wrong for everything else. `APP_cachePut_` bails above 250 chunks; that bail is logged at
@@ -478,6 +561,17 @@ there with the input that moved.
   three chunks because a builder split a file on a style tag written in *prose* inside a
   comment. Never write either tag as a literal when you mean to name it. `merge.js` check 9 is
   the gate.
+- **The page switcher only unmounts what it can SEE, and a reload used to tear down
+  everything.** That is the whole class of bug switching introduced. The sharpest instance:
+  `setInterval` is wrapped so the runtime can cancel it, and `app.html` never calls it — not
+  once. The hook was written for `AmrFresh`'s five-minute poll, and `AmrFresh` reschedules with
+  `setTimeout`, so the poll **survived every switch**. What that cost was not a stray timer but
+  a *wrong answer*: the watch holds the data version of the page that started it, `page()` reads
+  `window.APP_PAGE` which the switch has already moved, and the generation token is **per
+  page** — so the poll compared two different pages' versions, never matched, and told the user
+  their figures were stale. Anything a page starts that the runtime cannot see needs its own
+  teardown; `tests/pageswitch.js` checks that no five-minute watch outlives the page that
+  started it.
 - **A server callback can outlive its page.** `google.script.run` handlers on a switcher-mounted
   page land after `#appRoot` has been emptied, and an unguarded `el.style` throws out of a
   callback nothing is catching. Look the element up and bail if it is gone — in the failure
@@ -603,13 +697,132 @@ Publish stage needs it.
 
 ---
 
-## 9. Working conventions
+## 9. Deleting things, and what must not be deleted
+
+Everything unused should come out. **But "unused" has to be proved, and in Apps Script a grep
+does not prove it.**
+
+> ### What counts as proof, and the trap that nearly cost the data pipeline
+>
+> Grep **is** reliable for one thing: every client → server call here uses a literal function
+> name (`google.script.run.someFunction(…)`). There is no dynamic dispatch anywhere —
+> `google.script.run[name]` appears zero times — so if nothing in `app.html` names a server
+> function, no page calls it.
+>
+> **But a function with no caller in the repo can still be load-bearing**, because three kinds
+> of caller live outside it:
+>
+> 1. **Time-driven triggers**, configured by hand in the Apps Script UI. Nothing in the repo
+>    references them — there is not one `ScriptApp.newTrigger` in the codebase.
+> 2. **Editor-run tools**, invoked by a human from the Run menu.
+> 3. **`doGet`**, called by Apps Script itself.
+>
+> This is not hypothetical. An earlier draft of the merge plan described the sync's four entry
+> points as having "no client caller" — true, and badly misleading: **`qlikSyncCheck` is the
+> time-driven trigger that runs the entire QlikView → Sheets pipeline.** Deleting it on a
+> zero-caller count would have silently stopped every page's data from updating again, and
+> nothing would have errored.
+>
+> So: **before deleting a top-level function, check the trigger list in the Apps Script UI and
+> check whether its own comment says it is run from the editor.** Both are outside the repo.
+> Only then does zero callers mean dead.
+
+Client-side modules are the one place grep *is* conclusive — no dynamic dispatch, and a
+browser module cannot be reached by a trigger or the Run menu.
+
+**And a comment claiming code is dead is not evidence either.** `OVERVIEW` carried a banner
+starting `NOT USED` for four chunks while `getOverview` read its market list on every Overview
+load. The candidate was not a function nobody could find a caller for — it was a `var` that
+*announced itself as dead*, in a comment that survived a verbatim merge precisely because the
+merge moved everything without editing it. A grep for the name answers it in one second, and
+the banner still stood for four chunks. **Read the code, not the label.**
+
+### Things that look deletable and are not
+
+| | |
+|---|---|
+| `qlikSyncCheck` | **Load-bearing.** The time-driven trigger target; the whole data pipeline runs through it |
+| `qlikMarkCurrent` | Run once from the editor after the trigger is set up, so the first firing has stamps to compare. Needed again any time the trigger is rebuilt |
+| `qlikSyncNow(scope)` | The only manual recovery path when the trigger misfires or a sync has to be forced |
+| `qlikStamps` | A diagnostic worth having, and firmer than that: `tests/qliksync.js` exercises it in **three** checks. Deleting it fails a green harness |
+| `clearRetiredOverrides` | Its own comment says "run from the Apps Script editor", and it is idempotent. An editor tool, not dead code |
+| `getSaskRatesStatus` | Its comment says "so the Settings screen **(and a quick manual run)** can check the sheet" — that parenthetical is the editor-tool criterion. The Settings screen never calls it; wiring it would be a behaviour change, not a cleanup |
+| `DECK_status` | A real deck build has still never run against the live deployment, and that is what decides whether the Publish stage needs it. **Do not delete before then** |
+| `SB` · `getSlideData` | Live — the Overview's segment and product-category panels read them |
+| `RMX_getCrossReport` · `getRmxUnmapped` · `uploadRmxData` · `getMarkets` · `getKeys` · `getExtras` · `syncData` | The **legacy-name wrappers**. Zero callers is not the test: they exist so a stale deployment still resolves, and removing one changes what that deployment does. `getMarkets` / `getKeys` / `getExtras` are exactly the generic names the `RMX_NS` capture protects against. Treat as its own piece of work |
+| `doGet` | Apps Script itself is the caller |
+
+**All seven debug functions are already gone**, and a repo-wide audit of every top-level
+declaration found no others: every remaining callerless name is either a deliberate keep above
+or was dead code rather than a diagnostic.
+
+### Still worth auditing
+
+- The CUSTOM FLAG LOOKUP path in the Ready-Mix suggester. The Product Segment page's own help
+  text says neither Extras table groups on it any more.
+- The legacy-name wrappers in the table above — find each caller, then decide as a unit.
+
+### If you do audit the symbol table, use a scope-aware analyser
+
+A naive column-0 grep reports **330** functions in `script.gs`; scope-aware says **154** are
+genuinely top level, because the file does not indent IIFE bodies. Any analyser has to blank
+comments, strings, template literals **and regex literals** — without the last case a `/[)]/`
+or a `/'/` unbalances the brace counter and whole regions read as nested — and then assert its
+brace, paren and bracket counters all return to zero. A counter that does not balance is
+telling you it misread the file. `tests/gsparity.js` carries a working implementation.
+
+---
+
+## 10. Working conventions
 
 ### Delivery
 
-Work on `merging-files`, commit with a message that says *why*, and update `PLAN.md` and §10
-below at the end of every session that changed anything. A half-finished chunk with no note
-beside it is the most expensive thing you can leave behind.
+Work on `merging-files`, commit with a message that says *why*, and add a row to
+[§11](#11-session-log) at the end of every session that changed anything.
+
+### One change at a time
+
+**If two changes land together and something breaks, you cannot tell which one broke it.**
+That is why the 37-file merge carried no behaviour changes inside it, and why each of the
+things that *were* wanted — client-side page switching, the fuel pages' device cache, the §B
+reduction — landed afterwards as its own piece of work with its own gate. A new feature
+wearing a port's clothes is the specific shape to watch for: if a merged page then paints a
+stale figure, "the merge broke it" and "the new cache broke it" look identical.
+
+The same rule is why a deliberate edit inside a moved region gets **declared** to the parity
+harnesses rather than waved through — see Testing below.
+
+### Logging
+
+Both files have one logging helper, with the same signature and the same output shape:
+
+```js
+APP_log(level, where, msg, data)   // script.gs — 'debug' | 'info' | 'warn' | 'error'
+AMR.log (level, where, msg, data)  // app.html  — same
+```
+
+One helper means one place to change the format and **one switch to turn the noise down** —
+`APP_CONFIG.LOG_LEVEL` for the server, read fresh on every call so changing it takes effect on
+the next execution with nothing to redeploy, and a `localStorage` key for the browser.
+
+A line carries enough to answer "what was asked, what came back, how long, and did it come
+from cache" without a second line: `where` (the function, not the file), the arguments that
+*select* data (market, period, month — not whole payloads), the size of the answer, **elapsed
+ms**, and the cache verdict.
+
+- **Log at entry points and phase boundaries. Never inside a per-row loop.** The Ready-Mix
+  bundle is 40,000 rows; a line per row would cost more than the work it describes and bury
+  the line that matters.
+- **Elapsed ms is the only field that catches a regression nobody reported.**
+- **The cache field earns its place** because of §6's 14 MB bundle: a log line carrying elapsed
+  ms and bytes-read would have shown a flat 15–24 s against a varying question on the first
+  read of the transcript. Every cache read logs which of `hit` / `miss` / `skip` it was —
+  `skip` included, because a silent bail is indistinguishable from a cache that is never warm.
+- **Errors log the context, not just the message** — `where` plus the selecting arguments.
+
+`tests/logging.js` enforces all of it: every silent `catch` is listed with its reason, so a new
+one fails with "decide it"; the named entry points must log arrival, answer, failure and
+elapsed ms; and no `APP_log` may sit inside a per-row loop.
 
 ### Code hygiene
 
@@ -646,13 +859,26 @@ into a directory from commits this repo no longer reaches, and the newest copies
 delegate straight back to the modules under test — a comparison that passes whatever either
 side does. `gsparity.js` and `apphtml.js` stage from a *commit*, and both still work.
 
+**A harness that has never failed has not been tested.** Every gate here was mutation-tested
+before being trusted — unscoping one rule for `merge.js`, renaming a column header and
+disabling a click handler for `pageparity.js`, restoring the year literal for `yearroll.js`.
+`pageparity.js` passed clean on its first run **for the wrong reason**: both sides had died
+identically. That is exactly the bug this rule exists to catch.
+
+**Add your page's case to `pageparity.js` before you touch the page**, so you find out on the
+first run rather than the last. And **do not anchor a harness on a spelled-out line ending** —
+that broke `rmxcost.js` once, and the failure read as though the code had moved.
+
+**Nothing in `tests/` is uploaded to Apps Script.** `.claspignore` is what stops `clasp push`
+carrying it into the script project.
+
 ---
 
-## 10. Session log
+## 11. Session log
 
-One row per session. The deep evidence — what broke, what was measured, what was ruled out —
-lives in [`PLAN.md`](PLAN.md); this is the index. **An unmarked row means the task is
-incomplete or was forgotten.**
+One row per session: what was done, and the finding worth keeping. The blow-by-blow of how
+each was reached is in the commit that made it. **An unmarked row means the task is incomplete
+or was forgotten.**
 
 | Date | Task | Status |
 |---|---|---|
@@ -675,6 +901,7 @@ incomplete or was forgotten.**
 | 2026-08-19 | **Chunk 24 — which layout each slide uses is a dropdown, not a code push.** Per-row layout picker on the Plan stage, stored shared in one Script Property, differences only. Changing a layout drops that row's picture, because the capture's shape comes from the layout's image box | ✅ |
 | 2026-08-19 | **The intermittent landing-page `Cannot read properties of null (reading 'style')` is diagnosed and fixed.** It was RMX's `renderUnmapped`: a `google.script.run` answer landing after the page had been unmounted, with no guard on `#mapHost`. The Price & Volume copy has carried that guard since the Inventory Report fix; this one was missed. Both failure handlers guarded too | ✅ |
 | 2026-08-19 | **`regress.js` and `pvcheck.js` deleted.** The pages they diffed against are behind commits this repo no longer reaches, and the newest copies it does reach are one-line delegations to the modules under test — so the diff was a tautology. `modparity.js` is what survives, and its header now says it is the only proof for `AmrFuelExec` and `AmrPvSlide` | ✅ |
+| 2026-08-19 | **Three documents became one.** `PLAN.md`'s durable half — the deletion proof rule and the keep-list, how ten pages live in one HTML file, the logging convention, the OAuth scope table, the harness rules — moved here; its 2,400 lines of merge narrative went with it, into the git history. `CLAUDE.md` is a pointer now rather than a second copy. **The cost that had to be paid first was the ~30 pointers in `script.gs`, `app.html` and `tests/` that named `PLAN.md` sections and chunk numbers**: leaving those dangling is precisely the trap this repo has been bitten by, so each was repointed, and the ones inside `gsparity`/`modparity` declared-edit text had to change on both sides at once or the parity gates fail | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |

@@ -237,7 +237,7 @@ const EDITS = {
      payload arrives without them, which today means one cached before this
      landed; today's calendar year is the least-wrong guess, and it is a
      guess rather than a setting, which is why it is not in §C.
-     PLAN.md chunk 23. */
+     README §7, "the year is DATA". */
   var CY_YEAR = new Date().getFullYear(), PY_YEAR = CY_YEAR - 1;
   function years_(d){
     var cy = d && Number(d.cyYear);
@@ -273,7 +273,7 @@ const EDITS = {
      says which two years it is about — the backend reads them off the
      workbook's own column names — so no heading here spells one out. The
      fallback is only for a payload cached before those fields existed, and
-     today's calendar year is the least-wrong guess. PLAN.md chunk 23. */
+     today's calendar year is the least-wrong guess. README §7, "the year is DATA". */
   function cyOf(d){ var y = d && Number(d.cyYear); return y > 0 ? y : new Date().getFullYear(); }
   function pyOf(d){ var y = d && Number(d.pyYear); return y > 0 ? y : cyOf(d) - 1; }
 ` },
@@ -371,7 +371,7 @@ for (const m of MODULES) {
 
      Line endings are normalised, and that is deliberate rather than sloppy: the
      repo is mixed (Deck_Fuel.html is CRLF, Shell.html and SlideExport.html are
-     LF) and PLAN.md §12 says app.html is written LF throughout. Comparing raw
+     LF) and README says app.html is written LF throughout. Comparing raw
      would fail on every CRLF source at the first newline and say nothing about
      the code. */
   const norm = s => s.slice(s.indexOf(m.open)).replace(/\r\n/g, '\n').trim();

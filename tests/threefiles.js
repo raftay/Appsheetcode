@@ -9,8 +9,8 @@
  *
  * The whole point of the merge was that moving this application means copying
  * three files: script.gs, app.html and appsscript.json. Everything else in the
- * repo — README.md, PLAN.md, CLAUDE.md, tests/ — is scaffolding, and the claim
- * is that it can all be deleted without the app noticing.
+ * repo — README.md, CLAUDE.md, tests/ — is scaffolding, and the claim is
+ * that it can all be deleted without the app noticing.
  *
  * THAT CLAIM HAS NEVER BEEN TESTED, and the repo's own rule is that a deletion
  * you have not tried is a deletion you have not done. Chunk 13 learned it the
@@ -197,7 +197,7 @@ if (typeof ctx.doGet === 'function') {
        that shipped in chunk 2 and it is invisible in the file itself. */
     if (state.appUrl !== 'https://script.google.com/macros/s/TEST/exec')
       fail('server-values', `data-app-url came through as "${state.appUrl}" — a server value ` +
-        `reached the page mangled, which is the escaping trap PLAN.md §8 records twice`);
+        `reached the page mangled, which is the escaping trap README §7 records`);
     else pass('server-values', 'the deployed URL survives the render intact');
 
     if (errs.length) fail('pageerror', errs.slice(0, 2).join(' | ').slice(0, 200));

@@ -8,7 +8,7 @@
  * with google.script.run stubbed to return the same model to both, and diffs
  * the DOM they produce.
  *
- * It is the gate PLAN.md §12 asks for, and it is what catches the class of
+ * It is the gate README §10 asks for, and it is what catches the class of
  * break the other harnesses cannot see — a mistyped id, a listener that never
  * got wired, a template that mounts empty. Every page chunk should add its case
  * to PAGES below before touching the page.
@@ -597,7 +597,7 @@ const PAGES = [
          still compared verbatim. What the picker does when you use it is not
          this harness's job and is not asserted here: deckstatic.js covers the
          store and the recipe's side of it.
-         PLAN.md's rule for a comparison that stops being wholly true is to
+         README §10's rule for a comparison that stops being wholly true is to
          narrow the CLAIM to what is still provable and say so, not to weaken
          the comparison. This is that. */
       /* `selected` serialises as a bare attribute in one engine and as
@@ -660,7 +660,7 @@ const PAGES = [
   },
   {
     /* The Ready-Mix twin. It shares 21 ids with the case above ON PURPOSE
-       (PLAN.md §3) — that is not a mistake to be fixed, and the two cases
+       (README §3) — that is not a mistake to be fixed, and the two cases
        being nearly identical is the point. */
     id: 'rmxfuel',
     legacy: 'Page_RmxFuel.html',

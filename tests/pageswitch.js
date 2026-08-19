@@ -456,7 +456,7 @@ const SNAPSHOT = () => ({
   else pass('fallback', 'an unknown page falls back to a full navigation');
 
   /* ------------------------------------------------------------ the back button
-     PLAN.md claims Back returns to the previous page. It only does if the entry
+     README claims Back returns to the previous page. It only does if the entry
      the tab was OPENED on carries state: popstate reads e.state.amrPage, and
      the record the browser creates on load has none, so the handler fell
      through to "the page I am already on" and did nothing. That made the first
