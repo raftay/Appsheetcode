@@ -4419,10 +4419,12 @@ var AmrDeckSource = (function(){
 
 <script>
 /* ---- §E AmrPvSlide — the AGG Price & Volume slide content -------------------
-   Was Deck_PV.html. Shared by this page and the deck; tests/pvcheck.js proves
-   the non-chart paths byte-identical to the page code it replaced, and
-   tests/slidefit.js drives the fitter through real Chromium. Moved verbatim so
-   both still mean something (tests/modparity.js checks that).
+   Was Deck_PV.html. Shared by this page and the deck. tests/slidefit.js drives
+   the fitter through real Chromium, and tests/modparity.js proves this copy is
+   the file it came from. (tests/pvcheck.js used to diff the non-chart paths
+   against the pre-lift page; it is gone — that page is behind a commit this
+   repo no longer reaches, and the newest one it does reach delegates straight
+   back to this module, so the diff proved nothing.)
    Its pv / cust adapter registrations no-op until AmrDeckSource (chunk 10).  */
 var AmrPvSlide = (function(){
 
@@ -6554,10 +6556,12 @@ var AmrSlide = (function(){
 <script>
 /* ---- §E AmrFuelExec — the Fuel Recovery exec tables ------------------------
    Was Deck_Fuel.html, and it is the reason chunk 3 goes first: this module is
-   already shared by AGG Fuel Recovery, RMX Fuel Recovery and the deck, and
-   tests/regress.js proves its output byte-identical to the page code it
-   replaced. Moved verbatim so that proof still means something. The adapter
-   registrations at the bottom no-op until AmrDeckSource exists (chunk 10).   */
+   shared by AGG Fuel Recovery, RMX Fuel Recovery and the deck. tests/modparity.js
+   proves this copy is the file it came from, with its edits declared, and is
+   now the only such proof — tests/regress.js diffed it against the
+   pre-extraction page and is gone, that page being behind a commit this repo
+   no longer reaches. The adapter registrations at the bottom no-op until
+   AmrDeckSource exists (chunk 10).                                          */
 var AmrFuelExec = (function(){
 
   /* ---- the only real difference between the two pages ---- */
@@ -8459,7 +8463,8 @@ AMR.page('landing', {
 
    The exec tables are NOT here and must not come back: AmrFuelExec (§E) owns
    the compute and the markup for them, shared with RMX Fuel Recovery and the
-   deck, and tests/regress.js is the gate that proves the three agree.        */
+   deck. The three agree because there is one copy, not because a harness
+   compares three — which is what makes putting a second copy here expensive. */
 AMR.page('fuelsurcharge', {
   title: 'Amrize · Fuel Recovery',
   libs: ['html2canvas', 'xlsx'],
@@ -9377,8 +9382,9 @@ AMR.page('fuelsurcharge', {
    the page above, and a change to one is a change owed to the other.
 
    The exec tables are NOT here and must not come back: AmrFuelExec (§E) owns
-   the compute and the markup for them, and tests/regress.js is the gate that
-   proves the two pages and the deck agree.                                   */
+   the compute and the markup for them. The two pages and the deck agree
+   because there is one copy of that code, not because a harness compares
+   three of them.                                                             */
 AMR.page('rmxfuel', {
   title: 'Amrize · RMX Fuel Recovery',
   libs: ['html2canvas', 'xlsx'],

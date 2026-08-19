@@ -5,7 +5,7 @@ Node harnesses for the parts of the suite that can be checked **without** Google
 They exist because most of this project cannot be tested off-platform — anything touching
 SlidesApp, DriveApp, CacheService or a spreadsheet needs the live deployment. What *can* be
 checked is the pure client-side compute and render layer, and that is exactly where the Deck
-Builder extraction work lives. These two harnesses are the regression gate for Phases 3–4.
+Builder extraction work lives.
 
 Nothing here is uploaded to Apps Script. The repo root is a flat mirror of the script
 project; this folder is not part of it.
@@ -34,45 +34,28 @@ Install everything at once: `npm install playwright chart.js jsdom`. `--no-save`
 whatever is not on the command line, so doing them one at a time leaves you with only the last.
 Chromium is already at `/opt/pw-browsers`.
 
-## `regress.js` — the extraction gate
+## The two harnesses that were deleted, and why it was not laziness
 
-Runs the **pre-extraction** page code and the **post-extraction** shared module over the same
-data model and diffs the HTML. The pass condition is byte-identical output.
+`regress.js` and `pvcheck.js` are gone. Both did the same thing: run the **pre-extraction**
+page code and the extracted module over one model and diff the HTML, with the old page staged
+by hand into `$OLD_DIR`. Three things killed them, and the third is the one that matters.
 
-This is the test that makes moving code out of a working page safe. Every phase that pulls a
-page's builders into a shared include should extend it before touching the page.
+1. **The comparand is unreachable.** They wanted `Page_FuelSurcharge.html` / `Page_RmxFuel.html`
+   at `6400026` and `Page_PriceVolume.html` at `cc3adc9`. Neither commit is in this repo any
+   more. The recipe in this file could not be followed by anyone who read it.
+2. **The newest copy that IS reachable makes the diff a tautology.** At `cbed9df^`,
+   `buildExecTables` is `return AmrFuelExec.execTables(...)` and `buildCustTable` is
+   `return AmrPvSlide.custTableHtml(...)`. Staging from there compares each module against
+   *itself* — a check that passes no matter what breaks.
+3. **The claim had already been superseded on purpose.** Chunks 16–19 changed both fuel pages
+   and chunks 22–23 changed `AmrFuelExec` and `AmrPvSlide`. "Byte-identical to the
+   pre-extraction page" stopped being something anyone wanted to be true.
 
-Covers both fuel pages × three period modes × clean and edited state, where *edited* means
-typed numeric overrides, a renamed label, and a hidden market — the paths the shared `ctx`
-replaced, and the ones where a silent regression would only ever surface in somebody's
-already-edited slide.
-
-```bash
-# stage the pre-change pages somewhere, then point the harness at them
-mkdir -p /tmp/old
-git show <commit-before-your-change>:Page_FuelSurcharge.html > /tmp/old/old_fsc.html
-git show <commit-before-your-change>:Page_RmxFuel.html       > /tmp/old/old_rfsc.html
-OLD_DIR=/tmp/old node tests/regress.js
-```
-
-**`pvcheck.js` needs staging too, and its commit was never written down.** It reads
-`$OLD_DIR/old_pv.html`, the Price & Volume page from before the `Deck_PV` lift, and without it
-the harness dies on a missing file rather than reporting anything — which reads like a broken
-harness and is not. The commit is **`cc3adc9`**, the parent of `b713df9`:
-
-```bash
-git show cc3adc9:Page_PriceVolume.html > /tmp/old/old_pv.html
-OLD_DIR=/tmp/old node tests/pvcheck.js
-```
-
-Both are green as of chunk 12. Neither reads a `.gs`, so neither was affected by the merge.
-
-The line ranges for the old files are in the `CASES` array — they bracket the state block
-through the last exec builder. Re-check them against the commit you are diffing; they are
-line numbers, and they move.
-
-The commit to stage from is **`6400026`**, the parent of `cc3adc9` where `Deck_Fuel.html` was
-added. Twelve comparisons, all identical, as of chunk 3.
+**What replaced them is `modparity.js`, and the difference is the staging.** It proves the same
+modules are the files they came from, reading the comparand from a **commit** rather than a
+directory somebody fills in by hand, and declaring each deliberate edit with its reason. A gate
+whose second side has to be assembled by hand is a gate that stops running; that is the lesson,
+and it is why `gsparity.js` and `apphtml.js` were built the way they were.
 
 ## `merge.js` — the structural gate for `app.html`
 
@@ -397,8 +380,9 @@ REF=<commit> node tests/gsparity.js
 ```
 
 It reads the 16 originals **out of git**, not off disk: they were deleted in the same commit
-that added `script.gs`, because the two cannot coexist in an Apps Script project. That is the same
-staging trick `regress.js` and `pvcheck.js` use, pointed at a commit instead of a directory.
+that added `script.gs`, because the two cannot coexist in an Apps Script project. `regress.js`
+and `pvcheck.js` staged their comparand the same way but from a hand-filled directory, and that
+is what eventually killed them — see the top of this file. Point at a commit.
 
 Five checks: every source appears verbatim after the ten edits declared in the file and no
 others; the sections are in `PLAN.md` §5 order; the top-level name set moved by exactly the
@@ -448,9 +432,10 @@ Three of the seven have a `load()` of their own, so import it as `loadRegions`.
 ## `modparity.js` — §E holds verbatim copies (and it did NOT retire at chunk 13)
 
 Every shared module inside `app.html`'s §E is byte-for-byte the file it was ported from. That
-is what let `regress.js`, `slidefit.js` and `deckpath.js` count as proof about `app.html`
-while they still pointed at the *old* files, and what makes `apphtml.js`'s slicing trustworthy
-now that they point at §E. Line endings are normalised, because the repo is
+is what let `slidefit.js` and `deckpath.js` count as proof about `app.html` while they still
+pointed at the *old* files, and what makes `apphtml.js`'s slicing trustworthy now that they
+point at §E. Since `regress.js` and `pvcheck.js` were deleted it is also the **only** proof
+that `AmrFuelExec` and `AmrPvSlide` are what they were. Line endings are normalised, because the repo is
 mixed and `app.html` is LF throughout by `PLAN.md` §12.
 
 ```bash
@@ -470,8 +455,8 @@ Deleting it would have removed the ground under its own replacement.
 Same end of life as `gsparity.js`, for the reason its header gives: keep it while `app.html`
 is provably those files, delete it rather than weaken it when it is not.
 
-`regress.js`, `slidefit.js`, `deckpath.js` and `pvcheck.js` no longer point at the old files —
-they read §E directly now, which is the code that ships.
+`slidefit.js` and `deckpath.js` no longer point at the old files — they read §E directly now,
+which is the code that ships.
 
 ## `deckpath.js` — the deck's own path
 
@@ -830,27 +815,6 @@ node --check <(sed -n '/<script>/,/<\/script>/p' Page_X.html)   # or the checkjs
 Both harnesses take a synthetic model and need no Google access, so they run anywhere Node
 does. Keep `tests/node_modules` out of git — the repo root must stay a clean mirror of the
 Apps Script project.
-
-## `pvcheck.js` — the Price & Volume lift
-
-Same idea as `regress.js` but for `Deck_PV.html`: runs the old page's definitions and the
-extracted module over the same fixtures and diffs the HTML. Covers the paths that need no
-Chart.js — `tableInnerHtml`, `monthTag_`, `slideTitle`, and `buildCustTable` across every
-secondary dimension, sort direction and top-N.
-
-```bash
-cp Page_PriceVolume.html /tmp/old/old_pv.html    # pre-rewiring copy
-OLD_DIR=/tmp/old node tests/pvcheck.js
-```
-
-Extend it as Phase 3 lifts more (`custSlideSpec` next). The chart paths cannot be diffed
-this way — Chart.js needs a real canvas — so those are checked in the browser.
-
-`deckpath.js` stubs `Chart` and `HTMLCanvasElement.getContext` — jsdom has neither, and the
-PV slides need both. That exercises the block's *assembly* (tables, KPI cards, chart slots);
-whether a chart looks right is a browser check. The `google.script.run` stub returns a fresh
-runner per access on purpose: `cust` asks for MTD and YTD in parallel, and a shared success
-handler silently hangs the second call.
 
 ## `configcheck.js` — the sheet-resolution rules
 

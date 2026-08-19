@@ -14,8 +14,9 @@
  *       the deleted file, read out of GIT — for a harness whose job is to
  *       compare the merged app against the app it replaced. `pageparity` and
  *       `cssparity` need a second side, and there is no second side on disk.
- *       Same trick gsparity.js uses for the 16 .gs, and regress.js / pvcheck.js
- *       for their staged pages: point at a commit instead of a directory.
+ *       Same trick gsparity.js uses for the 16 .gs: point at a commit instead
+ *       of a directory. regress.js and pvcheck.js used it too, from a directory
+ *       staged BY HAND — which is what eventually killed them, see below.
  *
  * What makes the first form safe is tests/modparity.js: it proves every §E
  * module is byte-for-byte the file it came from, so slicing here and reading the

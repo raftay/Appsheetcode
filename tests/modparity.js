@@ -3,10 +3,17 @@
  * tests/modparity.js — §E of app.html holds VERBATIM copies
  * -----------------------------------------------------------------------------
  * Every shared module ported into app.html's §E already has a gate pointed at
- * the file it came from: regress.js proves AmrFuelExec byte-identical to the
- * page code it replaced, slidefit.js drives AmrSlide through real Chromium,
+ * the file it came from: slidefit.js drives AmrSlide through real Chromium,
  * deckpath.js walks the adapters. Those proofs are about Deck_Fuel.html and
  * SlideExport.html — not about the copy inside app.html.
+ *
+ * THIS IS NOW THE ONLY PROOF THAT AmrFuelExec AND AmrPvSlide ARE WHAT THEY
+ * WERE. regress.js and pvcheck.js used to diff them against the pre-extraction
+ * pages; both were deleted, because the pages they diffed against are behind
+ * commits this repo no longer reaches AND because the newest copies it does
+ * reach are one-line delegations to these very modules — a comparison that
+ * passes whatever either side does. What survived is this harness, which
+ * stages from a reachable commit and declares its edits.
  *
  * This is what connects the two. While both copies exist, a byte-for-byte match
  * means every one of those gates covers app.html for free, and a merge that

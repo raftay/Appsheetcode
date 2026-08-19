@@ -7,8 +7,11 @@
  *
  * It reads the 16 originals out of GIT rather than off disk, because chunk 12
  * deleted them in the same commit that added script.gs — they cannot coexist in an
- * Apps Script project (PLAN.md §2). That is the same staging trick regress.js
- * and pvcheck.js already use, just pointed at a commit instead of a directory.
+ * Apps Script project (PLAN.md §2). regress.js and pvcheck.js staged their
+ * comparand the same way and are gone: they wanted a directory somebody had
+ * filled in by hand, from commits this repo no longer reaches. A gate whose
+ * second side has to be assembled by hand is a gate that stops running.
+ * Point at a commit.
  *
  *     node tests/gsparity.js            # no dependencies
  *     REF=<commit> node tests/gsparity.js

@@ -53,8 +53,10 @@ const ROOT = path.join(__dirname, '..');
 const URL_BASE = 'https://script.google.com/macros/s/TEST/exec';
 
 /* ---------------------------------------------------------------- fixtures */
-/* The July 2026 shape regress.js uses, with the summary and by-month sections
-   it does not exercise filled in — this harness renders those tables too. */
+/* The July 2026 shape off the real pack, with the summary and by-month
+   sections filled in — this harness renders those tables too. (It was shared
+   with regress.js, which is gone; the numbers are the ones the formatters were
+   chosen against, so they stay.) */
 function fscModel() {
   const mk = (market, t26, t25, f26, f25) =>
     ({ market, tonnes26: t26, tonnes25: t25, fsc26: f26, fsc25: f25 });
