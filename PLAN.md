@@ -1,17 +1,30 @@
 # PLAN — one `app.html`, one `app.gs`
 
-**Status: chunks 0–13 done on `merging-files`. THE MERGE IS COMPLETE — the script project is `app.gs`, `app.html` and `appsscript.json`, and nothing else.** 37 files became 3. `app.html` is ~1.13 MB and holds the runtime, thirteen shared modules and all ten pages; `app.gs` is 542 KB in eleven sections. All **20** harnesses run and are green.
+**Status: ALL NINETEEN CHUNKS ARE DONE on `merging-files`. The script project is `app.gs`, `app.html` and `appsscript.json`, and nothing else — and that is now *tested* rather than asserted: `tests/threefiles.js` runs the whole application out of a directory holding only those three.** 37 files became 3. `app.html` is 1.14 MB and holds the runtime, thirteen shared modules and all ten pages; `app.gs` is 547 KB in eleven sections. All **26** harnesses run and are green.
 
-**Chunk 15 is next.** Chunk 14 is done — the nav mounts instead of reloading, all of it in §D, so the three parity harnesses survive. **Everything from here is [§10](#10-four-things-this-merge-does-not-touch) work** — behaviour changes that were deliberately kept out of the merge so a regression would have one possible cause instead of two. Take the first unticked chunk in [§8](#8-the-chunks).
+**There is no next chunk.** [§8](#8-the-chunks) is complete through 19; chunks **20 and 21** are findings chunk 15 turned up and deliberately did not fix inside a cleanup, and they are the only open code in this file. Everything else below is the record of how this got here.
 
-Two items are still owed and neither is code: **`APP_verifyPermissions()` has never been run** (nothing off-platform can), and **no real deck has ever been built** against the live deployment. Both need somebody in the Apps Script editor.
+**Three items are still owed and none of them is code — all three need somebody in the Apps Script editor:** `APP_verifyPermissions()` has never been run, no real deck has ever been built against the live deployment, and `DECK_status` is being kept until that build says whether the Publish stage needs it.
 
-> **Read this before the first deliberate page change.** Three harnesses compare `app.html`
-> against the app it replaced, reading the deleted files out of git through
-> `tests/apphtml.js`: `pageparity.js`, `cssparity.js` and `modparity.js`. They are the proof
-> that 37 files became 3 without changing what anyone sees. **The moment a page or a §E module
-> is deliberately changed, that claim stops being true and they start failing for the right
-> reason — delete them then, do not weaken them.** Chunk 14 is the likely first one.
+> **The parity harnesses are no longer a complete account, and that is by design.** `pageparity.js`, `cssparity.js` and `modparity.js` compare `app.html` against the app it replaced. Chunks 16–19 changed §B, both fuel pages, two §E modules and §D on purpose, so what those three still prove is narrower than it was: `modparity` carries the two §E changes as **declared edits** and proves the rest verbatim, and `pageparity` still proves what a COLD visit renders — which is genuinely unchanged. `fuelcache.js`, `slidecss.js`, `logging.js`, `settings.js` and `pageswitch.js` cover the behaviour that is new. Read a green parity run as "the port is still faithful where it is still a port", not as "nothing has changed".
+
+> **What happened to that instruction, because it was half right.** It used to read: the moment
+> a page or a §E module is deliberately changed, the parity claim stops being true and the three
+> harnesses start failing for the right reason — *delete them then, do not weaken them.* Chunks
+> 16–19 are that moment, and deleting them would have been wrong.
+>
+> **"Do not weaken them" is the part that held. "Delete them" was too blunt.** The choice is not
+> binary: `modparity.js` already carried `gsparity.js`'s declared-edit mechanism, so the two §E
+> methods chunk 14's review added are **declared, with their reasons, and every other byte of §E
+> is still proved verbatim** — which is strictly more proof than deleting the harness would have
+> left. `pageparity.js` still passes on both fuel pages after chunk 17 for a real reason: its
+> claim is about what a COLD visit renders, and a cold visit still reads the server.
+>
+> So the rule to carry forward is: **when a comparison stops being wholly true, narrow what it
+> claims to exactly what is still provable and say so — do not soften the comparison itself, and
+> do not throw away the part that still holds.** Deleting `modparity` would also have removed the
+> proof underneath `tests/apphtml.js`, which is what every repointed harness reads `app.html`
+> through.
 
 > **Note on the chunk numbers.** They are a way of splitting the work, not a structure the
 > code should carry. Nothing in `app.html` is arranged around them and nothing should be: a
@@ -31,8 +44,12 @@ Two items are still owed and neither is code: **`APP_verifyPermissions()` has ne
 >    and the [legacy hit-list](#11-legacy-hit-list) are what stop two agents undoing each other.
 > 3. Read §3 of `README.md` for the file map, and §7 for the domain rules. Those numbers are
 >    load-bearing; do not re-derive them from the code on a hunch.
-> 4. Take the **first unticked chunk** in [§8](#8-the-chunks). If it is already in progress,
->    the note beside it says who and since when — pick the next one instead.
+> 4. **There is no unticked chunk left.** [§8](#8-the-chunks) is done through 19. The only open
+>    code in this file is chunks **20 and 21** — two findings chunk 15 turned up and deliberately
+>    did not fix inside a cleanup — and the three editor-run items in the status block at the
+>    top, none of which anything off-platform can do. If you are here for something else, §8 is
+>    still the record of why the code is shaped the way it is; read the chunk that touched what
+>    you are about to touch before you touch it.
 >
 > **End of session, whether or not you finished:**
 > 1. Tick the chunk, or leave a one-line note beside it saying where it actually stands.
@@ -2271,6 +2288,11 @@ reach of `google.script.run` as well.
     the same commit. Also checks no top-level name is declared twice, and that the name set
     moved by exactly the declared deletions — **that last check is the one that caught a cut
     silently deleting `RMX_whoWins` while every syntax check still passed.**
+  - `tests/threefiles.js` — the project really is three files. Copies `app.gs`, `app.html` and
+    `appsscript.json` into an empty directory and runs the app out of THAT: evaluates `app.gs`
+    whole in one scope the way Apps Script does, serves all twelve routes, checks the only file
+    `HtmlService` is ever asked for is `app`, and boots the served HTML in real Chromium with no
+    `google.script` present. It is the standing answer to "can I delete everything else".
   - `tests/settings.js` *(chunk 19)* — the Settings modal and the Saskatchewan readout. Proves
     the readout appears where the page has that source and **is not even asked for** where it does
     not, that unmatched customers are named rather than counted, and that a failing readout still

@@ -14,7 +14,16 @@
  app.html — THE ENTIRE CLIENT SIDE OF THE AMRIZE COMMERCIAL SUITE
 ================================================================================
 
- One file. Every page. See PLAN.md for why, and read it before editing this.
+ One file. Every page.
+
+ THE SCRIPT PROJECT IS THREE FILES: app.gs, app.html and appsscript.json. There
+ is no fourth and nothing here loads one — the only external requests this page
+ makes are Google Fonts and the three CDN libraries §D loads on demand.
+
+ The repo this came from also holds PLAN.md, README.md and a tests/ folder, and
+ if you have them they are worth reading. IF YOU DO NOT, everything you need in
+ order not to break this file is below and in the section banners. They are
+ documentation, not dependencies.
 
  HOW TO NAVIGATE THIS FILE
  -------------------------
@@ -50,15 +59,50 @@
  On load, doGet passes ?page=  →  <body data-page>  →  AMR.start() mounts that
  ONE page and runs its boot(). Nothing else on the page has any effect.
 
- THREE RULES, BROKEN AT YOUR PERIL
- ---------------------------------
+ THE RULES, BROKEN AT YOUR PERIL
+ -------------------------------
  1. A rule a second page would want belongs in §A3, not §A4. The test is not
     "does another page use it today" — it is "would another page's version of
     this be the same".
  2. Ids are JS hooks. They do not carry style. If you need to style something,
-    give it a class.
+    give it a class. Ids REPEAT across pages on purpose — the two fuel pages are
+    the same screen on different numbers and share twenty-one of them — and that
+    is safe only because exactly one page is ever in the document.
  3. No raw values below §A1. A hex code further down is a token that has not
     been created yet.
+
+ AND THE FOUR THAT HAVE ACTUALLY COST SOMETHING HERE
+ ---------------------------------------------------
+ 4. SCOPING A CSS RULE IS NOT A NEUTRAL TRANSFORMATION OF IT. A
+    body[data-page="x"] prefix narrows what a selector matches AND raises its
+    specificity by an attribute selector, so a prefixed bare th{} starts beating
+    the shared .class rules the original lost to. That cost 673 computed values
+    on Ready-Mix. Use :where(body[data-page="x"]), which adds no weight. And
+    reach is a separate problem from weight: #appRoot is a <main> BETWEEN <body>
+    and the page, and modules append to <body> outside it, so a bare element
+    selector can still reach something that is not the page's. Anchor it on the
+    page's own container.
+
+ 5. APPS SCRIPT RUNS EVERY SCRIPTLET IN THIS FILE, COMMENTS INCLUDED, and the
+    printing form HTML-ESCAPES. One written as an example inside a comment
+    breaks the render; one printed into JavaScript emits &#39; and kills the
+    whole script block, silently — the server renders without complaint and only
+    the browser sees the damage. Server values ride in <body> data attributes.
+    That is why the three at the top of <body> are attributes and not code.
+
+ 6. A STYLE ELEMENT'S CONTENT IS TEXT UNTIL ITS CLOSING TAG. Anything that leaks
+    in is parsed as CSS, and CSS error recovery throws away the rule after the
+    garbage without a word. §B shipped that way for three chunks because a
+    builder split a file on a style tag written in PROSE inside a comment. Never
+    write that tag, or a scriptlet, as a literal when you only mean to name it.
+
+ 7. EXACTLY ONE PAGE IS EVER MOUNTED, and the runtime takes the previous one
+    apart by hand: it records what a mounted page registers — listeners on
+    document, window and #appRoot, and repeating timers — and removes them on a
+    switch. Caching mounted pages for speed would put two #tablesHost in one
+    document and is ruled out. See §D.
+
+ LINE ENDINGS: LF throughout. Do not let an editor flip it.
 ================================================================================
 -->
 

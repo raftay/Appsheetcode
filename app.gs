@@ -2,8 +2,18 @@
  * app.gs — THE ENTIRE SERVER SIDE OF THE AMRIZE COMMERCIAL SUITE
  *****************************************************************************
  *
- * One file. Every backend. See PLAN.md for why, and read it before editing
- * this — the merge that produced this file is described there in full.
+ * One file. Every backend.
+ *
+ * THE SCRIPT PROJECT IS THREE FILES: app.gs, app.html and appsscript.json.
+ * There is no fourth, and nothing here reads one — doGet asks HtmlService for
+ * 'app' and for nothing else. Moving the whole application means copying three
+ * files, which is the entire point of it being shaped this way.
+ *
+ * The repo this came from also holds PLAN.md, README.md and a tests/ folder,
+ * and if you have them they are worth reading — PLAN.md describes the merge
+ * that produced this file, README §7 the domain rules. IF YOU DO NOT HAVE THEM,
+ * everything you actually need in order not to break this file is below and in
+ * the section banners. They are documentation, not dependencies.
  *
  * HOW TO NAVIGATE THIS FILE
  * -------------------------
@@ -12,8 +22,8 @@
  *   §1   CONFIG ............... APP_CONFIG, APP_EXTRA_SOURCES, the Settings
  *                               API. FIRST on purpose — see the banner.
  *   §2   LOGGING .............. APP_log, and the LOG_LEVEL switch.
- *   §3   ROUTER + PLUMBING .... doGet, include, getLogo, the data-generation
- *                               stamps, the chunked cache, the SB reader.
+ *   §3   ROUTER + PLUMBING .... doGet, getLogo, the data-generation stamps,
+ *                               the chunked cache, the SB reader.
  *   §4   PERMISSIONS .......... APP_verifyPermissions(). Read this before
  *                               adding a service to the project.
  *   §5   SYNC ................. the QlikView → Sheets engine.
@@ -61,8 +71,23 @@
  *    input that moved. PLAN.md chunk 15 has the full diff and the two latent
  *    bugs it turned up.
  *
- * LINE ENDINGS: LF throughout, per PLAN.md §12. Most of the files this was
- * merged from were CRLF; do not let an editor flip it back.
+ * 6. WHEN YOU DELETE CODE BY ANCHORED TEXT, DIFF THE SYMBOL TABLE — not just
+ *    the syntax. A cut that takes one function too many is still perfectly
+ *    valid JavaScript, and in a half-megabyte file nobody sees it in a diff.
+ *    This is not hypothetical: the first build of this file lost RMX_whoWins
+ *    that way. The anchor matched UNIQUELY, node --check passed, every
+ *    structural check passed, and the only thing that noticed was a
+ *    before/after set difference of declared names.
+ *
+ * 7. THE SILENT catch IS A DECISION, NOT A STYLE. Silent is right for an
+ *    optional cache read and wrong for everything else — see §2's census. An
+ *    invalidation that fails silently looks exactly like nothing having
+ *    happened, which is the single most common shape of bug in this file's
+ *    history.
+ *
+ * LINE ENDINGS: LF throughout. Most of the files this was merged from were
+ * CRLF and two carried a lone CR as a line terminator; do not let an editor
+ * flip any of it back. .gitattributes pins it if you have the repo.
  *****************************************************************************/
 
 

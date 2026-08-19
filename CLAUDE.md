@@ -27,6 +27,24 @@ A flat mirror of one Google Apps Script project. **The project is three files** 
 `app.html` and `appsscript.json` — with no folders, no build step and no package manager.
 `tests/` is Node-only and is **not** part of the script project.
 
+**Those three files are the whole application, and that is tested rather than asserted.**
+`tests/threefiles.js` copies them into an empty directory, evaluates `app.gs` whole in one
+scope, calls `doGet` for all twelve routes, checks the only file it ever asks `HtmlService`
+for is `app`, and boots what it serves in real Chromium. Nothing else on disk.
+
+**So everything else here is deletable, and here is exactly what deleting it costs.** The app
+does not notice; you lose the ability to *check* it. `PLAN.md` is the record of why the code is
+shaped this way and the traps that have already been paid for once each; `README.md` §7 is the
+domain rules; `tests/` is the only proof available off-platform that a page still renders what
+it rendered. The survival-critical half of `PLAN.md` — the scoping trap, the scriptlet trap, the
+style-element trap, the one-global-scope rule, the symbol-table rule — is duplicated into the
+headers of `app.gs` and `app.html`, deliberately, so that a copy of the three files carries its
+own warnings. **What is not duplicated is the evidence**: every one of those rules is there
+because something broke, and the account of what broke is in `PLAN.md`.
+
+`.claspignore` is what stops `clasp push` uploading `tests/*.js` into the script project;
+`.gitattributes` pins the three files to LF, which is the repo's most-repeated hazard.
+
 The merge that got here is finished. Chunk 12 collapsed 16 `.gs` into `app.gs`; chunk 13 was
 the cutover — `doGet` serves `app.html` for every route and the 21 legacy `.html` are gone.
 Navigate both files by section banner (`Ctrl+F "§7"` in `app.gs`, `"§P rmx"` in `app.html`),

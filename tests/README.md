@@ -268,6 +268,32 @@ it to render the *same* ones: cssparity's whole guarantee — any difference is 
 difference — holds only while both sides are looking at identical markup. Two copies of the
 model would drift and the guarantee would quietly stop being true.
 
+## `threefiles.js` — the project really is three files
+
+The claim the whole merge was for: moving this application means copying `app.gs`, `app.html`
+and `appsscript.json`, and everything else in the repo is scaffolding. Until this existed that
+claim had never been tried — and the repo's own rule is that a deletion you have not tested is
+a deletion you have not done. Chunk 13 is why: ten harnesses were repointed at `app.html`, all
+ten went green, and **four failed the moment the legacy files were actually moved aside**,
+because each had a read the first pass missed. *Hide before you delete.*
+
+So it copies the three files into an empty temp directory and runs the app out of **that**:
+
+1. `app.gs` is evaluated **whole, in one scope**, exactly as Apps Script does it — not region
+   by region like the other harnesses. A section that referred to something no longer there
+   stops here.
+2. `doGet` is called for all twelve routes with `HtmlService` faked closely enough to prove the
+   one thing that matters: **the only file it ever asks for is `app`**. The fake escapes the
+   printing scriptlet, because that is what Apps Script does and it is the trap that has shipped
+   twice.
+3. The HTML `doGet` produced — scriptlets rendered, not the raw file — is booted in real
+   Chromium **with no `google.script` present**, and the page must actually mount. If it needs
+   the server to render its own chrome, it is not self-contained the way this is claiming.
+
+```bash
+node tests/threefiles.js
+```
+
 ## `fuelcache.js` — the fuel pages cache the sheet, and only the sheet
 
 Chunk 17 wired `AmrCache` into both Fuel Recovery pages. `PLAN.md` §10 named three things the
