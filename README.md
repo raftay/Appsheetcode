@@ -103,14 +103,15 @@ TP01's market → email map is a single list.
 add its scope by hand — nothing warns you, the call just throws for every user.
 `APP_verifyPermissions()` (`script.gs` §4) catches it in one editor run, reporting one line
 per service rather than dying on the first failure, so a missing grant cannot hide the other
-six. Each of the seven scopes was traced to a real call:
+six. Each of the eight scopes was traced to a real call:
 
 | Scope | What needs it |
 |---|---|
 | `auth/spreadsheets` | `SpreadsheetApp.openById` — the project is not bound to a sheet, so the narrower current-document scope is no use |
 | `auth/drive` | `DriveApp` get/create **and** the Drive v3 REST `files/copy` in §5 that converts a QlikView export. Full `drive`, not `drive.file`: the files were not created by this script |
 | `auth/presentations` | `SlidesApp.openById` — the Deck Builder |
-| `auth/script.send_mail` | `MailApp.sendEmail` — TP01. Note this is the narrow "send mail as you" grant, **not** a Gmail scope; nothing in the suite touches `GmailApp` or reads a mailbox |
+| `auth/script.send_mail` | `MailApp.sendEmail` — TP01. Still not a Gmail scope: it is the narrow "send mail as you" grant and it cannot read a mailbox. The read side is the next row, and the two are separate grants on purpose |
+| `auth/gmail.readonly` | `GmailApp.search` / `getAttachments` — §10's Inventory Report mail watch, and nothing else. **Read-only deliberately**: the watch remembers which messages it has already published in a Script Property rather than labelling or archiving them, so `gmail.modify` is not needed and nothing ever writes to a mailbox. This is the widest grant in the list — it can read every message the deployer can — and it is here only because Gmail has no "one sender, one subject" scope to ask for instead. `APP_CONFIG.INVENTORY_MAIL.FROM` is the narrowing the project *can* do |
 | `auth/script.external_request` | `UrlFetchApp` — the logo, and the Drive REST call above |
 | `auth/script.scriptapp` | `ScriptApp.getService().getUrl()`, which every page link is built from. Included deliberately even though it may be reachable without it: if that URL comes back empty every link goes **relative**, and a relative href inside the Apps Script sandbox iframe resolves against `googleusercontent.com`, navigating the user off the app. That shipped once |
 | `auth/userinfo.email` | `Session.getActiveUser().getEmail()` — who archived a KPI workbook, and the check's own report |
@@ -137,7 +138,7 @@ Ten pages, one `<template>` and one `AMR.page()` registration each.
 | `fuelsurcharge` | AGG Fuel Recovery | Price & Volume workbook (`readsFrom`) |
 | `rmxfuel` | RMX Fuel Recovery | Ready-Mix workbook |
 | `tp01` | Transfer Price Tool | uploaded file + mail |
-| `inventoryreport` | Inventory Report viewer | a Drive PDF |
+| `inventoryreport` | Inventory Report viewer | a Drive PDF, published by the mail watch |
 | `deckbuilder` | Deck Builder | the recipe + every page's content |
 
 **Three lists must name the same ten pages** — `APP_PAGES` (`script.gs` §3), `AMR_PAGES`
@@ -166,7 +167,7 @@ internal file order is not something this repo controls. Entry points are prefix
 | §7 | **RMX** — Ready-Mix, its lookup suggester, RMX Fuel Recovery |
 | §8 | **OVERVIEW** — the executive Overview and the month cube |
 | §9 | **DECK** — the Slides template reader, the deck writer, the recipe checker |
-| §10 | **SMALL PAGES** — KPI workbooks, TP01 mail, Inventory Report |
+| §10 | **SMALL PAGES** — KPI workbooks, TP01 mail, the Inventory Report and the mail watch that publishes it |
 | §11 | **TRIGGERS** — everything reached from outside the repo |
 
 ### Client — `app.html`, one file
@@ -302,7 +303,10 @@ bump anything, they just drop that 30-second copy so the next read sees the new 
 
 ### Syncing: one trigger, and nothing else
 
-**The sync is trigger-only by design and has no UI.** There is no pull button and one is not
+**The sync is trigger-only by design and has no UI.** (This is one of the suite's *two*
+time-driven triggers — the Inventory Report's mail watch, below, is the other. Neither is
+created in code; both are set by hand in the Apps Script UI, which is why `script.gs` §11
+exists.) There is no pull button and one is not
 wanted — a sync is a minutes-long Drive job, not something to put behind a control a user can
 press twice. Set **one** time-driven trigger on `qlikSyncCheck`; 15 minutes costs three Drive
 lookups when nothing has changed.
@@ -348,6 +352,48 @@ A page's workbook can be repointed at runtime from its ⚙ panel, stored as a Sc
 `APP_sheetOwner_` redirects a `readsFrom` page to the owning page's key, so a save through a
 borrowing page cannot create an orphan; `clearRetiredOverrides()` deletes keys left behind by
 a page that no longer owns a workbook. `tests/configcheck.js` is the gate.
+
+### The Inventory Report publishes itself
+
+**The second time-driven trigger, and the only other one.** Set one hourly trigger on
+`inventoryReportMailCheck` (`script.gs` §11); the engine it drives is `IRMAIL` in §10, next to
+the `IR` backend whose setting it writes, and everything configurable about it is
+`APP_CONFIG.INVENTORY_MAIL` in §1.
+
+Each firing searches the deploying account's mailbox for mail whose subject starts with
+`SUBJECT_PREFIX`, from `FROM`, inside `WINDOW_DAYS`. For every message it has not published
+before it files the PDF attachment into `FOLDER_ID` and calls **`IR.saveSource` — the same
+call the page's modal makes**, which is why there is no second setting anywhere and why a
+hand-set source and an auto-set one are indistinguishable.
+
+Four things about it are decisions, not details:
+
+- **The month comes off the subject, never off the calendar.** June's report is mailed at the
+  end of June, early in July, or weeks later if it is re-issued — so `new Date()` would label
+  it "July" exactly when it mattered. This is §7's rule about naming a period, in a different
+  costume. The received month is the fallback and it warns when it is used. The heading is
+  `LABEL_PREFIX` + the month with **no year**: `Inventory Report - June`.
+- **More than one mail a month is normal**, not an error — the data gets corrected and the
+  report re-sent. Messages are published oldest first so the page settles on the newest.
+- **Nothing is overwritten and nothing is deleted.** The clean name always points at the
+  newest copy, because that is what somebody opening the folder will click; the copy it
+  replaced is renamed `… (superseded <date>).pdf` and kept. Two files with one name is worse
+  than either keeping or losing the old one, and Drive would allow it.
+- **It never writes to the mailbox.** Which messages are done is a Script Property
+  (`INVENTORY_REPORT_MAIL_SEEN`, the last 300 ids), not a Gmail label — which is what keeps
+  the grant at `gmail.readonly`. A message that fails on the Drive side is *not* marked, so it
+  is retried next hour; one that can never work (no PDF on it) *is*, so it stops logging
+  forever.
+
+`inventoryReportMailStatus()` runs the same search from the editor and reports what the check
+would do — the query, the folder it can see, what the page is showing, and every unpublished
+mail with the heading it would be given — without filing anything. Run it before setting the
+trigger: a wrong prefix or an unshared folder shows up there rather than in a trigger nobody
+is watching.
+
+**A subject line is not a credential.** Anybody who can reach that mailbox can send one, and
+what the watch finds is published to every user of the app. `FROM` is the only narrowing
+available — Gmail has no per-sender scope — so emptying it is a real decision.
 
 ---
 
@@ -970,6 +1016,7 @@ or was forgotten.**
 | 2026-08-19 | **The period is data too.** The Aggregates workbook was re-headed from `2026 Volume` to `CY Volume` while its export still names years, so the sync silently stopped writing those columns. One rule now: split a header into the figure and its period (`APP_period_`), pair on that, and take the current year off the **data** — the Year column or a Bill Month. Two defects fell out of it: `Fuel Surchage` vs `Fuel Surcharge`, one missing letter that left that single column never written while the tab looked healthy; and the sync's positional fallback, which is how PY revenue once went into the wrong column for a whole run | ✅ |
 | 2026-08-19 | **The `~qliksync temp` sheet is contained, and its strays are swept.** A Drive copy made with no parent inherits the folder it lands in, so it was being born into the shared folder the export sits in. It is created in the script account's own Drive root now and has every non-owner permission stripped before it is read; nothing in the codebase creates a Drive permission, which is the only call that emails anybody. **The exports are `.xls` and cannot be anything else, so a copy is made on every sync** — which turns the one case `finally` cannot cover, Apps Script killing the execution at the runtime limit, from a one-off into a leak. `sweepTemps_` clears it, guarded on the prefix, the mime type and an hour's age | ✅ |
 | 2026-08-19 | **`gsparity.js` and `modparity.js` deleted**, on the rule their own headers gave: a legitimate change landed inside a moved region of both files, so neither is a copy of anything and the gates could only be weakened, never passed. `script.gs` and `app.html` also lost every reference to `README.md`, `PLAN.md`, `tests/` and chunk numbers — they explain themselves and each other now, and nothing outside | ✅ |
+| 2026-08-19 | **The Inventory Report publishes itself.** A second hourly trigger (`inventoryReportMailCheck`) watches the mailbox for the Qlik Sense report mail, files its PDF into the Drive folder and calls the same `IR.saveSource` the modal calls — so there is still exactly one setting. **The month is read off the subject, never off the calendar**: June's report is mailed in July as often as not, and stamping `new Date()` on it would mislabel it precisely when a late report made it matter. Old copies are superseded by rename, never overwritten or trashed. The grant is `gmail.readonly` because the "already published" list is a Script Property rather than a Gmail label | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |

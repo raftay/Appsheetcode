@@ -43,7 +43,8 @@
  *   §9   DECK ................. the Slides template reader, the deck writer and
  *                               the recipe checker. The template id, the folder
  *                               and the slide list are CONFIG, and live in §1.
- *   §10  SMALL PAGES .......... KPI workbooks, TP01 mail, Inventory Report.
+ *   §10  SMALL PAGES .......... KPI workbooks, TP01 mail, the Inventory Report
+ *                               and the mail watch that publishes it.
  *   §11  TRIGGERS ............. everything reached from outside this file.
  *
  * THE THINGS THAT WILL BITE YOU
@@ -134,6 +135,8 @@
  *     APP_CONFIG.PAGES.segment.MARKETS               the Slide Builder's markets
  *     APP_CONFIG.QLIK_SYNC.*                         the three QlikView exports
  *     APP_CONFIG.KPI_FOLDER_ID                       where the EBITDA books live
+ *     APP_CONFIG.INVENTORY_MAIL                      the mailbox the Inventory
+ *                                                    Report publishes itself from
  *     APP_CONFIG.LOGO_URL                            the logo every export uses
  *     APP_CONFIG.LOG_LEVEL                           how much the server logs (§2)
  *     APP_CONFIG.CUBE.ERAS                           the closed-year books
@@ -222,6 +225,48 @@ var APP_CONFIG = {
     AGG_FILE_ID: '19ptynrhtzC-Noi71znNbVIJw8GDmPUxZ',   // → Price & Volume
     RMX_FILE_ID: '1wUb82e1PVxstddK9IE2VxYLSQEicVAGK',   // → Ready-Mix (main, extra, assoc)
     SEG_FILE_ID: '1d1XzYlENUyE6sxBewCd-Q3GpjTNzgRZH'    // → Slide Builder
+  },
+
+
+  /* WHERE THE INVENTORY REPORT COMES FROM BY ITSELF.
+
+     The monthly PDF arrives by mail. inventoryReportMailCheck (§11) is the
+     hourly trigger target; the IRMAIL engine it drives is in §10, beside the
+     IR backend whose setting it writes. Nothing here is read at load time.
+
+     A month can bring more than one mail — the data gets corrected and the
+     report is re-sent — so this is not a once-a-month job: every message that
+     matches is published, newest last, and the page ends up showing the newest
+     one. */
+  INVENTORY_MAIL: {
+
+    /* The Drive folder every published PDF is filed into. This is the folder
+       itself, not a file in it. It must be shared with whoever the web app
+       runs as, with edit rights — the watch creates files in it. */
+    FOLDER_ID: '1eF2SI9vCMtQ1x0lNNyCvRGrpIgvC_Znu',
+
+    /* What a report mail's subject STARTS WITH. The month follows it
+       ("… Report - Jun") and is read off the subject, never off the calendar:
+       June's report routinely lands in July. */
+    SUBJECT_PREFIX: 'Monthly Central Region Qlik Sense Report',
+
+    /* Who the mail is accepted from, as a Gmail `from:` term — a domain, an
+       address, or several separated by OR. A subject line is not a credential:
+       anybody who can reach this mailbox can send one, and the watch publishes
+       what it finds to every user of the app. '' accepts anybody, and means
+       exactly that. */
+    FROM: 'amrize.com',
+
+    /* How far back each check searches. It only has to cover the gap between
+       two firings plus whatever downtime you are willing to sleep through —
+       a longer window costs nothing but is no use either, because a message
+       this has already published is skipped on its id. */
+    WINDOW_DAYS: 45,
+
+    /* What the page shows above the report, with the month appended:
+       "Inventory Report - June". No year, deliberately — the heading names
+       the reporting month and the file it points at carries the rest. */
+    LABEL_PREFIX: 'Inventory Report - '
   },
 
 
@@ -1973,7 +2018,7 @@ function getSlideData() {
  * active user so a wrong deployment setting is one line to read rather than
  * something inferred from whose name is on an email.
  *
- * THE SEVEN SCOPES, AND WHAT NEEDS EACH. JSON takes no comments, so this is the
+ * THE EIGHT SCOPES, AND WHAT NEEDS EACH. JSON takes no comments, so this is the
  * only place the reasoning lives. Every one was traced to a real call, not
  * guessed — the CHECKS array below carries the same mapping in code, beside the
  * probe that proves it, so the two cannot drift apart.
@@ -1988,10 +2033,26 @@ function getSlideData() {
  *                                drive.file: the files were not created by this
  *                                script.
  *   auth/presentations           SlidesApp.openById — the Deck Builder.
- *   auth/script.send_mail        MailApp.sendEmail — TP01 only. NOT the full
- *                                Gmail scope: GmailApp is referenced nowhere in
- *                                this file, and script.send_mail is the narrower
- *                                grant that covers sending with attachments.
+ *   auth/script.send_mail        MailApp.sendEmail — TP01 only. Still NOT a
+ *                                Gmail scope: it is the narrow "send mail as
+ *                                you" grant, it covers sending with attachments,
+ *                                and it does not let anything read a mailbox.
+ *                                The read side is the line below, and the two
+ *                                are separate grants on purpose.
+ *   auth/gmail.readonly          GmailApp.search and getAttachments — §10's
+ *                                Inventory Report mail watch, and nothing else
+ *                                in the file. READ-ONLY deliberately: the watch
+ *                                remembers which messages it has already
+ *                                published in a Script Property rather than
+ *                                labelling or archiving them, so it never writes
+ *                                to anybody's mailbox and gmail.modify is not
+ *                                needed. This is the widest grant in the list —
+ *                                it can read every message the deployer can —
+ *                                and it is here only because Gmail has no
+ *                                "one sender, one subject" scope to ask for
+ *                                instead. APP_CONFIG.INVENTORY_MAIL.FROM is the
+ *                                narrowing this project CAN do; do not empty it
+ *                                without meaning to.
  *   auth/script.external_request UrlFetchApp — the Amrize logo, and the Drive
  *                                REST call above.
  *   auth/script.scriptapp        ScriptApp.getService().getUrl(), which is what
@@ -2060,6 +2121,17 @@ function APP_verifyPermissions() {
       probe: function () {
         /* Reads the quota. Sends nothing. */
         return MailApp.getRemainingDailyQuota() + ' message(s) left in today’s quota';
+      } },
+
+    { service: 'GmailApp', scope: 'auth/gmail.readonly',
+      usedFor: "the Inventory Report's mail watch — §10's IRMAIL",
+      probe: function () {
+        /* Runs the watch's OWN search, so what this proves is the thing that
+           matters: the grant is live AND the query the trigger will run comes
+           back. Reads nothing else, publishes nothing, marks nothing seen. */
+        var q = (typeof IRMAIL !== 'undefined' && IRMAIL.query && IRMAIL.query()) || '';
+        if (!q) return 'no report subject configured — scope referenced, not proven';
+        return GmailApp.search(q, 0, 5).length + ' thread(s) match ' + q;
       } },
 
     { service: 'SlidesApp', scope: 'auth/presentations',
@@ -12414,6 +12486,328 @@ function IR_getSettings()             { return IR.getSettings(); }
 function IR_saveSource(input, label)  { return IR.saveSource(input, label); }
 
 
+/* ---- IR_MailWatch.gs ---------------------------------------------------------
+   The other half of the Inventory Report: the hourly mailbox check that sets
+   the source above, so nobody has to open the modal at all.  */
+
+/*****************************************************************************
+ * INVENTORY REPORT — the mail watch (namespaced IRMAIL)
+ * ---------------------------------------------------------------------------
+ * The report used to be published by hand: somebody saved the PDF out of the
+ * mail, uploaded it to the Drive folder, copied the link, opened the page's
+ * modal and pasted it. This does the same four things on a trigger.
+ *
+ *   1. search the mailbox for the report mail
+ *   2. file its PDF into APP_CONFIG.INVENTORY_MAIL.FOLDER_ID
+ *   3. name it for the month the SUBJECT names
+ *   4. write it into the same Script Property the modal writes — IR.saveSource
+ *
+ * Step 4 is the whole reason there is no second setting anywhere. The page,
+ * the modal and this all read and write one record, so a hand-set source and
+ * an auto-set one are indistinguishable and either can override the other.
+ *
+ * THE MONTH COMES OFF THE SUBJECT, NEVER OFF THE CALENDAR. June's report is
+ * mailed at the end of June or early in July, and a re-issue of it can land
+ * weeks later still — so a watch that stamped new Date() onto the file would
+ * label a June report "July" every time it ran late, which is the failure §7
+ * describes for column headers in a different costume. The subject carries the
+ * month; that is what is read. The received date is the fallback, and it warns
+ * when it is used.
+ *
+ * MORE THAN ONE MAIL A MONTH IS NORMAL, not an error — the data is corrected
+ * and the report re-sent. Each message is published in the order it arrived,
+ * so the newest is what the page ends up on. The one before it is not
+ * overwritten and not deleted: the clean name always points at the newest copy
+ * (that is what somebody opening the folder will click), and the copy it
+ * replaced is renamed with the date it was superseded and kept.
+ *
+ * WHAT IT DOES NOT DO, DELIBERATELY:
+ *   · it does not label, archive, read receipts on or otherwise touch the
+ *     mailbox — the grant is auth/gmail.readonly (§4). Which messages are
+ *     already published is remembered in a Script Property instead.
+ *   · it does not share the file it creates. A new file inherits the folder's
+ *     sharing, and nothing in this codebase creates a Drive permission,
+ *     because that is the one call that emails people.
+ *   · it does not delete anything, ever.
+ *****************************************************************************/
+var IRMAIL = (function () {
+
+  var SEEN_KEY = 'INVENTORY_REPORT_MAIL_SEEN';   // JSON: [ gmail message id, … ]
+
+  /* How many message ids are remembered. Anything older falls off the end and
+     would be published again if it were still inside WINDOW_DAYS — which is
+     why this is an order of magnitude more than a window's worth of mail. */
+  var SEEN_CAP = 300;
+
+  var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
+                'July', 'August', 'September', 'October', 'November', 'December'];
+
+  function cfg_() {
+    var c = (typeof APP_CONFIG !== 'undefined' && APP_CONFIG.INVENTORY_MAIL) || {};
+    return {
+      folderId:    String(c.FOLDER_ID || ''),
+      subject:     String(c.SUBJECT_PREFIX || ''),
+      from:        String(c.FROM || ''),
+      windowDays:  Number(c.WINDOW_DAYS) > 0 ? Math.round(Number(c.WINDOW_DAYS)) : 45,
+      labelPrefix: String(c.LABEL_PREFIX == null ? '' : c.LABEL_PREFIX)
+    };
+  }
+
+  /* The Gmail query. Exposed because §4's permission probe runs exactly this —
+     a scope check that proves a different query than the trigger uses proves
+     the wrong thing. */
+  function query() {
+    var c = cfg_();
+    if (!c.subject) return '';
+    return 'subject:"' + c.subject + '" has:attachment newer_than:' + c.windowDays + 'd'
+         + (c.from ? ' from:(' + c.from + ')' : '');
+  }
+
+  /* "Re:" and "Fwd:" come off the front first, in any combination. A report
+     that reaches the mailbox by being forwarded is still the report and still
+     carries the PDF; a rule that only accepted the original delivery would
+     fail the first time somebody passed one on. */
+  function stripMarkers_(subject) {
+    var s = String(subject || '').replace(/^\s+/, ''), was;
+    do { was = s; s = s.replace(/^(?:re|fw|fwd)\s*:\s*/i, ''); } while (s !== was);
+    return s;
+  }
+
+  /* Gmail's subject: term matches WORDS, anywhere in the subject and in any
+     order — "Monthly Qlik Report Central Region Sense" matches the query
+     above just as well, and so does a reply in the same thread. So the search
+     is the cheap filter and this is the real one: what is left after the
+     markers has to actually START with the configured prefix. */
+  function subjectMatches_(subject, prefix) {
+    return stripMarkers_(subject).toLowerCase().indexOf(prefix.toLowerCase()) === 0;
+  }
+
+  /* The month the report is FOR, read out of whatever follows the prefix:
+     "- Jun", "– June", "Jun 2026" and "- June 2026" all give June. Returns ''
+     when there is no month in it, which the caller reports rather than
+     guesses past silently.
+
+     Three letters is the shortest abbreviation accepted, because two is
+     ambiguous: "Ma" is March or May and "Ju" is June or July. */
+  function monthFromSubject_(subject, prefix) {
+    var rest = stripMarkers_(subject);
+    if (rest.toLowerCase().indexOf(prefix.toLowerCase()) === 0) rest = rest.slice(prefix.length);
+    var words = rest.replace(/[^A-Za-z]+/g, ' ').trim().split(' ');
+    for (var i = 0; i < words.length; i++) {
+      var w = words[i].toLowerCase();
+      if (w.length < 3) continue;
+      for (var m = 0; m < MONTHS.length; m++) {
+        var full = MONTHS[m].toLowerCase();
+        if (full.indexOf(w) === 0) return MONTHS[m];
+      }
+    }
+    return '';
+  }
+
+  function stamp_(d, fmt) {
+    return Utilities.formatDate(d, Session.getScriptTimeZone(), fmt);
+  }
+
+  function readSeen_() {
+    var raw = PropertiesService.getScriptProperties().getProperty(SEEN_KEY) || '';
+    if (!raw) return [];
+    var list = null;
+    try { list = JSON.parse(raw); }
+    catch (e) {
+      /* NOT SILENT (§7). An unreadable list means every message still inside
+         the search window looks new, so the next block republishes all of
+         them: the page lands back on the newest one, which is where it
+         already was, and the folder gains a superseded copy per message. It
+         is recoverable and it is loud, because a folder quietly filling up
+         with duplicates is not something anybody would trace back to here. */
+      APP_log('warn', 'IRMAIL.seen', 'the published-message list is unreadable — every ' +
+              'message in the window will look new and be published again', { error: String(e) });
+      return [];
+    }
+    return (list && list.length) ? list : [];
+  }
+
+  function writeSeen_(list) {
+    if (list.length > SEEN_CAP) list = list.slice(list.length - SEEN_CAP);
+    PropertiesService.getScriptProperties().setProperty(SEEN_KEY, JSON.stringify(list));
+  }
+
+  /* The clean name is kept pointing at the newest copy, so the file somebody
+     opens from the folder is the one the page is showing. Anything already
+     wearing that name is renamed, not replaced and not trashed — Drive is
+     perfectly happy to hold two files called the same thing, and that is worse
+     than either keeping or losing the old one. Returns how many were moved
+     aside, so the caller can log it. */
+  function supersede_(folder, name) {
+    var base = name.replace(/\.pdf$/i, '');
+    var it = folder.getFilesByName(name), old = [];
+    while (it.hasNext()) old.push(it.next());
+    for (var i = 0; i < old.length; i++) {
+      old[i].setName(base + ' (superseded ' + stamp_(new Date(), 'yyyy-MM-dd HHmm') + ').pdf');
+    }
+    return old.length;
+  }
+
+  function pdfOf_(msg) {
+    var atts = msg.getAttachments({ includeInlineImages: false, includeAttachments: true });
+    for (var i = 0; i < atts.length; i++) {
+      var a = atts[i];
+      if (/\.pdf$/i.test(a.getName() || '') ||
+          String(a.getContentType() || '').toLowerCase().indexOf('pdf') >= 0) return a;
+    }
+    return null;
+  }
+
+  /* File one message's PDF and point the page at it. Throws on anything that
+     is worth retrying in an hour (Drive unreachable, the property unwritable);
+     returns null when the message can never work (no PDF on it), which is the
+     difference between "come back later" and "stop asking". */
+  function publish_(msg, c) {
+    var pdf = pdfOf_(msg);
+    if (!pdf) return null;
+
+    var month = monthFromSubject_(msg.getSubject(), c.subject);
+    if (!month) {
+      month = MONTHS[msg.getDate().getMonth()];
+      APP_log('warn', 'IRMAIL.publish', 'no month in the subject — falling back to the month ' +
+              'the mail arrived in, which is wrong whenever a report is late or re-issued',
+              { subject: String(msg.getSubject() || ''), month: month });
+    }
+
+    var label = c.labelPrefix + month;
+    var name  = label + '.pdf';
+
+    var folder = DriveApp.getFolderById(c.folderId);
+    var moved  = supersede_(folder, name);
+    var file   = folder.createFile(pdf.copyBlob().setName(name));
+
+    /* The same call the modal makes. Everything the page needs — the preview
+       URL, the heading, the "set on" line — is derived from this one record. */
+    IR.saveSource(file.getId(), label);
+
+    return { fileId: file.getId(), name: name, label: label, superseded: moved,
+             sent: stamp_(msg.getDate(), 'yyyy-MM-dd HH:mm') };
+  }
+
+  /* THE TRIGGER TARGET'S BODY. One pass over everything the query finds that
+     has not been published yet, oldest first, so the newest mail is the last
+     one written and the page settles on it. */
+  function run() {
+    var t0 = Date.now();
+    APP_log('info', 'IRMAIL.run', 'checking the mailbox');
+
+    var c = cfg_();
+    if (!c.subject || !c.folderId) {
+      APP_log('error', 'IRMAIL.run', 'not configured — set APP_CONFIG.INVENTORY_MAIL ' +
+              'SUBJECT_PREFIX and FOLDER_ID', { ms: Date.now() - t0 });
+      return { ok: false, error: 'APP_CONFIG.INVENTORY_MAIL is incomplete.' };
+    }
+
+    var q = query(), threads;
+    try { threads = GmailApp.search(q, 0, 50); }
+    catch (e) {
+      APP_log('error', 'IRMAIL.run', 'the mailbox search failed — nothing was published',
+              { ms: Date.now() - t0, query: q, error: String(e && e.message || e) });
+      return { ok: false, error: String(e && e.message || e) };
+    }
+
+    var msgs = [];
+    for (var t = 0; t < threads.length; t++) {
+      var inThread = threads[t].getMessages();
+      for (var i = 0; i < inThread.length; i++) {
+        if (subjectMatches_(inThread[i].getSubject(), c.subject)) msgs.push(inThread[i]);
+      }
+    }
+    msgs.sort(function (a, b) { return a.getDate().getTime() - b.getDate().getTime(); });
+
+    var order = readSeen_(), seen = {};
+    for (var k = 0; k < order.length; k++) seen[order[k]] = true;
+
+    var out = { ok: true, published: [], alreadyDone: 0, ignored: [], failed: [] };
+
+    for (var n = 0; n < msgs.length; n++) {
+      var msg = msgs[n], id = msg.getId();
+      if (seen[id]) { out.alreadyDone++; continue; }
+
+      var rec = null;
+      try { rec = publish_(msg, c); }
+      catch (e) {
+        /* NOT marked as done, on purpose: a Drive hiccup or a folder that has
+           lost its sharing is fixed by the next firing, and forgetting the
+           message would mean it is never retried. */
+        out.failed.push(String(msg.getSubject() || '(no subject)') + ': ' + (e && e.message || e));
+        out.ok = false;
+        APP_log('error', 'IRMAIL.run', 'could not publish a message — it will be retried on ' +
+                'the next check', { subject: String(msg.getSubject() || ''),
+                                    error: String(e && e.message || e) });
+        continue;
+      }
+
+      /* Marked done either way from here. A mail with no PDF on it will never
+         grow one, so retrying it hourly forever would log the same warning
+         until somebody deleted the message. */
+      order.push(id); seen[id] = true;
+
+      if (!rec) {
+        out.ignored.push(String(msg.getSubject() || '(no subject)'));
+        APP_log('warn', 'IRMAIL.run', 'a matching mail carried no PDF — ignored from now on',
+                { subject: String(msg.getSubject() || '') });
+        continue;
+      }
+
+      out.published.push(rec);
+      APP_log('info', 'IRMAIL.run', 'published', { file: rec.name, label: rec.label,
+              fileId: rec.fileId, superseded: rec.superseded, sent: rec.sent });
+    }
+
+    writeSeen_(order);
+
+    APP_log(out.failed.length ? 'error' : 'info', 'IRMAIL.run', 'done',
+            { ms: Date.now() - t0, matched: msgs.length, published: out.published.length,
+              alreadyDone: out.alreadyDone, ignored: out.ignored.length,
+              failed: out.failed.length,
+              detail: out.failed.length ? out.failed.join(' | ') : '' });
+    return out;
+  }
+
+  /* What the next check would see, for a look from the editor. Reads only:
+     it publishes nothing, files nothing and marks nothing. */
+  function status() {
+    var c = cfg_(), q = query();
+    var out = { query: q, folder: '', showing: IR.getSettings(), published: 0, pending: [] };
+    if (!q) { out.error = 'APP_CONFIG.INVENTORY_MAIL.SUBJECT_PREFIX is empty.'; return out; }
+
+    try { out.folder = DriveApp.getFolderById(c.folderId).getName(); }
+    catch (e) { out.folder = 'UNREADABLE — ' + String(e && e.message || e); }
+
+    var order = readSeen_(), seen = {};
+    for (var k = 0; k < order.length; k++) seen[order[k]] = true;
+    out.published = order.length;
+
+    var threads = GmailApp.search(q, 0, 50);
+    for (var t = 0; t < threads.length; t++) {
+      var inThread = threads[t].getMessages();
+      for (var i = 0; i < inThread.length; i++) {
+        var m = inThread[i];
+        if (!subjectMatches_(m.getSubject(), c.subject)) continue;
+        if (seen[m.getId()]) continue;
+        out.pending.push({
+          subject: String(m.getSubject() || ''),
+          sent:    stamp_(m.getDate(), 'yyyy-MM-dd HH:mm'),
+          from:    String(m.getFrom() || ''),
+          wouldBe: c.labelPrefix + (monthFromSubject_(m.getSubject(), c.subject) ||
+                                    MONTHS[m.getDate().getMonth()] + ' (guessed from the send date)'),
+          hasPdf:  !!pdfOf_(m)
+        });
+      }
+    }
+    return out;
+  }
+
+  return { run: run, status: status, query: query };
+})();
+
+
 
 /* ============================================================================
  * §11  TRIGGERS + EDITOR ENTRY POINTS
@@ -12431,6 +12825,19 @@ function IR_saveSource(input, label)  { return IR.saveSource(input, label); }
  *   qlikStamps       what the next check will compare, and what it will do.
  *   qlikSyncNow      the only manual recovery path when the trigger misfires.
  *
+ *   inventoryReportMailCheck
+ *                    THE SECOND TRIGGER TARGET. Set ONE hourly trigger on it.
+ *                    It publishes the Inventory Report out of the mailbox
+ *                    (§10's IRMAIL). Nothing points at it either, and the page
+ *                    it feeds has a modal that still works by hand — so with no
+ *                    trigger set the page does not break, it just quietly stops
+ *                    updating itself and waits for somebody who no longer knows
+ *                    they are meant to do it.
+ *   inventoryReportMailStatus
+ *                    what that check would do right now — the query, the folder,
+ *                    what the page is showing, and every mail it has not
+ *                    published yet. Reads only; run it from the editor.
+ *
  * The other functions in this file that are run by hand rather than called are
  * signposted where they live, because they belong with the code they report on:
  * APP_verifyPermissions (§4), clearRetiredOverrides (§1), getSaskRatesStatus (§6)
@@ -12443,9 +12850,9 @@ function IR_saveSource(input, label)  { return IR.saveSource(input, label); }
  * anything is not superseded, it is unreachable.
  *
  * THIS IS WHY THE SECTION EXISTS. There is not one ScriptApp.newTrigger in the
- * codebase — the trigger is configured by hand in the Apps Script UI, so nothing
- * in the repo points at it. Ctrl+F "§11" is the substitute for that missing
- * reference.
+ * codebase — BOTH triggers are configured by hand in the Apps Script UI, so
+ * nothing in the repo points at either. Ctrl+F "§11" is the substitute for that
+ * missing reference.
  * ============================================================================ */
 
 /* ---- QlikSync.gs -------------------------------------------------------------
@@ -12610,3 +13017,39 @@ function qlikSyncNow(scope) {
   }
   return res;
 }
+
+
+/* ---- IR_MailWatch.gs ---------------------------------------------------------
+   The entry points. The IRMAIL engine they drive is in §10, next to the IR
+   backend whose setting it writes.  */
+
+/* ==========================================================================
+ * THE SECOND HOURLY TRIGGER: the Inventory Report publishes itself.
+ * --------------------------------------------------------------------------
+ * Set ONE time-driven trigger on inventoryReportMailCheck — Triggers ▸ Add
+ * trigger ▸ Time-driven ▸ Hour timer ▸ Every hour. Nothing in this repo creates
+ * it and nothing calls this function; the trigger is the only caller it will
+ * ever have.
+ *
+ * It looks for the report mail, files the PDF it carries into
+ * APP_CONFIG.INVENTORY_MAIL.FOLDER_ID, names it for the month the subject
+ * names, and writes it into the Inventory Report's source setting. A message it
+ * has already published is skipped on its id, so an hour where nothing arrived
+ * costs one Gmail search and nothing else.
+ *
+ * Run inventoryReportMailStatus() from the editor first. It runs the same
+ * search and reports what the check WOULD do — the query, the folder it can
+ * see, and every unpublished mail with the heading it would be given — without
+ * filing anything. A wrong subject prefix or an unshared folder shows up there
+ * in one run instead of in a trigger nobody is watching.
+ *
+ * The first firing publishes everything inside WINDOW_DAYS that has not been
+ * seen before, oldest first. That is one or two months of report mail on a
+ * mailbox that has been receiving them, and the page lands on the newest — the
+ * older ones are filed and superseded on the way past, which is tidy rather
+ * than wrong.
+ * ======================================================================== */
+function inventoryReportMailCheck()  { return IRMAIL.run(); }
+
+/* What the check above would do right now, without doing any of it. */
+function inventoryReportMailStatus() { return IRMAIL.status(); }

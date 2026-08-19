@@ -185,6 +185,10 @@ const NOT_ROWS = {
      killed run left in Drive, not rows — and the line only fires for one that
      will not trash, which is the thing somebody would need to go and look at. */
   'QLIKSYNC.sweep':         'stranded temp files, capped at 50 and usually none',
+  /* Report MAILS, not rows. A month brings one, occasionally two or three when
+     the data is corrected and the report re-sent, and the search window caps
+     it well below that — a line per message IS the account of the run. */
+  'IRMAIL.run':             'the unpublished report mails — normally none, at most a few',
 };
 const inLoop = [];
 LINES.forEach((l, i) => {
