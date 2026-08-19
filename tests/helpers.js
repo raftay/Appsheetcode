@@ -18,15 +18,19 @@
  *   · PV reads the text "5%" as 0.05. FSC / RFSC / RMX / SASK read it as 5.
  *     PV is right: a percent-FORMATTED cell comes back from Apps Script as the
  *     number 0.05 already, so a "5%" that reaches toNum_ is TEXT and means 5%.
- *   · FSC / RFSC / RMX / SASK read the text "(1,234)" as -1234. PV reads it as
- *     ZERO — the parenthesis survives its strip, parseFloat gives NaN, and NaN
- *     becomes 0. They are right: an accounting export writes negatives that way.
+ *   · ~~FSC / RFSC / RMX / SASK read the text "(1,234)" as -1234. PV reads it as
+ *     ZERO.~~ **CLOSED BY CHUNK 20: all six read it as -1234 now.** It was never
+ *     a dialect worth keeping — PV's strip left the brackets, parseFloat gave
+ *     NaN, and NaN became 0, so an accounting negative was DROPPED from every
+ *     sum it landed in rather than mis-signed, which is why nothing ever looked
+ *     wrong. The table below records the move.
  *
- * So "unify them" has no safe direction. Picking PV's breaks every parenthesised
- * negative in Fuel Recovery and Ready-Mix; picking the others multiplies every
- * text percentage in Price & Volume by a hundred. Both would be silent, both
- * would land under 144 call sites, and neither would fail a single harness that
- * existed before this one.
+ * So "unify them" has no safe direction — and note which half of that survived.
+ * The PERCENT rule still has none: picking the others' reading would multiply
+ * every text percentage in Price & Volume by a hundred, silently, under 144 call
+ * sites. What chunk 20 changed was not a dialect but a BUG that happened to sit
+ * in one, and the distinction is the whole reason chunk 15 refused to fix it in
+ * passing: a fix worth making is worth making where it can be seen.
  *
  * WHAT LANDS INSTEAD OF A MERGE: this. Every dialect's behaviour is written down
  * as a table of inputs and expected outputs, taken from the code as it actually
@@ -102,11 +106,26 @@ const TONUM_TABLE = [
   /* ← THE PERCENT DIVIDE. Only PV and PVLOOK scale a text percentage. */
   ['5%',              0.05,  0.05,   5,      5,      5,      5],
   ['-12.5%',          -0.125,-0.125, -12.5,  -12.5,  -12.5,  -12.5],
-  /* ← THE ACCOUNTING NEGATIVE. Everyone except PV reads it as negative;
-       PV silently reads it as ZERO, which is a dropped figure, not a
-       rounding difference. */
-  ['(1,234)',         0,     0,      -1234,  -1234,  -1234,  -1234],
-  ['($99.50)',        0,     0,      -99.5,  -99.5,  -99.5,  -99.5],
+  /* ← THE ACCOUNTING NEGATIVE — AND THIS ROW MOVED IN CHUNK 20. It used to
+       read `0, 0` for PV and PVLOOK: the parentheses survived their strip,
+       parseFloat gave NaN, and NaN became 0, so the figure was DROPPED rather
+       than mis-signed, which is why nothing ever looked wrong. Both now carry
+       the rule the other four always had. All six agree here now, and this is
+       the one place in this table where a column CHANGED rather than being
+       recorded. */
+  ['(1,234)',         -1234, -1234,  -1234,  -1234,  -1234,  -1234],
+  ['($99.50)',        -99.5, -99.5,  -99.5,  -99.5,  -99.5,  -99.5],
+  /* ← AND THE LIMIT OF THAT FIX, pinned so it cannot widen. A parenthesis is a
+       minus sign only in front of a NUMBER: a parenthesised word is still 0
+       everywhere, because parseFloat still gives NaN. `(5%)` is the one input
+       where both rules meet — PV negates AND scales it, the others only
+       negate. SASKRATES negates it too, for a reason worth writing down: it is
+       the one copy that does not strip '%', so "%12" stops parseFloat dead at
+       0 — but "(5%)" becomes "-5%" first, and parseFloat is perfectly happy to
+       stop at a TRAILING one. This cell was predicted 0 and the harness said
+       -5; it is the third time this table has corrected the person writing it. */
+  ['(n/a)',           0,     0,      0,      0,      0,      0],
+  ['(5%)',            -0.05, -0.05,  -5,     -5,     -5,     -5],
   /* ← SASKRATES ALONE does not strip '%', so a leading one stops parseFloat
        dead where the others have already removed it. And note PV: it tests for
        a '%' ANYWHERE, not a trailing one, so it scales this too. Both of those

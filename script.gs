@@ -2976,7 +2976,17 @@ function toNum_(v) {
   if (v == null || v === '') return 0;
   if (typeof v === 'number') return v;
   var s = String(v).trim(), pct = /%/.test(s);
-  s = s.replace(/[$,%\s]/g, '');
+  /* THE PARENTHESES ARE A MINUS SIGN. An accounting export writes -1,234 as
+     "(1,234)", and stripping only [$,%\s] left the brackets in place: parseFloat
+     gave NaN and NaN became 0, so the figure was DROPPED rather than mis-signed
+     — which is why nothing ever looked wrong. Every other toNum_ in the suite
+     (FSC, RFSC, RMX, SASKRATES) has always read it as -1234; this is that rule,
+     spelled the way they spell it, and it is the whole of PLAN.md chunk 20.
+     It cannot touch a value that is not a parenthesised NUMBER: "(n/a)" still
+     reads 0, because parseFloat still gives NaN. The percent rule above is
+     untouched — chunk 15's point was that PV is RIGHT about "5%" and the others
+     are wrong, and the two rules are about different inputs. */
+  s = s.replace(/[$,%\s]/g, '').replace(/\(/g, '-').replace(/\)/g, '');
   if (s === '' || s === '-') return 0;
   var n = parseFloat(s);
   if (isNaN(n)) return 0;
@@ -4383,7 +4393,17 @@ function toNum_(v){
   if (v == null || v === '') return 0;
   if (typeof v === 'number') return v;
   var s = String(v).trim(), pct = /%/.test(s);
-  s = s.replace(/[$,%\s]/g, '');
+  /* THE PARENTHESES ARE A MINUS SIGN. An accounting export writes -1,234 as
+     "(1,234)", and stripping only [$,%\s] left the brackets in place: parseFloat
+     gave NaN and NaN became 0, so the figure was DROPPED rather than mis-signed
+     — which is why nothing ever looked wrong. Every other toNum_ in the suite
+     (FSC, RFSC, RMX, SASKRATES) has always read it as -1234; this is that rule,
+     spelled the way they spell it, and it is the whole of PLAN.md chunk 20.
+     It cannot touch a value that is not a parenthesised NUMBER: "(n/a)" still
+     reads 0, because parseFloat still gives NaN. The percent rule above is
+     untouched — chunk 15's point was that PV is RIGHT about "5%" and the others
+     are wrong, and the two rules are about different inputs. */
+  s = s.replace(/[$,%\s]/g, '').replace(/\(/g, '-').replace(/\)/g, '');
   if (s === '' || s === '-') return 0;
   var n = parseFloat(s);
   if (isNaN(n)) return 0;

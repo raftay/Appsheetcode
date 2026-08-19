@@ -678,6 +678,33 @@ var DECK = (function () {\n` },
 
   'PV_Lookup.gs': [
 
+  /* ---- CHUNK 20: the same fix, because this is the same copy --------------
+     PV_Lookup's toNum_ was byte-identical to PV's. Chunk 15's table records the
+     two as ONE dialect ("PV · PVLOOK"), so fixing one and not the other would
+     have invented a fifth dialect inside a family — the precise shape of drift
+     this whole set of chunks exists to stop. */
+    { kind: 'replace', gone: [],
+      why: 'The byte-identical twin of the PV_Backend.gs edit above, for the same reason. This ' +
+           'copy sits under the mapping check, which ranks unmapped rows BY MONEY IMPACT — so ' +
+           'a dropped negative here does not just change a total, it reorders the list of what ' +
+           'to fix first. ',
+      from: String.raw`  var s = String(v).trim(), pct = /%/.test(s);
+  s = s.replace(/[$,%\s]/g, '');
+  if (s === '' || s === '-') return 0;`,
+      to:   String.raw`  var s = String(v).trim(), pct = /%/.test(s);
+  /* THE PARENTHESES ARE A MINUS SIGN. An accounting export writes -1,234 as
+     "(1,234)", and stripping only [$,%\s] left the brackets in place: parseFloat
+     gave NaN and NaN became 0, so the figure was DROPPED rather than mis-signed
+     — which is why nothing ever looked wrong. Every other toNum_ in the suite
+     (FSC, RFSC, RMX, SASKRATES) has always read it as -1234; this is that rule,
+     spelled the way they spell it, and it is the whole of PLAN.md chunk 20.
+     It cannot touch a value that is not a parenthesised NUMBER: "(n/a)" still
+     reads 0, because parseFloat still gives NaN. The percent rule above is
+     untouched — chunk 15's point was that PV is RIGHT about "5%" and the others
+     are wrong, and the two rules are about different inputs. */
+  s = s.replace(/[$,%\s]/g, '').replace(/\(/g, '-').replace(/\)/g, '');
+  if (s === '' || s === '-') return 0;` },
+
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----
      Declared like every other edit, so the other ~10,800 lines stay proved verbatim.
      script.gs §2 carries the census and the rule each one was decided by. */
@@ -919,6 +946,41 @@ var DECK = (function () {\n` },
   ],
 
   'PV_Backend.gs': [
+
+  /* ---- CHUNK 20: PV.toNum_ stops dropping accounting negatives -------------
+     THE FIRST EDIT IN THIS FILE THAT CHANGES AN ANSWER rather than a message or
+     a comment. Chunk 15 diffed the six toNum_, recorded this as a finding and
+     deliberately did not fix it inside a cleanup; chunk 20 is that finding,
+     fixed on its own. tests/helpers.js's table moves with it — two cells, 0 to
+     -1234 and 0 to -99.5 — which is the visible record of what changed.
+
+     NOTE THE `String.raw`. Both anchors are regex source, and in an ordinary
+     template literal `\s` collapses to `s`, so the anchor would not match the
+     file it came from. */
+    { kind: 'replace', gone: [],
+      why: 'PV.toNum_("(1,234)") was 0. The strip left the brackets in place, parseFloat gave ' +
+           'NaN, and NaN became 0 — so a parenthesised negative was DROPPED from every sum it ' +
+           'landed in rather than mis-signed, which is exactly why nothing ever looked wrong. ' +
+           'Every other copy in the suite has always read it as -1234. This is NOT the ' +
+           'unification chunk 15 forbade: the percent rule that makes PV right and the others ' +
+           'wrong is untouched, because the two rules are about different inputs. And it cannot ' +
+           'reach a value that is not a parenthesised NUMBER — "(n/a)" still reads 0. ',
+      from: String.raw`  var s = String(v).trim(), pct = /%/.test(s);
+  s = s.replace(/[$,%\s]/g, '');
+  if (s === '' || s === '-') return 0;`,
+      to:   String.raw`  var s = String(v).trim(), pct = /%/.test(s);
+  /* THE PARENTHESES ARE A MINUS SIGN. An accounting export writes -1,234 as
+     "(1,234)", and stripping only [$,%\s] left the brackets in place: parseFloat
+     gave NaN and NaN became 0, so the figure was DROPPED rather than mis-signed
+     — which is why nothing ever looked wrong. Every other toNum_ in the suite
+     (FSC, RFSC, RMX, SASKRATES) has always read it as -1234; this is that rule,
+     spelled the way they spell it, and it is the whole of PLAN.md chunk 20.
+     It cannot touch a value that is not a parenthesised NUMBER: "(n/a)" still
+     reads 0, because parseFloat still gives NaN. The percent rule above is
+     untouched — chunk 15's point was that PV is RIGHT about "5%" and the others
+     are wrong, and the two rules are about different inputs. */
+  s = s.replace(/[$,%\s]/g, '').replace(/\(/g, '-').replace(/\)/g, '');
+  if (s === '' || s === '-') return 0;` },
 
   /* ---- DEAD CODE FOUND BY THE 404-NAME AUDIT ---------------------------------
      Not debug functions — those are all gone. These are IIFE-private helpers with
