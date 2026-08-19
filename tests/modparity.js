@@ -144,6 +144,43 @@ const EDITS = {
   };` },
   ],
 
+  AmrSlide: [
+    { kind: 'replace',
+      why: 'CHUNK 22 — THE FRAME\'S FOUR NUMBERS MOVED TO §C, and nothing else about the module ' +
+           'changed: same values, read from one place instead of declared in four. They are ' +
+           'settings rather than constants — the size of every exported PNG, the padding of ' +
+           'every deck picture, and where the comment bands start — and a setting whose only ' +
+           'home is line 6,080 of a 22,000-line file is a setting nobody can find. WHAT THIS ' +
+           'COSTS, stated plainly: slidefit.js drives the LEGACY SlideExport.html, so it no ' +
+           'longer exercises this module\'s first five lines. threefiles.js, pageparity.js and ' +
+           'bgrender.js all boot app.html whole, which is where §C exists, so the frame is still ' +
+           'rendered from these values in Chromium and under jsdom — what is no longer proved ' +
+           'is that the two copies agree about them.',
+      from: `  var W = 1600, H = 900, PAD = 40;          // the pages' 16:9 canvas
+  /* A bare frame keeps a hair of padding so a card's border and shadow are not
+     shaved off at the picture's edge. */
+  var BARE_PAD = 8;
+  var MARGINS = { left:120, right:120, top:30, bottom:30 };  // current comment bands`,
+      to: `  /* THE FRAME'S FOUR NUMBERS ARE IN §C — Ctrl+F "§C  TUNABLES". They were the
+     first lines of this module, which is the right place for a constant nobody
+     changes and the wrong one for a setting: resizing the exported slide meant
+     finding the module that owns the frame first. The values are unchanged.
+     Read once, here, because §C is above §E and cannot move below it. */
+  var T = AMR_TUNABLES.slide;
+  var W = T.W, H = T.H, PAD = T.PAD;        // the pages' 16:9 canvas
+  var BARE_PAD = T.BARE_PAD;
+  /* A COPY: the sliders assign into MARGINS, and §C's table must not move with
+     them. */
+  var MARGINS = { left:T.MARGINS.left, right:T.MARGINS.right,
+                  top:T.MARGINS.top, bottom:T.MARGINS.bottom };  // current comment bands` },
+
+    { kind: 'replace',
+      why: 'and the slider ceilings with them — a page that does not name its own maxima gets ' +
+           '§C\'s, which is where the numbers now are.',
+      from: `    var maxLR = opts.maxLR || 650, maxTB = opts.maxTB || 320;`,
+      to:   `    var maxLR = opts.maxLR || T.MAX_LR, maxTB = opts.maxTB || T.MAX_TB;` },
+  ],
+
   AmrProgress: [
     { kind: 'replace',
       why: 'THE OVERLAY OUTLIVED THE PAGE THAT RAISED IT. #amrLoad is on §D\'s KEEP_ON_SWITCH ' +

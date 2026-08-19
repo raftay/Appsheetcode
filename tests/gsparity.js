@@ -80,6 +80,23 @@ const EDITS = {
      something is being investigated. */
   LOG_LEVEL: 'info',
 ` },
+
+  /* ---- CHUNK 22: a comment that was wrong about live code ---------------- */
+    { kind: 'replace',
+      why: 'OVERVIEW WAS LABELLED "NOT USED" AND IS READ ON EVERY OVERVIEW LOAD. getOverview ' +
+           '(§8) takes its market list from OVERVIEW.MARKETS, the page footer reports any PV ' +
+           'market missing from it as unmapped, and app.html names the object by name in that ' +
+           'hint. The label came across from Config.gs verbatim, which is exactly how a wrong ' +
+           'comment survives a merge — and PLAN.md §11\'s rule is that nothing is deleted on a ' +
+           'hunch, so the one thing that could have made this dangerous was a future reader ' +
+           'believing the banner. Only the comment changed.',
+      from: ` * NOT USED \n * EXECUTIVE OVERVIEW — canonical market list + PV/RMX name mapping.`,
+      to: ` * USED — and the "NOT USED" that stood here was wrong. getOverview (§8) reads
+ * OVERVIEW.MARKETS on every Overview load, the page's footer reports any PV
+ * market missing from it as "unmapped", and app.html names it by name in that
+ * hint. Deleting it empties the Executive Overview. Corrected in chunk 22.
+ * ------------------------------------------------------------------
+ * EXECUTIVE OVERVIEW — canonical market list + PV/RMX name mapping.` },
   ],
 
   'Code.gs': [
@@ -535,12 +552,75 @@ function RMX_whoWins(){
   ],
 
   'Deck_Backend.gs': [
+
+  /* ---- CHUNK 22: the deck's CONFIG moved to §1; its CODE did not ----------
+     A MOVE INSIDE THE FILE, not a deletion — DECK_CONFIG is still declared
+     exactly once, at the top of §1, which is why `gone` is empty. Check 3 would
+     say so anyway: a name that moved is still in script.gs's top-level set. */
+    { kind: 'cut', gone: [],
+      why: 'DECK_CONFIG MOVED TO §1. The template id, the destination folder and the capture ' +
+           'resolution are the settings a business user is expected to change, and they sat at ' +
+           'line 10,281 of an 11,700-line file, behind the engine that reads them. Nothing about ' +
+           'the object changed — it is the same bytes, 3,024 of them, 10,000 lines earlier.',
+      from: 'var DECK_CONFIG = {\n',
+      to: '\n  CAPTURE_MAX_PX: 2048\n};\n' },
+
+    { kind: 'replace',
+      why: 'and the pointer left where it was, so §9 still tells you where its configuration went.',
+      from: '\n\n\n\nvar DECK = (function () {\n',
+      to: `
+
+/* THE TWO THINGS ANYONE EDITS ABOUT THE DECK ARE IN §1, AT THE TOP OF THIS
+   FILE.  Ctrl+F  "§1 DECK".  DECK_CONFIG — the template and folder ids, the
+   capture resolution — and DECK_RECIPE — which slides the monthly deck holds,
+   and in what order — used to sit here, ten thousand lines down, behind the
+   engine that reads them. The one part of the deck a business user is expected
+   to change was the hardest part of the file to find.
+
+   NOTHING ELSE MOVED. Everything below is the reader, the writer and the
+   geometry: code, not configuration. tests/gsparity.js declares the cut, so
+   this region is still proved verbatim against the file it came from apart
+   from it. */
+
+
+var DECK = (function () {\n` },
+
     { kind: 'cut', gone: ['DECK_smokeTest'],
       why: 'PLAN §7 debug function. Builds a throwaway 3-slide deck to eyeball image geometry. ' +
            'No caller.',
       from: '/*****************************************************************************\n * DECK_smokeTest - run this from the Apps Script editor, before any UI exists.\n',
       to: 'EOF' },
   ],
+
+  'Deck_Recipe.gs': [
+
+  /* ---- CHUNK 22: the recipe is config, so it moved to §1 ------------------
+     Its own header says it: "THIS FILE IS CONFIG, NOT CODE." The checking half
+     — DECK_getRecipe — is code and stayed. Same shape of edit as DECK_CONFIG
+     above, and `gone` is empty for the same reason: the array moved, it did not
+     go away. */
+    { kind: 'cut', gone: [],
+      why: 'DECK_RECIPE MOVED TO §1. Adding, dropping or reordering a slide in the monthly pack ' +
+           'is an edit to this array and to nothing else, which makes it the most-edited object ' +
+           'in the file — and it sat at line 10,968, further down than anything except the small ' +
+           'pages. The 43 rows are unchanged, byte for byte.',
+      from: 'var DECK_RECIPE = [\n',
+      to: "    title:'TOP 10 CUSTOMERS MTD & YTD - North' }\n];\n" },
+
+    { kind: 'replace',
+      why: 'and the pointer left in its place, beside the checker that reads it.',
+      from: '\n\n\n\n/*****************************************************************************\n * DECK_getRecipe',
+      to: `
+
+/* THE RECIPE ITSELF IS IN §1 — Ctrl+F "§1 DECK". The list of slides moved to
+   the top of the file in chunk 22; the checking below did not, because it is
+   code. */
+
+
+/*****************************************************************************
+ * DECK_getRecipe` },
+  ],
+
   'FSC_Backend.gs': [
 
   /* ---- CHUNK 18: APP_log at the entry points, and the silent-catch pass ----

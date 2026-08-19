@@ -26,8 +26,10 @@
  * -------------------------
  * Search for a section banner, e.g.  Ctrl+F  "§7"  or  "§11  TRIGGERS".
  *
- *   §1   CONFIG ............... APP_CONFIG, APP_EXTRA_SOURCES, the Settings
- *                               API. FIRST on purpose — see the banner.
+ *   §1   CONFIG ............... APP_CONFIG, OVERVIEW, DECK_CONFIG, DECK_RECIPE,
+ *                               APP_EXTRA_SOURCES, the Settings API. FIRST on
+ *                               purpose, and its banner is the map of every
+ *                               constant in this file worth changing.
  *   §2   LOGGING .............. APP_log, and the LOG_LEVEL switch.
  *   §3   ROUTER + PLUMBING .... doGet, getLogo, the data-generation stamps,
  *                               the chunked cache, the SB reader.
@@ -39,7 +41,9 @@
  *   §7   RMX .................. Ready-Mix, its lookup suggester, RMX Fuel
  *                               Recovery.
  *   §8   OVERVIEW ............. the executive Overview and the month cube.
- *   §9   DECK ................. the Slides template reader, writer and recipe.
+ *   §9   DECK ................. the Slides template reader, the deck writer and
+ *                               the recipe checker. The template id, the folder
+ *                               and the slide list are CONFIG, and live in §1.
  *   §10  SMALL PAGES .......... KPI workbooks, TP01 mail, Inventory Report.
  *   §11  TRIGGERS ............. everything reached from outside the repo.
  *
@@ -99,13 +103,61 @@
 
 
 /* ============================================================================
- * §1  CONFIG
+ * §1  CONFIG — everything you are meant to change
  * ----------------------------------------------------------------------------
  * The single source of truth for everything configurable, and it comes FIRST on
  * purpose. IIFEs run at evaluation time, so anything that read config while
  * constructing itself would have to sit below this. Today nothing does — every
  * read is inside a function or a getter, which is why the old 16-file load order
  * never mattered — and putting config at the top means nothing ever has to.
+ *
+ * WHERE EVERY KNOB IS. A number in an 11,000-line file is either configuration
+ * or it is code, and there is no way to tell which by looking at it. So the ones
+ * that are configuration are either HERE, or they are named below with the
+ * section that owns them. Nothing else in this file is meant to be edited by
+ * hand.
+ *
+ *   IN THIS SECTION
+ *     APP_CONFIG.PAGES.<page>.defaultSpreadsheetId   which Sheet a page reads
+ *     APP_CONFIG.PAGES.<page>.SHEETS                 its tab names
+ *     APP_CONFIG.PAGES.segment.MARKETS               the Slide Builder's markets
+ *     APP_CONFIG.QLIK_SYNC.*                         the three QlikView exports
+ *     APP_CONFIG.KPI_FOLDER_ID                       where the EBITDA books live
+ *     APP_CONFIG.LOGO_URL                            the logo every export uses
+ *     APP_CONFIG.LOG_LEVEL                           how much the server logs (§2)
+ *     APP_CONFIG.CUBE.ERAS                           the closed-year books
+ *     APP_CONFIG.CUBE.FLOOR                          oldest month the slider offers
+ *     APP_CONFIG.CUBE.COVERAGE                       the PPI weight floors
+ *     OVERVIEW.MARKETS                               the canonical market list, and
+ *                                                    its PV / RMX spellings
+ *     APP_EXTRA_SOURCES                              extra sheets a page's ⚙ offers
+ *     DECK_CONFIG                                    the deck template and folder,
+ *                                                    and the capture resolution
+ *     DECK_RECIPE                                    WHICH slides the monthly deck
+ *                                                    holds, and in what order
+ *
+ *   THE LAST TWO MOVED HERE FROM §9 IN CHUNK 22. They are the deck's two config
+ *   objects and they used to sit behind the engine that reads them, ten thousand
+ *   lines down. §9 still holds everything about the deck that is code.
+ *   tests/gsparity.js declares the move.
+ *
+ *   STILL BESIDE THE CODE THAT READS THEM, deliberately — changing one of these
+ *   means understanding what it feeds, and the comment beside it is the half you
+ *   need:
+ *     §3   APP_PAGES               the ten route names doGet accepts
+ *     §3   APP_STAMP_TTL_S         how long a freshness stamp is memoised
+ *     §6   SCHEMA_                 PV's cache-shape version — bump on a change
+ *     §6   XF_TABLE_CAP / XF_CHILD_CAP / XF_DATA_CAP    cross-filter payload caps
+ *     §6   LIST_CAP, RL_*          the lookup writer's column map
+ *     §7   RXF_TABLE_CAP / RXF_DRILL_CAP / RXF_EXCL_CAP  the Ready-Mix equivalents
+ *     §7   SG_OLD2NEW_LIST, SG_TECTS   the product suggester's vocabulary
+ *     §8   OVCUBE_SHAPE_VER_       the month cube's shape version
+ *     §10  TP_RECIP_KEY            names the PROPERTY the TP01 recipient map is
+ *                                  stored in — the map itself is not in this file
+ *
+ *   THE CLIENT HAS ITS OWN, AND THE TWO DO NOT OVERLAP. Nothing in app.html
+ *   reads a constant from this file; its tunables — the slide frame, and every
+ *   page's whitespace defaults — are in ITS §C.
  * ============================================================================ */
 
 /* ---- Config.gs ---------------------------------------------------------------
@@ -436,7 +488,11 @@ var APP_CONFIG = {
 };
 
 /* ------------------------------------------------------------------
- * NOT USED 
+ * USED — and the "NOT USED" that stood here was wrong. getOverview (§8) reads
+ * OVERVIEW.MARKETS on every Overview load, the page's footer reports any PV
+ * market missing from it as "unmapped", and app.html names it by name in that
+ * hint. Deleting it empties the Executive Overview. Corrected in chunk 22.
+ * ------------------------------------------------------------------
  * EXECUTIVE OVERVIEW — canonical market list + PV/RMX name mapping.
  * The Overview page reads PV and RMX (never blends them). Each row maps
  * ONE overview market to the exact MARKET value in each source.
@@ -683,6 +739,245 @@ function extractSpreadsheetId_(input){
   if (/^[a-zA-Z0-9-_]{20,}$/.test(s)) return s;   // bare id: long token, no spaces/slashes
   return '';
 }
+
+
+
+/* ---- §1 DECK — the template, the folder, and the list of slides -------------
+   MOVED HERE FROM §9 IN CHUNK 22, unchanged. Both objects are read only from
+   inside functions in §9, so nothing depends on where they sit — which is why
+   they could come to the top at all, and the reason §1 is at the top in the
+   first place.
+
+   WHY THEY ARE NOT IN §9 ANY MORE. The Deck Builder is the one page whose
+   configuration a business user is expected to edit: a new template, a new
+   destination folder, a slide added to or dropped from the monthly pack. All of
+   it lived at lines 10,281 and 10,968 of an 11,700-line file, behind the engine
+   that reads it. §9 is that engine — the template reader, the deck writer, the
+   geometry — and none of it moved.
+
+   The two headers that explain the template contract and the recipe's columns
+   stayed with the code as well, so §9 still reads as one piece; what is here is
+   the part you change.  */
+
+var DECK_CONFIG = {
+
+  /* The template deck, as a GOOGLE SLIDES file (not the .pptx). */
+  TEMPLATE_ID: '1_VsyemKcWKipvi9pKttwotZcJH8sz3s7iKRgvxd3OQo',
+
+  /* Every generated deck is moved here. Share as Editor with the team. */
+  FOLDER_ID: '1WRHFhA3e_1KO30sUpGaF6W35VCN5AToS',
+
+  /* Script Property overrides, so the ⚙ Settings modal can point these
+     somewhere else later without a code push. Same pattern as the per-page
+     sheet IDs in Config.gs. */
+  PROP_TEMPLATE: 'DECK_TEMPLATE_ID',
+  PROP_FOLDER: 'DECK_FOLDER_ID',
+
+  /* Tokens. Kept in one place so the page and the server cannot drift. */
+  TOKENS: {
+    title: '{{TITLE}}',
+    comment: '{{COMMENT}}',
+    image: '{{IMAGE}}',
+    image2: '{{IMAGE2}}',
+    label1: '{{LABEL1}}',
+    label2: '{{LABEL2}}',
+    page: '{{PAGE}}',
+    deckTitle: '{{DECK_TITLE}}',
+    deckSub: '{{DECK_SUB}}'
+  },
+
+  /* Speaker-note prefixes. */
+  LAYOUT_TAG: 'LAYOUT:',
+  SLIDE_TAG: 'SLIDE:',
+
+  /* Layouts that are documentation, never used to build a slide. */
+  DOC_LAYOUTS: ['L_README'],
+
+  /* The cover. It is a layout like any other, but it is FILLED IN PLACE by
+     create() rather than duplicated by addSlide, so it is not something a
+     recipe row can point at. readTemplate still returns it (tagged
+     role:'cover') so the page can preview it; the page builds its recipe
+     picker from role:'report' only. It also carries {{DECK_TITLE}} /
+     {{DECK_SUB}} instead of {{TITLE}}, which is why validateTemplate judges
+     it against a different checklist. */
+  COVER_LAYOUT: 'L_COVER',
+
+  /* Capture resolution the page should aim for, expressed as pixels per POINT
+     of slot width. Slides renders a 720pt-wide slide to ~1920px on a big
+     screen (2.67 px/pt), so 4 leaves headroom without bloating the payload.
+     DECK_readTemplate returns a suggested pixel width per slot using this. */
+  CAPTURE_PX_PER_PT: 4,
+
+  /* Hard ceiling on a single capture, so one huge table cannot blow up the
+     request. The page should downscale to fit rather than send more.
+
+     2048 IS NOT AN ARBITRARY ROUND NUMBER - it is where Google resamples.
+     Whatever is inserted here, an exported deck comes back with every picture
+     capped at 2048px on its LONGEST side; in the July build 21 of the 43
+     pictures were exactly 2048 wide or exactly 2048 tall, across every aspect
+     ratio in the deck. Asking for 2400 therefore did not buy 2400 - it bought a
+     2400px canvas that Google then bilinear-resampled down to 2048, so text
+     rendered at one scale was squeezed to another and every slide came out
+     softer than the same table screenshotted by hand.
+
+     Capturing at the ceiling instead means html2canvas RENDERS the text at its
+     final size - one sampling, not two - and nothing downstream touches it. The
+     page also clamps the capture's HEIGHT to this, because the cap applies to
+     the longest side: an unclamped tall table used to have its height reduced
+     to 2048 and its width dragged down with it. */
+  CAPTURE_MAX_PX: 2048
+};
+
+
+/* WHAT A ROW MEANS, in one screen. The long version — why the Top 10 slides are
+   L_FULL_IMAGE, which slides the source pack does not have and why that is
+   copied rather than corrected — stayed with DECK_getRecipe in §9, because it is
+   about the checker as much as the list.
+
+     id        unique and STABLE. It is written into the generated slide's
+               speaker notes as "SLIDE: <id>", which is how a re-run knows what
+               already landed and how one failed slide is retried without
+               rebuilding the deck. Never reuse an id for a different slide.
+     source    which page produces the content. Must match an id registered with
+               AmrDeckSource (app.html §E).
+     market    passed straight through to that source, spelled THE WAY THAT PAGE
+               SPELLS IT — the Southwest is 'Southwest' to Price & Volume and
+               'HNS_SW' to Ready-Mix. OVERVIEW.MARKETS above is the mapping.
+     refine    optional narrowing WITHIN that market (the Land / Docks split).
+     period    'MTD' | 'YTD'. Omitted where the slide shows both.
+     layout    a LAYOUT id from the template's own speaker notes.
+     title     the real, editable Slides heading — not baked into the picture.
+     optional  true = shown unticked in the Plan stage.
+
+   ADDING, DROPPING OR REORDERING A SLIDE IS AN EDIT TO THIS ARRAY AND NOTHING
+   ELSE. The page reads it, shows it as a checklist, and builds it top to bottom;
+   DECK_getRecipe (§9) rejects a duplicate id or a row with no layout before the
+   build starts rather than at slide 30 of 43. */
+
+var DECK_RECIPE = [
+
+  /* ---- Fuel Recovery (4) ------------------------------------------------ */
+  { id:'fsc_mtd',   source:'fsc',  period:'MTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
+    group:'Fuel Recovery', title:'Agg - Fuel Recovery MTD' },
+  { id:'fsc_ytd',   source:'fsc',  period:'YTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
+    group:'Fuel Recovery', title:'Agg - Fuel Recovery YTD' },
+  { id:'rfsc_mtd',  source:'rfsc', period:'MTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
+    group:'Fuel Recovery', title:'Rmx - Fuel Recovery MTD' },
+  { id:'rfsc_ytd',  source:'rfsc', period:'YTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
+    group:'Fuel Recovery', title:'Rmx - Fuel Recovery YTD' },
+
+  /* ---- AGG Price & Volume, with the Top 10 slide after each market ------ */
+  { id:'pv_cc_mtd',   source:'pv', market:'Central Canada', period:'MTD',
+    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - CENTRAL CANADA - MTD' },
+  { id:'pv_cc_ytd',   source:'pv', market:'Central Canada', period:'YTD',
+    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - CENTRAL CANADA - YTD' },
+
+  { id:'pv_sk_mtd',   source:'pv', market:'Saskatchewan', period:'MTD',
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'AGG', title:'AGG - SASKATCHEWAN - MTD' },
+  { id:'pv_sk_ytd',   source:'pv', market:'Saskatchewan', period:'YTD',
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'AGG', title:'AGG - SASKATCHEWAN - YTD' },
+  { id:'cust_sk',     source:'cust', market:'Saskatchewan',
+    layout:'L_FULL_IMAGE', group:'AGG',
+    title:'TOP 10 CUSTOMERS MTD & YTD - Saskatchewan' },
+
+  { id:'pv_mb_mtd',   source:'pv', market:'Manitoba', period:'MTD',
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'AGG', title:'AGG - MANITOBA - MTD' },
+  { id:'pv_mb_ytd',   source:'pv', market:'Manitoba', period:'YTD',
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'AGG', title:'AGG - MANITOBA - YTD' },
+  { id:'cust_mb',     source:'cust', market:'Manitoba',
+    layout:'L_FULL_IMAGE', group:'AGG',
+    title:'TOP 10 CUSTOMERS MTD & YTD - Manitoba' },
+
+  { id:'pv_gta_mtd',  source:'pv', market:'Greater Toronto Area', period:'MTD',
+    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - GTA COMMERCIAL - MTD' },
+  { id:'pv_gta_ytd',  source:'pv', market:'Greater Toronto Area', period:'YTD',
+    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - GTA COMMERCIAL - YTD' },
+  { id:'cust_gta',    source:'cust', market:'Greater Toronto Area',
+    layout:'L_FULL_IMAGE', group:'AGG',
+    title:'TOP 10 CUSTOMERS MTD & YTD - GTA' },
+
+  { id:'pv_sw_mtd',   source:'pv', market:'Southwest', period:'MTD',
+    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - Southwest - MTD' },
+  { id:'pv_sw_ytd',   source:'pv', market:'Southwest', period:'YTD',
+    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - Southwest - YTD' },
+
+  /* Land and Docks are a Southwest breakdown, not every month's story. They
+     are in the pack, they are a now also checked by defualt.
+
+     THEY ARE NOT MARKETS. Land and Docks are the two values of the MB
+     SUBMARKET column INSIDE the Southwest market - the same split the Price &
+     Volume page offers as its Land / Docks chips. These rows used to say
+     market:'Southwest Land', which matched no market at all, so both slides
+     published a full page of zeroes instead of failing. `refine` is the label,
+     never the sheet's raw spelling: the adapter matches it against the market's
+     own MB SUBMARKET values, so a re-spelling in the sheet needs no edit here. */
+  { id:'pv_swland_mtd',  source:'pv', market:'Southwest', refine:'Land', period:'MTD',
+    layout:'L_COMMENT_IMAGE', group:'AGG',
+    title:'AGG - Southwest Land - MTD' },
+  { id:'pv_swland_ytd',  source:'pv', market:'Southwest', refine:'Land', period:'YTD',
+    layout:'L_COMMENT_IMAGE', group:'AGG',
+    title:'AGG - Southwest Land - YTD' },
+  { id:'pv_swdocks_mtd', source:'pv', market:'Southwest', refine:'Docks', period:'MTD',
+    layout:'L_COMMENT_IMAGE', group:'AGG',
+    title:'AGG - Southwest Docks - MTD' },
+  { id:'pv_swdocks_ytd', source:'pv', market:'Southwest', refine:'Docks', period:'YTD',
+    layout:'L_COMMENT_IMAGE', group:'AGG',
+    title:'AGG - Southwest Docks - YTD' },
+
+  { id:'cust_sw',     source:'cust', market:'Southwest',
+    layout:'L_FULL_IMAGE', group:'AGG',
+    title:'TOP 10 CUSTOMERS MTD & YTD - SW' },
+
+  /* ---- Ready-Mix. Per market: Segment/Product (commented), then P&V ----- */
+  { id:'seg_sk_mtd',  source:'seg', market:'SASKATCHEWAN', period:'MTD',
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - SASKATCHEWAN - Commercial MTD' },
+  { id:'seg_sk_ytd',  source:'seg', market:'SASKATCHEWAN', period:'YTD',
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - SASKATCHEWAN - Commercial YTD' },
+  { id:'rmx_sk_mtd',  source:'rmx', market:'SASKATCHEWAN', period:'MTD',
+    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Saskatchewan - Commercial MTD' },
+  { id:'rmx_sk_ytd',  source:'rmx', market:'SASKATCHEWAN', period:'YTD',
+    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Saskatchewan - Commercial YTD' },
+
+  { id:'seg_mb_mtd',  source:'seg', market:'MANITOBA', period:'MTD',
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - MANITOBA - Commercial MTD' },
+  { id:'seg_mb_ytd',  source:'seg', market:'MANITOBA', period:'YTD',
+    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - MANITOBA - Commercial YTD' },
+  { id:'rmx_mb_mtd',  source:'rmx', market:'MANITOBA', period:'MTD',
+    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Manitoba - Commercial MTD' },
+  { id:'rmx_mb_ytd',  source:'rmx', market:'MANITOBA', period:'YTD',
+    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Manitoba - Commercial YTD' },
+
+  { id:'seg_sw_mtd',  source:'seg', market:'HNS_SW', period:'MTD',
+    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - HNS SW - Commercial MTD' },
+  { id:'seg_sw_ytd',  source:'seg', market:'HNS_SW', period:'YTD',
+    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - HNS SW - Commercial YTD' },
+  { id:'rmx_sw_mtd',  source:'rmx', market:'HNS_SW', period:'MTD',
+    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - HNS_SW - Commercial MTD' },
+  { id:'rmx_sw_ytd',  source:'rmx', market:'HNS_SW', period:'YTD',
+    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - HNS_SW - Commercial YTD' },
+
+  { id:'seg_inn_mtd', source:'seg', market:'Innocon', period:'MTD',
+    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - INNOCON - Commercial MTD' },
+  { id:'seg_inn_ytd', source:'seg', market:'Innocon', period:'YTD',
+    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - INNOCON - Commercial YTD' },
+  { id:'rmx_inn_mtd', source:'rmx', market:'Innocon', period:'MTD',
+    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Innocon - Commercial MTD' },
+  { id:'rmx_inn_ytd', source:'rmx', market:'Innocon', period:'YTD',
+    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Innocon - Commercial YTD' },
+
+  { id:'seg_no_mtd',  source:'seg', market:'North', period:'MTD',
+    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - NORTH - Commercial MTD' },
+  { id:'seg_no_ytd',  source:'seg', market:'North', period:'YTD',
+    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - NORTH - Commercial YTD' },
+  { id:'rmx_no_mtd',  source:'rmx', market:'North', period:'MTD',
+    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - North - Commercial MTD' },
+  { id:'rmx_no_ytd',  source:'rmx', market:'North', period:'YTD',
+    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - North - Commercial YTD' },
+
+  { id:'cust_no',     source:'cust', market:'North',
+    layout:'L_FULL_IMAGE_SMALL_OR_FSC', group:'AGG',
+    title:'TOP 10 CUSTOMERS MTD & YTD - North' }
+];
 
 
 
@@ -10278,74 +10573,17 @@ function OV_refreshLookups(){
  * whoever pressed the button (same deployment TP01 already uses).
  *****************************************************************************/
 
-var DECK_CONFIG = {
+/* THE TWO THINGS ANYONE EDITS ABOUT THE DECK ARE IN §1, AT THE TOP OF THIS
+   FILE.  Ctrl+F  "§1 DECK".  DECK_CONFIG — the template and folder ids, the
+   capture resolution — and DECK_RECIPE — which slides the monthly deck holds,
+   and in what order — used to sit here, ten thousand lines down, behind the
+   engine that reads them. The one part of the deck a business user is expected
+   to change was the hardest part of the file to find.
 
-  /* The template deck, as a GOOGLE SLIDES file (not the .pptx). */
-  TEMPLATE_ID: '1_VsyemKcWKipvi9pKttwotZcJH8sz3s7iKRgvxd3OQo',
-
-  /* Every generated deck is moved here. Share as Editor with the team. */
-  FOLDER_ID: '1WRHFhA3e_1KO30sUpGaF6W35VCN5AToS',
-
-  /* Script Property overrides, so the ⚙ Settings modal can point these
-     somewhere else later without a code push. Same pattern as the per-page
-     sheet IDs in Config.gs. */
-  PROP_TEMPLATE: 'DECK_TEMPLATE_ID',
-  PROP_FOLDER: 'DECK_FOLDER_ID',
-
-  /* Tokens. Kept in one place so the page and the server cannot drift. */
-  TOKENS: {
-    title: '{{TITLE}}',
-    comment: '{{COMMENT}}',
-    image: '{{IMAGE}}',
-    image2: '{{IMAGE2}}',
-    label1: '{{LABEL1}}',
-    label2: '{{LABEL2}}',
-    page: '{{PAGE}}',
-    deckTitle: '{{DECK_TITLE}}',
-    deckSub: '{{DECK_SUB}}'
-  },
-
-  /* Speaker-note prefixes. */
-  LAYOUT_TAG: 'LAYOUT:',
-  SLIDE_TAG: 'SLIDE:',
-
-  /* Layouts that are documentation, never used to build a slide. */
-  DOC_LAYOUTS: ['L_README'],
-
-  /* The cover. It is a layout like any other, but it is FILLED IN PLACE by
-     create() rather than duplicated by addSlide, so it is not something a
-     recipe row can point at. readTemplate still returns it (tagged
-     role:'cover') so the page can preview it; the page builds its recipe
-     picker from role:'report' only. It also carries {{DECK_TITLE}} /
-     {{DECK_SUB}} instead of {{TITLE}}, which is why validateTemplate judges
-     it against a different checklist. */
-  COVER_LAYOUT: 'L_COVER',
-
-  /* Capture resolution the page should aim for, expressed as pixels per POINT
-     of slot width. Slides renders a 720pt-wide slide to ~1920px on a big
-     screen (2.67 px/pt), so 4 leaves headroom without bloating the payload.
-     DECK_readTemplate returns a suggested pixel width per slot using this. */
-  CAPTURE_PX_PER_PT: 4,
-
-  /* Hard ceiling on a single capture, so one huge table cannot blow up the
-     request. The page should downscale to fit rather than send more.
-
-     2048 IS NOT AN ARBITRARY ROUND NUMBER - it is where Google resamples.
-     Whatever is inserted here, an exported deck comes back with every picture
-     capped at 2048px on its LONGEST side; in the July build 21 of the 43
-     pictures were exactly 2048 wide or exactly 2048 tall, across every aspect
-     ratio in the deck. Asking for 2400 therefore did not buy 2400 - it bought a
-     2400px canvas that Google then bilinear-resampled down to 2048, so text
-     rendered at one scale was squeezed to another and every slide came out
-     softer than the same table screenshotted by hand.
-
-     Capturing at the ceiling instead means html2canvas RENDERS the text at its
-     final size - one sampling, not two - and nothing downstream touches it. The
-     page also clamps the capture's HEIGHT to this, because the cap applies to
-     the longest side: an unclamped tall table used to have its height reduced
-     to 2048 and its width dragged down with it. */
-  CAPTURE_MAX_PX: 2048
-};
+   NOTHING ELSE MOVED. Everything below is the reader, the writer and the
+   geometry: code, not configuration. tests/gsparity.js declares the cut, so
+   this region is still proved verbatim against the file it came from apart
+   from it. */
 
 
 var DECK = (function () {
@@ -10965,130 +11203,9 @@ function DECK_status(deckId) { return DECK.status(deckId); }
  *   business wants them, add the rows.
  *****************************************************************************/
 
-var DECK_RECIPE = [
-
-  /* ---- Fuel Recovery (4) ------------------------------------------------ */
-  { id:'fsc_mtd',   source:'fsc',  period:'MTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
-    group:'Fuel Recovery', title:'Agg - Fuel Recovery MTD' },
-  { id:'fsc_ytd',   source:'fsc',  period:'YTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
-    group:'Fuel Recovery', title:'Agg - Fuel Recovery YTD' },
-  { id:'rfsc_mtd',  source:'rfsc', period:'MTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
-    group:'Fuel Recovery', title:'Rmx - Fuel Recovery MTD' },
-  { id:'rfsc_ytd',  source:'rfsc', period:'YTD', layout:'L_FULL_IMAGE_SMALL_OR_FSC',
-    group:'Fuel Recovery', title:'Rmx - Fuel Recovery YTD' },
-
-  /* ---- AGG Price & Volume, with the Top 10 slide after each market ------ */
-  { id:'pv_cc_mtd',   source:'pv', market:'Central Canada', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - CENTRAL CANADA - MTD' },
-  { id:'pv_cc_ytd',   source:'pv', market:'Central Canada', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - CENTRAL CANADA - YTD' },
-
-  { id:'pv_sk_mtd',   source:'pv', market:'Saskatchewan', period:'MTD',
-    layout:'L_COMMENT_IMAGE_NO_KPI', group:'AGG', title:'AGG - SASKATCHEWAN - MTD' },
-  { id:'pv_sk_ytd',   source:'pv', market:'Saskatchewan', period:'YTD',
-    layout:'L_COMMENT_IMAGE_NO_KPI', group:'AGG', title:'AGG - SASKATCHEWAN - YTD' },
-  { id:'cust_sk',     source:'cust', market:'Saskatchewan',
-    layout:'L_FULL_IMAGE', group:'AGG',
-    title:'TOP 10 CUSTOMERS MTD & YTD - Saskatchewan' },
-
-  { id:'pv_mb_mtd',   source:'pv', market:'Manitoba', period:'MTD',
-    layout:'L_COMMENT_IMAGE_NO_KPI', group:'AGG', title:'AGG - MANITOBA - MTD' },
-  { id:'pv_mb_ytd',   source:'pv', market:'Manitoba', period:'YTD',
-    layout:'L_COMMENT_IMAGE_NO_KPI', group:'AGG', title:'AGG - MANITOBA - YTD' },
-  { id:'cust_mb',     source:'cust', market:'Manitoba',
-    layout:'L_FULL_IMAGE', group:'AGG',
-    title:'TOP 10 CUSTOMERS MTD & YTD - Manitoba' },
-
-  { id:'pv_gta_mtd',  source:'pv', market:'Greater Toronto Area', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - GTA COMMERCIAL - MTD' },
-  { id:'pv_gta_ytd',  source:'pv', market:'Greater Toronto Area', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - GTA COMMERCIAL - YTD' },
-  { id:'cust_gta',    source:'cust', market:'Greater Toronto Area',
-    layout:'L_FULL_IMAGE', group:'AGG',
-    title:'TOP 10 CUSTOMERS MTD & YTD - GTA' },
-
-  { id:'pv_sw_mtd',   source:'pv', market:'Southwest', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - Southwest - MTD' },
-  { id:'pv_sw_ytd',   source:'pv', market:'Southwest', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG', title:'AGG - Southwest - YTD' },
-
-  /* Land and Docks are a Southwest breakdown, not every month's story. They
-     are in the pack, they are a now also checked by defualt.
-
-     THEY ARE NOT MARKETS. Land and Docks are the two values of the MB
-     SUBMARKET column INSIDE the Southwest market - the same split the Price &
-     Volume page offers as its Land / Docks chips. These rows used to say
-     market:'Southwest Land', which matched no market at all, so both slides
-     published a full page of zeroes instead of failing. `refine` is the label,
-     never the sheet's raw spelling: the adapter matches it against the market's
-     own MB SUBMARKET values, so a re-spelling in the sheet needs no edit here. */
-  { id:'pv_swland_mtd',  source:'pv', market:'Southwest', refine:'Land', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG',
-    title:'AGG - Southwest Land - MTD' },
-  { id:'pv_swland_ytd',  source:'pv', market:'Southwest', refine:'Land', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG',
-    title:'AGG - Southwest Land - YTD' },
-  { id:'pv_swdocks_mtd', source:'pv', market:'Southwest', refine:'Docks', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG',
-    title:'AGG - Southwest Docks - MTD' },
-  { id:'pv_swdocks_ytd', source:'pv', market:'Southwest', refine:'Docks', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'AGG',
-    title:'AGG - Southwest Docks - YTD' },
-
-  { id:'cust_sw',     source:'cust', market:'Southwest',
-    layout:'L_FULL_IMAGE', group:'AGG',
-    title:'TOP 10 CUSTOMERS MTD & YTD - SW' },
-
-  /* ---- Ready-Mix. Per market: Segment/Product (commented), then P&V ----- */
-  { id:'seg_sk_mtd',  source:'seg', market:'SASKATCHEWAN', period:'MTD',
-    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - SASKATCHEWAN - Commercial MTD' },
-  { id:'seg_sk_ytd',  source:'seg', market:'SASKATCHEWAN', period:'YTD',
-    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - SASKATCHEWAN - Commercial YTD' },
-  { id:'rmx_sk_mtd',  source:'rmx', market:'SASKATCHEWAN', period:'MTD',
-    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Saskatchewan - Commercial MTD' },
-  { id:'rmx_sk_ytd',  source:'rmx', market:'SASKATCHEWAN', period:'YTD',
-    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Saskatchewan - Commercial YTD' },
-
-  { id:'seg_mb_mtd',  source:'seg', market:'MANITOBA', period:'MTD',
-    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - MANITOBA - Commercial MTD' },
-  { id:'seg_mb_ytd',  source:'seg', market:'MANITOBA', period:'YTD',
-    layout:'L_COMMENT_IMAGE_NO_KPI', group:'RMX', title:'RMX - MANITOBA - Commercial YTD' },
-  { id:'rmx_mb_mtd',  source:'rmx', market:'MANITOBA', period:'MTD',
-    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Manitoba - Commercial MTD' },
-  { id:'rmx_mb_ytd',  source:'rmx', market:'MANITOBA', period:'YTD',
-    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Manitoba - Commercial YTD' },
-
-  { id:'seg_sw_mtd',  source:'seg', market:'HNS_SW', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - HNS SW - Commercial MTD' },
-  { id:'seg_sw_ytd',  source:'seg', market:'HNS_SW', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - HNS SW - Commercial YTD' },
-  { id:'rmx_sw_mtd',  source:'rmx', market:'HNS_SW', period:'MTD',
-    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - HNS_SW - Commercial MTD' },
-  { id:'rmx_sw_ytd',  source:'rmx', market:'HNS_SW', period:'YTD',
-    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - HNS_SW - Commercial YTD' },
-
-  { id:'seg_inn_mtd', source:'seg', market:'Innocon', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - INNOCON - Commercial MTD' },
-  { id:'seg_inn_ytd', source:'seg', market:'Innocon', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - INNOCON - Commercial YTD' },
-  { id:'rmx_inn_mtd', source:'rmx', market:'Innocon', period:'MTD',
-    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Innocon - Commercial MTD' },
-  { id:'rmx_inn_ytd', source:'rmx', market:'Innocon', period:'YTD',
-    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - Innocon - Commercial YTD' },
-
-  { id:'seg_no_mtd',  source:'seg', market:'North', period:'MTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - NORTH - Commercial MTD' },
-  { id:'seg_no_ytd',  source:'seg', market:'North', period:'YTD',
-    layout:'L_COMMENT_IMAGE', group:'RMX', title:'RMX - NORTH - Commercial YTD' },
-  { id:'rmx_no_mtd',  source:'rmx', market:'North', period:'MTD',
-    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - North - Commercial MTD' },
-  { id:'rmx_no_ytd',  source:'rmx', market:'North', period:'YTD',
-    layout:'L_FULL_IMAGE', group:'RMX', title:'RMX - North - Commercial YTD' },
-
-  { id:'cust_no',     source:'cust', market:'North',
-    layout:'L_FULL_IMAGE_SMALL_OR_FSC', group:'AGG',
-    title:'TOP 10 CUSTOMERS MTD & YTD - North' }
-];
+/* THE RECIPE ITSELF IS IN §1 — Ctrl+F "§1 DECK". The list of slides moved to
+   the top of the file in chunk 22; the checking below did not, because it is
+   code. */
 
 
 /*****************************************************************************

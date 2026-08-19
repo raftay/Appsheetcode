@@ -939,3 +939,33 @@ clip, any second line, or the row overflowing its panel, at the widths a report 
 The web fonts are not vendored either, so it runs in whatever sans the machine has: every
 check is a relationship between measured boxes, so it holds either way — only the exact font
 sizes it prints differ from production.
+
+## `tunables.js` — §C is what the pages said
+
+Chunk 22 lifted the slide frame out of `AmrSlide` and the five pages' whitespace defaults out
+of the pages, into `app.html`'s **§C TUNABLES**. That is a move, and this is the proof it
+changed nothing on the way — the same argument `gsparity.js` and `modparity.js` make about
+their halves, by the same method: read the BEFORE out of git.
+
+```bash
+node tests/tunables.js            # no dependencies
+REF=<commit> node tests/tunables.js
+```
+
+Four things, and only the second is a comparison:
+
+| check | what it holds |
+|---|---|
+| `§C evaluates with nothing but window` | §C sits above §D and §E because their IIFEs read it **while they construct**. Anything it needed from them would be a load-order bug that only appears in a browser — and only sometimes |
+| every number == the page's own, at `REF` | each literal it was lifted from is asserted to still exist at that commit, so the harness's own copies cannot rot either |
+| each page asks for **its own** row | a copy-pasted `'pricevolume'` in the Ready-Mix page would silently give Ready-Mix another page's slide, and nothing renders wrong enough to notice. It also fails if any page goes back to mounting sliders from a literal |
+| `ws()` returns a copy | `mountControls` keeps the object it is handed and the sliders write back into it, so a shared object would let one page's dragging move another page's defaults |
+
+**When to retire it:** the second row is the parity half and it goes the way its siblings do —
+the day someone deliberately re-tunes one of these defaults, that number stops being "what the
+page used to say" and the check should be deleted rather than edited to match. The other three
+are invariants, not comparisons; they stay.
+
+The values were also compared end to end in real Chromium when the move landed — all five
+pages mounted byte-identical slider values before and after — but that check lives in the
+session log rather than here, because it needs both trees at once.

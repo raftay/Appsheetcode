@@ -20,6 +20,16 @@
  *     const { region, whole, load } = require('./scriptgs.js');
  *     region('PV_Backend.gs')          // the merged text, minus its banner
  *     load(ctx, 'Config.gs')           // …evaluated into a vm context
+ *
+ * ONE REGION IS NO LONGER ONLY ITS FILE. Chunk 22 moved DECK_CONFIG and
+ * DECK_RECIPE — the deck's two config objects — from §9 to the end of §1, so
+ * region('Config.gs') is Config.gs *plus* those two declarations. gsparity.js
+ * still proves the Config.gs half verbatim and declares the cut on the §9 side;
+ * what changed is only that a caller wanting DECK_RECIPE now asks for
+ * 'Config.gs' and one wanting DECK_getRecipe still asks for 'Deck_Recipe.gs'
+ * (tests/deckstatic.js loads both, which is what the one-global-scope runtime
+ * does anyway). A region ends at the next SECTION banner, so the block cannot
+ * leak past §1.
  */
 'use strict';
 const fs = require('fs');

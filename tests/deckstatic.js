@@ -370,6 +370,13 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
 /* ---- the recipe ---------------------------------------------------------- */
 {
   const ctx = {};
+  /* TWO REGIONS, because chunk 22 split the recipe from its checker: DECK_RECIPE
+     is config and moved to §1, DECK_getRecipe is code and stayed in §9. Apps
+     Script evaluates both into one global scope, so evaluating both into one
+     context is what models the runtime — the same reason scriptgs.js installs
+     APP_log before any region. Config.gs first: the array has to exist before
+     the function that walks it is called, not before it is declared. */
+  require('vm').runInNewContext(read('Config.gs'), ctx, { filename: 'script.gs (Config.gs)' });
   require('vm').runInNewContext(read('Deck_Recipe.gs'), ctx, { filename: 'script.gs (Deck_Recipe.gs)' });
   const out = ctx.DECK_getRecipe();
 

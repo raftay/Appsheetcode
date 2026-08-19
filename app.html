@@ -41,6 +41,10 @@
    §A3  COMPONENTS ............ every block used by MORE THAN ONE page.
    §A4  PAGE CSS .............. one block per page, scoped body[data-page="x"].
    §B   SLIDE CSS ............. .slide-bare capture styles.        (chunk 10)
+   §C   TUNABLES .............. AMR_TUNABLES: the slide frame, and where every
+                                page's whitespace sliders start. The settings
+                                that used to be buried in the module or the page
+                                that read them.                    (chunk 22)
    §D   RUNTIME ............... AMR core: logging, lib loader, nav, modals,
                                 the QlikView guide, the page registry.
    §E   SHARED MODULES ........ AmrProgress, AmrBoot, AmrFresh, AmrSlide,
@@ -1879,6 +1883,132 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
     <button type="button" class="amr-stale-btn" id="amrStaleBtn">Update from source</button>
   </div>
 </div>
+
+<script>
+/* ============================================================================
+   §C  TUNABLES — the numbers you are meant to change
+   ----------------------------------------------------------------------------
+   NEW IN CHUNK 22, and it holds nothing new: every value below was already in
+   this file, three to fourteen thousand lines down, inside the module or the
+   page that reads it. A number sitting beside the code that uses it is fine
+   while the only person who ever reads it is the person maintaining that code.
+   It stops being fine the moment the number is a SETTING — something a user of
+   the app is expected to adjust — because then it is buried treasure: you have
+   to know which module owns the slide frame before you can change the size of
+   the slide frame.
+
+   So: the settings are here, at the top, and the code that reads them says
+   where it read them from.
+
+   THIS RUNS BEFORE §D AND §E ON PURPOSE. §E's modules are IIFEs — they execute
+   as the browser reaches them, so anything they read at construction time has
+   to already exist. That is the same rule script.gs §1 is written to, for the
+   same reason, and it is why this block is a plain assignment with no
+   dependencies: it must not need the runtime that comes after it.
+
+   WHAT IS HERE
+     slide        the 16:9 frame every PNG export and every deck picture is
+                  built inside — size, padding, and the comment bands' starting
+                  width. Read by §E AmrSlide.
+     whitespace   where each page's four whitespace sliders START, and how far
+                  they go. Read by the five pages that mount them.
+
+   WHAT IS DELIBERATELY NOT HERE
+     · COLOURS, RADII, SHADOWS, BREAKPOINTS — §A1's :root custom properties are
+       already exactly this, for CSS, and splitting one idea across two places
+       would be worse than either. Change a colour in §A1.
+     · THE SERVER'S SETTINGS — sheet ids, tab names, the QlikView exports, the
+       deck template and the deck's slide list live in script.gs §1. Nothing in
+       this file reads them and nothing there reads this; they are two lists and
+       they do not overlap.
+     · THE CURRENT AND PRIOR YEAR. 2026 / 2025 are still written out by hand, in
+       about sixty places: §E AmrSegSlide's CY_YEAR / PY_YEAR, AmrRmxSlide's and
+       AmrFuelExec's table headers, both fuel pages' titles and hint text, and
+       the sample tables in the QlikView guides — where they are ILLUSTRATIONS
+       and should not move with the calendar at all. Hoisting half of them would
+       leave one knob that changes some of the headings, which is worse than a
+       knob nobody expects. PLAN.md chunk 23 is the sorted version of that job.
+     · TIMINGS. §E AmrFresh polls every 5 minutes (EVERY), §E AmrBoot gives up
+       after 150 s (WATCHDOG), §E AmrProgress waits 400 ms before showing
+       anything (GRACE). They are behaviour rather than configuration — each one
+       is a decision explained where it stands — so they are named here and left
+       where they are.
+   ========================================================================== */
+window.AMR_TUNABLES = {
+
+  /* ------------------------------------------------------------------------
+     THE SLIDE FRAME.  §E AmrSlide builds every PNG export and every deck
+     picture inside a box this size, then scales the content to fit it.
+     ---------------------------------------------------------------------- */
+  slide: {
+    W: 1600,          // the pages' 16:9 canvas, in px. The DECK overrides both
+    H: 900,           // per picture — it passes the template's image box —
+                      // so changing these moves the pages' exports, not the deck's.
+    PAD: 40,          // the framed slide's own padding
+
+    /* A BARE frame keeps a hair of padding so a card's border and shadow are
+       not shaved off at the picture's edge. Bare is what the deck captures:
+       no header, no logo, no bands, because on a generated slide the title and
+       the comment box are real, editable Slides text. */
+    BARE_PAD: 8,
+
+    /* Where the four whitespace sliders sit when a page does not say. Every
+       page that mounts them does say — see `whitespace` below — so this is the
+       fallback for a caller that hands AmrSlide a frame and no bands. */
+    MARGINS: { left:120, right:120, top:30, bottom:30 },
+
+    /* How far the sliders travel when a page does not say. */
+    MAX_LR: 650,
+    MAX_TB: 320
+  },
+
+  /* ------------------------------------------------------------------------
+     WHERE EACH PAGE'S WHITESPACE SLIDERS START.
+     ------------------------------------------------------------------------
+     These are the four bands around a slide's content — the space the comment
+     text is typed into once the picture is in a deck. They are per page because
+     the pages are not the same shape: Price & Volume reserves 375px on the left
+     for a comment column and nothing on the right, Ready-Mix is nearly
+     full-bleed, the fuel pages are symmetrical.
+
+     They are ONLY the starting position. The moment a user drags a slider the
+     page stops re-setting it, so nothing here overrides a deliberate
+     adjustment — it decides what the slide looks like before anyone touches it,
+     which is what most exports actually use.
+
+     maxLR / maxTB are the slider ceilings, not the values.
+     ---------------------------------------------------------------------- */
+  whitespace: {
+    pricevolume:   { left:375, right:0,   top:10, bottom:0,  maxLR:1000, maxTB:400 },
+    rmx:           { left:15,  right:15,  top:15, bottom:15, maxLR:600,  maxTB:300 },
+    fuelsurcharge: { left:140, right:140, top:40, bottom:40, maxLR:650,  maxTB:320 },
+    rmxfuel:       { left:140, right:140, top:40, bottom:40, maxLR:650,  maxTB:320 },
+    /* The Slide Builder's top band is the one that is NOT constant — it depends
+       on how many KPI cards are showing. `top` is supplied by the page from
+       segmentTopBand below, so it is deliberately absent here. */
+    segment:       { left:345, right:55,             bottom:15, maxLR:650,  maxTB:320 }
+  },
+
+  /* The Slide Builder's top band. With KPI cards the top of the slide is
+     already occupied, so the band stays small; without them it opens up to
+     leave room for the comment, and how much room depends on how many tables
+     are ticked (1, 2 or 3). Same rule as above — a slider the user has moved is
+     never re-set. */
+  segmentTopBand: { withKpi:20, withoutKpi:{ 1:165, 2:110, 3:60 } },
+
+  /* One page's bands, as an options object for AmrSlide.mountControls, with
+     whatever the page adds — its onChange, and the Slide Builder's dynamic
+     top — layered on top. A COPY every time: mountControls keeps the object it
+     is handed and the sliders write back into it, so handing out the table
+     itself would let one page's dragging change another page's defaults. */
+  ws: function(page, extra){
+    var d = this.whitespace[page] || {}, o = {}, k;
+    for (k in d)     if (Object.prototype.hasOwnProperty.call(d, k))     o[k] = d[k];
+    if (extra) for (k in extra) if (Object.prototype.hasOwnProperty.call(extra, k)) o[k] = extra[k];
+    return o;
+  }
+};
+</script>
 
 <script>
 /* ============================================================================
@@ -6074,11 +6204,18 @@ window.AmrFresh = (function(){
  * shared .slide* / .amr-ws CSS above.
  * ============================================================== */
 var AmrSlide = (function(){
-  var W = 1600, H = 900, PAD = 40;          // the pages' 16:9 canvas
-  /* A bare frame keeps a hair of padding so a card's border and shadow are not
-     shaved off at the picture's edge. */
-  var BARE_PAD = 8;
-  var MARGINS = { left:120, right:120, top:30, bottom:30 };  // current comment bands
+  /* THE FRAME'S FOUR NUMBERS ARE IN §C — Ctrl+F "§C  TUNABLES". They were the
+     first lines of this module, which is the right place for a constant nobody
+     changes and the wrong one for a setting: resizing the exported slide meant
+     finding the module that owns the frame first. The values are unchanged.
+     Read once, here, because §C is above §E and cannot move below it. */
+  var T = AMR_TUNABLES.slide;
+  var W = T.W, H = T.H, PAD = T.PAD;        // the pages' 16:9 canvas
+  var BARE_PAD = T.BARE_PAD;
+  /* A COPY: the sliders assign into MARGINS, and §C's table must not move with
+     them. */
+  var MARGINS = { left:T.MARGINS.left, right:T.MARGINS.right,
+                  top:T.MARGINS.top, bottom:T.MARGINS.bottom };  // current comment bands
 
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
@@ -6093,7 +6230,7 @@ var AmrSlide = (function(){
               right: opts.right !=null ? opts.right : MARGINS.right,
               top:   opts.top   !=null ? opts.top   : MARGINS.top,
               bottom:opts.bottom!=null ? opts.bottom: MARGINS.bottom };
-    var maxLR = opts.maxLR || 650, maxTB = opts.maxTB || 320;
+    var maxLR = opts.maxLR || T.MAX_LR, maxTB = opts.maxTB || T.MAX_TB;
     MARGINS = v;
     host.classList.add('amr-ws');
     function rowHtml(label, key, max){
@@ -8928,8 +9065,8 @@ AMR.page('fuelsurcharge', {
     STATE.sub=document.getElementById('subIn').value;
 
     // comment-band sliders (shared engine) — bands only affect the slide
-    AmrSlide.mountControls('fscWs', { left:140, right:140, top:40, bottom:40, maxLR:650, maxTB:320,
-      onChange:function(){ renderPreview(); } });
+    AmrSlide.mountControls('fscWs', AMR_TUNABLES.ws('fuelsurcharge',
+      { onChange:function(){ renderPreview(); } }));
 
     // capture edits from the Tables section:
     //  · label cells  → text override only
@@ -9830,8 +9967,8 @@ AMR.page('rmxfuel', {
     STATE.sub=document.getElementById('subIn').value;
 
     // comment-band sliders (shared engine) — bands only affect the slide
-    AmrSlide.mountControls('fscWs', { left:140, right:140, top:40, bottom:40, maxLR:650, maxTB:320,
-      onChange:function(){ renderPreview(); } });
+    AmrSlide.mountControls('fscWs', AMR_TUNABLES.ws('rmxfuel',
+      { onChange:function(){ renderPreview(); } }));
 
     // capture edits from the Tables section:
     //  · label cells  → text override only
@@ -12061,8 +12198,8 @@ MB Submarket, plus Region&rarr;Country.<br>
     /* Was its own <script> at the foot of the page, polling every 30ms until
        AmrSlide existed because Cube/SlideExport were included below the main
        block. §E is above §P here, so the wait had nothing to wait for. */
-    AmrSlide.mountControls('pvWs', { left:375, right:0, top:10, bottom:0,
-      maxLR:1000, maxTB:400, onChange:function(){ renderSlidePreview(); } });
+    AmrSlide.mountControls('pvWs', AMR_TUNABLES.ws('pricevolume',
+      { onChange:function(){ renderSlidePreview(); } }));
 
     /* The ⚙ Data sheet modal calls this after it is pointed somewhere new. */
     window.amrReloadData = function(){ syncData(); };
@@ -13551,8 +13688,8 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
     /* Was its own <script> at the foot of the page, polling every 30ms until
        AmrSlide existed because SlideExport was included below the main block.
        §E is above §P here, so there is nothing to wait for. */
-    AmrSlide.mountControls('rmxWs', { left:15, right:15, top:15, bottom:15, maxLR:600, maxTB:300,
-      onChange:function(){ renderRmxPreview(); } });
+    AmrSlide.mountControls('rmxWs', AMR_TUNABLES.ws('rmx',
+      { onChange:function(){ renderRmxPreview(); } }));
 
     /* The ⚙ Data sheet modal calls this after it is pointed somewhere new. */
     window.amrReloadData = function(){ doSync(); };
@@ -14285,19 +14422,20 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
      where the eye expects it. With KPI cards the top is already occupied, so the
      band stays small whatever is ticked.
      This is only the DEFAULT: the moment someone moves any slider themselves we
-     stop re-setting it, so a deliberate adjustment is never undone. */
-  var WS_TOP = { withKpi:20, withoutKpi:{ 1:165, 2:110, 3:60 } };
+     stop re-setting it, so a deliberate adjustment is never undone.
+     THE THREE NUMBERS THEMSELVES ARE IN §C, with this page's other bands. */
+  var WS_TOP = AMR_TUNABLES.segmentTopBand;
   var WS = { top:WS_TOP.withKpi, touched:false, busy:false };
 
   function mountWs(){
     WS.busy = true;                       // suppress the mount-time onChange
-    AmrSlide.mountControls('sbWs', {
-      left:345, right:55, top:WS.top, bottom:15, maxLR:650, maxTB:320,
+    AmrSlide.mountControls('sbWs', AMR_TUNABLES.ws('segment', {
+      top:WS.top,
       onChange:function(m){
         if(WS.busy) return;
         WS.touched = true; WS.top = m.top;
         renderPreview();
-      } });
+      } }));
     WS.busy = false;
   }
 

@@ -1,6 +1,6 @@
 # PLAN — one `app.html`, one `script.gs`
 
-**Status: ALL NINETEEN CHUNKS ARE DONE on `merging-files`. The script project is `script.gs`, `app.html` and `appsscript.json`, and nothing else — and that is now *tested* rather than asserted: `tests/threefiles.js` runs the whole application out of a directory holding only those three.** 37 files became 3. `app.html` is 1.14 MB and holds the runtime, thirteen shared modules and all ten pages; `script.gs` is 547 KB in eleven sections. All **26** harnesses run and are green.
+**Status: ALL NINETEEN CHUNKS ARE DONE on `merging-files`. The script project is `script.gs`, `app.html` and `appsscript.json`, and nothing else — and that is now *tested* rather than asserted: `tests/threefiles.js` runs the whole application out of a directory holding only those three.** 37 files became 3. `app.html` is 1.14 MB and holds the runtime, thirteen shared modules and all ten pages; `script.gs` is 547 KB in eleven sections. All **27** harnesses run and are green (26 before chunk 22 added `tunables.js`).
 
 > **The server file is `script.gs`, not `app.gs`, and it must not be renamed back.** An Apps
 > Script project keys a file by its **name without the extension**, so `app.gs` and `app.html`
@@ -11,7 +11,7 @@
 > is the same two files under the name the platform allows. The HTML keeps `app`; the server
 > side is the one that moved.
 
-**There is no next chunk.** [§8](#8-the-chunks) is complete through 19; chunks **20 and 21** are findings chunk 15 turned up and deliberately did not fix inside a cleanup, and they are the only open code in this file. Everything else below is the record of how this got here.
+**[§8](#8-the-chunks) is complete through 19, plus chunk 22.** Three chunks are open and none is on the critical path: **20 and 21** are findings chunk 15 turned up and deliberately did not fix inside a cleanup, and **23** is the one chunk 22 turned up and deliberately did not start. Everything else below is the record of how this got here.
 
 **Three items are still owed and none of them is code — all three need somebody in the Apps Script editor:** `APP_verifyPermissions()` has never been run, no real deck has ever been built against the live deployment, and `DECK_status` is being kept until that build says whether the Publish stage needs it.
 
@@ -53,12 +53,14 @@
 >    and the [legacy hit-list](#11-legacy-hit-list) are what stop two agents undoing each other.
 > 3. Read §3 of `README.md` for the file map, and §7 for the domain rules. Those numbers are
 >    load-bearing; do not re-derive them from the code on a hunch.
-> 4. **There is no unticked chunk left.** [§8](#8-the-chunks) is done through 19. The only open
->    code in this file is chunks **20 and 21** — two findings chunk 15 turned up and deliberately
->    did not fix inside a cleanup — and the three editor-run items in the status block at the
->    top, none of which anything off-platform can do. If you are here for something else, §8 is
->    still the record of why the code is shaped the way it is; read the chunk that touched what
->    you are about to touch before you touch it.
+> 4. **The open code in this file is chunks 20, 21 and 23** — two findings chunk 15 turned up
+>    and one chunk 22 turned up, each deliberately left rather than fixed inside a cleanup —
+>    plus the three editor-run items in the status block at the top, none of which anything
+>    off-platform can do. If you are here for something else, §8 is still the record of why the
+>    code is shaped the way it is; read the chunk that touched what you are about to touch
+>    before you touch it. **And read the two banners first**: `script.gs` §1 and `app.html` §C
+>    are the map of every constant either file expects anyone to change, and they name the ones
+>    that deliberately live elsewhere.
 >
 > **End of session, whether or not you finished:**
 > 1. Tick the chunk, or leave a one-line note beside it saying where it actually stands.
@@ -409,6 +411,11 @@ merge broke it" and "the new router broke it".
   <main id="appRoot"></main>                  <!-- the one mounted page -->
   …the shared modal shells, outside #appRoot so they survive a page swap…
 
+  <script>  §C  TUNABLES                                             (chunk 22)
+              AMR_TUNABLES  the slide frame, and where every page's
+                            whitespace sliders start. Above §D and §E
+                            because their IIFEs read it as they build.
+  </script>
   <script>  §D  SHARED RUNTIME
               AmrLib        lazy CDN loader — Chart.js / html2canvas / SheetJS   (new)
               AmrCache      device report cache              (was Shell.html)
@@ -491,7 +498,8 @@ So the merge is close to ordered concatenation. Two rules make it safe:
 Section order:
 
 ```
-§1  CONFIG            APP_CONFIG, APP_EXTRA_SOURCES, Settings API          (Config.gs)
+§1  CONFIG            APP_CONFIG, OVERVIEW, APP_EXTRA_SOURCES, Settings API (Config.gs)
+                      DECK_CONFIG, DECK_RECIPE                     (chunk 22, from §9)
 §2  LOGGING           APP_log() + LOG_LEVEL                                (new — §7)
 §3  ROUTER + PLUMBING doGet, include, getLogo, data-generation, cache       (Code.gs)
 §4  PERMISSIONS       APP_verifyPermissions()                              (new — §6)
@@ -499,7 +507,8 @@ Section order:
 §6  AGG               PV_Backend, PV_Lookup, FSC_Backend, Sask_Backend
 §7  RMX               RMX_Backend, RMX_Suggest, RFSC_Backend
 §8  OVERVIEW          Ov_Backend
-§9  DECK              Deck_Backend, Deck_Recipe
+§9  DECK              Deck_Backend, Deck_Recipe — the engine and the recipe
+                      CHECKER. Both config objects are in §1 (chunk 22)
 §10 SMALL PAGES       Kpi_Backend, TP01_Backend, IR_Backend
 §11 TRIGGERS          qlikSyncCheck, qlikMarkCurrent, qlikStamps,
                       qlikSyncNow                                 (QlikSync.gs, part 2)
@@ -747,6 +756,8 @@ Chunks 3–9 are independent of each other — a swamp in one does not block the
 | 18 | **`APP_log` at the server entry points** | Wired, in the order the payoff is in: `APP_cachePut_`'s `n > 250` bail, `APP_cacheGet_`'s hit/miss (**and its partial**), then `getFscData`, `getPvUnmapped`, `qlikSyncCheck` and `RMX_prepare`. **All 36 silent catches decided — not 31; five bind `e2`/`e3` and every one of those had to speak.** 24 now log, 12 stay silent with a reason. `tests/logging.js` is the gate. | ✅ |
 | 20 | **`PV.toNum_` drops accounting negatives** | Found by chunk 15. `PV.toNum_('(1,234)')` is `0` where every other copy in the suite gives `-1234`: the strip leaves the parentheses, `parseFloat` gives `NaN`, and `NaN` becomes `0`. The figure is **dropped, not mis-signed**, which is why nothing looks wrong. **Whether it bites cannot be answered off-platform** — it depends on whether the Price & Volume source ever writes a negative that way. Check the sheet first; only then decide. | ☐ |
 | 21 | **`PVLOOK.gk_` ignores `SCHEMA_`** | Found by chunk 15. `PV.gk_` mixes `SCHEMA_` into its cache key and `PVLOOK.gk_` does not, so a schema bump invalidates one Price & Volume cache and leaves the other serving rows shaped the old way. Fixing it changes every existing `PVLOOK` cache key — which is harmless (a miss, then a rebuild) but should be stated rather than discovered. `tests/helpers.js` fails if either changes. | ☐ |
+| 22 | **The settings are at the top of both files** | `DECK_CONFIG` and `DECK_RECIPE` moved from `script.gs` §9 to §1, unchanged — the deck template, its folder, the capture resolution and **which 43 slides the monthly pack contains** were at lines 10,281 and 10,968, behind the engine that reads them. `app.html` gains **§C TUNABLES**: the 16:9 slide frame lifted out of `AmrSlide`, and the five pages' whitespace defaults that were scattered from line 8,931 to 14,294. Both files' banners now carry the map of every constant worth changing, including the ones that stayed and why. Declared to `gsparity.js` (two `cut`s with an empty `gone` — a name that MOVED is still in the top-level set) and to `modparity.js`. `OVERVIEW`'s `NOT USED` banner corrected: it is read on every Overview load. | `tunables.js` (new, mutation-tested two ways) + all five pages' sliders compared in Chromium before/after + the whole suite, 27 green | ✅ |
+| 23 | **The current and prior year, written out ~60 times** | `AmrSegSlide`'s `CY_YEAR`/`PY_YEAR`, `AmrRmxSlide`'s and `AmrFuelExec`'s table headers, both fuel pages' titles and hint text — and the QlikView guides' sample tables, where `Jan-2026` is an **illustration of the export's shape** and must not move with the calendar. That split is the whole job: sorting which literals are the reporting year and which are examples, then giving the first group one home. Chunk 22 deliberately did not start it — a knob that changes some of the headings and not others is worse than no knob, and §C says so where a reader will find it. `AmrFuelExec` already shows the shape of the answer: `cy: function(d){ return (d && d.cyYear) || 2026; }` reads the year off the payload and falls back. | ☐ |
 
 ### Still open, and not part of the merge
 
@@ -2229,10 +2240,19 @@ reach of `google.script.run` as well.
   the generic names the `RMX_NS` capture exists to protect against, so removing them changes
   what a stale deployment does. Treat as its own chunk.
 - The dead nav hook in `Shell.html`, which says in a comment that it is dead.
-- The `EXECUTIVE OVERVIEW — canonical market list + PV/RMX name mapping` block in `Config.gs`
-  (now `script.gs` §1), whose own banner comment starts `NOT USED`. **Not touched by chunk 12** —
-  the merge moved it verbatim like everything else. It is a `var OVERVIEW` at top level, so it
-  is one of the 181 audited names and collides with nothing.
+- ~~The `EXECUTIVE OVERVIEW — canonical market list + PV/RMX name mapping` block, whose own
+  banner comment starts `NOT USED`.~~ **RESOLVED, CHUNK 22 — THE COMMENT WAS WRONG AND THE
+  OBJECT IS LIVE.** `getOverview` (§8) takes its entire market list from `OVERVIEW.MARKETS`
+  (`script.gs:8818`), the Overview footer reports any PV market missing from it as "unmapped",
+  and `app.html` tells the user to "add them to `OVERVIEW.MARKETS`" by name in that hint.
+  Deleting it on the strength of its own banner would have emptied the Executive Overview.
+
+  **This is the cheapest possible demonstration of why this list exists.** The candidate was
+  not a function nobody could find a caller for — it was a `var` that *announced itself as
+  dead*, in a comment that survived a verbatim merge precisely because chunk 12 moved
+  everything without editing it. A grep for the name answers this in one second and the
+  banner still stood for four chunks. **Read the code, not the label.** The banner now says
+  what is true, and `gsparity.js` declares the correction.
 - ✅ **Done, chunk 12.** Every `.gs` top-level function with no caller anywhere. All seven from
   chunk 1's audit are resolved in [§1a](#1a-chunk-1-results--the-three-audits); three of the
   four open ones turned out to have a caller, a gate or a documented editor use.

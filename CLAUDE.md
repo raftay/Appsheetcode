@@ -66,6 +66,12 @@ locator.
 - Apps Script evaluates every `.gs` into **one** global scope — which is why there is now
   only one. Entry points are still prefixed (`RMX_`, `PV`, `DECK_`, `TP_`, `IR`) and
   everything real still lives inside a namespace IIFE; the reasons outlived the file count.
+- **The settings live at the top of each file, and the top of each file says where the rest
+  are.** `script.gs` §1 holds `APP_CONFIG`, `OVERVIEW`, `DECK_CONFIG` and `DECK_RECIPE` — the
+  sheet ids, tab names, markets, the deck template and folder, and which 43 slides the monthly
+  pack contains; `app.html` §C holds `AMR_TUNABLES` — the slide frame and every page's
+  whitespace defaults. Both banners also name the constants that deliberately stayed beside
+  the code that reads them. Read those two banners before grepping for a number.
 - `appsscript.json` carries an explicit `oauthScopes` array, which **replaces** Apps Script's
   automatic scope detection. Add a service, add its scope by hand — nothing warns you, the
   call just throws for every user. `APP_verifyPermissions()` (`script.gs` §4) catches it in one
@@ -104,6 +110,10 @@ locator.
   that takes one function too many is still valid JavaScript. Chunk 12 lost `RMX_whoWins` that
   way — the anchor matched *uniquely*, `node --check` passed, every structural check passed,
   and the only thing that noticed was a before/after set difference of top-level names.
+- **A comment that says code is dead is not evidence either.** `OVERVIEW` carried a banner
+  starting `NOT USED` for four chunks while `getOverview` read its market list on every single
+  Overview load — the label came across from `Config.gs` in a verbatim merge, which is exactly
+  how a wrong comment outlives the thing that made it wrong. Read the code, not the label.
 - **Nothing gets deleted on a hunch.** Every removal needs a repo-wide grep proving zero live
   references, logged in the `README.md` session log with what proved it. "Looks unused" is
   not evidence — several things that look dead are load-bearing, and several things that look
