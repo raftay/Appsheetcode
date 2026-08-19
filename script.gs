@@ -2518,11 +2518,16 @@ var QLIKSYNC = (function () {
    * the Advanced Drive Service means there is no service to switch on in the
    * editor.
    *
-   * THE TEMP SHEET IS NOT OPTIONAL, BUT IT IS AVOIDABLE. It exists only for
-   * the .xls / .xlsx case: an export saved in Drive as a GOOGLE SHEET is read
-   * where it stands, no copy is made, and the whole of this block is skipped
-   * (see readExport_). If the temp file is unwanted, that is the way to be rid
-   * of it — converting the export once, in Drive, rather than on every sync.
+   * THE TEMP SHEET IS NOT OPTIONAL. QlikView delivers .xls and that is not
+   * negotiable, so a copy is made on EVERY sync — this is the steady state,
+   * not a fallback. (readExport_ does skip the copy for an export that is
+   * already a Google Sheet, which is why the branch is there; it is not a
+   * route anybody can take here.)
+   *
+   * That it happens every time is why sweepTemps_ exists. A `finally` covers
+   * every way the read can fail except the runtime limit, where the execution
+   * is killed and no `finally` runs — and one stranded copy per kill, forever,
+   * is a leak in the script account's Drive rather than a one-off.
    *
    * AND IT MUST NOT BE SHARED WITH ANYBODY. A new Drive file takes its
    * audience from the folder it is created in, so a copy made with no parent
@@ -2549,9 +2554,13 @@ var QLIKSYNC = (function () {
   }
   var DRIVE_V3 = 'https://www.googleapis.com/drive/v3/files/';
 
+  /* The temp copy's name always starts with this, which is what makes the
+     leftovers below identifiable. Do not change it without changing them. */
+  var TEMP_PREFIX = '~qliksync temp';
+
   /* Convert to a temporary Google Sheet and return the new file id. */
   function convertToSheet_(fileId, name) {
-    var body = { name: '~qliksync temp \u2014 ' + name, mimeType: MimeType.GOOGLE_SHEETS };
+    var body = { name: TEMP_PREFIX + ' \u2014 ' + name, mimeType: MimeType.GOOGLE_SHEETS };
 
     /* The script account's own Drive root: a folder nobody else can see, so
        the copy is born private instead of inheriting the export folder's
@@ -2617,6 +2626,58 @@ var QLIKSYNC = (function () {
                 'Drive', { fileId: fileId, error: String(e), deleteError: String(e2) });
       }
     }
+  }
+
+  /* ---- LEFTOVERS ---------------------------------------------------------
+     readExport_ trashes its temp copy in a `finally`, which covers every way
+     the read can fail — except the one that matters most here. Apps Script
+     kills an execution at the runtime limit; `finally` does not run, and the
+     copy is stranded. That kill is not hypothetical for this pipeline: it is
+     what the formula band's run-at-a-time batching exists to avoid, and it
+     used to report "failed" over tabs that had written correctly.
+
+     Every sync makes a copy — the exports are .xls and there is no reading one
+     in place — so a stranded file is not a one-off, it is a slow leak in the
+     script account's Drive. This is the only thing that clears them.
+
+     THREE GUARDS, because this trashes files. The name must actually start
+     with the prefix (Drive's `title contains` is looser than it looks), it
+     must be a Google Sheet, and it must be over an hour old so a copy another
+     execution is reading right now can never be taken out from under it.
+     Trashed, never permanently deleted: recoverable is the right default for
+     anything this decides on its own. */
+  var TEMP_MIN_AGE_MS = 60 * 60 * 1000;
+  var TEMP_SWEEP_CAP  = 50;          // a backlog must not eat the runtime budget
+
+  function sweepTemps_() {
+    var found = 0, trashed = 0;
+    try {
+      var q = 'title contains "' + TEMP_PREFIX + '"' +
+              ' and mimeType = "application/vnd.google-apps.spreadsheet"' +
+              ' and trashed = false';
+      var it = DriveApp.searchFiles(q), cutoff = Date.now() - TEMP_MIN_AGE_MS;
+      while (it.hasNext() && found < TEMP_SWEEP_CAP) {
+        var f = it.next();
+        found++;
+        if (String(f.getName()).indexOf(TEMP_PREFIX) !== 0) continue;
+        if (f.getDateCreated().getTime() > cutoff) continue;
+        try { f.setTrashed(true); trashed++; }
+        catch (e) {
+          APP_log('warn', 'QLIKSYNC.sweep', 'a stranded temp sheet would not trash',
+                  { fileId: f.getId(), error: String(e) });
+        }
+      }
+    } catch (e) {
+      /* Not silent, and not fatal: a sweep that cannot run leaves files behind,
+         which is untidy, while a sync that stops because of it is an outage. */
+      APP_log('warn', 'QLIKSYNC.sweep', 'could not look for stranded temp sheets',
+              { error: String(e) });
+    }
+    if (trashed) {
+      APP_log('info', 'QLIKSYNC.sweep', 'trashed temp sheets a killed run left behind',
+              { found: found, trashed: trashed });
+    }
+    return trashed;
   }
 
   /* Every tab of one export, as { name, hdr:[normalised], raw:[…], rows:[…] } */
@@ -3143,6 +3204,9 @@ var QLIKSYNC = (function () {
     }
     var started = new Date();
     var done = [], skipped = [], failed = [];
+
+    /* Inside the lock, so it can never see another execution's live copy. */
+    sweepTemps_();
 
     try {
       var SPEC = buildSpec_().filter(function (s) { return want === 'all' || s.page === want; });

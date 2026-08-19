@@ -322,9 +322,18 @@ wrong column for a whole run.
 ### The `~qliksync temp` sheet
 
 Apps Script cannot read `.xls` / `.xlsx` — `SpreadsheetApp` opens a Google Sheet and nothing
-else — so Drive converts each export to a temporary one, which is read and then trashed. **An
-export saved in Drive as a Google Sheet skips the copy entirely**, which is the way to be rid
-of the temp file if it is unwanted.
+else — so Drive converts each export to a temporary one, which is read and then trashed.
+**QlikView delivers `.xls` and cannot deliver anything else, so this happens on every sync.**
+`readExport_` does skip the copy for an export that is already a Google Sheet, but that is not
+a route this pipeline can take.
+
+Because it happens every time, **`sweepTemps_` clears the strays**. The copy is trashed in a
+`finally`, which covers every way the read can fail except the runtime limit — Apps Script
+kills the execution and no `finally` runs. That kill is what the formula band's run-at-a-time
+batching exists to avoid, so it is not hypothetical, and one stranded copy per kill is a slow
+leak. The sweep runs inside the lock and trashes only files that carry the `~qliksync temp`
+prefix, are Google Sheets, and are **over an hour old** — so a copy another execution is
+reading can never be taken out from under it. Trashed, never permanently deleted.
 
 **It must not be shared with anybody.** A new Drive file takes its audience from the folder it
 is created in, so a copy made with no parent lands beside the export — in whatever shared
@@ -959,7 +968,7 @@ or was forgotten.**
 | 2026-08-19 | **`regress.js` and `pvcheck.js` deleted.** The pages they diffed against are behind commits this repo no longer reaches, and the newest copies it does reach are one-line delegations to the modules under test — so the diff was a tautology. `modparity.js` is what survives, and its header now says it is the only proof for `AmrFuelExec` and `AmrPvSlide` | ✅ |
 | 2026-08-19 | **Three documents became one.** `PLAN.md`'s durable half — the deletion proof rule and the keep-list, how ten pages live in one HTML file, the logging convention, the OAuth scope table, the harness rules — moved here; its 2,400 lines of merge narrative went with it, into the git history. `CLAUDE.md` is a pointer now rather than a second copy. **The cost that had to be paid first was the ~30 pointers in `script.gs`, `app.html` and `tests/` that named `PLAN.md` sections and chunk numbers**: leaving those dangling is precisely the trap this repo has been bitten by, so each was repointed, and the ones inside `gsparity`/`modparity` declared-edit text had to change on both sides at once or the parity gates fail | ✅ |
 | 2026-08-19 | **The period is data too.** The Aggregates workbook was re-headed from `2026 Volume` to `CY Volume` while its export still names years, so the sync silently stopped writing those columns. One rule now: split a header into the figure and its period (`APP_period_`), pair on that, and take the current year off the **data** — the Year column or a Bill Month. Two defects fell out of it: `Fuel Surchage` vs `Fuel Surcharge`, one missing letter that left that single column never written while the tab looked healthy; and the sync's positional fallback, which is how PY revenue once went into the wrong column for a whole run | ✅ |
-| 2026-08-19 | **The `~qliksync temp` sheet is contained.** A Drive copy made with no parent inherits the folder it lands in, so it was being born into the shared folder the export sits in. It is created in the script account's own Drive root now and has every non-owner permission stripped before it is read; nothing in the codebase creates a Drive permission, which is the only call that emails anybody | ✅ |
+| 2026-08-19 | **The `~qliksync temp` sheet is contained, and its strays are swept.** A Drive copy made with no parent inherits the folder it lands in, so it was being born into the shared folder the export sits in. It is created in the script account's own Drive root now and has every non-owner permission stripped before it is read; nothing in the codebase creates a Drive permission, which is the only call that emails anybody. **The exports are `.xls` and cannot be anything else, so a copy is made on every sync** — which turns the one case `finally` cannot cover, Apps Script killing the execution at the runtime limit, from a one-off into a leak. `sweepTemps_` clears it, guarded on the prefix, the mime type and an hour's age | ✅ |
 | 2026-08-19 | **`gsparity.js` and `modparity.js` deleted**, on the rule their own headers gave: a legitimate change landed inside a moved region of both files, so neither is a copy of anything and the gates could only be weakened, never passed. `script.gs` and `app.html` also lost every reference to `README.md`, `PLAN.md`, `tests/` and chunk numbers — they explain themselves and each other now, and nothing outside | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |

@@ -577,5 +577,69 @@ console.log('\nthe converted copy is private, and is cleaned up:');
   check('the temp sheet is trashed', trashed, [TEMP]);
 }
 
+/* ======================================================================
+ * Stranded temp sheets are cleared, and only stranded ones
+ * ----------------------------------------------------------------------
+ * The exports are .xls and cannot be read in place, so EVERY sync makes a
+ * copy. readExport_ trashes it in a `finally`, which covers every way the read
+ * can fail except the one that matters: Apps Script killing the execution at
+ * the runtime limit, where `finally` does not run at all. That kill is what
+ * this file's batching checks exist to avoid, so it is not hypothetical — and
+ * one stranded file per kill, forever, is a leak.
+ *
+ * It trashes files, so the guards are the check: the prefix, the mime type,
+ * and an hour's age so a copy another execution is reading is never taken.
+ * ==================================================================== */
+console.log('\nstranded temp sheets are cleared, and only those:');
+{
+  const ctx = load();
+  const HOUR = 3600 * 1000;
+  const files = [
+    { id: 'old-temp',   name: '~qliksync temp — Agg.xls',  age: 3 * HOUR, mime: 'application/vnd.google-apps.spreadsheet' },
+    { id: 'live-temp',  name: '~qliksync temp — Rmx.xls',  age: 30 * 1000, mime: 'application/vnd.google-apps.spreadsheet' },
+    { id: 'not-sheet',  name: '~qliksync temp — odd',      age: 3 * HOUR, mime: 'application/pdf' },
+    { id: 'not-ours',   name: 'Q3 ~qliksync temp notes',   age: 9 * HOUR, mime: 'application/vnd.google-apps.spreadsheet' },
+    { id: 'unrelated',  name: 'Agg Margin Monitor Export', age: 9 * HOUR, mime: 'application/vnd.google-apps.spreadsheet' },
+  ];
+  let trashed = [], query = '';
+  ctx.DriveApp.searchFiles = q => {
+    query = q;
+    /* the fake honours the mimeType and trashed clauses the query carries; the
+       prefix and the age are the code's own job and are left to it */
+    const hits = files.filter(f => f.mime === 'application/vnd.google-apps.spreadsheet');
+    let i = 0;
+    return {
+      hasNext: () => i < hits.length,
+      next: () => {
+        const f = hits[i++];
+        return { getId: () => f.id, getName: () => f.name,
+                 getDateCreated: () => new RealDate(CLOCK - f.age),
+                 setTrashed: () => { trashed.push(f.id); } };
+      },
+    };
+  };
+
+  ctx.qlikSyncNow('pricevolume');
+
+  checkThat('it asks Drive for untrashed Sheets carrying the prefix',
+            /~qliksync temp/.test(query) && /trashed = false/.test(query) &&
+            /google-apps\.spreadsheet/.test(query), query);
+  check('the stranded one is trashed', trashed, ['old-temp']);
+  checkThat('a copy a live run may be reading is left alone', trashed.indexOf('live-temp') === -1);
+  checkThat('and a file that merely mentions the prefix is left alone',
+            trashed.indexOf('not-ours') === -1);
+}
+
+/* A sweep that cannot run leaves files behind, which is untidy. A sync that
+   stops because of it is an outage. */
+console.log('\na sweep that throws does not stop the sync:');
+{
+  const ctx = load();
+  ctx.DriveApp.searchFiles = () => { throw new Error('Drive search is unavailable'); };
+  const res = ctx.qlikSyncNow('pricevolume');
+  check('the sync still ran', res.done.length > 0, true);
+  check('and it still says it succeeded', res.ok, true);
+}
+
 console.log(fails ? `\n${fails} failing check(s)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

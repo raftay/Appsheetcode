@@ -181,6 +181,10 @@ const NOT_ROWS = {
   /* The loop walks the chunks of ONE cache entry, and the line inside it
      RETURNS immediately: at most one per call, never one per chunk. */
   'APP.cacheGet':           'one chunked entry, and the line returns on the first gap',
+  /* Stranded temp sheets, capped at 50 and normally zero. Named files a
+     killed run left in Drive, not rows — and the line only fires for one that
+     will not trash, which is the thing somebody would need to go and look at. */
+  'QLIKSYNC.sweep':         'stranded temp files, capped at 50 and usually none',
 };
 const inLoop = [];
 LINES.forEach((l, i) => {

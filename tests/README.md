@@ -741,6 +741,13 @@ parent of its own, that every non-owner permission is deleted and the owner's is
 permission is ever *created* (the only Drive call that emails a person), and that the copy is
 trashed.
 
+**And the strays.** The exports are `.xls` and cannot be read in place, so every sync makes a
+copy — which makes the one case `finally` cannot cover (Apps Script killing the execution at
+the runtime limit) a slow leak rather than a one-off. `sweepTemps_` trashes files, so its
+guards are the check: the prefix, the mime type, and an hour's age, with a live copy, a
+lookalike name and an unrelated file all left alone. A sweep that *throws* must not stop the
+sync either, which is checked on its own.
+
 ## `freshness.js` — the data version
 
 Runs `Config.gs` + `Code.gs` under Node with Drive stubbed, and counts the Drive calls.
