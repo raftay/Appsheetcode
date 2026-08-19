@@ -162,6 +162,56 @@ console.log('a workbook from ' + CY + ', read by code written in 2026:\n');
 }
 
 /* ===========================================================================
+ * 1c. The Aggregates UPLOAD path takes the same two shapes
+ * ---------------------------------------------------------------------------
+ * `uploadData` replaces the raw tab for one browser session from two QlikView
+ * files the user picks. It used to require the exact strings — "2025 Volume",
+ * "2026 Volume", "Fuel Surchage" — and refuse a perfectly good download with
+ * "Missing column(s)" the day any of them changed. Loud rather than silent,
+ * which is why it survived longer than the read path, but wrong either way.
+ * ======================================================================== */
+{
+  const ctx = attach({ console });
+  ctx.Utilities = { getUuid: () => 'abcdef0123456789' };
+  const BOX = {};
+  ctx.CacheService = { getScriptCache: () => ({
+    put: (k, v) => { BOX[k] = v; }, get: k => (k in BOX ? BOX[k] : null),
+    putAll: o => { for (const k in o) BOX[k] = o[k]; },
+    getAll: ks => { const o = {}; ks.forEach(k => { if (k in BOX) o[k] = BOX[k]; }); return o; },
+    remove: k => { delete BOX[k]; }, removeAll: ks => ks.forEach(k => { delete BOX[k]; }),
+  }) };
+  vm.createContext(ctx);
+  vm.runInContext(region('PV_Backend.gs'), ctx, { filename: 'script.gs (PV_Backend.gs)' });
+  /* uploadData is private to the PV namespace; uploadPvData is the wrapper
+     google.script.run calls. Its only side effect is a chunked cache put, and
+     the fake CacheService above makes that a no-op. */
+  const upload_ = ctx.uploadPvData;
+
+  const DIMS = ['Year', 'Month', 'Plant Type', 'Material Family', 'Product Class [Rock]',
+    'Cust Segment [Rock]', 'Product Application', 'Plant', 'Material', 'Customer Parent', 'Sold To'];
+  const dimRow = y => [y, 'Jul', 'Fixed', 'Sand', 'Rock', 'Seg', 'App', 'P1', 'M1', 'CP', 'ST'];
+  const other = [DIMS.concat(['Other Revenue']), dimRow(CY).concat([100])];
+
+  const upload = (volNames, fscName) => upload_({
+    raw: [DIMS.concat(volNames, ['PY Rev exWorks', 'CY Rev exWorks', fscName]),
+          dimRow(PY).concat([50, 0], [500, 0, 7]),
+          dimRow(CY).concat([0, 60], [0, 600, 9])],
+    other: other,
+  });
+
+  const years = upload([PY + ' Volume', CY + ' Volume'], 'Fuel Surchage');
+  eq('upload · a year-named export is still accepted', [years.ok, years.rows], [true, 2]);
+
+  const cypy = upload(['PY Volume', 'CY Volume'], 'Fuel Surcharge');
+  eq('upload · so is a CY/PY-headed one with the typo fixed', [cypy.ok, cypy.rows], [true, 2]);
+
+  let threw = '';
+  try { upload(['PY Volume'], 'Fuel Surcharge'); } catch (e) { threw = String(e.message || e); }
+  check('upload · one volume column only is still refused, by name',
+        /prior volume column|CY Volume/.test(threw), threw || '(it did not throw)');
+}
+
+/* ===========================================================================
  * 2. Ready-Mix — the loaders that asked for a year by name
  * ======================================================================== */
 {

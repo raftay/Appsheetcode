@@ -388,7 +388,7 @@ var APP_CONFIG = {
     /* ------- HISTORY, ONE BOOK BACK: Aggregates (2024 / 2023) -------
        Identical in every way to histagg above - same export, same tabs, one
        pair of years earlier. Nothing in the reader is year-aware: it takes the
-       years from the Year column and the "#### Volume" headers, so a third,
+       years from the Year column and the volume headers, so a third,
        fourth or fifth book needs a page entry here and a line in CUBE.ERAS,
        never a code change.
 
@@ -3337,7 +3337,8 @@ var PV = (function () {
  * MTD = latest month present in CY data;  YTD = all months collapsed.
  *
  * VERIFY (numbers depend on these):
- *  1. PY = lower of the two "#### Volume" years, CY = higher.
+ *  1. CY and PY are the volume pair, however the tab heads it; the Year column
+ *     says which year is which when it says CY/PY.
  *  2. REGION LOOKUP (key = Plant, range A:L): col10 REGION, col4 SUBREGION,
  *     col11 MARKET, col12 SUBMARKET1, col3 SUBMARKET2, col9 MB SUBMARKET;
  *     and Q:R maps REGION -> COUNTRY.
@@ -3541,20 +3542,24 @@ function buildLookups_() {
 
 function getRawEnriched_(upToken) {
   var raw = upToken ? upTab_(upToken) : readTab_(CONFIG.RAW.SHEET, RAW_HEADER_NAMES_), H = raw.header;
-  /* The volume pair, whichever way the tab spells its periods — "2026 Volume"
-     and "CY Volume" both land here. When it says CY/PY the header names no
+  /* Volume, revenue and the surcharge split, whichever way the tab spells its
+     periods — "2026 Volume" and "CY Volume" both land here, and so do "CY Rev
+     exWorks" and "2026 Rev exWorks". When it says CY/PY the header names no
      year at all, so the Year column is what says which year is which; the tab
      keeps one, and it is the same column the month model reads. */
-  var vol = APP_yearCols_(APP_hdrArray_(H), 'volume',
-                          APP_dataCyYear_(raw.rows, colIndex_(H, 'Year')));
+  var hdrArr = APP_hdrArray_(H);
+  var cyData = APP_dataCyYear_(raw.rows, colIndex_(H, 'Year'));
+  var vol = APP_yearCols_(hdrArr, 'volume',        cyData);
+  var rev = APP_yearCols_(hdrArr, 'rev exworks',   cyData);
+  var fsc = APP_yearCols_(hdrArr, 'fuel surcharge', cyData);
   var ix = {
     month: colIndex_(H, 'Month'), plantType: colIndex_(H, 'Plant Type'), materialFam: colIndex_(H, 'Material Family'),
     prodClass: colIndex_(H, 'Product Class [Rock]'), custSeg: colIndex_(H, 'Cust Segment [Rock]'),
     prodApp: colIndex_(H, 'Product Application'), plant: colIndex_(H, 'Plant'), material: colIndex_(H, 'Material'),
     custParent: colIndex_(H, 'Customer Parent'), soldTo: colIndex_(H, 'Sold To'),
     pyVol: vol.py, cyVol: vol.cy,
-    pyRev: colIndex_(H, 'PY Rev exWorks'), cyRev: colIndex_(H, 'CY Rev exWorks'),
-    pyFsc: colIndex_(H, 'PY Fuel Surcharge'), cyFsc: colIndex_(H, 'CY Fuel Surcharge'),
+    pyRev: rev.py, cyRev: rev.cy,
+    pyFsc: fsc.py, cyFsc: fsc.cy,
     lkey: colIndex_(H, 'LOOKUP KEY')
   };
   var L = buildLookups_();
@@ -4323,34 +4328,42 @@ function uploadData(payload) {
     hdr.forEach(function (h, i) { var n = norm_(h); if (n && !(n in H)) H[n] = i; });
     return { hdr: hdr, H: H, rows: values.slice(1) };
   }
+  /* A column is present if its FIGURE and PERIOD are, not if its exact string
+     is. The export spells CY and PY as years and the workbook spells them CY
+     and PY; it also heads the surcharge "Fuel Surchage". Naming any of those
+     back rejects a perfectly good download. */
   function need(t, names, label) {
-    var miss = names.filter(function (n) { return colIndex_(t.H, n) === -1; });
+    var map = APP_periodMap_(t.hdr);
+    var miss = names.filter(function (n) {
+      var q = APP_period_(n);
+      return APP_periodFind_(map, q.base, q, '') === -1;
+    });
     if (miss.length) throw new Error(label + ' upload doesn\u2019t match the expected QlikView format. Missing column(s): '
       + miss.join(', ') + '. Please re-download from QlikView without changing the columns.');
   }
   var R = idxOf(payload.raw), O = idxOf(payload.other);
   need(R, ['Year', 'Month', 'Plant Type', 'Material Family', 'Product Class [Rock]', 'Cust Segment [Rock]',
            'Product Application', 'Plant', 'Material', 'Customer Parent', 'Sold To',
-           'PY Rev exWorks', 'CY Rev exWorks', 'Fuel Surchage'], 'Combined Data CPI Raw');
+           'PY Rev exWorks', 'CY Rev exWorks', 'Fuel Surcharge'], 'Combined Data CPI Raw');
 
-  /* THE VOLUME COLUMNS CARRY THE YEAR, AND THIS LIST USED TO NAME 2026 AND 2025.
-     The read path has resolved them by pattern since it was written — "the
-     header carries the year, so nothing here has to be edited when the file
-     rolls over" — and the UPLOAD path did not, so on the first export of a new
-     year this required two columns the file no longer has and refused a
-     perfectly good download with "Missing column(s): 2025 Volume, 2026 Volume".
-     Loud rather than silent, which is why it survived, but wrong either way.
-     Same rule as everywhere else: the year is DATA. Find every volume column
-     however it is headed, keep them BY YEAR, and let each row pick its own. */
-  var volCols = {};
-  R.hdr.forEach(function (h, i) {
-    var m = /^(\d{4})\s+volume$/.exec(norm_(h));
-    if (m && !(Number(m[1]) in volCols)) volCols[Number(m[1])] = i;
-  });
+  /* THE VOLUME COLUMNS CARRY THE PERIOD, AND THIS LIST USED TO NAME 2026 AND
+     2025. The read path has resolved them by shape since it was written and
+     the UPLOAD path did not, so on the first export of a new year this
+     required two columns the file no longer has and refused a perfectly good
+     download with "Missing column(s): 2025 Volume, 2026 Volume". Loud rather
+     than silent, which is why it survived, but wrong either way — and a file
+     headed "CY Volume" would be refused the same way.
+
+     Same rule as everywhere else: find the volume pair however it is headed,
+     key it BY YEAR off the file's own Year column, and let each row pick its
+     own. */
+  var upCy    = APP_dataCyYear_(R.rows, colIndex_(R.H, 'Year'));
+  var upVol   = APP_yearCols_(R.hdr, 'volume', upCy);
+  var volCols = upVol.byYear;
   var volYears = Object.keys(volCols).map(Number).sort(function (a, b) { return b - a; });
   if (volYears.length < 2)
-    throw new Error('Combined Data CPI Raw upload needs two "#### Volume" columns (e.g. "'
-      + ((new Date()).getFullYear()) + ' Volume" and the year before). Found: '
+    throw new Error('Combined Data CPI Raw upload needs a current and a prior volume column '
+      + '("CY Volume" and "PY Volume", or "#### Volume" for two years). Found: '
       + (volYears.length ? volYears.join(', ') : 'none')
       + '. Please re-download from QlikView without changing the columns.');
   need(O, ['Year', 'Sold To', 'Plant', 'Plant Type', 'Customer Parent', 'Cust Segment [Rock]', 'Month', 'Other Revenue'],
@@ -4359,7 +4372,9 @@ function uploadData(payload) {
   function ci(t, n) { return colIndex_(t.H, n); }
   var rp = { yr: ci(R, 'Year'), st: ci(R, 'Sold To'), pl: ci(R, 'Plant'), pt: ci(R, 'Plant Type'),
              cp: ci(R, 'Customer Parent'), cs: ci(R, 'Cust Segment [Rock]'), mo: ci(R, 'Month'),
-             vol: volCols, cy: volYears[0], py: volYears[1], fsc: ci(R, 'Fuel Surchage') };
+             vol: volCols, cy: volYears[0], py: volYears[1],
+             fsc: APP_periodFind_(APP_periodMap_(R.hdr), 'fuel surcharge',
+                                  { base: 'fuel surcharge', period: '', year: 0 }, '') };
   var op = { yr: ci(O, 'Year'), st: ci(O, 'Sold To'), pl: ci(O, 'Plant'), pt: ci(O, 'Plant Type'),
              cp: ci(O, 'Customer Parent'), cs: ci(O, 'Cust Segment [Rock]'), mo: ci(O, 'Month'), rev: ci(O, 'Other Revenue') };
 
@@ -4977,11 +4992,12 @@ function getUnmapped(opts){
 
   var raw = rawTab_(opts.upload), H = raw.header;
 
-  /* CY volume, however the tab spells its periods, exactly as PV picks it. */
+  /* CY volume and CY revenue, however the tab spells its periods, exactly as PV
+     picks them. */
   var iP = ci_(H, 'Plant');
-  var iV = APP_yearCols_(APP_hdrArray_(H), 'volume',
-                         APP_dataCyYear_(raw.rows, ci_(H, 'Year'))).cy;
-  var iR = ci_(H, 'CY Rev exWorks');
+  var hdrArr = APP_hdrArray_(H), cyData = APP_dataCyYear_(raw.rows, ci_(H, 'Year'));
+  var iV = APP_yearCols_(hdrArr, 'volume',      cyData).cy;
+  var iR = APP_yearCols_(hdrArr, 'rev exworks', cyData).cy;
   if (iP === -1) throw new Error('The raw tab has no "Plant" column, so the mapping check can\u2019t run.');
 
   /* Just enough of PV's buildLookups_ to answer "is there a row?". */
@@ -5192,10 +5208,11 @@ function applyPvLookupRows(p)  { return PVLOOK.applyRows(p); }
  * names (row 1 sums, row 2 names, row 3 first record), so the header row is
  * located by scoring, exactly as Price & Volume does. See headerRow_().
  *
- * COLUMNS USED (names matched case- and space-insensitively)
+ * COLUMNS USED (matched on the FIGURE and its PERIOD, not on the literal name)
  *   Plant · Year · Month
- *   "#### Volume"      - one column per year; the row's Year picks which
- *   CY / PY Rev exWorks - net sales, picked the same way
+ *   volume              - "CY Volume" or "#### Volume"; the row's Year picks
+ *                         which, and the Year column is what dates a CY header
+ *   rev exWorks         - "CY Rev exWorks" or "#### Rev exWorks"
  *   New Fuel Surcharge  - THE surcharge column
  *
  *   NOTE ON "Fuel Surchage" (the source's own typo): it is a partial column -
@@ -6639,7 +6656,8 @@ function loadMain_(LK, src, bag){
          that key's rows in proportion to volume. OPTIONAL - a workbook without
          the columns simply reports no surcharge by mix, and the Fuel Recovery
          page falls back to the Extras stream for every figure it can. */
-      cCyF=col_(s,'cy fuel surcharge'), cPyF=col_(s,'py fuel surcharge');
+      fY=yearPair_(s, 'fuel surcharge', cyData),
+      cCyF=fY.cyCol, cPyF=fY.pyCol;
   var out=[];
   for (var i=s.hdr+1;i<s.values.length;i++){
     var row=s.values[i]; var plant=String(row[cPlant]||'').trim(); if(!plant) continue;
@@ -8675,15 +8693,15 @@ function getRmxLookupUrls(){      return RMXSUGGEST.getUrls(); }
  *     Bill Month                     - carries the YEAR as well as the month
  *                                      ("Feb-25"), which decides which pair of
  *                                      year columns a row uses.
- *     "#### Vol"                     - one column per year
- *     "#### Net Sales Ex VA (CAD)"   - one column per year
+ *     volume                         - "CY Vol" or "#### Vol"
+ *     net sales                      - "CY Net Sales Ex VA (CAD)" or "####…"
  *     Major Project Segment          - the one product dimension this page can
  *                                      filter on (see FILTERS below)
  *
  *   Extra Raw Data - the surcharge itself: dollars AND applied m3.
  *     mat_prod_hier_3 matching /fuel surcharge/i
- *     "Total Revenue - ####"         - one column per year
- *     "M3 Applied To - ####"         - one column per year
+ *     revenue                        - "Total Revenue - CY" or "- ####"
+ *     applied m3                     - "M3 Applied To - CY" or "- ####"
  *
  * WHY BOTH THE DOLLARS AND THE m3 COME OFF EXTRA RAW DATA
  *   Main Raw Data's CY / PY Fuel Surcharge columns are not a per-row charge.
@@ -10556,13 +10574,19 @@ function ovcHistAgg_(page){
     plantType: ovcCol_(t, 'plant type'), matFam: ovcCol_(t, 'material family'),
     prodClass: ovcCol_(t, 'product class [rock]'), prodApp: ovcCol_(t, 'product application'),
     custSeg: ovcCol_(t, 'cust segment [rock]'), custParent: ovcCol_(t, 'customer parent'),
-    cyRev: ovcCol_(t, 'cy rev exworks'), pyRev: ovcCol_(t, 'py rev exworks'),
-    cyFsc: ovcCol_(t, 'cy fuel surcharge'), pyFsc: ovcCol_(t, 'py fuel surcharge'),
     /* optional: absent in older exports, handled in the roll */
     soldTo:   ovcColOpt_(t, 'sold to'),
     fscCyVol: ovcColOpt_(t, 'fsc cy volume'),
     fscPyVol: ovcColOpt_(t, 'fsc py volume')
   };
+  /* Revenue and the surcharge split, however this era's book heads them. The
+     year handed in is 0 here on purpose: these two are only ever needed as a
+     CY/PY PAIR, and where the header names years the newest is CY either way.
+     Volume is the one that needs the data to decide, and it is done below. */
+  var revC = APP_yearCols_(APP_hdrArray_(t.idx), 'rev exworks', 0);
+  var fscC = APP_yearCols_(APP_hdrArray_(t.idx), 'fuel surcharge', 0);
+  c.cyRev = revC.cy; c.pyRev = revC.py;
+  c.cyFsc = fscC.cy; c.pyFsc = fscC.py;
   /* THE HEADER DOES NOT DECIDE ANYTHING - not the year of a row, and not which
      volume column belongs to which year. The 2024/2023 export ships its two
      columns labelled "2023 Volume", "2024 Volume" in that order while the data
