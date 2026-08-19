@@ -95,9 +95,19 @@ relationship to each other.
 mounting nothing, and logs a warning. The ten route names are unchanged from the nine-file
 era, so old bookmarks still work.
 
-`appsscript.json` pins `executeAs: USER_DEPLOYING` — everything runs as the deploying
-account, which is also why `getUserProperties()` is effectively one shared store and why
-TP01's market → email map is a single list.
+`appsscript.json` pins `executeAs: USER_DEPLOYING` — every **web request** runs as the
+deploying account, which is also why `getUserProperties()` is effectively one shared store and
+why TP01's market → email map is a single list.
+
+**`executeAs` does not govern the triggers, and this is the trap.** An installable trigger runs
+as **whoever created it in the Triggers UI** — not the script owner, not the deployer, not the
+person whose browser is open. Two identities, two consent screens, two sets of Drive and Gmail
+access, and nothing anywhere reports the mismatch: if the deployer and the trigger-creator are
+different accounts, the pages serve one account's Drive while `qlikSyncCheck` writes from
+another's and `inventoryReportMailCheck` reads another's mail. **Create both triggers from the
+account that deployed the web app**, and if you are ever unsure which one that is,
+`APP_verifyPermissions()` prints the effective user — run it from the editor, and read the
+`ran` line of a trigger's own execution log to see who a firing actually ran as.
 
 **Its `oauthScopes` array replaces Apps Script's automatic scope detection.** Add a service,
 add its scope by hand — nothing warns you, the call just throws for every user.
@@ -111,7 +121,8 @@ six. Each of the eight scopes was traced to a real call:
 | `auth/drive` | `DriveApp` get/create **and** the Drive v3 REST `files/copy` in §5 that converts a QlikView export. Full `drive`, not `drive.file`: the files were not created by this script |
 | `auth/presentations` | `SlidesApp.openById` — the Deck Builder |
 | `auth/script.send_mail` | `MailApp.sendEmail` — TP01. Still not a Gmail scope: it is the narrow "send mail as you" grant and it cannot read a mailbox. The read side is the next row, and the two are separate grants on purpose |
-| `auth/gmail.readonly` | `GmailApp.search` / `getAttachments` — §10's Inventory Report mail watch, and nothing else. **Read-only deliberately**: the watch remembers which messages it has already published in a Script Property rather than labelling or archiving them, so `gmail.modify` is not needed and nothing ever writes to a mailbox. This is the widest grant in the list — it can read every message the deployer can — and it is here only because Gmail has no "one sender, one subject" scope to ask for instead. `APP_CONFIG.INVENTORY_MAIL.FROM` is the narrowing the project *can* do |
+| `auth/gmail.readonly` | `GmailApp.search` / `getAttachments` — §10's Inventory Report mail watch, and nothing else. **Read-only deliberately**: the watch remembers which messages it has already published in a Script Property rather than labelling or archiving them, so `gmail.modify` is not needed and nothing ever writes to a mailbox. This is the widest grant in the list — it can read every message the deployer can — and it is here only because Gmail has no "one sender, one subject" scope to ask for instead.
+The mailbox it reads is the **trigger creator's**, not the deployer's (§1). `APP_CONFIG.INVENTORY_MAIL.FROM` is the narrowing the project *can* do |
 | `auth/script.external_request` | `UrlFetchApp` — the logo, and the Drive REST call above |
 | `auth/script.scriptapp` | `ScriptApp.getService().getUrl()`, which every page link is built from. Included deliberately even though it may be reachable without it: if that URL comes back empty every link goes **relative**, and a relative href inside the Apps Script sandbox iframe resolves against `googleusercontent.com`, navigating the user off the app. That shipped once |
 | `auth/userinfo.email` | `Session.getActiveUser().getEmail()` — who archived a KPI workbook, and the check's own report |
@@ -360,7 +371,8 @@ a page that no longer owns a workbook. `tests/configcheck.js` is the gate.
 the `IR` backend whose setting it writes, and everything configurable about it is
 `APP_CONFIG.INVENTORY_MAIL` in §1.
 
-Each firing searches the deploying account's mailbox for mail whose subject starts with
+Each firing searches **the trigger creator's own mailbox** — see §1: the trigger runs as
+whoever added it, not as the deployer — for mail whose subject starts with
 `SUBJECT_PREFIX`, from `FROM`, inside `WINDOW_DAYS`. For every message it has not published
 before it files the PDF attachment into `FOLDER_ID` and calls **`IR.saveSource` — the same
 call the page's modal makes**, which is why there is no second setting anywhere and why a

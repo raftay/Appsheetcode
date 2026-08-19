@@ -12497,6 +12497,16 @@ function IR_saveSource(input, label)  { return IR.saveSource(input, label); }
  * mail, uploaded it to the Drive folder, copied the link, opened the page's
  * modal and pasted it. This does the same four things on a trigger.
  *
+ * WHOSE MAILBOX IT IS, BECAUSE IT IS NOT THE OBVIOUS ANSWER. appsscript.json
+ * pins executeAs: USER_DEPLOYING, and that governs WEB REQUESTS ONLY. An
+ * installable trigger runs as WHOEVER CREATED IT in the Triggers UI — so this
+ * reads the trigger creator's mail, writes to the trigger creator's Drive, and
+ * asks the trigger creator for the gmail.readonly grant. Add the trigger from
+ * the account that deployed the web app and the two identities are the same
+ * one; add it from anywhere else and they are not, silently. §4 reports the
+ * effective user, and a trigger's own execution log names who each firing ran
+ * as.
+ *
  *   1. search the mailbox for the report mail
  *   2. file its PDF into APP_CONFIG.INVENTORY_MAIL.FOLDER_ID
  *   3. name it for the month the SUBJECT names
@@ -12849,6 +12859,14 @@ var IRMAIL = (function () {
  * because §2's logging replaced it: a diagnostic that can no longer observe
  * anything is not superseded, it is unreachable.
  *
+ * AND WHOEVER ADDS A TRIGGER IS WHO IT RUNS AS. Not the script owner and not
+ * the deployer: executeAs: USER_DEPLOYING covers web requests, and an
+ * installable trigger runs under the account that created it. Both triggers
+ * here read another account's Drive or mail to do their job, so adding one from
+ * the wrong account gives you a run that authorises cleanly and then looks at
+ * the wrong data — or at nothing. Add both from the account that deployed the
+ * web app.
+ *
  * THIS IS WHY THE SECTION EXISTS. There is not one ScriptApp.newTrigger in the
  * codebase — BOTH triggers are configured by hand in the Apps Script UI, so
  * nothing in the repo points at either. Ctrl+F "§11" is the substitute for that
@@ -13027,7 +13045,10 @@ function qlikSyncNow(scope) {
  * THE SECOND HOURLY TRIGGER: the Inventory Report publishes itself.
  * --------------------------------------------------------------------------
  * Set ONE time-driven trigger on inventoryReportMailCheck — Triggers ▸ Add
- * trigger ▸ Time-driven ▸ Hour timer ▸ Every hour. Nothing in this repo creates
+ * trigger ▸ Time-driven ▸ Hour timer ▸ Every hour. ADD IT FROM THE ACCOUNT THAT
+ * DEPLOYED THE WEB APP: a trigger runs as whoever created it, so it is that
+ * account's mailbox this searches and that account that is asked to grant
+ * gmail.readonly. Nothing in this repo creates
  * it and nothing calls this function; the trigger is the only caller it will
  * ever have.
  *
