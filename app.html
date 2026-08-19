@@ -22150,24 +22150,39 @@ AMR.page('tp01', {
 
   function norm(v) { return String(v ?? '').trim(); }
 
-  /* THE EXPORT NAMES THE YEAR IN TWO OF ITS COLUMNS — "2026 Volume" and
-     "2026 ASP ex-Works" — AND THIS PAGE USED TO NAME IT BACK, in six
-     indexOf() calls. On the first export of a new year every one of them
-     returns -1: the volume and ASP columns read as missing, every Additional
-     Revenue to Post comes out of a blank cell, and the workbook still builds
-     and still downloads. Nothing on the page says anything is wrong, which is
-     what makes it worth the eight lines below.
+  /* THE EXPORT NAMES A PERIOD IN TWO OF ITS COLUMNS — "2026 Volume" or "CY
+     Volume", "2026 ASP ex-Works" or "CY ASP ex-Works" — AND THIS PAGE USED TO
+     NAME IT BACK, in six indexOf() calls. On the first export of a new year
+     every one of them returned -1: the volume and ASP columns read as missing,
+     every Additional Revenue to Post came out of a blank cell, and the
+     workbook still built and still downloaded. Nothing on the page said
+     anything was wrong, which is what makes it worth the lines below.
 
-     So the column is found by SHAPE — four digits, a space, the rest — and the
-     newest year wins if an export ever carries both. Everything downstream
-     already passes the export's own header through to the output file, so the
-     year needs naming in exactly one place: here, not at all.
-     README §7, "the year is DATA". */
+     So the column is found by SHAPE. The period is CY, PY or a four-digit
+     year; it sits at either end of the name and the dash before it is
+     optional. Current wins: an explicit CY beats anything, a newer year beats
+     an older one, and a PY column is taken only when it is all there is —
+     which is still better than reading nothing at all.
+
+     Everything downstream passes the export's own header through to the output
+     file, so the period needs naming in exactly one place: here, and by shape
+     rather than by name. This is script.gs's APP_period_ rule, in the one place
+     on this side of the wire that has to know it. */
   function iYearCol(headers, suffix) {
-    var best = -1, bestY = -1;
+    var want = String(suffix).replace(/\s+/g, ' ').trim().toLowerCase();
+    var best = -1, bestRank = -1;
     for (var i = 0; i < headers.length; i++) {
-      var m = /^(\d{4})\s+(.+)$/.exec(String(headers[i] == null ? '' : headers[i]).trim());
-      if (m && m[2] === suffix && Number(m[1]) > bestY) { bestY = Number(m[1]); best = i; }
+      var s = String(headers[i] == null ? '' : headers[i]).replace(/\s+/g, ' ').trim().toLowerCase();
+      var m = /^((?:19|20)\d{2}|cy|py)\b[\s\-]*(.+)$/.exec(s), tok, rest;
+      if (m) { tok = m[1]; rest = m[2]; }
+      else {
+        m = /^(.+?)[\s\-]*\b((?:19|20)\d{2}|cy|py)$/.exec(s);
+        if (!m) continue;
+        tok = m[2]; rest = m[1];
+      }
+      if (rest !== want) continue;
+      var rank = (tok === 'cy') ? Infinity : (tok === 'py') ? 0 : Number(tok);
+      if (rank > bestRank) { bestRank = rank; best = i; }
     }
     return best;
   }

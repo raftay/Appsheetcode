@@ -119,9 +119,37 @@ function load(ctx, ...files) {
   return ctx;
 }
 
+/* §3's shared header helpers — APP_hdrNorm_, APP_period_, APP_yearCols_ and the
+   rest — sliced out of script.gs. They sit between the §3 banner and the first
+   merged file's banner, so they belong to no region and a harness that loads
+   one region alone would not have them. In Apps Script it would: one global
+   scope, every section can see them. Same argument as APP_log below. */
+function sharedSource() {
+  const at = APP.indexOf('\n * §3  ROUTER + PLUMBING');
+  if (at === -1) throw new Error('scriptgs.js: no §3 banner in script.gs');
+  const from = APP.indexOf('*/\n', at);
+  const to   = APP.indexOf('\n/* ---- ', from);
+  if (from === -1 || to === -1) throw new Error('scriptgs.js: §3 has lost its shape');
+  return APP.slice(from + 3, to);
+}
+
+/* Built once and copied by reference. The helpers close over nothing but their
+   own definitions, so a function made here works in any context it is handed
+   to — which is what lets attach() run before vm.createContext as well as
+   after. */
+const SHARED = (() => {
+  const box = { console };
+  vm.createContext(box);
+  vm.runInContext(sharedSource(), box, { filename: 'script.gs (§3 shared)' });
+  const out = {};
+  for (const k of Object.keys(box)) if (k.startsWith('APP_')) out[k] = box[k];
+  return out;
+})();
+
 /* For harnesses that build and run their own context rather than going through
    load(). Call it before vm.createContext. */
 function attach(ctx) {
+  for (const k in SHARED) if (!ctx[k]) ctx[k] = SHARED[k];
   if (!ctx.APP_log) {
     ctx.__log = [];
     ctx.APP_log = function (level, where, msg, data) {
@@ -133,5 +161,5 @@ function attach(ctx) {
 
 const whole = () => APP;
 
-module.exports = { region, load, attach, whole, ORDER, REPO,
+module.exports = { region, load, attach, whole, shared: () => SHARED, ORDER, REPO,
                    APP_PATH: path.join(REPO, 'script.gs') };

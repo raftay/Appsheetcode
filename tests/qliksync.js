@@ -406,5 +406,176 @@ console.log('\nqlikStamps says what the next check will do:');
     rows.filter(r => r.willSync)[0].feeds, 'segment');
 }
 
+/* ======================================================================
+ * The two sides spell their periods differently, and always will
+ * ----------------------------------------------------------------------
+ * The Aggregates export names years — "2025 Volume", "2026 Volume" — and the
+ * workbook it feeds has been moved to "CY Volume" / "PY Volume". Neither side
+ * is under this code's control and either can change again, so the pairing is
+ * on the figure and its period rather than on the literal header.
+ *
+ * The surcharge is the same defect wearing different clothes: the export heads
+ * it "Fuel Surchage" and the workbook "Fuel Surcharge". One missing letter,
+ * one column that matched nothing and was never written, and a tab that looked
+ * healthy because every OTHER column synced.
+ * ==================================================================== */
+function periodBook() {
+  const hdr = ['LOOKUP KEY', 'Year', 'Month', 'Plant Type', 'Material Family',
+               'CY Volume', 'PY Volume', 'CY Rev exWorks', 'PY Rev exWorks',
+               'Fuel Surcharge', 'CY Fuel Surcharge'];
+  /* the banner the real tab carries above its header: periods, no figures */
+  const banner  = ['', '', '', '', '', 'CY', 'PY', 'CY', 'PY', '', ''];
+  const anchors = ['', '', '', '', '', '', '', '', '', '',
+                   { f: '=ARRAYFORMULA(F3:F50040*1)' }];
+  const stale = () => ['', 'OLD', 'OLD', 'OLD', 'OLD', -1, -1, -1, -1, -1, ''];
+  return makeBook([makeSheet(RAW_TAB, [banner, hdr, anchors, stale(), stale()]),
+                   makeSheet(OTHER_TAB, [['LOOKUP KEY', 'Year', 'Month', 'Other Revenue'],
+                                         ['', '', '', ''], ['', 'OLD', 'OLD', 'OLD']])]);
+}
+/* Years on one side, CY/PY on the other, and the export's own typo. */
+function periodExport() {
+  const raw = [['Year', 'Month', 'Plant Type', 'Material Family',
+                '2025 Volume', '2026 Volume', 'PY Rev exWorks', 'CY Rev exWorks',
+                'Fuel Surchage']];
+  raw.push([2026, 'Apr', 'Fixed', 'Sand', 11, 22, 33, 44, 55]);
+  raw.push([2025, 'Apr', 'Fixed', 'Sand', 66, 77, 88, 99, 110]);
+  const other = [['Year', 'Month', 'Other Revenue'], [2026, 'Apr', 7]];
+  return makeBook([makeSheet('CPI Raw Export', raw),
+                   makeSheet('CPI Other Export', other)]);
+}
+
+console.log('\nyears on one side, CY/PY on the other:');
+{
+  const ctx = load();
+  BOOKS.pricevolume = periodBook();
+  ctx.SpreadsheetApp.openById = id => ((id in NAMES) ? periodExport() : BOOKS[id]);
+
+  const res = ctx.qlikSyncNow('pricevolume');
+  const tab = res.done.filter(d => d.tab === RAW_TAB)[0] || { unmatched: ['(tab not written)'] };
+  check('every export column found a home', tab.unmatched, []);
+  check('all nine were paired', tab.columns, 9);
+  check('CY was read off the Year column, not the header', tab.dataYear, 2026);
+
+  const g = BOOKS.pricevolume.getSheetByName(RAW_TAB)._grid();
+  const at = (row, name) => {
+    const c = g[1].findIndex(x => String(x.v) === name);
+    return c === -1 ? '(no such column)' : g[row - 1][c].v;
+  };
+  check('"2026 Volume" wrote into "CY Volume"',      at(3, 'CY Volume'), 22);
+  check('"2025 Volume" wrote into "PY Volume"',      at(3, 'PY Volume'), 11);
+  check('CY Rev exWorks is not swapped with PY',     at(3, 'CY Rev exWorks'), 44);
+  check('nor PY with CY',                            at(3, 'PY Rev exWorks'), 33);
+  check('"Fuel Surchage" wrote into "Fuel Surcharge"', at(3, 'Fuel Surcharge'), 55);
+  check('and not into "CY Fuel Surcharge"',          at(3, 'CY Fuel Surcharge'), '');
+  check('the second export row landed too',          at(4, 'CY Volume'), 77);
+}
+
+/* The workbook has not gained next year's column yet. Pairing on rank would
+   write 2027's figures into the 2026 column; pairing on the year leaves it
+   unmatched, which is reported and is the right answer. */
+console.log('\na year the workbook does not have yet is reported, not guessed at:');
+{
+  const ctx = load();
+  BOOKS.pricevolume = makeBook([makeSheet(RAW_TAB, [
+    ['LOOKUP KEY', 'Year', 'Month', 'Plant Type', 'Material Family',
+     'Fuel Surcharge', '2026 Volume', '2025 Volume'],
+    ['', '', '', '', '', '', '', ''],
+  ])]);
+  ctx.SpreadsheetApp.openById = id => ((id in NAMES) ? makeBook([makeSheet('X', [
+    ['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage',
+     '2027 Volume', '2026 Volume'],
+    [2027, 'Apr', 'Fixed', 'Sand', 1, 5, 6],
+  ])]) : BOOKS[id]);
+
+  const res = ctx.qlikSyncNow('pricevolume');
+  const tab = res.done.filter(d => d.tab === RAW_TAB)[0] || {};
+  check('the new year is named as unmatched', tab.unmatched, ['2027 Volume']);
+  check('and every other column still paired', tab.columns, 6);
+}
+
+/* ======================================================================
+ * The temp sheet is private, and it goes away
+ * ----------------------------------------------------------------------
+ * An .xls export cannot be read where it stands, so Drive converts it to a
+ * Google Sheet first. That copy must not inherit the export's audience: a new
+ * Drive file takes its sharing from the folder it is created in, so one made
+ * with no parent lands beside the export, in whatever shared folder that sits
+ * in, and turns up in other people's Drive activity mail.
+ *
+ * Nothing here creates a permission — that is the only Drive call that emails
+ * anybody — and the copy is trashed whether the read worked or not.
+ * ==================================================================== */
+/* The trigger skips a source that has not moved. A person running the manual
+   sync is here BECAUSE the sheet is wrong and the file did NOT move, so that
+   rule must not reach them. */
+console.log('\nthe manual sync ignores the export\u2019s modified time:');
+{
+  const ctx = load();
+  const first = ctx.qlikSyncNow('pricevolume');
+  check('the first run wrote', first.done.length > 0, true);
+
+  const wroteFirst = OPS.length;
+  OPS = [];
+  const again = ctx.qlikSyncNow('pricevolume');   /* same file, same modified time */
+  check('and so did the second, with nothing having changed', again.done.length > 0, true);
+  checkThat('it wrote as much the second time', OPS.length === wroteFirst,
+            OPS.length + ' vs ' + wroteFirst);
+
+  /* …while the trigger, on that same unchanged file, does nothing at all. Only
+     Aggregates is looked at here: the manual run covered that scope alone, so
+     the other two have no stamp yet and still count as new. */
+  OPS = [];
+  const chk = ctx.qlikSyncCheck();
+  checkThat('the trigger still skips what has not moved',
+            chk.changed.indexOf('Aggregates') === -1 && chk.unchanged.indexOf('Aggregates') !== -1,
+            JSON.stringify({ changed: chk.changed, unchanged: chk.unchanged }));
+  check('and it wrote nothing for Price & Volume',
+    OPS.filter(o => o.sheet === RAW_TAB).length, 0);
+}
+
+console.log('\nthe converted copy is private, and is cleaned up:');
+{
+  const ctx = load();
+  const CALLS = [];
+  const TEMP = 'temp-file-id';
+  let trashed = [];
+
+  ctx.DriveApp.getFileById = id => {
+    if (id === TEMP) return { setTrashed: () => { trashed.push(id); } };
+    return {
+      getId: () => id, getName: () => NAMES[id],
+      getMimeType: () => 'application/vnd.ms-excel',      /* forces a conversion */
+      getLastUpdated: () => new RealDate(MTIME[id]),
+      setTrashed: () => { trashed.push(id); },
+    };
+  };
+  ctx.DriveApp.getRootFolder = () => ({ getId: () => 'my-drive-root' });
+  ctx.UrlFetchApp.fetch = (url, opts) => {
+    CALLS.push({ url, method: (opts && opts.method) || 'get', payload: opts && opts.payload });
+    if (/\/copy\?/.test(url)) return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ id: TEMP }) };
+    if (/\/permissions\?/.test(url)) return { getResponseCode: () => 200,
+      getContentText: () => JSON.stringify({ permissions: [
+        { id: 'owner1', role: 'owner' }, { id: 'reader1', role: 'reader' },
+        { id: 'writer1', role: 'writer' }] }) };
+    return { getResponseCode: () => 204, getContentText: () => '' };
+  };
+  ctx.SpreadsheetApp.openById = id => ((id === TEMP) ? exportBook() : BOOKS[id]);
+
+  ctx.qlikSyncNow('pricevolume');
+
+  const copy = CALLS.filter(c => /\/copy\?/.test(c.url))[0];
+  checkThat('the copy names a parent of its own', !!copy && /"parents":\["my-drive-root"\]/.test(copy.payload),
+            copy && copy.payload);
+  check('every non-owner permission is deleted',
+    CALLS.filter(c => c.method === 'delete' && /\/permissions\//.test(c.url))
+         .map(c => c.url.split('/permissions/')[1].split('?')[0]).sort(),
+    ['reader1', 'writer1']);
+  check('and the owner\u2019s is left alone',
+    CALLS.filter(c => /\/permissions\/owner1/.test(c.url)).length, 0);
+  checkThat('no permission is ever created — that is the call that emails people',
+    CALLS.every(c => !(c.method === 'post' && /\/permissions/.test(c.url))));
+  check('the temp sheet is trashed', trashed, [TEMP]);
+}
+
 console.log(fails ? `\n${fails} failing check(s)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

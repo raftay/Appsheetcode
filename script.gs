@@ -1197,6 +1197,236 @@ function APP_logTimed(where, msg, fn, data) {
  * for every route and the ?page=app scaffold goes.
  * ============================================================================ */
 
+/* ========================================================================
+ * PERIOD COLUMNS — the one place that reads a period out of a header name
+ * ----------------------------------------------------------------------
+ * The same figure is headed four different ways across the exports and the
+ * workbooks they feed, and all four are live:
+ *
+ *     2026 Volume     CY Volume     Total Revenue - 2025     Total Revenue -PY
+ *
+ * The two sides do not have to agree and currently do not: the Aggregates
+ * export still names years while its workbook has been moved to CY/PY. Both
+ * sides also roll — 2025/2026 becomes 2026/2027 — and either can be switched
+ * to CY/PY without warning. Everything that reads a header goes through the
+ * helpers below so none of that costs a code change.
+ *
+ * WHICH YEAR IS CURRENT IS DECIDED BY THE DATA, NOT BY THE HEADER. A header
+ * spelling its periods "CY"/"PY" names no year at all, so a reader keying its
+ * cells by year has nothing to key on. The Year column (Aggregates) and the
+ * year on a Bill Month (Ready-Mix) are the answer, and they are also the
+ * check: whatever a header claims, the rows say which years the book holds.
+ * ====================================================================== */
+
+/* Header text, flattened. Case, non-breaking spaces, doubled spaces and stray
+   padding all vary between an export and the workbook it feeds. Two spellings
+   are folded outright because both ship and both mean one column:
+
+     · "Fuel Surchage" is the Aggregates export's own name for the column its
+       workbook heads "Fuel Surcharge". One missing letter meant that one
+       column matched nothing and was never written, while every other column
+       on the tab synced — so the tab looked fine and the surcharge was stale.
+     · "ex Works" / "ex-Works" / "exWorks" alternate freely on both sides. */
+function APP_hdrNorm_(v) {
+  return String(v == null ? '' : v)
+    .replace(/\u00A0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/surchage/g, 'surcharge')
+    .replace(/ex[\s\-]?works/g, 'exworks');
+}
+
+/* One header split into the figure it names and the period it names it for,
+   as { base, period: 'cy' | 'py' | '', year }.
+
+   The token is CY, PY or a four-digit year. It can sit at either end or in the
+   middle ("FSC CY Volume"), and the dash between it and the rest is optional —
+   "Total Revenue - 2025", "Total Revenue -PY" and "2025 Revenue" are one shape.
+
+   A NAME CARRYING NO TOKEN IS NOT A VAGUER SPELLING OF ONE. "Fuel Surcharge"
+   comes back with period '' and year 0, and that is a period of its own: the
+   Aggregates workbook carries "Fuel Surcharge", "CY Fuel Surcharge" and "PY
+   Fuel Surcharge" side by side, and they are three different columns.
+
+   TWO TOKENS MEANS NEITHER, so nothing is invented for a "2025 vs 2026"
+   heading — it is left whole and matches only itself. */
+function APP_period_(name) {
+  var s = APP_hdrNorm_(name);
+  var out = { base: s, period: '', year: 0 };
+  if (!s) return out;
+
+  var re = /(^|[^a-z0-9])((?:19|20)\d{2}|cy|py)(?![a-z0-9])/g, hits = [], m;
+  while ((m = re.exec(s))) hits.push({ at: m.index + m[1].length, tok: m[2] });
+  if (hits.length !== 1) return out;
+
+  var at = hits[0].at, tok = hits[0].tok;
+  var left  = s.slice(0, at).replace(/[\s\-]+$/, '');
+  var right = s.slice(at + tok.length).replace(/^[\s\-]+/, '');
+  out.base = (left && right) ? (left + ' ' + right) : (left || right);
+  if (tok === 'cy' || tok === 'py') out.period = tok;
+  else out.year = Number(tok);
+  return out;
+}
+
+/* The year a cell names, whatever shape it arrives in: a Year column's 2026, a
+   Bill Month's "Apr-25" or "July-2026", a real Date, or the Excel serial a
+   round trip through .xls leaves behind. 0 means the cell names no year, which
+   is normal rather than an error — the Aggregates tabs carry a bare "Jul" in
+   their Month column and keep the year in a column of its own. */
+function APP_cellYear_(v) {
+  if (v == null || v === '') return 0;
+  if (Object.prototype.toString.call(v) === '[object Date]') return v.getFullYear();
+  if (typeof v === 'number') {
+    if (v >= 1990 && v <= 2100) return Math.round(v);                 // a Year cell
+    if (v > 20000 && v < 80000)                                       // an Excel serial
+      return new Date(Math.round((v - 25569) * 86400000)).getUTCFullYear();
+    return 0;
+  }
+  var s = String(v).trim(), m = /(^|[^0-9])((?:19|20)\d{2})(?![0-9])/.exec(s);
+  if (m) return Number(m[2]);
+  m = /^[A-Za-z]{3,}[\s\-\/.]*(\d{2})$/.exec(s);                      // "Apr-25"
+  return m ? 2000 + Number(m[1]) : 0;
+}
+
+/* The newest year the ROWS name in `col`, starting at `from` for a grid that
+   still has its header on the front. This is what decides which of a tab's two
+   period columns is current.
+
+   NOTHING HERE CONSULTS THE CALENDAR, and a cap against "the future" was tried
+   and taken out again. It made the answer depend on the day the code ran, which
+   is the one dependency this whole family of helpers exists to remove — a
+   workbook is read the same way whenever it is opened. APP_cellYear_ only
+   accepts 19xx/20xx, so a mistyped cell cannot invent a year outside that. */
+function APP_dataCyYear_(rows, col, from) {
+  if (!rows || col == null || col < 0) return 0;
+  var best = 0;
+  for (var i = from || 0; i < rows.length; i++) {
+    var r = rows[i]; if (!r) continue;
+    var y = APP_cellYear_(r[col]);
+    if (y > best) best = y;
+  }
+  return best;
+}
+
+/* Every column of `headerRow` that names `base` for a period, as
+   { byYear, cy, py, cyYear, pyYear, years }. `base` may be a list, for a
+   figure that is spelled more than one way ("Net Sales Ex VA", with or without
+   the "(CAD)" the export sometimes drops).
+
+   `byYear` is the map a reader keys on: the row says 2026, byYear[2026] says
+   which column to read. A header that names its years builds that map itself.
+   A header that says CY/PY CANNOT, and `dataCyYear` — the newest year the rows
+   carry — is what fills it in. Without that a CY/PY-headed workbook reads as a
+   column of zeroes under correct-looking headings, which is the failure this
+   helper exists to stop.
+
+   A HEADER THAT NAMES YEARS IS BELIEVED OVER dataCyYear. The years are the
+   answer there, and the first export of a new year legitimately carries a
+   column for a year no row has reached yet. */
+function APP_yearCols_(headerRow, base, dataCyYear) {
+  var want = (base instanceof Array ? base : [base]).map(APP_hdrNorm_);
+  var years = [], cy = -1, py = -1, i, p;
+  headerRow = headerRow || [];
+  for (i = 0; i < headerRow.length; i++) {
+    p = APP_period_(headerRow[i]);
+    if (want.indexOf(p.base) === -1) continue;
+    if (p.year) years.push({ y: p.year, i: i });
+    else if (p.period === 'cy' && cy < 0) cy = i;
+    else if (p.period === 'py' && py < 0) py = i;
+  }
+  years.sort(function (a, b) { return b.y - a.y; });
+
+  var out = { byYear: {}, cy: cy, py: py, cyYear: 0, pyYear: 0,
+              years: years.map(function (x) { return x.y; }) };
+  years.forEach(function (x) { if (!(x.y in out.byYear)) out.byYear[x.y] = x.i; });
+
+  if (years.length) {
+    if (out.cy < 0) out.cy = years[0].i;
+    if (out.py < 0 && years.length > 1) out.py = years[1].i;
+    out.cyYear = years[0].y;
+    out.pyYear = years.length > 1 ? years[1].y : years[0].y - 1;
+  } else if (dataCyYear) {
+    out.cyYear = Number(dataCyYear);
+    out.pyYear = out.cyYear - 1;
+    if (out.cy >= 0) out.byYear[out.cyYear] = out.cy;
+    if (out.py >= 0) out.byYear[out.pyYear] = out.py;
+  }
+  return out;
+}
+
+/* A { normalised name -> column } index turned back into a header row, so the
+   helpers above can read it. Several of the readers hold their header that
+   way and never keep the row itself. */
+function APP_hdrArray_(index) {
+  var out = [];
+  for (var k in index) if (Object.prototype.hasOwnProperty.call(index, k)) out[index[k]] = k;
+  return out;
+}
+
+/* One header row, indexed so it can be matched against another header row that
+   spells its periods differently. Three indexes, because three questions:
+
+     plain   base            -> column, for a header naming no period
+     year    base + '|y2026' -> column
+     rank    base + '|cy'    -> column, and '|py'
+
+   `rank` is the bridge. An explicit CY/PY token goes in as itself; a
+   year-named column is ranked against the other years the SAME header gives
+   that base — newest is CY, the one below it is PY. Ranking rather than naming
+   is the point: the sync has to pair "2026 Volume" with "CY Volume" and cannot
+   rewrite either side.
+
+   THE YEAR KEY IS TRIED FIRST WHEN BOTH SIDES NAME YEARS, and that is not a
+   detail. A workbook gains a new year's column by hand, some time after the
+   export already has it. Pairing on rank inside that window would write this
+   year's figures into last year's column; pairing on the year leaves the new
+   column unmatched, which is reported, and is the right answer. */
+function APP_periodMap_(headerRow) {
+  var out = { plain: {}, year: {}, rank: {}, hasYear: {}, rankAt: {} }, byBase = {};
+  headerRow = headerRow || [];
+  for (var i = 0; i < headerRow.length; i++) {
+    var p = APP_period_(headerRow[i]);
+    if (!p.base) continue;
+    if (!p.period && !p.year) {
+      if (!(p.base in out.plain)) out.plain[p.base] = i;
+    } else if (p.year) {
+      out.hasYear[p.base] = 1;
+      var yk = p.base + '|y' + p.year;
+      if (!(yk in out.year)) out.year[yk] = i;
+      (byBase[p.base] = byBase[p.base] || []).push({ y: p.year, i: i });
+    } else {
+      var tk = p.base + '|' + p.period;
+      if (!(tk in out.rank)) { out.rank[tk] = i; out.rankAt[i] = p.period; }
+    }
+  }
+  Object.keys(byBase).forEach(function (base) {
+    var list = byBase[base].sort(function (a, b) { return b.y - a.y; });
+    ['cy', 'py'].forEach(function (per, n) {
+      if (!list[n] || (base + '|' + per) in out.rank) return;
+      out.rank[base + '|' + per] = list[n].i;
+      out.rankAt[list[n].i] = per;
+    });
+  });
+  return out;
+}
+
+/* Which column of `tgt` holds what the other side's column `p` names, where
+   `base` is that name after any per-tab aliasing and `srcRank` is 'cy' / 'py'
+   / '' — the rank that column has in ITS OWN header. -1 when nothing does,
+   which is a reportable answer and not a failure. */
+function APP_periodFind_(tgt, base, p, srcRank) {
+  if (!base) return -1;
+  if (!p.period && !p.year) return (base in tgt.plain) ? tgt.plain[base] : -1;
+  if (p.year) {
+    var yk = base + '|y' + p.year;
+    if (yk in tgt.year) return tgt.year[yk];
+    if (tgt.hasYear[base]) return -1;         // both sides name years: the year decides
+  }
+  var rk = base + '|' + (p.period || srcRank || '');
+  return (rk in tgt.rank) ? tgt.rank[rk] : -1;
+}
+
 /* ---- Code.gs -----------------------------------------------------------------
    Verbatim, less syncSlideData — see the hit-list note in README §9.  */
 
@@ -1840,6 +2070,31 @@ function APP_verifyPermissions() {
         return 'logo fetch returned HTTP ' + r.getResponseCode();
       } },
 
+    /* THE ONE CALL THIS REPORT USED TO TAKE ON TRUST. The sync converts each
+       .xls export through the Drive REST API on the script's own OAuth token —
+       three things at once (the token is issued, external requests are
+       allowed, the export is readable), and none of them proved by the logo
+       fetch above or by the DriveApp probe. A read of one export's metadata
+       proves all three, writes nothing, and fails here rather than an hour
+       later inside a trigger nobody is watching. */
+    { service: 'Drive REST', scope: 'auth/drive + auth/script.external_request',
+      usedFor: 'the QlikView sync: converting each export to a Google Sheet',
+      probe: function () {
+        var q = (APP_CONFIG && APP_CONFIG.QLIK_SYNC) || {};
+        var id = q.AGG_FILE_ID || q.RMX_FILE_ID || q.SEG_FILE_ID || '';
+        if (!id) return 'no export file id configured — scope referenced, not proven';
+        var r = UrlFetchApp.fetch(
+          'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) +
+          '?supportsAllDrives=true&fields=name,mimeType',
+          { muteHttpExceptions: true,
+            headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } });
+        if (r.getResponseCode() !== 200) {
+          throw new Error('Drive answered HTTP ' + r.getResponseCode() + ' for the export file id ' +
+            id + ': ' + r.getContentText().slice(0, 200));
+        }
+        return 'read "' + (JSON.parse(r.getContentText()).name || '?') + '"';
+      } },
+
     { service: 'CacheService', scope: '(none needed)',
       usedFor: 'every cached report, and the chunked bundle cache',
       probe: function () {
@@ -2127,52 +2382,39 @@ var QLIKSYNC = (function () {
 
   /* SYNONYMS — names that mean the same column on either side.
      The month column is the case that needs it: QlikView exports it as
-     `bill_month`, the sheet's header spells it "Bill Month", and norm_ only
-     folds case and whitespace — not underscores — so the two would otherwise
-     never match. Both carry the year ("Apr-25" / "Apr-26"), one year per row. */
+     `bill_month`, the sheet's header spells it "Bill Month", and header
+     normalising folds case and whitespace, not underscores, so the two would
+     otherwise never match. Both carry the year ("Apr-25" / "Apr-26"), one year
+     per row, which is also where a Ready-Mix tab's current year is read from. */
   var SYNONYM = {
     'bill month': 'monthcol', 'billmonth':   'monthcol', 'bill_month': 'monthcol'
   };
   function canon_(name) { return SYNONYM[name] || name; }
   function isMonthCol_(name) { return canon_(name) === 'monthcol'; }
 
-  /* Extras + Associates: the export names the year first, the sheet last.
+  /* Extras + Associates: the only two names that still differ once the period
+     has been taken off the header.
 
-     THE SIX YEAR ENTRIES WERE LITERALS FOR 2025 AND 2026, and a rule that only
-     knows two years stops being a rule on the first of January. They are one
-     pattern each now (README §7, "the year is DATA"): whatever year the export names, the
-     sheet's spelling of that same year is what it maps to.
+     THERE USED TO BE SIX YEAR-BY-YEAR ENTRIES HERE, then three patterns that
+     carried the year across. Both are gone: matching is on the BASE now — the
+     name with its CY, PY or year removed — so "2025 Revenue", "2027 Revenue"
+     and "Total Revenue -PY" are one entry between them, and a roll to the next
+     year costs nothing here.
 
-     THIS IS ONLY THIS HALF OF THE ROLL, and the other half is not in this repo.
-     The sync writes DATA under the headers the SHEET already has; it never
-     rewrites a header row. So a new year's column has to exist in the workbook
-     before anything can be written into it — until it does, the export's new
-     column matches nothing and is reported as unmatched rather than being
-     written somewhere wrong. What these patterns buy is that the moment the
-     workbook gains "Total Revenue - 2027", the export's "2027 revenue" finds
-     it, with no code change. */
+     THE SYNC NEVER REWRITES A HEADER ROW. It writes data under the headers the
+     workbook already has, so a new year's column has to exist there before
+     anything can be written into it. Until it does, the export's new column
+     matches nothing and is reported as unmatched rather than written somewhere
+     wrong — see APP_periodFind_ for why that is deliberate. */
   var ALIAS_EXTRA = {
-    'plant_descr': 'Plant'
+    'plant_descr': 'plant',
+    'revenue':     'total revenue'
   };
-  /* Tried in order, first match wins; each is anchored, so the "(m3 applied
-     to)" forms cannot be swallowed by the plain revenue one. */
-  var ALIAS_EXTRA_RE = [
-    [/^(\d{4}) revenue \(m3 applied to\)$/i, 'Revenue (M3 Applied To) - $1'],
-    [/^(\d{4}) m3 applied to$/i,               'M3 Applied To - $1'],
-    [/^(\d{4}) revenue$/i,                     'Total Revenue - $1']
-  ];
 
-  /* One export column's name as the SHEET spells it: the exact map first, then
-     the patterns, then the name unchanged. */
-  function alias_(spec, raw) {
-    var name = String(raw == null ? '' : raw);
-    var hit = spec.alias && spec.alias[name];
-    if (hit) return hit;
-    var rules = spec.aliasRe || [];
-    for (var i = 0; i < rules.length; i++) {
-      if (rules[i][0].test(name)) return name.replace(rules[i][0], rules[i][1]);
-    }
-    return name;
+  /* The base of one export column as the SHEET spells it. Keyed on the base,
+     so nothing here has to know which years are in play. */
+  function alias_(spec, base) {
+    return (spec.alias && spec.alias[base]) || base;
   }
 
   /* Main Raw Data and both AGG tabs use the same names on both sides. */
@@ -2198,7 +2440,7 @@ var QLIKSYNC = (function () {
       /* ---- AGG folder → Price & Volume ---- */
       { folder: 'AGG', page: 'pricevolume', tab: 'Combined Data CPI Raw',
         mode: 'columns', alias: ALIAS_NONE,
-        match: ['year', 'month', 'plant type', 'material family', 'fuel surchage'] },
+        match: ['year', 'month', 'plant type', 'material family', 'fuel surcharge'] },
 
       { folder: 'AGG', page: 'pricevolume', tab: 'Combined Data CPI Other Revenue',
         mode: 'columns', alias: ALIAS_NONE,
@@ -2218,11 +2460,11 @@ var QLIKSYNC = (function () {
          content: the fuel surcharge only ever appears on the Extras side, and
          Main Raw Data's surcharge formula reads it from there. */
       { folder: 'RMX', page: 'rmx', tab: 'Extra Raw Data',
-        mode: 'columns', alias: ALIAS_EXTRA, aliasRe: ALIAS_EXTRA_RE,
+        mode: 'columns', alias: ALIAS_EXTRA,
         match: ['bill_month', 'mat_prod_hier_3', 'mat_descr'], pick: 'extras' },
 
       { folder: 'RMX', page: 'rmx', tab: 'Associate Raw Data',
-        mode: 'columns', alias: ALIAS_EXTRA, aliasRe: ALIAS_EXTRA_RE,
+        mode: 'columns', alias: ALIAS_EXTRA,
         match: ['bill_month', 'mat_prod_hier_3', 'mat_descr'], pick: 'assoc' },
 
       /* ---- RMX folder → Slide Builder ----
@@ -2262,10 +2504,26 @@ var QLIKSYNC = (function () {
   /* =====================================================================
    * 3. DRIVE → a readable grid
    * ---------------------------------------------------------------------
-   * Apps Script cannot read .xls / .xlsx directly. Drive can convert one to a
-   * Google Sheet in a single REST call; we read it, then throw the copy away.
-   * Using the REST endpoint (rather than the Advanced Drive Service) means
-   * there is no service to switch on in the editor.
+   * Apps Script cannot read .xls / .xlsx directly — SpreadsheetApp opens a
+   * Google Sheet and nothing else. Drive converts one in a single REST call;
+   * we read the copy, then throw it away. Using the REST endpoint rather than
+   * the Advanced Drive Service means there is no service to switch on in the
+   * editor.
+   *
+   * THE TEMP SHEET IS NOT OPTIONAL, BUT IT IS AVOIDABLE. It exists only for
+   * the .xls / .xlsx case: an export saved in Drive as a GOOGLE SHEET is read
+   * where it stands, no copy is made, and the whole of this block is skipped
+   * (see readExport_). If the temp file is unwanted, that is the way to be rid
+   * of it — converting the export once, in Drive, rather than on every sync.
+   *
+   * AND IT MUST NOT BE SHARED WITH ANYBODY. A new Drive file takes its
+   * audience from the folder it is created in, so a copy made with no parent
+   * lands beside the export — in whatever shared folder that sits in, visible
+   * to everyone with access to it and turning up in their Drive activity
+   * mail. The copy is therefore created in the script account's own Drive
+   * root, and any permission that still came across with it is removed before
+   * anything is read. Nothing in this file ever CREATES a permission, which is
+   * the only Drive call that emails a person.
    * =================================================================== */
 
   var EXCEL_MIME = {
@@ -2274,31 +2532,83 @@ var QLIKSYNC = (function () {
     'application/vnd.google-apps.spreadsheet': 1
   };
 
+  /* One Drive REST call on the script's own token. */
+  function driveFetch_(url, opts) {
+    var o = { muteHttpExceptions: true };
+    for (var k in opts) o[k] = opts[k];
+    o.headers = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() };
+    return UrlFetchApp.fetch(url, o);
+  }
+  var DRIVE_V3 = 'https://www.googleapis.com/drive/v3/files/';
+
   /* Convert to a temporary Google Sheet and return the new file id. */
   function convertToSheet_(fileId, name) {
-    var url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) +
-              '/copy?supportsAllDrives=true&fields=id';
-    var res = UrlFetchApp.fetch(url, {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify({
-        name: '~qliksync temp — ' + name,
-        mimeType: MimeType.GOOGLE_SHEETS
-      }),
-      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
-      muteHttpExceptions: true
-    });
+    var body = { name: '~qliksync temp \u2014 ' + name, mimeType: MimeType.GOOGLE_SHEETS };
+
+    /* The script account's own Drive root: a folder nobody else can see, so
+       the copy is born private instead of inheriting the export folder's
+       audience. If the root cannot be read the copy is still made — a sync
+       that stops because it could not name a folder would be worse than one
+       that makes a file it then unshares and trashes. */
+    try { body.parents = [DriveApp.getRootFolder().getId()]; }
+    catch (e) {
+      APP_log('warn', 'QLIKSYNC.convert', 'no Drive root to copy into — the temp sheet will be ' +
+              'made beside the export instead', { file: name, error: String(e) });
+    }
+
+    var res = driveFetch_(DRIVE_V3 + encodeURIComponent(fileId) + '/copy?supportsAllDrives=true&fields=id',
+                          { method: 'post', contentType: 'application/json',
+                            payload: JSON.stringify(body) });
     if (res.getResponseCode() !== 200) {
       throw new Error('Drive could not convert "' + name + '" to a Google Sheet. ' +
         'Response ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
     }
-    return JSON.parse(res.getContentText()).id;
+    var id = JSON.parse(res.getContentText()).id;
+    unshare_(id, name);
+    return id;
   }
 
+  /* Every permission on the temp copy except its owner's, removed. Belt to the
+     private-parent braces: it costs one list call and it is the only thing
+     that can prove nobody else can reach the file. A failure here is a warning
+     and not a throw — the file is trashed either way, and refusing to sync
+     because a tidy-up call failed would stop the pipeline over nothing. */
+  function unshare_(fileId, name) {
+    try {
+      var res = driveFetch_(DRIVE_V3 + encodeURIComponent(fileId) +
+                            '/permissions?supportsAllDrives=true&fields=permissions(id,role)',
+                            { method: 'get' });
+      if (res.getResponseCode() !== 200) throw new Error('HTTP ' + res.getResponseCode());
+      var perms = (JSON.parse(res.getContentText()).permissions || []);
+      perms.forEach(function (pm) {
+        if (pm.role === 'owner') return;
+        driveFetch_(DRIVE_V3 + encodeURIComponent(fileId) + '/permissions/' +
+                    encodeURIComponent(pm.id) + '?supportsAllDrives=true', { method: 'delete' });
+      });
+    } catch (e) {
+      APP_log('warn', 'QLIKSYNC.convert', 'could not strip the temp sheet\u2019s sharing — it may be ' +
+              'visible to whoever the export is shared with until it is trashed',
+              { file: name, fileId: fileId, error: String(e) });
+    }
+  }
+
+  /* Trashed, and permanently deleted if trashing will not take. It is a file
+     this run created seconds ago, named "~qliksync temp", holding nothing that
+     is not already in the export — so leaving one behind on every sync is the
+     worse outcome. */
   function trashFile_(fileId) {
-    try { DriveApp.getFileById(fileId).setTrashed(true); }
-  catch (e) { APP_log('warn', 'APP.trashFile', 'could not trash the file — it stays in the folder',
-                      { fileId: fileId, error: String(e) }); }
+    try { DriveApp.getFileById(fileId).setTrashed(true); return; }
+    catch (e) {
+      try {
+        var res = driveFetch_(DRIVE_V3 + encodeURIComponent(fileId) + '?supportsAllDrives=true',
+                              { method: 'delete' });
+        if (res.getResponseCode() < 300 || res.getResponseCode() === 404) return;
+        throw new Error('HTTP ' + res.getResponseCode());
+      } catch (e2) {
+        APP_log('warn', 'QLIKSYNC.trashFile', 'the temp sheet could not be removed — it stays in ' +
+                'Drive', { fileId: fileId, error: String(e), deleteError: String(e2) });
+      }
+    }
   }
 
   /* Every tab of one export, as { name, hdr:[normalised], raw:[…], rows:[…] } */
@@ -2316,7 +2626,7 @@ var QLIKSYNC = (function () {
         books.push({
           file:  file.name,
           name:  sh.getName(),
-          hdr:   values[h].map(norm_),
+          hdr:   values[h].map(APP_hdrNorm_),
           rows:  trimGrid_(values.slice(h + 1)),
           hdrRaw: values[h]
         });
@@ -2384,7 +2694,7 @@ var QLIKSYNC = (function () {
       var ok = true;
       var canonHdr = tabs[i].hdr.map(canon_);
       for (var m = 0; m < spec.match.length; m++) {
-        if (canonHdr.indexOf(canon_(norm_(spec.match[m]))) === -1) { ok = false; break; }
+        if (canonHdr.indexOf(canon_(APP_hdrNorm_(spec.match[m]))) === -1) { ok = false; break; }
       }
       if (ok) cands.push(tabs[i]);
     }
@@ -2470,15 +2780,25 @@ var QLIKSYNC = (function () {
    * 6. WRITE — 'columns' mode
    * =================================================================== */
 
-  /* The sheet's header row: the one that matches the most export names.
-     The raw tabs carry a banner row above it ("Bill Year | 2025 | 2025 …",
-     or the totals row on Main Raw Data). */
-  function tgtHeaderRow_(probe, wanted) {
+  /* One header row, in the form the pairing below compares. */
+  function hdrKeys_(row) {
+    return (row || []).map(function (h) { return canon_(APP_hdrNorm_(h)); });
+  }
+
+  /* The sheet's header row: the one the most export columns can be paired
+     against. The raw tabs carry a banner row above it — "Bill Year | PY | PY |
+     CY", or the totals strip on Main Raw Data — and a banner scores nothing,
+     because a bare period token with no figure beside it is not a column name
+     and APP_periodMap_ does not index one. */
+  function tgtHeaderRow_(probe, srcKeys, srcMap, spec) {
     var best = 0, bestScore = -1;
     for (var r = 0; r < probe.length; r++) {
-      var score = 0;
-      for (var c = 0; c < probe[r].length; c++) {
-        if (wanted[canon_(norm_(probe[r][c]))]) score++;
+      var map = APP_periodMap_(hdrKeys_(probe[r])), score = 0, taken = {};
+      for (var sc = 0; sc < srcKeys.length; sc++) {
+        if (!srcKeys[sc]) continue;
+        var p  = APP_period_(srcKeys[sc]);
+        var tc = APP_periodFind_(map, alias_(spec, p.base), p, srcMap.rankAt[sc]);
+        if (tc !== -1 && !taken[tc]) { taken[tc] = 1; score++; }
       }
       if (score > bestScore) { bestScore = score; best = r; }
     }
@@ -2558,61 +2878,98 @@ var QLIKSYNC = (function () {
     return String(v);
   }
 
+  /* Which year the EXPORT is current for, read off its ROWS. The Aggregates
+     tabs keep it in a Year column, Ready-Mix on the Bill Month ("Jul-26").
+
+     Nothing in the pairing needs it — that is settled by rank, which holds
+     whatever the two sides call their periods. It is here because it is the
+     one figure that says the sync read the file the way a person reading it
+     would, and it goes back with the run so somebody can check it against the
+     export they just dropped in Drive. */
+  function srcCyYear_(src, keys) {
+    var yc = -1, mc = -1;
+    for (var i = 0; i < keys.length; i++) {
+      if (yc < 0 && keys[i] === 'year')     yc = i;
+      if (mc < 0 && keys[i] === 'monthcol') mc = i;
+    }
+    return APP_dataCyYear_(src.rows, yc) || APP_dataCyYear_(src.rows, mc);
+  }
+
+  /* The newest year the export's own HEADERS name, or 0 if they name none. */
+  function hdrCyYear_(keys) {
+    var best = 0;
+    for (var i = 0; i < keys.length; i++) {
+      var y = APP_period_(keys[i]).year;
+      if (y > best) best = y;
+    }
+    return best;
+  }
+
   function writeColumns_(sh, src, spec, plan) {
     var nCols = sh.getMaxColumns();
 
-    /* --- where the header sits, and what each export column maps to --- */
-    var wanted = {};
-    src.hdr.forEach(function (h) {
-      if (!h) return;
-      wanted[canon_(norm_(alias_(spec, h)))] = 1;
-    });
+    var srcKeys = src.hdr.map(canon_);
+    var srcMap  = APP_periodMap_(srcKeys);
+    var dataYear = srcCyYear_(src, srcKeys), headYear = hdrCyYear_(srcKeys);
 
+    /* --- where the header sits, and what each export column maps to --- */
     var probeRows = Math.min(8, sh.getMaxRows());
     var probe = sh.getRange(1, 1, probeRows, nCols).getValues();
-    var head  = tgtHeaderRow_(probe, wanted);
+    var head  = tgtHeaderRow_(probe, srcKeys, srcMap, spec);
     var hdrRow = head.row;
-    /* compared in canonical form, so "bill_month" finds a "Bill Month" column */
-    var tgtHdr = probe[hdrRow - 1].map(function (h) { return canon_(norm_(h)); });
+    var tgtMap = APP_periodMap_(hdrKeys_(probe[hdrRow - 1]));
 
-    /* Export column  →  sheet column (1-based). Names first; where a name is
-       repeated or blank on either side, fall back to the same position. */
-    var pairs = [], used = {}, unmatched = [];
-    function countOf(arr, v) { var n = 0; for (var i = 0; i < arr.length; i++) if (arr[i] === v) n++; return n; }
+    /* Export column  →  sheet column (1-based).
 
-    for (var sc = 0; sc < src.hdr.length; sc++) {
-      var raw = src.hdr[sc];
-      if (!raw) continue;
-      var name = canon_(norm_(alias_(spec, raw)));
-      var tc = -1;
-      if (countOf(src.hdr, raw) === 1 && countOf(tgtHdr, name) === 1) {
-        tc = tgtHdr.indexOf(name);
-      }
-      if (tc === -1 && sc < tgtHdr.length && tgtHdr[sc] === name) tc = sc;   // positional
-      /* THE SHEET REPEATS A NAME, THE EXPORT DOES NOT.
-         "Combined Data CPI Raw" carries two columns headed "PY Rev exWorks"
-         (R and S). The export sends one. Requiring exactly one on each side
-         made the pair ambiguous, the positional fallback landed on a different
-         column, and PY revenue was quietly never written - so every sync left
-         last export's PY dollars sitting against this export's rows.
+       PAIRING IS ON THE FIGURE AND THE PERIOD, NEVER ON THE LITERAL HEADER.
+       "2026 Volume" and "CY Volume" are one column; so are "Fuel Surchage" and
+       "Fuel Surcharge", which is a real defect and not a hypothetical — one
+       missing letter in the export left that single column matching nothing
+       while every other column on the tab wrote, so the surcharge sat at the
+       previous export's figures and the tab looked healthy. APP_periodFind_
+       decides all of it. What is left here is the two rules about repeats.
 
-         One export column and several sheet columns of that name is not
-         ambiguous: it is the first of them, and any others are the sheet's own
-         working columns, which stay untouched because `used` blocks a second
-         write. The reverse - the EXPORT repeating a name - stays unmatched,
-         because then there really is no way to tell which is which. */
-      if (tc === -1 && countOf(src.hdr, raw) === 1 && countOf(tgtHdr, name) > 1) {
-        for (var dc = 0; dc < tgtHdr.length; dc++) {
-          if (tgtHdr[dc] === name && !used[dc]) { tc = dc; break; }
-        }
-      }
+       THE SHEET MAY REPEAT A NAME AND THE EXPORT MAY NOT. "Combined Data CPI
+       Raw" has carried two columns of one name; the export sends one. One
+       export column against several sheet columns of that name is not
+       ambiguous — it is the first of them, which is the one the index holds,
+       and the rest are the sheet's own working columns, left untouched because
+       `used` blocks a second write. The reverse IS ambiguous: an export
+       repeating a name is reported unmatched, because nothing can say which of
+       the two is which.
+
+       THERE IS NO POSITIONAL FALLBACK ANY MORE. There was, and it is how PY
+       revenue was quietly written into the wrong column for a whole run: a
+       name that failed to match landed on whatever sat at the same index. A
+       column that cannot be paired by name is reported, not guessed at. */
+    var pairs = [], used = {}, unmatched = [], srcSeen = {};
+    for (var i0 = 0; i0 < srcKeys.length; i0++) {
+      if (srcKeys[i0]) srcSeen[srcKeys[i0]] = (srcSeen[srcKeys[i0]] || 0) + 1;
+    }
+
+    for (var sc = 0; sc < srcKeys.length; sc++) {
+      var key = srcKeys[sc];
+      if (!key || srcSeen[key] > 1) { if (key) unmatched.push(src.hdrRaw[sc]); continue; }
+      var p    = APP_period_(key);
+      var base = alias_(spec, p.base);
+      var tc   = APP_periodFind_(tgtMap, base, p, srcMap.rankAt[sc]);
       if (tc === -1 || used[tc]) { unmatched.push(src.hdrRaw[sc]); continue; }
       used[tc] = 1;
-      pairs.push({ src: sc, col: tc + 1, isMonth: (name === 'monthcol') });
+      pairs.push({ src: sc, col: tc + 1, isMonth: (base === 'monthcol') });
     }
     if (!pairs.length) {
       throw new Error('None of the export columns matched "' + spec.tab + '". ' +
         'Export header: ' + src.hdrRaw.join(' | '));
+    }
+
+    /* THE CHECK THE YEAR BUYS. Where the export names years, the newest one it
+       names should be the newest one its rows carry. When it is not, the file
+       is not the file it claims to be — a stale export, or a tab from another
+       era — and the run says so. The columns are still written: pairing is on
+       rank, and rank is right either way. */
+    if (dataYear && headYear && dataYear !== headYear) {
+      APP_log('warn', 'QLIKSYNC.write', 'the export names a different year from the one its rows carry',
+              { tab: spec.tab, headerYear: headYear, dataYear: dataYear });
     }
 
     var firstData = firstDataRow_(sh, hdrRow, pairs.map(function (p) { return p.col; }), nCols);
@@ -2687,7 +3044,10 @@ var QLIKSYNC = (function () {
     return {
       tab: spec.tab, mode: 'columns', from: src.file + ' · ' + src.name,
       rows: n, columns: pairs.length, firstDataRow: firstData,
-      unmatched: unmatched, reportMonth: stamped
+      unmatched: unmatched, reportMonth: stamped,
+      /* what the run decided CY and PY are, so the report can be checked
+         against the export rather than taken on trust */
+      cyYear: dataYear || headYear, headerYear: headYear, dataYear: dataYear
     };
   }
 
@@ -3174,15 +3534,18 @@ function buildLookups_() {
 
 function getRawEnriched_(upToken) {
   var raw = upToken ? upTab_(upToken) : readTab_(CONFIG.RAW.SHEET, RAW_HEADER_NAMES_), H = raw.header;
-  var vc = []; for (var n in H) { var m = n.match(/^(\d{4}) volume$/); if (m) vc.push({ y: +m[1], i: H[n] }); }
-  vc.sort(function (a, b) { return a.y - b.y; });
+  /* The volume pair, whichever way the tab spells its periods — "2026 Volume"
+     and "CY Volume" both land here. When it says CY/PY the header names no
+     year at all, so the Year column is what says which year is which; the tab
+     keeps one, and it is the same column the month model reads. */
+  var vol = APP_yearCols_(APP_hdrArray_(H), 'volume',
+                          APP_dataCyYear_(raw.rows, colIndex_(H, 'Year')));
   var ix = {
     month: colIndex_(H, 'Month'), plantType: colIndex_(H, 'Plant Type'), materialFam: colIndex_(H, 'Material Family'),
     prodClass: colIndex_(H, 'Product Class [Rock]'), custSeg: colIndex_(H, 'Cust Segment [Rock]'),
     prodApp: colIndex_(H, 'Product Application'), plant: colIndex_(H, 'Plant'), material: colIndex_(H, 'Material'),
     custParent: colIndex_(H, 'Customer Parent'), soldTo: colIndex_(H, 'Sold To'),
-    pyVol: vc.length ? vc[0].i : colIndex_(H, 'PY Volume'),
-    cyVol: vc.length > 1 ? vc[vc.length - 1].i : colIndex_(H, 'CY Volume'),
+    pyVol: vol.py, cyVol: vol.cy,
     pyRev: colIndex_(H, 'PY Rev exWorks'), cyRev: colIndex_(H, 'CY Rev exWorks'),
     pyFsc: colIndex_(H, 'PY Fuel Surcharge'), cyFsc: colIndex_(H, 'CY Fuel Surcharge'),
     lkey: colIndex_(H, 'LOOKUP KEY')
@@ -3237,11 +3600,9 @@ function getRawEnriched_(upToken) {
   }
 
   /* The raw tab keeps the bill YEAR in a column of its own - the Month column is
-     bare ("Jul"), so monthKey_ can never say which year a row belongs to. The CY
-     year is whatever the higher "#### Volume" header says, which is already how
-     CY volume itself is chosen. The Fuel Recovery page keys its cells by year, so
-     it needs this handed over. */
-  enriched.cyYear = vc.length > 1 ? vc[vc.length - 1].y : (vc.length ? vc[0].y : 0);
+     bare ("Jul"), so monthKey_ can never say which year a row belongs to. The
+     Fuel Recovery page keys its cells by year, so it needs this handed over. */
+  enriched.cyYear = vol.cyYear;
 
   /* Worked out once, off the full unfiltered set, so every period and every
      month choice on this request agrees about which months exist and which one
@@ -3435,11 +3796,9 @@ function pvMonthMeta_(upToken) {
   var hit = cacheGet_(ck); if (hit) return hit;
 
   var raw = upToken ? upTab_(upToken) : readTab_(CONFIG.RAW.SHEET, RAW_HEADER_NAMES_), H = raw.header;
-  var vc = []; for (var n in H) { var m = n.match(/^(\d{4}) volume$/); if (m) vc.push({ y: +m[1], i: H[n] }); }
-  vc.sort(function (a, b) { return a.y - b.y; });
-  var iMo = colIndex_(H, 'Month');
-  var iPy = vc.length ? vc[0].i : colIndex_(H, 'PY Volume');
-  var iCy = vc.length > 1 ? vc[vc.length - 1].i : colIndex_(H, 'CY Volume');
+  var vol = APP_yearCols_(APP_hdrArray_(H), 'volume',
+                          APP_dataCyYear_(raw.rows, colIndex_(H, 'Year')));
+  var iMo = colIndex_(H, 'Month'), iPy = vol.py, iCy = vol.cy;
 
   var lite = raw.rows.map(function (r) {
     return { monthNo: pvMonthNum_(r[iMo]),
@@ -4611,11 +4970,10 @@ function getUnmapped(opts){
 
   var raw = rawTab_(opts.upload), H = raw.header;
 
-  /* CY = the later of the two "#### Volume" columns, exactly as PV does it. */
-  var vc = []; for (var n in H){ var m = n.match(/^(\d{4}) volume$/); if (m) vc.push({ y: +m[1], i: H[n] }); }
-  vc.sort(function (a, b){ return a.y - b.y; });
+  /* CY volume, however the tab spells its periods, exactly as PV picks it. */
   var iP = ci_(H, 'Plant');
-  var iV = vc.length > 1 ? vc[vc.length - 1].i : ci_(H, 'CY Volume');
+  var iV = APP_yearCols_(APP_hdrArray_(H), 'volume',
+                         APP_dataCyYear_(raw.rows, ci_(H, 'Year'))).cy;
   var iR = ci_(H, 'CY Rev exWorks');
   if (iP === -1) throw new Error('The raw tab has no "Plant" column, so the mapping check can\u2019t run.');
 
@@ -4884,12 +5242,13 @@ var FSC = (function () {
      through PV's reader at all.
 
      Score the first few rows against the names this tab is supposed to carry
-     and take the best. A "#### Volume" column counts too, so a file that rolls
-     over to a new year needs no edit here. */
+     and take the best. A volume column counts however it is headed — "2026
+     Volume", "CY Volume" — so neither a roll to a new year nor a switch to
+     CY/PY needs an edit here. */
   var CPI_HEADER_NAMES_ = ['lookup key','sold to','plant','plant type','material family',
     'customer parent','product class [rock]','product application','material',
     'cust segment [rock]','year','month','cy rev exworks','py rev exworks',
-    'new fuel surcharge','cy fuel surcharge','py fuel surcharge','fuel surchage'];
+    'new fuel surcharge','cy fuel surcharge','py fuel surcharge','fuel surcharge'];
 
   function headerRow_(grid, names){
     var want = {};
@@ -4899,7 +5258,7 @@ var FSC = (function () {
       var row = grid[r] || [], score = 0;
       for (var c = 0; c < row.length; c++){
         var k = norm_(row[c]); if (!k) continue;
-        if (want[k] || /^\d{4} volume$/.test(k)) score++;
+        if (want[k] || APP_period_(k).base === 'volume') score++;
       }
       if (score > bestScore){ bestScore = score; best = r; }
     }
@@ -4908,8 +5267,14 @@ var FSC = (function () {
 
   /* ---------- shared column resolution for a CPI grid ----------
      Used by both the sheet reader and the upload path, so an uploaded export
-     and the live tab are parsed by exactly the same rules. */
-  function cpiCols_(header, headerRowNo){
+     and the live tab are parsed by exactly the same rules.
+
+     `grid` and `headerRowNo` are how the year is read. This tab has been headed
+     "2026 Volume" and "CY Volume", and a CY header names no year at all — so
+     the Year column beside it is what says which year a CY column holds. Pass
+     the grid and the period columns resolve either way; pass the header alone
+     and only a year-named tab can be read. */
+  function cpiCols_(header, headerRowNo, grid){
     var idx = {};
     header.forEach(function(h,i){ var k = norm_(h); if (k && !(k in idx)) idx[k] = i; });
 
@@ -4920,24 +5285,23 @@ var FSC = (function () {
       month: pick_(idx, ['month']),
       fsc:    pick_(idx, ['new fuel surcharge']),
       rawFsc: pick_(idx, ['fuel surchage','fuel surcharge']),   // the source's own typo
-      cyFsc: pick_(idx, ['cy fuel surcharge']),
-      pyFsc: pick_(idx, ['py fuel surcharge']),
-      cyRev: pick_(idx, ['cy rev exworks','cy rev ex-works']),
-      pyRev: pick_(idx, ['py rev exworks','py rev ex-works']),
       vol:   {}                      // year -> column
     };
-    /* "2026 Volume" / "2025 Volume": the header carries the year, so nothing
-       here has to be edited when the file rolls over to a new year. */
-    header.forEach(function(h,i){
-      var m = /^(\d{4})\s+volume$/.exec(norm_(h));
-      if (m) c.vol[Number(m[1])] = i;
-    });
+
+    var dataCy = APP_dataCyYear_(grid, c.year, headerRowNo || 0);
+    var volY   = APP_yearCols_(header, 'volume',       dataCy);
+    var revY   = APP_yearCols_(header, 'rev exworks',  dataCy);
+    var fscY   = APP_yearCols_(header, 'fuel surcharge', dataCy);
+    c.vol   = volY.byYear;
+    c.cyRev = revY.cy; c.pyRev = revY.py;
+    c.cyFsc = fscY.cy; c.pyFsc = fscY.py;
+    c.cyYear = volY.cyYear || dataCy;
 
     var miss = [];
     if (c.plant < 0) miss.push('Plant');
     if (c.year  < 0) miss.push('Year');
     if (c.month < 0) miss.push('Month');
-    if (!Object.keys(c.vol).length) miss.push('"#### Volume"');
+    if (!Object.keys(c.vol).length) miss.push('a volume column ("CY Volume" or "#### Volume")');
     if (c.fsc < 0 && c.cyFsc < 0 && c.pyFsc < 0 && c.rawFsc < 0) miss.push('New Fuel Surcharge');
     if (miss.length){
       /* Name the row that was read and the names found on it. When the header
@@ -5007,7 +5371,7 @@ var FSC = (function () {
   function buildCells_(grid, mktOf, unknownLabel, otherRev){
     /* hr, not 0: the tab sums ABOVE its header (see headerRow_) */
     var hr = headerRow_(grid);
-    var c  = cpiCols_(grid[hr], hr + 1);
+    var c  = cpiCols_(grid[hr], hr + 1, grid);
     var first = hr + 1;                      // first data row
 
     /* the newest year in the file decides which Rev column belongs to a row */
@@ -5948,36 +6312,26 @@ function readSheet_(name, mustHave){
 }
 function col_(sheet, name){ var i = sheet.idx[norm_(name)]; return (i==null?-1:i); }
 
-/* ---- THE YEAR IS IN THE COLUMN NAME, AND IT IS THE DATA'S YEAR ------------
-   "2026 Vol", "2025 Net Sales ex VA (CAD)", "Total Revenue - 2026". This file
-   deliberately ignores the year on the ROW (see loadMain_'s header) and takes
-   current vs prior from the COLUMNS — which was right, and was then spelled out
-   as literals, so the two newest years were pinned to 2026 and 2025 in eight
-   places. On the first export of a new year every one of those lookups returns
-   -1, toNum_ turns the missing cell into 0, and the page publishes a full set
-   of zeroes without failing: the exact shape of bug this suite keeps paying for.
+/* ---- CURRENT AND PRIOR YEAR COME FROM THE COLUMNS ------------------------
+   "2026 Vol", "2025 Net Sales ex VA (CAD)", "Total Revenue - 2026" — and now
+   "CY Vol", "PY Net Sales Ex VA (CAD)", "Total Revenue -PY" as well, because
+   the workbook has been re-headed and can be re-headed again.
 
-   So the pattern is matched instead and the two NEWEST years found are CY and
-   PY. RFSC_Backend.gs's mainCols_ has always done it this way; this is the rest
-   of Ready-Mix catching up (README §7, "the year is DATA").
+   These were once spelled out as literals, so the two newest years were pinned
+   to 2026 and 2025 in eight places. On the first export of a new year every
+   one of those lookups returns -1, toNum_ turns the missing cell into 0, and
+   the page publishes a full set of zeroes without failing.
 
-   The regex must be non-global: exec on a /g regex carries lastIndex between calls
-   and would skip every other column. */
-function yearPair_(sheet, re){
-  var found = {}, k;
-  for (k in sheet.idx){
-    var m = re.exec(k);
-    if (m) found[Number(m[1])] = sheet.idx[k];
-  }
-  var ys = Object.keys(found).map(Number).sort(function(a,b){ return b-a; });
-  return { cy:    ys.length     ? ys[0] : 0,
-           py:    ys.length > 1 ? ys[1] : 0,
-           cyCol: ys.length     ? found[ys[0]] : -1,
-           pyCol: ys.length > 1 ? found[ys[1]] : -1,
-           years: ys };
+   `base` is the figure with its period taken off, so one call covers every
+   spelling of it. `dataCyYear` is what a CY/PY header cannot supply: the year
+   read off the rows' own Bill Month, which is where this file's current year
+   has to come from once the column names stop carrying one. */
+function yearPair_(sheet, base, dataCyYear){
+  var y = APP_yearCols_(APP_hdrArray_(sheet.idx), base, dataCyYear);
+  return { cy: y.cyYear, py: y.pyYear, cyCol: y.cy, pyCol: y.py, years: y.years };
 }
 /* (kept small on purpose: one place decides what a year column looks like) */
-function yearsInHeader_(sheet, re){ return yearPair_(sheet, re).years; }
+function yearsInHeader_(sheet, base){ return yearPair_(sheet, base).years; }
 function firstCol_(sheet, names){
   for (var i=0;i<names.length;i++){ var c = col_(sheet, names[i]); if (c !== -1) return c; }
   throw new Error('Missing column (looked for: ' + names.join(', ') + ')');
@@ -6269,10 +6623,12 @@ function loadMain_(LK, src, bag){
   var cMonth=monthCol_(s),                         // Bill Month ("Apr-25" / "Apr-26")
       cPlant=col_(s,'plant'), cMix=col_(s,'product mix'),
       cSeg=col_(s,'major project segment'),
-      /* CY and PY are the two newest years the COLUMNS carry — see yearPair_.
-         Not 2026 and 2025, which is what these four lines used to say. */
-      vY=yearPair_(s, /^(\d{4}) vol$/),
-      rY=yearPair_(s, /^(\d{4}) net sales ex va \(cad\)$/),
+      /* CY and PY, however the columns are headed — see yearPair_. When they
+         say "CY Vol" rather than "2026 Vol" the header names no year, so the
+         year comes off the rows' own Bill Month. */
+      cyData=APP_dataCyYear_(s.values, cMonth, s.hdr + 1),
+      vY=yearPair_(s, 'vol', cyData),
+      rY=yearPair_(s, ['net sales ex va (cad)','net sales ex va'], cyData),
       cPyV=vY.pyCol, cPyR=rY.pyCol,
       cCyV=vY.cyCol, cCyR=rY.cyCol,
       /* Fuel surcharge, allocated down to the mix row by the sheet's own MAP
@@ -6312,9 +6668,11 @@ function loadStream_(LK, sheetName, src, bag){
       cPlant=col_(s,'plant'), cH3=col_(s,'mat_prod_hier_3'),
       cDescr=col_(s,'mat_descr'),
       cSeg=col_(s,'major project segment'),
-      /* the two newest years the columns carry, not two literals */
-      rY=yearPair_(s, /^total revenue - (\d{4})$/),
-      mY=yearPair_(s, /^m3 applied to - (\d{4})$/),
+      /* the two periods the columns carry, named either way, with the year
+         off the rows' Bill Month for when they are named CY/PY */
+      cyData=APP_dataCyYear_(s.values, cMo, s.hdr + 1),
+      rY=yearPair_(s, 'total revenue', cyData),
+      mY=yearPair_(s, 'm3 applied to', cyData),
       cPyR=rY.pyCol, cCyR=rY.cyCol,
       cPyM=mY.pyCol, cCyM=mY.cyCol;
   var streamLabel = (sheetName === CONFIG.SHEETS.ASSOC) ? 'VAP' : 'EXTRAS';
@@ -8512,27 +8870,33 @@ var RFSC = (function () {
   }
 
   /* ---------- column resolution, shared by the sheet and the upload ---------- */
-  function mainCols_(header){
+  function mainCols_(header, grid, hdrRow){
     var idx = {};
     header.forEach(function(h,i){ var k = norm_(h); if (k && !(k in idx)) idx[k] = i; });
     var c = {
       plant: pick_(idx, ['plant']),
       bill:  pick_(idx, MONTH_NAMES_),
       seg:   pick_(idx, ['major project segment','project segment','segment']),
-      cyFsc: pick_(idx, ['cy fuel surcharge']),
-      pyFsc: pick_(idx, ['py fuel surcharge']),
       vol:   {},                     // year -> column
       ns:    {}                      // year -> column
     };
-    header.forEach(function(h,i){
-      var s = norm_(h), m;
-      if ((m = /^(\d{4})\s+vol$/.exec(s)))                          c.vol[Number(m[1])] = i;
-      else if ((m = /^(\d{4})\s+net sales ex va( \(cad\))?$/.exec(s))) c.ns[Number(m[1])] = i;
-    });
+    /* "2026 Vol" or "CY Vol", and the same for net sales and the surcharge.
+       A CY header names no year, so the year comes off the rows' own Bill
+       Month — which is where this reader's current year has come from all
+       along, and the reason it is the check rather than the header. */
+    var cyData = APP_dataCyYear_(grid, c.bill, (hdrRow || 0) + 1);
+    var volY = APP_yearCols_(header, 'vol', cyData);
+    var nsY  = APP_yearCols_(header, ['net sales ex va (cad)','net sales ex va'], cyData);
+    var fscY = APP_yearCols_(header, 'fuel surcharge', cyData);
+    c.vol = volY.byYear;
+    c.ns  = nsY.byYear;
+    c.cyFsc = fscY.cy;
+    c.pyFsc = fscY.py;
+
     var miss = [];
     if (c.plant < 0) miss.push('Plant');
     if (c.bill  < 0) miss.push('Bill Month');
-    if (!Object.keys(c.vol).length) miss.push('"#### Vol"');
+    if (!Object.keys(c.vol).length) miss.push('a volume column ("CY Vol" or "#### Vol")');
     if (miss.length) throw new Error('The Main Raw Data tab is missing these column(s): '
       + miss.join(', ') + '. Check the header row spelling.');
     return c;
@@ -8540,7 +8904,7 @@ var RFSC = (function () {
 
   /* Extra Raw Data. mat_prod_hier_3 is REQUIRED - it is the only thing that says
      a line is the fuel surcharge, and there is no honest fallback for it. */
-  function extraCols_(header){
+  function extraCols_(header, grid, hdrRow){
     var idx = {};
     header.forEach(function(h,i){ var k = norm_(h); if (k && !(k in idx)) idx[k] = i; });
     var c = {
@@ -8551,17 +8915,19 @@ var RFSC = (function () {
       m3:    {},                     // year -> column
       rev:   {}                      // year -> column
     };
-    header.forEach(function(h,i){
-      var s = norm_(h), m;
-      if ((m = /^m3 applied to\s*-?\s*(\d{4})$/.exec(s)))   c.m3[Number(m[1])]  = i;
-      else if ((m = /^total revenue\s*-?\s*(\d{4})$/.exec(s))) c.rev[Number(m[1])] = i;
-    });
+    /* "M3 Applied To - 2026", "M3 Applied To - CY", "2026 M3 Applied To" — the
+       dash is optional and the period sits at either end. The year for a CY/PY
+       header comes off the rows' Bill Month. */
+    var cyData = APP_dataCyYear_(grid, c.bill, (hdrRow || 0) + 1);
+    c.m3  = APP_yearCols_(header, 'm3 applied to', cyData).byYear;
+    c.rev = APP_yearCols_(header, 'total revenue', cyData).byYear;
+
     var miss = [];
     if (c.plant < 0) miss.push('Plant');
     if (c.bill  < 0) miss.push('Bill Month');
     if (c.hier3 < 0) miss.push('mat_prod_hier_3');
-    if (!Object.keys(c.m3).length)  miss.push('"M3 Applied To - ####"');
-    if (!Object.keys(c.rev).length) miss.push('"Total Revenue - ####"');
+    if (!Object.keys(c.m3).length)  miss.push('an applied-m\u00b3 column ("M3 Applied To - CY" or "- ####")');
+    if (!Object.keys(c.rev).length) miss.push('a revenue column ("Total Revenue - CY" or "- ####")');
     if (miss.length) throw new Error('The Extra Raw Data tab is missing these column(s): '
       + miss.join(', ') + '. That tab is where the fuel surcharge and its applied m\u00b3 come '
       + 'from; check the header row spelling.');
@@ -8611,7 +8977,7 @@ var RFSC = (function () {
     if (!grid || grid.length < 2) return null;
     var disp = dispGrid || grid;
     var hdr = headerRow_(grid, ['plant'], MONTH_NAMES_);
-    var c   = extraCols_(grid[hdr] || []);
+    var c   = extraCols_(grid[hdr] || [], disp, hdr);
 
     var fact = {}, years = {}, lines = 0;
     for (var i = hdr + 1; i < grid.length; i++){
@@ -8648,7 +9014,7 @@ var RFSC = (function () {
      filter  - { plants:[], segments:[] }, either side optional */
   function buildCells_(grid, dims, unknownLabel, charge, filter){
     var hdr = headerRow_(grid, ['plant'], MONTH_NAMES_);
-    var c = mainCols_(grid[hdr] || []);
+    var c = mainCols_(grid[hdr] || [], grid, hdr);
 
     var okPlant = allow_(filter && filter.plants);
     var okSeg   = allow_(filter && filter.segments);
@@ -9896,16 +10262,18 @@ function ovcReadTab_(ss, name, mustHave){
 }
 function ovcCol_(t, name){ var i = t.idx[ovcH_(name)]; return (i === undefined) ? -1 : i; }
 
-/* Find "#### Volume" / "#### Vol" columns and report which year each is.
-   Never used to DECIDE a row's year — an export that reuses the live template
+/* The period columns for one figure ("Volume", "Vol", "Net Sales Ex VA (CAD)"),
+   oldest first, as { y, i }. A header that says CY/PY carries no year of its
+   own, so `cyYear` — read off the tab's Year column or its Bill Month — is
+   what puts a year on those.
+
+   NEVER USED TO DECIDE A ROW'S YEAR. An export that reuses the live template
    can carry 2026/2025 headers over 2025/2024 data. Only the pairing comes from
-   here; the year itself comes from the Year column (AGG) or Bill Month (RMX). */
-function ovcYearCols_(t, re){
-  var out = [];
-  Object.keys(t.idx).forEach(function(h){
-    var m = h.match(re);
-    if (m) out.push({ y: parseInt(m[1], 10), i: t.idx[h] });
-  });
+   here; the year itself comes from the Year column (AGG) or Bill Month (RMX),
+   which is also what is handed in below. */
+function ovcYearCols_(t, base, cyYear){
+  var y = APP_yearCols_(APP_hdrArray_(t.idx), base, cyYear), out = [];
+  Object.keys(y.byYear).forEach(function(k){ out.push({ y: Number(k), i: y.byYear[k] }); });
   out.sort(function(a, b){ return a.y - b.y; });
   return out;
 }
@@ -10192,9 +10560,6 @@ function ovcHistAgg_(page){
     fscCyVol: ovcColOpt_(t, 'fsc cy volume'),
     fscPyVol: ovcColOpt_(t, 'fsc py volume')
   };
-  var vc = ovcYearCols_(t, /^(\d{4}) volume$/);
-  if (vc.length < 2) throw new Error('History Aggregates: expected two "#### Volume" columns.');
-
   /* THE HEADER DOES NOT DECIDE ANYTHING - not the year of a row, and not which
      volume column belongs to which year. The 2024/2023 export ships its two
      columns labelled "2023 Volume", "2024 Volume" in that order while the data
@@ -10202,10 +10567,12 @@ function ovcHistAgg_(page){
      header year reads the wrong column for BOTH years and the whole era lands
      with zero volume against real revenue.
 
-     So: find the columns by header (above), then let the DATA say which is CY.
-     Each row fills exactly one of the two, so totalling both columns split by
-     Year and taking the larger on the yMax rows is unambiguous. Ties and empty
-     books fall back to left-most = CY, which is how every export is laid out. */
+     So the Year column is read FIRST. It says which years the book holds — the
+     only thing that can, for a tab headed "CY Volume" / "PY Volume" — and then
+     the DATA says which of the two columns is CY. Each row fills exactly one
+     of them, so totalling both split by Year and taking the larger on the yMax
+     rows is unambiguous. Ties and empty books fall back to left-most = CY,
+     which is how every export is laid out. */
   var yMin = 0, yMax = 0, i, y;
   for (i = t.hdr + 1; i < t.values.length; i++){
     y = Math.round(ovcNum_(t.values[i][c.year])); if (!y) continue;
@@ -10213,6 +10580,10 @@ function ovcHistAgg_(page){
     if (!yMin || y < yMin) yMin = y;
   }
   if (!yMax) throw new Error('History Aggregates: the Year column is empty.');
+
+  var vc = ovcYearCols_(t, 'volume', yMax);
+  if (vc.length < 2) throw new Error('History Aggregates: expected two volume columns '
+    + '("CY Volume" / "PY Volume", or "#### Volume").');
 
   var iA = vc[0].i, iB = vc[vc.length - 1].i, sumA = 0, sumB = 0;
   for (i = t.hdr + 1; i < t.values.length; i++){
@@ -10231,19 +10602,23 @@ function ovcHistRmx_(page){
   var ss = APP_openSpreadsheet_(page);
   var S  = APP_CONFIG.PAGES[page].SHEETS;
   var t  = ovcReadTab_(ss, S.MAIN, ['plant', 'product mix']);
-  var vcols = ovcYearCols_(t, /^(\d{4}) vol$/);
-  var rcols = ovcYearCols_(t, /^(\d{4}) net sales ex va \(cad\)$/);
-  if (vcols.length < 2 || rcols.length < 2)
-    throw new Error('History Ready-Mix: expected two "#### Vol" and two "#### Net Sales Ex VA (CAD)" columns.');
-  var byYear = {};
-  vcols.forEach(function(x){ (byYear[x.y] = byYear[x.y] || {}).v = x.i; });
-  rcols.forEach(function(x){ (byYear[x.y] = byYear[x.y] || {}).r = x.i; });
   /* ovcH_ leaves underscores alone, so the export's "bill_month" needs its own
-     entry alongside the sheet's "Bill Month". */
+     entry alongside the sheet's "Bill Month". It is read before the columns
+     because it is what dates them: a tab headed "CY Vol" names no year. */
   var cBill = ovcCol_(t, 'bill month');
   if (cBill < 0) cBill = ovcCol_(t, 'billmonth');
   if (cBill < 0) cBill = ovcCol_(t, 'bill_month');
   if (cBill < 0) throw new Error('History Ready-Mix: no "Bill Month" column was found.');
+  var cyBill = APP_dataCyYear_(t.values, cBill, t.hdr + 1);
+
+  var vcols = ovcYearCols_(t, 'vol', cyBill);
+  var rcols = ovcYearCols_(t, ['net sales ex va (cad)', 'net sales ex va'], cyBill);
+  if (vcols.length < 2 || rcols.length < 2)
+    throw new Error('History Ready-Mix: expected two volume and two net-sales columns '
+      + '("CY Vol" / "PY Vol", or "#### Vol").');
+  var byYear = {};
+  vcols.forEach(function(x){ (byYear[x.y] = byYear[x.y] || {}).v = x.i; });
+  rcols.forEach(function(x){ (byYear[x.y] = byYear[x.y] || {}).r = x.i; });
   var c = { bill: cBill, plant: ovcCol_(t, 'plant'),
             mix: ovcCol_(t, 'product mix'), seg: ovcCol_(t, 'major project segment') };
   return ovcRmxRoll_(t, c, byYear, null, 0, null);
@@ -10259,8 +10634,11 @@ function ovcLiveAgg_(seed){
   return ovcAggRoll_(null, null, 0, 0, cy, cy - 1, rows, seed);
 }
 
-/* RMX's loader hard-codes its year column names, so the CY year is read off
-   the sheet header instead of assumed — three rows, not a data read. */
+/* The Ready-Mix bundle already worked its own current year out — off the
+   columns when they name one, off the rows' Bill Month when they say CY/PY —
+   so the roll reads it from there rather than opening the workbook again. The
+   header read below is the fallback for a bundle written before that field
+   existed; it only works on a year-named header, which is why it is second. */
 function ovcLiveRmxYear_(){
   var ss = APP_openSpreadsheet_('rmx');
   var S = APP_CONFIG.PAGES.rmx.SHEETS, want = ovcH_(S.MAIN), sh = null;
@@ -10269,13 +10647,14 @@ function ovcLiveRmxYear_(){
   var head = sh.getRange(1, 1, Math.min(3, sh.getLastRow()), Math.min(30, sh.getLastColumn())).getDisplayValues();
   var best = 0;
   head.forEach(function(r){ r.forEach(function(h){
-    var m = ovcH_(h).match(/^(\d{4}) vol$/); if (m && +m[1] > best) best = +m[1];
+    var p = APP_period_(h); if (p.base === 'vol' && p.year > best) best = p.year;
   }); });
-  if (!best) throw new Error('Could not read the current year from the RMX "#### Vol" headers.');
+  if (!best) throw new Error('Could not read the current year from the Ready-Mix volume headers.');
   return best;
 }
 function ovcLiveRmx_(seed){
-  return ovcRmxRoll_(null, null, null, RMX_NS.dataBundle().main || [], ovcLiveRmxYear_(), seed);
+  var b = RMX_NS.dataBundle();
+  return ovcRmxRoll_(null, null, null, b.main || [], b.cyYear || ovcLiveRmxYear_(), seed);
 }
 
 
@@ -12105,8 +12484,17 @@ function qlikStamps() {
 }
 
 /* Manual sync, from the editor only. Nothing in the UI calls this.
-   Records the stamps of whatever it covered, so the next check does not
-   immediately redo the same work. */
+
+   IT DOES NOT LOOK AT THE EXPORT'S MODIFIED TIME, and that is the whole point
+   of it. qlikSyncCheck skips a source that has not moved since it was last
+   synced, which is right for something firing every fifteen minutes and wrong
+   for a person who has just gone to run this by hand — they are here BECAUSE
+   the sheet is wrong and the file did not move: a bad write, a header renamed
+   in the workbook, a cache that got cleared. So this pulls unconditionally,
+   every time, for whatever scope it is given.
+
+   It records the stamps of whatever it covered afterwards, so the next check
+   does not immediately redo the same work. */
 function qlikSyncNow(scope) {
   var want = (typeof scope === 'string' && scope) ? scope : 'all';
   var res  = QLIKSYNC.run(want);

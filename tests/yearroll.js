@@ -116,6 +116,52 @@ console.log('a workbook from ' + CY + ', read by code written in 2026:\n');
 }
 
 /* ===========================================================================
+ * 1b. The same page, with the workbook re-headed CY / PY
+ * ---------------------------------------------------------------------------
+ * The Aggregates workbook's period columns have been renamed from years to
+ * CY/PY, and can be renamed back. "CY Volume" names no year at all, so a
+ * reader keying its cells by the row's Year finds nothing under it — every
+ * figure zero, every heading correct, nothing thrown. The Year column beside
+ * it is what dates the pair, and it is the same column the page already reads.
+ * ======================================================================== */
+{
+  const HEADER = ['LOOKUP KEY', 'Plant', 'Year', 'Month', 'CY Volume', 'PY Volume',
+    'CY Rev exWorks', 'PY Rev exWorks', 'New Fuel Surcharge', 'Fuel Surcharge'];
+  const BAND = ['', '', '', '', 350, 150, 3000, 1500, 425, 0];
+  const DATA = [
+    ['K1', 'P1', CY, 'Jul', 100, 0, 1000, 0, 300, 0],
+    ['K2', 'P1', CY, 'Jul', 200, 0, 2000, 0, 0, 0],
+    ['K3', 'P1', PY, 'Jul', 0, 150, 0, 1500, 150, 0],
+    ['', '', '', '', '', '', '', '', '', ''],
+  ];
+  const REGION = [['Plant # - Desc', 'Formatted Market'], ['P1', 'Greater Toronto Area']];
+
+  const sheet = (name, values) => ({ getName: () => name, getDataRange: () => ({ getValues: () => values }) });
+  const ctx = {
+    console,
+    APP_openSpreadsheet_: () => ({ getSheets: () => [
+      sheet('Combined Data CPI Raw', [BAND, HEADER].concat(DATA)),
+      sheet('REGION LOOKUP', REGION)] }),
+    PV: { saskMonthly: () => null },
+    __cache: {},
+  };
+  ctx.APP_getGen_ = () => 'g1';
+  ctx.APP_cacheGet_ = k => (Object.prototype.hasOwnProperty.call(ctx.__cache, k) ? JSON.parse(ctx.__cache[k]) : null);
+  ctx.APP_cachePut_ = (k, v) => { ctx.__cache[k] = JSON.stringify(v); };
+  attach(ctx);
+  vm.createContext(ctx);
+  vm.runInContext(region('FSC_Backend.gs'), ctx, { filename: 'script.gs (FSC_Backend.gs)' });
+
+  const out = ctx.getFscData();
+  const gta = out.summary.YTD.filter(r => r.market === 'Greater Toronto Area')[0];
+
+  eq('FSC CY/PY · the Year column dates the columns', [out.cyYear, out.pyYear], [CY, PY]);
+  eq('FSC CY/PY · current-year tonnes are read, not zero', gta.totalVol, 300);
+  eq('FSC CY/PY · $/applied tonne, current year', gta.fscT2026, 3);
+  eq('FSC CY/PY · $/applied tonne, prior year', gta.fscT2025, 1);
+}
+
+/* ===========================================================================
  * 2. Ready-Mix — the loaders that asked for a year by name
  * ======================================================================== */
 {
@@ -125,15 +171,19 @@ console.log('a workbook from ' + CY + ', read by code written in 2026:\n');
      a copy that started to would fail here on the first call rather than
      quietly reading a global. */
   const RMXSRC = region('RMX_Backend.gs');
-  const at = RMXSRC.indexOf('function yearPair_(sheet, re){');
+  const at = RMXSRC.indexOf('function yearPair_(sheet, base, dataCyYear){');
   if (at === -1) throw new Error('yearroll.js: yearPair_ is not in the RMX region any more');
   let depth = 0, end = -1;
   for (let i = RMXSRC.indexOf('{', at); i < RMXSRC.length; i++) {
     if (RMXSRC[i] === '{') depth++;
     else if (RMXSRC[i] === '}') { depth--; if (!depth) { end = i + 1; break; } }
   }
-  const yearPair_ = new Function('return (' + RMXSRC.slice(at, end).replace(/^function \w+/, 'function') + ');')();
-  const ctx = { yearPair_ };
+  /* It leans on §3's shared helpers, which in Apps Script are one global scope
+     away. attach() supplies exactly those. */
+  const ctx = attach({});
+  ctx.yearPair_ = new Function('APP_yearCols_', 'APP_hdrArray_',
+    'return (' + RMXSRC.slice(at, end).replace(/^function \w+/, 'function') + ');')(
+    ctx.APP_yearCols_, ctx.APP_hdrArray_);
 
   const idx = names => {
     const o = {};
@@ -141,32 +191,45 @@ console.log('a workbook from ' + CY + ', read by code written in 2026:\n');
     return { idx: o };
   };
 
-  const vol = ctx.yearPair_(idx(['plant', PY + ' vol', CY + ' vol']), /^(\d{4}) vol$/);
+  const vol = ctx.yearPair_(idx(['plant', PY + ' vol', CY + ' vol']), 'vol');
   eq('RMX · "#### Vol" resolves to the two newest years', [vol.cy, vol.py], [CY, PY]);
   eq('RMX · ...and to their columns', [vol.cyCol, vol.pyCol], [2, 1]);
 
   const rev = ctx.yearPair_(idx(['plant', 'total revenue - ' + PY, 'total revenue - ' + CY]),
-                            /^total revenue - (\d{4})$/);
+                            'total revenue');
   eq('RMX · "Total Revenue - ####" resolves the same way', [rev.cy, rev.py], [CY, PY]);
 
   /* A workbook that still carries a third, older year: the two newest win, and
      the oldest is ignored rather than mistaken for PY. */
-  const three = ctx.yearPair_(idx([(PY - 1) + ' vol', CY + ' vol', PY + ' vol']), /^(\d{4}) vol$/);
+  const three = ctx.yearPair_(idx([(PY - 1) + ' vol', CY + ' vol', PY + ' vol']), 'vol');
   eq('RMX · three years in one workbook — the two newest win', [three.cy, three.py], [CY, PY]);
 
-  /* And the shape that used to be assumed: a workbook with only one year still
-     answers rather than throwing, with no prior year to compare against. */
-  const one = ctx.yearPair_(idx([CY + ' vol']), /^(\d{4}) vol$/);
-  eq('RMX · one year only — cy found, py absent', [one.cy, one.py, one.pyCol], [CY, 0, -1]);
+  /* A workbook with only one year still answers rather than throwing. The YEAR
+     below it is known — a prior year always exists — but there is no COLUMN
+     for it, and those are two different answers. */
+  const one = ctx.yearPair_(idx([CY + ' vol']), 'vol');
+  eq('RMX · one year only — cy found, py has no column', [one.cy, one.py, one.pyCol], [CY, PY, -1]);
 
-  /* THE ONE WAY THIS HELPER CAN GO WRONG QUIETLY. exec() on a /g regex carries
-     lastIndex between calls, so every other column would be skipped and the
-     answer would depend on how many columns came before it. Every call site is
-     checked rather than the helper, because that is where the flag would go. */
-  const callRes = (region('RMX_Backend.gs').match(/yearPair_\(\w+,\s*(\/[^\n]+?\/)[a-z]*\)/g) || []);
-  check('RMX · every yearPair_ call passes a NON-global regex (' + callRes.length + ' call sites)',
-        callRes.length >= 4 && callRes.every(c => !/\/[a-z]*g[a-z]*\)$/.test(c)),
-        callRes.join('\n        '));
+  /* THE WORKBOOK HAS BEEN RE-HEADED. "CY Vol" / "PY Vol" name no year at all,
+     so the pair is only datable from the rows — the Bill Month the loader
+     already reads. Without the year handed in there is nothing to key a cell
+     on, which is the whole of this failure: a page of zeroes under correct
+     headings, and nothing thrown. */
+  const cy = idx(['plant', 'py vol', 'cy vol']);
+  eq('RMX · "CY Vol" / "PY Vol" find their columns', 
+     [ctx.yearPair_(cy, 'vol', CY).cyCol, ctx.yearPair_(cy, 'vol', CY).pyCol], [2, 1]);
+  eq('RMX · and the Bill Month dates them', 
+     [ctx.yearPair_(cy, 'vol', CY).cy, ctx.yearPair_(cy, 'vol', CY).py], [CY, PY]);
+  eq('RMX · a mixed header — "Total Revenue -PY" with no space', 
+     ctx.yearPair_(idx(['total revenue -py', 'total revenue - cy']), 'total revenue', CY).cyCol, 1);
+
+  /* Every call site hands the year over. A call that forgets it works on a
+     year-named workbook and reads zero on a CY/PY one, which is exactly the
+     failure that does not announce itself. */
+  const calls = (RMXSRC.match(/yearPair_\(s,[^\n]*\)/g) || []);
+  check('RMX · every yearPair_ call passes the data year (' + calls.length + ' call sites)',
+        calls.length >= 4 && calls.every(c => /cyData/.test(c)),
+        calls.join('\n        '));
 }
 
 /* ===========================================================================
@@ -174,24 +237,27 @@ console.log('a workbook from ' + CY + ', read by code written in 2026:\n');
  * ======================================================================== */
 {
   const src = region('QlikSync.gs');
-  const m = src.match(/var ALIAS_EXTRA = \{[\s\S]*?function alias_\(spec, raw\) \{[\s\S]*?\n  \}/);
+  const m = src.match(/var ALIAS_EXTRA = \{[\s\S]*?function alias_\(spec, base\) \{[\s\S]*?\n  \}/);
   check('sync · the alias table and alias_ are where this expects them', !!m);
   if (m) {
-    const ctx = vm.createContext({});
+    const ctx = attach({});
+    vm.createContext(ctx);
     vm.runInContext(m[0].replace(/^ {2}/gm, ''), ctx);
-    const spec = { alias: ctx.ALIAS_EXTRA, aliasRe: ctx.ALIAS_EXTRA_RE };
-    eq('sync · "#### revenue" → "Total Revenue - ####"',
-       ctx.alias_(spec, CY + ' revenue'), 'Total Revenue - ' + CY);
-    eq('sync · "#### m3 applied to" → "M3 Applied To - ####"',
-       ctx.alias_(spec, CY + ' m3 applied to'), 'M3 Applied To - ' + CY);
+    const spec = { alias: ctx.ALIAS_EXTRA };
+    /* Aliasing works on the BASE — the name with its period taken off — so one
+       entry covers every year and both spellings of every year. */
+    const base = n => ctx.alias_(spec, ctx.APP_period_(n).base);
+    eq('sync · "#### revenue" → "total revenue"', base(CY + ' revenue'), 'total revenue');
+    eq('sync · and so does "Total Revenue -PY"', base('Total Revenue -PY'), 'total revenue');
     eq('sync · the (m3 applied to) form is not swallowed by the plain one',
-       ctx.alias_(spec, CY + ' revenue (m3 applied to)'), 'Revenue (M3 Applied To) - ' + CY);
-    eq('sync · 2026 still maps exactly as it did', ctx.alias_(spec, '2026 revenue'),
-       'Total Revenue - 2026');
-    eq('sync · a name with no year is untouched', ctx.alias_(spec, 'major project segment'),
+       base(CY + ' revenue (m3 applied to)'), 'revenue (m3 applied to)');
+    eq('sync · "#### m3 applied to" keeps its own base',
+       base(CY + ' m3 applied to'), 'm3 applied to');
+    eq('sync · 2026 reduces the same way as ' + CY, base('2026 revenue'), 'total revenue');
+    eq('sync · a name with no period is untouched', base('major project segment'),
        'major project segment');
-    eq('sync · the one literal left is the one with no year in it',
-       Object.keys(ctx.ALIAS_EXTRA), ['plant_descr']);
+    eq('sync · two literals, neither carrying a year',
+       Object.keys(ctx.ALIAS_EXTRA).sort(), ['plant_descr', 'revenue']);
   }
 }
 
@@ -212,6 +278,13 @@ console.log('a workbook from ' + CY + ', read by code written in 2026:\n');
     eq('TP01 · a missing column is still -1, not column 0',
        iYearCol(['Sold To', 'Plant'], 'Volume'), -1);
     eq('TP01 · a suffix must match in full', iYearCol([CY + ' Volume x'], 'Volume'), -1);
+    /* And the export re-headed the way the workbooks already have been. */
+    eq('TP01 · "CY Volume" is found too',
+       iYearCol(['x', 'PY Volume', 'CY Volume'], 'Volume'), 2);
+    eq('TP01 · a trailing period, dash optional',
+       iYearCol(['Volume -PY', 'Volume - CY'], 'Volume'), 1);
+    eq('TP01 · PY on its own is read rather than missed',
+       iYearCol(['x', 'PY ASP ex-Works'], 'ASP ex-Works'), 1);
   }
   check('TP01 · no indexOf on a year-named column survives',
         !/indexOf\('\d{4} (Volume|ASP ex-Works)'\)/.test(APP),
