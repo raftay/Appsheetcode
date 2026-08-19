@@ -1,6 +1,6 @@
 # THE REPO IS MIXED, AND THE THREE PROJECT FILES ARE NOT.
 #
-# app.gs and app.html are LF throughout and must stay that way. The 37 files
+# script.gs and app.html are LF throughout and must stay that way. The 37 files
 # they were merged from were mixed THREE ways — most .html were CRLF, Code.gs
 # was LF, and two .gs carried a lone CR as a line terminator — and every tool
 # that has ever anchored on a spelled-out line ending in this repo has broken.
@@ -9,7 +9,7 @@
 # an editor on Windows cannot quietly convert them back on the next save. This
 # is the mechanical form of a rule that was previously only written down.
 
-app.gs           text eol=lf
+script.gs        text eol=lf
 app.html         text eol=lf
 appsscript.json  text eol=lf
 

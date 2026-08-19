@@ -8,7 +8,7 @@
  * WHY THIS EXISTS
  *
  * The whole point of the merge was that moving this application means copying
- * three files: app.gs, app.html and appsscript.json. Everything else in the
+ * three files: script.gs, app.html and appsscript.json. Everything else in the
  * repo — README.md, PLAN.md, CLAUDE.md, tests/ — is scaffolding, and the claim
  * is that it can all be deleted without the app noticing.
  *
@@ -21,7 +21,7 @@
  * So this copies the three files into an empty directory and runs the app out
  * of THAT — nothing else on disk, nothing to fall back on:
  *
- *   1. app.gs is evaluated whole, in one scope, exactly as Apps Script does it.
+ *   1. script.gs is evaluated whole, in one scope, exactly as Apps Script does it.
  *   2. doGet() is called for every route, with HtmlService faked closely enough
  *      to prove the one thing that matters: the ONLY file it asks for is 'app'.
  *   3. The HTML doGet produces — scriptlets rendered, not the raw file — is
@@ -37,7 +37,7 @@ const os   = require('os');
 const vm   = require('vm');
 
 const ROOT = path.join(__dirname, '..');
-const THREE = ['app.gs', 'app.html', 'appsscript.json'];
+const THREE = ['script.gs', 'app.html', 'appsscript.json'];
 
 let chromium;
 try { ({ chromium } = require('playwright')); }
@@ -75,7 +75,7 @@ for (const f of THREE) fs.copyFileSync(path.join(ROOT, f), path.join(ISLAND, f))
   else pass('setup', `${ISLAND} holds ${THREE.join(', ')} and nothing else`);
 }
 
-/* ------------------------------------------------------- 1. app.gs evaluates
+/* ------------------------------------------------------- 1. script.gs evaluates
    In ONE scope, whole, the way Apps Script does it — not region by region. If
    two top-level names collided, or a section referred to something no longer
    there, this is where it stops. */
@@ -114,7 +114,7 @@ const ctx = {
     },
     XFrameOptionsMode: { ALLOWALL: 1 },
   },
-  /* The services doGet touches on the way through. Everything else in app.gs is
+  /* The services doGet touches on the way through. Everything else in script.gs is
      evaluated but not called. */
   ScriptApp: { getService: () => ({ getUrl: () => 'https://script.google.com/macros/s/TEST/exec' }) },
   PropertiesService: { getScriptProperties: () => ({ getProperty: () => null, setProperty(){} }),
@@ -128,11 +128,11 @@ const ctx = {
 ctx.globalThis = ctx;
 vm.createContext(ctx);
 try {
-  vm.runInContext(fs.readFileSync(path.join(ISLAND, 'app.gs'), 'utf8'), ctx,
-                  { filename: 'app.gs' });
-  pass('app.gs', 'the whole file evaluates in one scope, with no other file present');
+  vm.runInContext(fs.readFileSync(path.join(ISLAND, 'script.gs'), 'utf8'), ctx,
+                  { filename: 'script.gs' });
+  pass('script.gs', 'the whole file evaluates in one scope, with no other file present');
 } catch (e) {
-  fail('app.gs', `it does not evaluate on its own: ${e.message}`);
+  fail('script.gs', `it does not evaluate on its own: ${e.message}`);
 }
 
 /* ------------------------------------------------- 2. doGet asks for one file */
@@ -155,7 +155,7 @@ if (typeof ctx.doGet === 'function') {
     pass('one-html-file', `${routes.length} routes served, and every one asked for 'app' and nothing else`);
   }
 } else {
-  fail('doGet', 'app.gs defines no doGet');
+  fail('doGet', 'script.gs defines no doGet');
 }
 
 /* --------------------------------------------- 3. what it serves actually runs */
@@ -208,6 +208,6 @@ if (typeof ctx.doGet === 'function') {
 
   fs.rmSync(ISLAND, { recursive: true, force: true });
   console.log(failures ? `\n${failures} failure(s)`
-                       : '\nthreefiles.js: app.gs + app.html + appsscript.json are the whole application');
+                       : '\nthreefiles.js: script.gs + app.html + appsscript.json are the whole application');
   process.exit(failures ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

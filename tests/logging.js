@@ -16,7 +16,7 @@
  * keystroke and it is invisible in review — that is exactly how 36 of them
  * accumulated. §7's rule is that silent is right for an OPTIONAL CACHE READ and
  * wrong for everything else, and the whole of chunk 18's judgement is in which
- * group each one landed. So every silent catch left in app.gs is listed here by
+ * group each one landed. So every silent catch left in script.gs is listed here by
  * the function that contains it, and a new one fails this harness with "decide
  * it" rather than sliding in behind a green run.
  *
@@ -31,7 +31,7 @@ const fs   = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const APP  = fs.readFileSync(path.join(ROOT, 'app.gs'), 'utf8');
+const APP  = fs.readFileSync(path.join(ROOT, 'script.gs'), 'utf8');
 const LINES = APP.split('\n');
 
 let failures = 0;
@@ -87,7 +87,7 @@ if (undecided.length) {
     `§7: silent is right for an OPTIONAL CACHE READ and wrong for everything else — an ` +
     `invalidation that fails silently looks exactly like nothing having happened. Decide it, ` +
     `then either make it log or add it to ALLOWED here with the reason.\n` +
-    undecided.slice(0, 8).map(f => `        · app.gs:${f.line} in ${f.fn}() — ${f.text.slice(0, 74)}`)
+    undecided.slice(0, 8).map(f => `        · script.gs:${f.line} in ${f.fn}() — ${f.text.slice(0, 74)}`)
              .join('\n'));
 } else {
   const over = Object.keys(counts).filter(fn => counts[fn] > ALLOWED[fn].length);
@@ -114,7 +114,7 @@ const ENTRY = [
 ];
 for (const e of ENTRY) {
   const at = LINES.findIndex(l => new RegExp('^function\\s+' + e.fn + '\\s*\\(').test(l));
-  if (at === -1) { fail('entry-points', `${e.fn} is gone from app.gs`); continue; }
+  if (at === -1) { fail('entry-points', `${e.fn} is gone from script.gs`); continue; }
   /* the function body, by brace match */
   let depth = 0, end = at, started = false;
   for (; end < LINES.length; end++) {
@@ -211,7 +211,7 @@ if (inLoop.length) {
     `Ready-Mix bundle is 40,000 rows, so a line per row costs more than the work it describes ` +
     `and buries the line that matters. If it iterates a handful of named things rather than ` +
     `rows, say so in NOT_ROWS here.\n` +
-    inLoop.slice(0, 6).map(x => `        · app.gs:${x.line} (${x.where}) inside: ${x.loop}`).join('\n'));
+    inLoop.slice(0, 6).map(x => `        · script.gs:${x.line} (${x.where}) inside: ${x.loop}`).join('\n'));
 } else {
   pass('never-in-a-loop', `${(APP.match(/APP_log\(/g) || []).length} APP_log calls, none per-row`);
 }

@@ -6,12 +6,12 @@ landed into Google Sheets and renders interactive dashboards, editable executive
 and slide-ready PNG exports.
 
 This repository is a flat mirror of the Apps Script project, and since chunk 13 the project
-is **three files**: `app.gs`, `app.html` and `appsscript.json`. There are no folders, no build
+is **three files**: `script.gs`, `app.html` and `appsscript.json`. There are no folders, no build
 step and no package manager — paste those three into the script editor and it runs. `tests/`
 is Node-only and is **not** part of the script project.
 
 Both merged files are navigated by section banner rather than by scrolling: `Ctrl+F` for
-`§7` in `app.gs` or `§P rmx` in `app.html`. Each region also carries the name of the file it
+`§7` in `script.gs` or `§P rmx` in `app.html`. Each region also carries the name of the file it
 came from as a locator (`/* ---- RMX_Backend.gs ----`), which is what the commit history and
 the older parts of this document refer to.
 
@@ -34,7 +34,7 @@ the older parts of this document refer to.
 > ### Agents: read [`PLAN.md`](PLAN.md) before starting. Every session.
 >
 > The suite is mid-project — 37 Apps Script files are being collapsed into one `app.html` +
-> one `app.gs`. `PLAN.md` carries the chunk to pick up, the rules, the legacy hit-list and a
+> one `script.gs`. `PLAN.md` carries the chunk to pick up, the rules, the legacy hit-list and a
 > session-start/session-end protocol. Work happens on the `merging-files` branch only.
 > [`CLAUDE.md`](CLAUDE.md) is the short version. Once the merge lands, this file gets
 > rewritten around two files instead of 37.
@@ -48,12 +48,12 @@ not.** Small fixes go to `main` directly — a PR on a one-line change is a revi
 is waiting on. Anything that spans several files or several sessions gets a branch, so it can
 be reviewed in pieces and abandoned cheaply if it goes wrong. The merge described in
 [`PLAN.md`](PLAN.md) is on `merging-files` for exactly that reason — and belongs on that
-branch only. **It is done as of chunk 13: the script project is `app.gs`, `app.html` and
+branch only. **It is done as of chunk 13: the script project is `script.gs`, `app.html` and
 `appsscript.json`, and nothing else.**
 
 Two things that will bite you if you skip them:
 
-- **`app.gs` and `app.html` are LF throughout — keep them that way.** The deleted files were
+- **`script.gs` and `app.html` are LF throughout — keep them that way.** The deleted files were
   mixed three ways (most `.html` CRLF, `Code.gs` LF, and two `.gs` carried a lone `\r` as a
   line terminator), and they are still read out of git by three harnesses, so a scripted edit
   that touches historical text must open with `newline=''` and write back what was there.
@@ -107,8 +107,8 @@ mounting nothing, because a blank screen reads as an outage.
 | `inventoryreport` | `tpl-inventoryreport` | `IR_Backend.gs` | a Drive PDF (file ID in Script Properties) |
 | `deckbuilder` | `tpl-deckbuilder` | `Deck_Backend.gs`, `Deck_Recipe.gs` | the other pages |
 
-Backend names are the section locators `app.gs` still carries, not files — see
-[§3](#3-file-map). Three lists have to name the same ten pages: `APP_PAGES` in `app.gs`,
+Backend names are the section locators `script.gs` still carries, not files — see
+[§3](#3-file-map). Three lists have to name the same ten pages: `APP_PAGES` in `script.gs`,
 `AMR_PAGES` in §D, and the `§P` templates. `tests/merge.js` check 10 is what holds them
 together; drift is otherwise silent, and in one direction it reads as a click being ignored.
 
@@ -127,9 +127,9 @@ makes those borrowed sheets appear and be editable in each page's ⚙ panel.
 
 ## 3. File map
 
-### Server — one file, `app.gs`, in one shared global namespace
+### Server — one file, `script.gs`, in one shared global namespace
 
-**Since chunk 12 the server is a single `app.gs`.** The 16 `.gs` files below were merged into
+**Since chunk 12 the server is a single `script.gs`.** The 16 `.gs` files below were merged into
 it and deleted in the same commit — they cannot coexist, because Apps Script evaluates every
 `.gs` into **one** global scope and the last writer wins, silently. That is also why entry
 points are uniquely prefixed (`RMX_`, `PV`, `DECK_`, `TP_`, `IR`) and namespace objects are
@@ -163,7 +163,7 @@ region still carries as a `/* ---- RMX_Backend.gs ----` locator.
 ### Client — one file, `app.html`
 
 **Since chunk 13 the client is a single `app.html`, and the script project is three files:
-`app.gs`, `app.html`, `appsscript.json`.** The 21 `.html` below were merged into it and
+`script.gs`, `app.html`, `appsscript.json`.** The 21 `.html` below were merged into it and
 deleted at the cutover. Navigate it by section banner — `Ctrl+F` for `§A3` or `§P rmx`.
 
 | Section | Was | Role |
@@ -212,15 +212,15 @@ Chart.js, SheetJS (XLSX), html2canvas.
 Everything below is §D or §E of `app.html`; the file each came from is named where it helps.
 
 - **`AMR_PAGES`** (§D) — the page-switcher list. Adding a page means one line here, one in
-  `APP_PAGES` in `app.gs`, a `<template>` + `AMR.page()` registration in §P, and (optionally)
+  `APP_PAGES` in `script.gs`, a `<template>` + `AMR.page()` registration in §P, and (optionally)
   a landing card. `tests/merge.js` check 10 fails if the first three disagree.
 - **`AmrCache`** — device-level report cache in `localStorage`, keyed by a data-generation
   token. No expiry: entries stay valid until the token moves.
 - **The QlikView sync is trigger-driven only.** No client file calls any of `QlikSync.gs`'s
   four entry points (`qlikSyncCheck`, `qlikMarkCurrent`, `qlikStamps`, `qlikSyncNow`, all in
-  `app.gs` §11), and there is no Pull-from-QlikView button on any page. What every page
+  `script.gs` §11), and there is no Pull-from-QlikView button on any page. What every page
   carries is ⇣ *Update from source*, which is a different thing: it calls
-  `updateFromSource()` (`app.gs` §3) and only re-checks the data version.
+  `updateFromSource()` (`script.gs` §3) and only re-checks the data version.
 - **`AmrProgress`** — the shared progress pill.
 - **The Region memory is keyed by VIEW, in one place.** `pvKpiViewMap` in `localStorage`,
   key = `MARKET:<market>` plus `:<refine>` when there is one. Southwest, Southwest·Land and
@@ -809,7 +809,7 @@ so nobody has to guess.
 ### What exists today
 
 > Filenames in this table are **pre-merge locators**. The Deck Builder was built while the
-> project was 37 files; `Deck_Backend.gs` is `app.gs` §9, `Deck_Fuel.html` is §E's
+> project was 37 files; `Deck_Backend.gs` is `script.gs` §9, `Deck_Fuel.html` is §E's
 > `AmrFuelExec`, `Page_DeckBuilder.html` is §P `deckbuilder`, and so on. [§3](#3-file-map)
 > maps every one. The names are left as they were because they are what the commits and the
 > section banners say.
@@ -1175,7 +1175,7 @@ before assuming it is finished.**
 | 2026-08-17 | `RMX_prepare` returns **every** market's payload, so a market switch costs no server call — the way Aggregates already worked | ✅ done |
 | 2026-08-17 | **One loading screen** across the suite: `AmrBoot` holds it until every named step lands, `AmrProgress` gained a 400 ms grace so quick work paints nothing, and `done()` ticks are gone from every report page | ✅ done |
 | | TP01, the Inventory Report and the Landing page have no boot screen wired — they read no report data, so there may be nothing to do. Check before adding one | ☐ |
-| 2026-08-17 | **Planned the merge to one `app.html` + one `app.gs`** — see [`PLAN.md`](PLAN.md). Eight chunks on the `merging-files` branch, ordered around the fact that `app.gs` cannot coexist with the files it replaces | ✅ plan only, no code |
+| 2026-08-17 | **Planned the merge to one `app.html` + one `script.gs`** — see [`PLAN.md`](PLAN.md). Eight chunks on the `merging-files` branch, ordered around the fact that `script.gs` cannot coexist with the files it replaces | ✅ plan only, no code |
 | 2026-08-17 | Merge **chunks 1–2** on `merging-files` — the three audits (zero top-level `.gs` collisions; 7 of 127 functions callerless; 132 id-style rules in two pages), then `app.html` itself: §A1–§A4 CSS, the §D runtime, the Landing page and the Inventory Report, the `?page=app` route in `Code.gs`, and `tests/merge.js` | ✅ done |
 | 2026-08-17 | Merge **chunk 3** — AGG Fuel Recovery ported into `app.html`. §E gains `AmrProgress`, `AmrBoot`, `AmrFresh`, `AmrSlide`, `AmrFuelExec`; §A3 gains the slide frame, the load screen and the `.fsc-*` tables; **no §A4 block was needed**. New gates `tests/pageparity.js` (34 comparisons, legacy page vs merged page under jsdom, all identical) and `tests/modparity.js`. `Code.gs` unchanged | ✅ done |
 | 2026-08-17 | Two bugs the port surfaced, both fixed in `app.html`: chunk 2 ported `AmrHint` without the delegated `.amr-qm` click handler, so the "?" source-hint buttons would have been dead on the first page that had one; and the QlikView guide's *Use uploaded data* / *Back to sheet data* buttons carry `.ghost`, which is white-on-white outside the navy header. **`Page_RmxFuel.html:792` and `:794` still have the second one** — chunk 4 inherits the fix | ✅ done |
@@ -1211,15 +1211,15 @@ before assuming it is finished.**
 | 2026-08-18 | **Two sentences of TP01's page copy corrected** — it told users mail is sent "from your account" and that a recipient is remembered "for your account". Neither has been true since `executeAs: USER_DEPLOYING` was pinned: `TP01_Backend.gs` and README §1 both say the deployer sends and the recipient map is one shared list. It is the sentence someone reads before typing a colleague's address | ✅ done |
 | 2026-08-18 | **`.ghost` on white is closed** — the last two pages to check, TP01 and Landing, put no buttons inside their guides at all. The bug was on the two fuel pages and Price & Volume and is fixed on all three | ✅ done |
 | | **A real TP01 send is still owed.** Nothing off-platform can exercise `MailApp`; the page's parity case covers everything up to the click | ☐ |
-| 2026-08-18 | Merge **chunk 12** — the 16 `.gs` files into one `app.gs`, in one commit, because `app.gs` cannot coexist with the files it replaces. **542 KB, 11,388 lines, eleven sections, zero top-level collisions.** `APP_log()` + `APP_CONFIG.LOG_LEVEL`, `APP_verifyPermissions()`, and seven explicit `oauthScopes`. Both files now exist; only the cutover is left | ✅ done |
-| 2026-08-18 | **`tests/gsparity.js`** — proves every region of `app.gs` is byte-for-byte the `.gs` it came from, reading the originals out of git because they were deleted in the same commit. Mutation-tested four ways. Retires at chunk 13, like `modparity.js` | ✅ done |
+| 2026-08-18 | Merge **chunk 12** — the 16 `.gs` files into one `script.gs`, in one commit, because `script.gs` cannot coexist with the files it replaces. **542 KB, 11,388 lines, eleven sections, zero top-level collisions.** `APP_log()` + `APP_CONFIG.LOG_LEVEL`, `APP_verifyPermissions()`, and seven explicit `oauthScopes`. Both files now exist; only the cutover is left | ✅ done |
+| 2026-08-18 | **`tests/gsparity.js`** — proves every region of `script.gs` is byte-for-byte the `.gs` it came from, reading the originals out of git because they were deleted in the same commit. Mutation-tested four ways. Retires at chunk 13, like `modparity.js` | ✅ done |
 | 2026-08-18 | **A cut deleted `RMX_whoWins` and nothing noticed.** The `RMX_debugMonths` cut ran to the first `  return s;\n}` after its banner, and that is how `RMX_whoWins` ends, not `RMX_debugMonths`. The anchor matched *uniquely*; `node --check` and every structural check passed. What caught it was diffing the top-level **name set** before and after — now a permanent check in `gsparity.js`. `Page_Rmx.html` tells users to run `RMX_whoWins()` by name, so it would have shipped as a dead instruction | ✅ done |
 | 2026-08-18 | **Six debug functions deleted, and both of `PLAN.md` §7's required pre-deletion checks actually run.** `debugUnclassified`'s Drive CSV is a strict subset of what the live Mapping check already shows on screen (`getUnmapped` → `finishUnmapped_` carries row counts, markets, `mat_prod_hier_3` and CY/PY volume *and* revenue, sorted by money impact). Removing it does not cost the Drive scope. §7 also had the CSV attributed to `debugNaOthers`, which only writes to `Logger` — corrected | ✅ done |
 | 2026-08-18 | **`syncSlideData` and `CUBE_historyStatus` deleted; `qlikStamps`, `getSaskRatesStatus`, `SB` and `getSlideData` kept.** Three of the four open "callerless" candidates turned out not to be: `qlikStamps` is exercised by three checks in `tests/qliksync.js`, `getSaskRatesStatus` says "and a quick manual run" in its own comment, and `getSlideData` is called by the Overview at `Ov_Backend.gs:240`. `syncSlideData`'s own comment *claimed* a caller it does not have | ✅ done |
 | 2026-08-18 | **The chunk-1 audit's count was wrong and the analyser was the reason.** It is 181 top-level declarations (154 functions, 27 `var`/`const`), not 127: the original did not blank **regex literals**, so a `/[)]/` unbalanced its brace counter and whole regions read as nested — `Ov_Backend.gs` reported 5 top-level names against an actual 62. Every verdict survived; the fix is that a counter-based analyser must assert its counters return to zero. `PLAN.md` §1a and §13 corrected | ✅ done |
-| 2026-08-18 | **The repo's line endings are mixed three ways, not two.** `FSC_Backend.gs` and `RFSC_Backend.gs` each carry a lone `\r` as a line terminator, between `cPut_` and `cachedRead_`. Harmless to JavaScript, but `wc -l` undercounts and line-based tools see two statements on one line. `app.gs` normalises all three to LF | ✅ done |
-| 2026-08-18 | **The seven harnesses that read a `.gs` read a *region* of `app.gs` now**, via the new `tests/appgs.js`. Deliberately regions, not the whole file: eight of their checks assert on source text and would have passed against any of the eleven sections, leaving checks that could no longer fail. `tests/rmxcost.js` also had a literal `\r\n` in the anchor it splices the RMX IIFE return on — it matches the line ending now instead of spelling it | ✅ done |
-| | **`APP_verifyPermissions()` has never been run.** Nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp`, so the whole of §4 is unproven code. Run it from the editor as the first thing after pasting `app.gs` in | ☐ |
+| 2026-08-18 | **The repo's line endings are mixed three ways, not two.** `FSC_Backend.gs` and `RFSC_Backend.gs` each carry a lone `\r` as a line terminator, between `cPut_` and `cachedRead_`. Harmless to JavaScript, but `wc -l` undercounts and line-based tools see two statements on one line. `script.gs` normalises all three to LF | ✅ done |
+| 2026-08-18 | **The seven harnesses that read a `.gs` read a *region* of `script.gs` now**, via the new `tests/scriptgs.js`. Deliberately regions, not the whole file: eight of their checks assert on source text and would have passed against any of the eleven sections, leaving checks that could no longer fail. `tests/rmxcost.js` also had a literal `\r\n` in the anchor it splices the RMX IIFE return on — it matches the line ending now instead of spelling it | ✅ done |
+| | **`APP_verifyPermissions()` has never been run.** Nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp`, so the whole of §4 is unproven code. Run it from the editor as the first thing after pasting `script.gs` in | ☐ |
 | | **Two sentences in `app.html` are now untrue**, both user-facing strings rather than comments, both for chunk 13: the Ready-Mix month-list banner still tells users "a SECOND file in the Apps Script project is also defining RMX and winning", which is now impossible; and the Price & Volume cross-year notice still says to paste `PV_Backend.gs`, a file that no longer exists | ☐ |
 | | **`APP_log` has almost no call sites, on purpose.** Chunk 12 moved 10,889 lines and edited none of them — `PLAN.md` §7 says "written or rewritten", and moving is neither. Wiring it in is chunk 18, starting with `APP_cachePut_`'s silent `n > 250` bail, which is the whole reason the `cache` field exists. The `catch (e) {}` pass goes with it | ☐ |
 | 2026-08-18 | **The Inventory Report showed its toolbar and nothing else.** `#appRoot` sits between `<body>` and the page now, and `flex:1` on a child of a BLOCK box does nothing — `.irwrap` collapsed to its content, so `.ir-frame-wrap`'s own `flex:1` resolved against zero free space and the PDF iframe rendered **0px tall**. One rule gives the mount the missing link. Measured in Chromium before and after: the frame goes 1520x2 -> 1520x455 | ✅ done |
@@ -1233,7 +1233,7 @@ before assuming it is finished.**
 | 2026-08-18 | **Chunk 13, the cutover — the merge is done.** `doGet` validates `?page=` against the new `APP_PAGES` and serves `app.html` for every route; the `?page=app` scaffold, its `&view=` and `hrefFor`'s branch are gone. **All 21 legacy `.html` deleted**, plus `include()` (47 call sites, every one in a deleted file; `app.html`'s only mention is a comment) and `AmrKpiStore` (zero callers, went with `Shell.html`). The two untrue user-facing sentences fixed. Every route driven through the real `doGet` in a browser, including the unknown-page fallback. **37 files are now 3** | ✅ done |
 | 2026-08-18 | **Ten harnesses repointed through the new `tests/apphtml.js`, and the plan was wrong about three of them.** It said to delete `modparity.js` and retire `gsparity.js` because "they compare against files that no longer exist" — but gsparity had already solved that in chunk 12 by reading the 16 `.gs` out of **git**, and the same works for the 21 `.html`. Deleting `modparity.js` would have been actively harmful: `apphtml.js` slices §E out of `app.html`, and that slicing is only trustworthy while §E is a verbatim copy — modparity is the proof of it. The retirement condition is "a legitimate change lands inside a moved region", not "the sources are gone" | ✅ done |
 | 2026-08-18 | **Every repointed harness was proved green twice — once with the legacy files present, then again with them moved aside.** Four failed that second run (`freshness`, `pvcheck`, `ovperiod`, `bgrender`), each with a read the first pass had missed. **Hide before you delete** | ✅ done |
-| 2026-08-18 | **`merge.js` check 10, `routes`** — `APP_PAGES`, §D's `AMR_PAGES` and the `§P` templates must name the same ten pages. Three lists, two languages, nothing else making them agree; drift is silent and asymmetric — missing from `app.gs` and the switcher offers a link that quietly serves the landing page, which reads as the click being ignored. `gsparity.js` also gained a `rewrite` edit kind, because `replace` swaps one exact string and a rewritten function needs a span | ✅ done |
+| 2026-08-18 | **`merge.js` check 10, `routes`** — `APP_PAGES`, §D's `AMR_PAGES` and the `§P` templates must name the same ten pages. Three lists, two languages, nothing else making them agree; drift is silent and asymmetric — missing from `script.gs` and the switcher offers a link that quietly serves the landing page, which reads as the click being ignored. `gsparity.js` also gained a `rewrite` edit kind, because `replace` swaps one exact string and a rewritten function needs a span | ✅ done |
 | | **`APP_verifyPermissions()` has still never been run, and no real deck has ever been built.** Both need somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | 2026-08-18 | **"Update from source" turned the page white** — reported, and it predates the merge. `AmrFresh`'s stale dialog and its no-chrome fallback both called `window.location.reload()`. The page runs inside an Apps Script sandbox iframe whose URL is a one-shot `googleusercontent.com` content URL, so reloading *that* re-requests something that does not re-serve and comes back blank; a manual browser reload works because it reloads the top `/exec` URL. `Shell.html` had the same two lines. Both go through §D's `navTop` now, which is what every other navigation in the file already used — and the comment saying why had been dropped in the port, so it is back | ✅ done |
 | 2026-08-18 | **`modparity.js` gained gsparity's declared-`EDITS` mechanism** so that fix did not cost the whole harness. A module changed on purpose is declared and applied to the source side before comparing; everything else stays byte-for-byte. Retire it when the list stops being short enough to read | ✅ done |
@@ -1256,12 +1256,12 @@ before assuming it is finished.**
 | 2026-08-18 | **A mutation that does not change behaviour tells you nothing about the gate.** The first "cache the upload too" mutation passed — it removed a guard on a write the upload path never reaches. The mutation that models the real mistake is *adding* a cache write to `runUpload`, and that one fails by name | ✅ done |
 | 2026-08-18 | **Chunk 18 — `APP_log` at the server entry points, and all 36 silent catches decided.** In the order `PLAN.md` names: `APP_cachePut_`'s `n > 250` bail (the whole reason the `cache` field has a `skip`), `APP_cacheGet_`'s hit/miss **and its partial** — a chunked entry with one chunk expired is neither, and reads exactly like a cache that never warms — then `getFscData`, `getPvUnmapped`, `qlikSyncCheck` and `RMX_prepare` | ✅ done |
 | 2026-08-18 | **36 silent catches, not 31.** `catch (e) {}` misses five that bind `e2`/`e3`, and **every one of those five had to speak** — the sharpest being a fallback chain in `PVLOOK.applyRows` whose *fallback* was also silent, so both ways of invalidating the cache could fail with the rows already written and nothing said. 24 now log, 12 stay silent with a written reason. One shape covers most of them: **an invalidation that fails silently looks exactly like nothing having happened** — and one is logged at `error`, `QLIKSYNC.run`'s `syncAll()`, where the pipeline succeeds, the sheets hold new numbers, and every page keeps serving the old ones while the run reports ok | ✅ done |
-| 2026-08-18 | **A harness slicing one region out of `app.gs` was modelling the scope wrongly.** Apps Script puts every `.gs` in ONE global scope — the premise of the whole file — so §2's `APP_log` is reachable from §6 at run time. Three harnesses build a `vm` context from a single region and died on "APP_log is not defined" the moment a moved backend gained a log line: a failure that reads like a broken build and is a missing global. `tests/appgs.js` installs it now, and **records** the calls on `ctx.__log`. `tests/logging.js` is the standing gate; 27 of the 29 edits are declared to `gsparity.js`, which is still green | ✅ done |
+| 2026-08-18 | **A harness slicing one region out of `script.gs` was modelling the scope wrongly.** Apps Script puts every `.gs` in ONE global scope — the premise of the whole file — so §2's `APP_log` is reachable from §6 at run time. Three harnesses build a `vm` context from a single region and died on "APP_log is not defined" the moment a moved backend gained a log line: a failure that reads like a broken build and is a missing global. `tests/scriptgs.js` installs it now, and **records** the calls on `ctx.__log`. `tests/logging.js` is the standing gate; 27 of the 29 edits are declared to `gsparity.js`, which is still green | ✅ done |
 | 2026-08-18 | **Chunk 19 — the Saskatchewan rate table is read out in Settings.** `getSaskRatesStatus` had existed since before the merge with nothing calling it; its own comment claimed the Settings screen used it, and that half was untrue for its whole life. It is wired now, and **it follows `APP_EXTRA_SOURCES` rather than a page list** — `getSettingsFor` already returns a `saskrates` row on exactly the pages that read that sheet, so the readout attaches to that row and there is no second list to drift. It answers what the row above cannot: not *is a sheet configured* but *does the table match the customers in the data*, and it **names** the ones with no rate — an unmatched name is a rate that silently never applies | ✅ done |
 | 2026-08-18 | **The last debug function is gone.** Chunk 12 deleted six; `RMX_whoWins` was kept because the Ready-Mix page named it in an error banner. It goes now — and **not because chunk 18's logging replaced it**. It answered *"is a second `.gs` also defining `RMX` and winning"*, by comparing `RMX` with `RMX_NS`, printing the live source of `getKeys`, and forcing a throw so the stack names the FILE that owns the winning copy. **Since the merge there is one `.gs` and there cannot be a second**, so three of those four are impossible by construction; the fourth, the build stamp, was already printed at the end of the very banner telling users to run it. A diagnostic that can no longer observe anything is unreachable, not superseded | ✅ done |
 | 2026-08-18 | **Deleted with the symbol-table diff, because that is the check that caught this exact function being deleted by accident in chunk 12.** Asserted to remove exactly one top-level name. `RMX_NS.build` went with it — chunk 12 kept that export for its one reader — while `BUILD` itself stays, since it rides in every payload. The Ready-Mix banner and the §11 signpost no longer name a function that is not there | ✅ done |
 | 2026-08-18 | **A repo-wide audit of all 404 top-level declarations found seven with no caller anywhere, and not one is a diagnostic.** `DECK_status` is kept on the record (a real deck build has still never run, and that is what decides whether Publish needs it); `RMX_getCrossReport`, `getRmxUnmapped` and `uploadRmxData` are the legacy-name wrappers `PLAN.md` §11 already holds open as their own chunk. The remaining three are dead private helpers, removed separately | ✅ done |
 | 2026-08-18 | **Three dead helpers removed, with the audit that proves it.** `PV_MONTH_NAMES_` (a month-name constant no one reads — `pvMonthNum_` carries its own map), `pvMonthFor_` (a two-line wrapper over the live `pvMonthSel_`) and `aspInc_` (an ASP-increase calculator; every ASP percentage is computed where it is rendered). All three are **IIFE-private**, which the scope-aware analyser confirmed by not listing them among the 404 top-level names — stronger than "no caller": never reachable from outside their own section, and the trailing underscore puts them out of reach of `google.script.run` too. Declared to `gsparity.js`, symbol-table diff asserted, 25 harnesses green | ✅ done |
-| 2026-08-19 | **The three-file claim is tested now, not asserted.** `tests/threefiles.js` copies `app.gs`, `app.html` and `appsscript.json` into an empty directory and runs the app out of *that*: evaluates `app.gs` whole in one scope the way Apps Script does, serves all twelve routes, checks the only file `HtmlService` is ever asked for is `app`, and boots the served HTML in real Chromium **with no `google.script` present**. All green — so everything else in this repo is deletable | ✅ done |
-| 2026-08-19 | **The survival-critical knowledge now lives in the two files themselves.** `app.gs`'s and `app.html`'s headers carry the one-global-scope rule, the callerless-is-not-dead rule, the `oauthScopes` rule, the symbol-table rule, the silent-catch rule, the `:where()` scoping trap, the scriptlet trap and the style-element trap — so a copy of the three files carries its own warnings. **What is not duplicated is the evidence**: every rule is there because something broke, and that account stays in `PLAN.md` | ✅ done |
+| 2026-08-19 | **The three-file claim is tested now, not asserted.** `tests/threefiles.js` copies `script.gs`, `app.html` and `appsscript.json` into an empty directory and runs the app out of *that*: evaluates `script.gs` whole in one scope the way Apps Script does, serves all twelve routes, checks the only file `HtmlService` is ever asked for is `app`, and boots the served HTML in real Chromium **with no `google.script` present**. All green — so everything else in this repo is deletable | ✅ done |
+| 2026-08-19 | **The survival-critical knowledge now lives in the two files themselves.** `script.gs`'s and `app.html`'s headers carry the one-global-scope rule, the callerless-is-not-dead rule, the `oauthScopes` rule, the symbol-table rule, the silent-catch rule, the `:where()` scoping trap, the scriptlet trap and the style-element trap — so a copy of the three files carries its own warnings. **What is not duplicated is the evidence**: every rule is there because something broke, and that account stays in `PLAN.md` | ✅ done |
 | 2026-08-19 | **`.claspignore` and `.gitattributes` added.** Without the first, `clasp push` uploads `tests/*.js` into the script project — every harness landing in the one global scope every `.gs` shares, which is the hazard this repo is shaped around. The second pins the three files to LF on every platform, which is the mechanical form of a rule that was previously only written down | ✅ done |

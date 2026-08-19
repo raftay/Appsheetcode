@@ -17,7 +17,7 @@
  *   node tests/pvlookup.js
  */
 const fs = require('fs'), vm = require('vm'), path = require('path');
-const { region, load: loadRegions } = require('./appgs.js');   // this file has its own load()
+const { region, load: loadRegions } = require('./scriptgs.js');   // this file has its own load()
 const REPO = path.resolve(__dirname, '..');
 
 let fails = 0;
@@ -210,7 +210,7 @@ console.log('\nthere is one tab reader, and PV_Lookup uses it:');
   checkThat('...along with the names it scores against',
     Array.isArray(ctx.PV.RAW_HEADER_NAMES) && ctx.PV.RAW_HEADER_NAMES.length > 8);
 
-  /* The REGION, not the whole of app.gs: run against all eleven sections these
+  /* The REGION, not the whole of script.gs: run against all eleven sections these
      two negative regexes would match on any backend that happens to slice a
      header off, and this check would pass while PV_Lookup regressed. */
   const src = region('PV_Lookup.gs');

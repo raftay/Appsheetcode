@@ -25,7 +25,7 @@
  *   node tests/qliksync.js
  */
 const fs = require('fs'), vm = require('vm'), path = require('path');
-const { load: loadRegions } = require('./appgs.js');   // qliksync has its own load()
+const { load: loadRegions } = require('./scriptgs.js');   // qliksync has its own load()
 const REPO = path.resolve(__dirname, '..');
 
 let fails = 0;

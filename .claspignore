@@ -1,6 +1,6 @@
 # .claspignore — WHAT GOES UP TO APPS SCRIPT, AND NOTHING ELSE.
 #
-# The script project is THREE FILES: app.gs, app.html and appsscript.json.
+# The script project is THREE FILES: script.gs, app.html and appsscript.json.
 # The rest of this repo is scaffolding — the plan, the README, and a tests/
 # folder that is Node-only and has never been part of the project.
 #
@@ -21,6 +21,6 @@
 
 **/**
 
-!app.gs
+!script.gs
 !app.html
 !appsscript.json

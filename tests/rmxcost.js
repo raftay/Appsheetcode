@@ -33,7 +33,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const REPO = path.resolve(__dirname, '..');
-const { region } = require('./appgs.js');
+const { region } = require('./scriptgs.js');
 
 /* ---- the Apps Script globals RMX_Backend.gs touches --------------------- */
 const CACHE = {};                       // a CacheService that counts its traffic
@@ -58,25 +58,25 @@ global.APP_forgetStamp_ = () => {};
 global.APP_openSpreadsheet_ = () => { throw new Error('rmxcost never opens a sheet'); };
 global.APP_CONFIG = { CUBE: { COVERAGE: { rmx: { pyVol:1, cyVol:1, pyRev:110, cyRev:110 } } } };
 
-/* app.gs §7 (was RMX_Backend.gs) is one IIFE, so its helpers are private. One
+/* script.gs §7 (was RMX_Backend.gs) is one IIFE, so its helpers are private. One
    extra key is spliced onto the object it returns; nothing else is touched.
 
    The anchor used to carry a literal \r\n, because RMX_Backend.gs was CRLF like
-   most of the repo. app.gs is LF throughout (PLAN.md §12), so the line ending
+   most of the repo. script.gs is LF throughout (PLAN.md §12), so the line ending
    is matched rather than spelled — otherwise this harness fails at the splice
    with "could not find the IIFE return", which reads like the return moved. */
 let src = region('RMX_Backend.gs');
 const RET_RE = /  \/\/ Surface what the front end \/ Code\.gs need\.\r?\n  return \{/;
 const RET = (src.match(RET_RE) || [])[0];
 if (!RET) {
-  console.error('could not find the IIFE return in app.gs §7 (RMX_Backend.gs)'); process.exit(2);
+  console.error('could not find the IIFE return in script.gs §7 (RMX_Backend.gs)'); process.exit(2);
 }
 src = src.replace(RET, RET + '\n    __t: { keyRows_:keyRows_, plantRows_:plantRows_,' +
   ' ppiMaps_:ppiMaps_, slideSegment_:slideSegment_, extrasPayload_:extrasPayload_,' +
   ' scopeMonth_:scopeMonth_, inMonth_:inMonth_, monthFor_:monthFor_,' +
   ' selKey_:selKey_, cacheKey_:cacheKey_, cacheGet_:cacheGet_, cachePut_:cachePut_,' +
   ' loadDataCached_:loadDataCached_, ALL_MARKETS:ALL_MARKETS, CONFIG:CONFIG },');
-vm.runInThisContext(src, { filename: 'app.gs (RMX_Backend.gs)' });
+vm.runInThisContext(src, { filename: 'script.gs (RMX_Backend.gs)' });
 const T = RMX.__t;
 
 /* ---- a bundle the shape of the live one -------------------------------- */

@@ -16,9 +16,15 @@
 
  One file. Every page.
 
- THE SCRIPT PROJECT IS THREE FILES: app.gs, app.html and appsscript.json. There
+ THE SCRIPT PROJECT IS THREE FILES: script.gs, app.html and appsscript.json. There
  is no fourth and nothing here loads one — the only external requests this page
  makes are Google Fonts and the three CDN libraries §D loads on demand.
+
+ THE .gs BESIDE THIS FILE IS script.gs, NOT app.gs, AND IT CANNOT BE RENAMED
+ BACK. Apps Script keys a file by its name WITHOUT the extension, so 'app.gs'
+ and 'app.html' would both be the file 'app' — the project cannot hold both,
+ and createTemplateFromFile('app') would be ambiguous. This file keeps the
+ name 'app'; the server file is the one that moved.
 
  The repo this came from also holds PLAN.md, README.md and a tests/ folder, and
  if you have them they are worth reading. IF YOU DO NOT, everything you need in
@@ -2029,7 +2035,7 @@ window.AMR = (function(){
     navTop(href + (href.indexOf('?') === -1 ? '?' : '&') + 'r=' + Date.now());
   }
 
-  /* The page switcher. To add a page: one line here, one route in app.gs,
+  /* The page switcher. To add a page: one line here, one route in script.gs,
      one <template> + registration in §P. */
   var AMR_PAGES = [
     { p:'landing',         label:'Home' },
@@ -2168,7 +2174,7 @@ window.AMR = (function(){
      delete it and the sentence; wiring it is what makes the sentence true, and
      the function was being kept either way.
 
-     IT FOLLOWS APP_EXTRA_SOURCES RATHER THAN A PAGE LIST. app.gs already
+     IT FOLLOWS APP_EXTRA_SOURCES RATHER THAN A PAGE LIST. script.gs already
      declares which pages read the Saskatchewan sheet — Price & Volume, AGG Fuel
      Recovery and the Deck Builder — and getSettingsFor returns a row for every
      one of a page's sources, so the saskrates row is ALREADY in this modal on
@@ -10774,12 +10780,12 @@ MB Submarket, plus Region&rarr;Country.<br>
     if (!list.length){
       sel.innerHTML = '<option value="0">\u2014 unavailable \u2014</option>';
       sel.disabled = true;
-      /* Named app.gs, not PV_Backend.gs: chunk 12 merged the 16 server files into
+      /* Named script.gs, not PV_Backend.gs: chunk 12 merged the 16 server files into
          one and deleted them, so the file this sentence used to name no longer
          exists to paste. */
       showBanner('The server sent no month list, so nothing is being filtered by month. '
         + 'If the sheet carries a full prior year, every YTD figure below is putting a part '
-        + 'year against a whole one. Paste the current app.gs into the Apps Script '
+        + 'year against a whole one. Paste the current script.gs into the Apps Script '
         + 'editor, save, then press \u21bb Update from source. '
         + 'Backend build: ' + (STATE.build || 'older than 2026-08-11'));
       return;
@@ -12489,8 +12495,8 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
          the end of this very banner. Telling somebody to go and run a tool to
          learn something already on their screen is worse than saying nothing. */
       showBanner('The server sent no month list, so nothing is being filtered by month and '
-        + 'every figure below covers the WHOLE year, which means app.gs is out of date. '
-        + 'Paste the current app.gs into the Apps Script editor, save, then press '
+        + 'every figure below covers the WHOLE year, which means script.gs is out of date. '
+        + 'Paste the current script.gs into the Apps Script editor, save, then press '
         + '\u21bb Update from source. '
         + 'Backend build: ' + (STATE.build || 'older than 2026-08-11'));
       return;

@@ -1,4 +1,4 @@
-/* app.gs §1's sheet-resolution rules, run for real.  (Was Config.gs.)
+/* script.gs §1's sheet-resolution rules, run for real.  (Was Config.gs.)
  *
  * These are pure functions over APP_CONFIG plus a Script Properties lookup, so
  * they exercise without Google. The case that matters is a page with
@@ -10,7 +10,7 @@
  * kind of rule that looks obviously right and silently stops being true.
  */
 const fs = require('fs'), vm = require('vm'), path = require('path');
-const { load: loadRegions } = require('./appgs.js');
+const { load: loadRegions } = require('./scriptgs.js');
 const REPO = path.resolve(__dirname, '..');
 
 const ctx = { Logger: { log: () => {} } };

@@ -1,13 +1,20 @@
 /*****************************************************************************
- * app.gs — THE ENTIRE SERVER SIDE OF THE AMRIZE COMMERCIAL SUITE
+ * script.gs — THE ENTIRE SERVER SIDE OF THE AMRIZE COMMERCIAL SUITE
  *****************************************************************************
  *
  * One file. Every backend.
  *
- * THE SCRIPT PROJECT IS THREE FILES: app.gs, app.html and appsscript.json.
+ * THE SCRIPT PROJECT IS THREE FILES: script.gs, app.html and appsscript.json.
  * There is no fourth, and nothing here reads one — doGet asks HtmlService for
  * 'app' and for nothing else. Moving the whole application means copying three
  * files, which is the entire point of it being shaped this way.
+ *
+ * IT IS script.gs AND NOT app.gs, AND THAT IS NOT A STYLE CHOICE. An Apps
+ * Script project keys a file by its NAME WITHOUT THE EXTENSION, so 'app.gs'
+ * and 'app.html' are both the file 'app' and the project cannot hold both —
+ * the editor refuses the second one and the API rejects the push. It also
+ * makes HtmlService.createTemplateFromFile('app') ambiguous, which is the
+ * call doGet depends on. Renaming this back to app.gs breaks the project.
  *
  * The repo this came from also holds PLAN.md, README.md and a tests/ folder,
  * and if you have them they are worth reading — PLAN.md describes the merge
@@ -165,7 +172,7 @@ var APP_CONFIG = {
 
   /* How much the server logs. One of 'debug' | 'info' | 'warn' | 'error', or
      'off'. Read fresh on every APP_log call, so changing it here takes effect
-     on the next execution with nothing to redeploy. See app.gs §2.
+     on the next execution with nothing to redeploy. See script.gs §2.
      'info' is the production setting: entry points and phase boundaries, and
      every error with its context. 'debug' adds the detail you only want while
      something is being investigated. */

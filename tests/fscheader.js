@@ -21,8 +21,8 @@ const fs = require('fs');
 const vm = require('vm');
 const path = require('path');
 
-const { region, attach } = require('./appgs.js');
-/* Was FSC_Backend.gs; it is app.gs §6 now. tests/gsparity.js proves the region
+const { region, attach } = require('./scriptgs.js');
+/* Was FSC_Backend.gs; it is script.gs §6 now. tests/gsparity.js proves the region
    is still byte-for-byte that file, which is what keeps this harness a proof
    about the code that actually runs. */
 const SRC = region('FSC_Backend.gs');
@@ -85,7 +85,7 @@ function load(cpi) {
      missing global. attach() records the calls on ctx.__log. */
   attach(ctx);
   vm.createContext(ctx);
-  vm.runInContext(SRC, ctx, { filename: 'app.gs (FSC_Backend.gs)' });
+  vm.runInContext(SRC, ctx, { filename: 'script.gs (FSC_Backend.gs)' });
   return ctx;
 }
 

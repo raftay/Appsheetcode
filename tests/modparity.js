@@ -52,7 +52,7 @@ const APP  = fs.readFileSync(path.join(ROOT, 'app.html'), 'utf8');
 /* ---------------------------------------------------------------- EDITS
  * Changes made to a module ON PURPOSE since it was ported, declared here and
  * applied to the SOURCE side before comparing — exactly the mechanism
- * gsparity.js uses for app.gs, and for the same reason.
+ * gsparity.js uses for script.gs, and for the same reason.
  *
  * A module that has been deliberately changed is no longer a verbatim copy, and
  * the honest options are to declare the change or to retire the harness. Two

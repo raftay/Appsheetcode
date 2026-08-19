@@ -10,13 +10,13 @@ Builder extraction work lives. These two harnesses are the regression gate for P
 Nothing here is uploaded to Apps Script. The repo root is a flat mirror of the script
 project; this folder is not part of it.
 
-**Since chunk 13 the whole script project is `app.gs`, `app.html` and `appsscript.json`.**
+**Since chunk 13 the whole script project is `script.gs`, `app.html` and `appsscript.json`.**
 Both merged files have a reader in front of them and a parity gate behind it, and the pattern
 is the same on each side:
 
 | | reader | parity gate | reads a deleted file out of |
 |---|---|---|---|
-| server | `appgs.js` — one **region** of `app.gs` | `gsparity.js` | git, at `4d8ee5d` |
+| server | `scriptgs.js` — one **region** of `script.gs` | `gsparity.js` | git, at `4d8ee5d` |
 | client | `apphtml.js` — a **module / style layer / page** of `app.html`, or a deleted file whole | `modparity.js` | git, at `61b714c` |
 
 Read the reader's header before pointing anything new at either file. The distinction that
@@ -85,7 +85,7 @@ traps that have each shipped once — see `PLAN.md` §8.
 
 Check 9, `style-blocks`, is why §B stopped losing a rule: a style element's content is text
 until its closing tag, so anything that leaks in is parsed as CSS, and CSS error recovery eats
-the rule after it silently. Check 10, `routes`, holds `app.gs`'s `APP_PAGES`, §D's `AMR_PAGES`
+the rule after it silently. Check 10, `routes`, holds `script.gs`'s `APP_PAGES`, §D's `AMR_PAGES`
 and the `§P` templates to the same ten page names — three lists in two languages that nothing
 else makes agree.
 
@@ -239,7 +239,7 @@ emptying `#appRoot`. Each is caught, and each names what actually broke.
 
 ## `apphtml.js` — not a harness; the reader in front of `app.html`
 
-The client-side twin of `appgs.js`, and it answers two different questions:
+The client-side twin of `scriptgs.js`, and it answers two different questions:
 
 ```js
 const { module: mod, legacy, source, styleBlock, pageOf, pageCss } = require('./apphtml.js');
@@ -247,7 +247,7 @@ mod('AmrSlide')             // the §E module's script block — the code that S
 styleBlock('A3')            // one style layer, by its banner
 pageOf('rmx')               // one page's <template>, its registration JS, and its §A4 rules
 legacy('Page_Rmx.html')     // the deleted file, out of git — the app it REPLACED
-source('Shell.html')        // app.html/app.gs off disk, anything else out of git
+source('Shell.html')        // app.html/script.gs off disk, anything else out of git
 ```
 
 `source()` is the drop-in for a harness that splices pages together and needs `include('Shell')`
@@ -270,7 +270,7 @@ model would drift and the guarantee would quietly stop being true.
 
 ## `threefiles.js` — the project really is three files
 
-The claim the whole merge was for: moving this application means copying `app.gs`, `app.html`
+The claim the whole merge was for: moving this application means copying `script.gs`, `app.html`
 and `appsscript.json`, and everything else in the repo is scaffolding. Until this existed that
 claim had never been tried — and the repo's own rule is that a deletion you have not tested is
 a deletion you have not done. Chunk 13 is why: ten harnesses were repointed at `app.html`, all
@@ -279,7 +279,7 @@ because each had a read the first pass missed. *Hide before you delete.*
 
 So it copies the three files into an empty temp directory and runs the app out of **that**:
 
-1. `app.gs` is evaluated **whole, in one scope**, exactly as Apps Script does it — not region
+1. `script.gs` is evaluated **whole, in one scope**, exactly as Apps Script does it — not region
    by region like the other harnesses. A section that referred to something no longer there
    stops here.
 2. `doGet` is called for all twelve routes with `HtmlService` faked closely enough to prove the
@@ -368,7 +368,7 @@ read them as `5` and `-1234`. Both readings are defensible, so unifying has no s
 and the change would be silent under 144 call sites.
 
 This is a **characterisation** test, not a correctness one. It reads each definition out of
-`app.gs` by namespace, runs it against a shared table of inputs, and asserts the answer is what
+`script.gs` by namespace, runs it against a shared table of inputs, and asserts the answer is what
 the suite gives today — nothing more. Change one on purpose and it fails naming the input that
 moved.
 
@@ -385,7 +385,7 @@ fails naming `"5%"` and `"-12.5%"`.
 node tests/helpers.js
 ```
 
-## `gsparity.js` — `app.gs` holds verbatim copies of the 16 `.gs`
+## `gsparity.js` — `script.gs` holds verbatim copies of the 16 `.gs`
 
 Chunk 12 merged 10,889 lines of working backend into one file. The argument that made it safe
 was that it is a **move** — ordered concatenation, no renaming, nothing reconciled. This turns
@@ -397,7 +397,7 @@ REF=<commit> node tests/gsparity.js
 ```
 
 It reads the 16 originals **out of git**, not off disk: they were deleted in the same commit
-that added `app.gs`, because the two cannot coexist in an Apps Script project. That is the same
+that added `script.gs`, because the two cannot coexist in an Apps Script project. That is the same
 staging trick `regress.js` and `pvcheck.js` use, pointed at a commit instead of a directory.
 
 Five checks: every source appears verbatim after the ten edits declared in the file and no
@@ -418,21 +418,21 @@ appending a second top-level `getReport` (fails the collision check), flipping t
 the ordering check, and only that one).
 
 **Retire this at chunk 13**, same as `modparity.js`: the moment a legitimate change lands
-inside a moved region, `app.gs` stops being a copy of anything and this starts failing for the
+inside a moved region, `script.gs` stops being a copy of anything and this starts failing for the
 right reason. Delete it then — do not weaken it.
 
-## `appgs.js` — not a harness; the region slicer the others use
+## `scriptgs.js` — not a harness; the region slicer the others use
 
-Seven harnesses used to read a `.gs` file by name. They read a **region** of `app.gs` now, and
+Seven harnesses used to read a `.gs` file by name. They read a **region** of `script.gs` now, and
 this is the one place that knows how to find one.
 
 ```js
-const { region, load } = require('./appgs.js');
+const { region, load } = require('./scriptgs.js');
 region('PV_Backend.gs')      // the merged text, minus its banner
 load(ctx, 'Config.gs')       // ...evaluated into a vm context
 ```
 
-**Read this before repointing anything else at `app.gs`.** Several of those harnesses assert on
+**Read this before repointing anything else at `script.gs`.** Several of those harnesses assert on
 *source text* — "PV takes its generation from the sheet", "no local header-is-row-1 reader is
 back in `PV_Lookup`". Run against the whole merged file, those regexes pass if **any** of the
 eleven sections satisfies them, so a check that used to pin one backend would start passing
