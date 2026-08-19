@@ -64,6 +64,120 @@ const gitShow = f => lf(execFileSync('git', ['show', REF + ':' + f],
   { cwd: REPO, encoding: 'utf8', maxBuffer: 1 << 28 }));
 
 /* ===========================================================================
+ * THE DECK'S LAYOUT MAP, SPELLED OUT — because a declared edit has to BE the
+ * text, not a reference to it. Reading this out of script.gs would make the
+ * check vacuous: it would prove the file matches itself. Anything in the file
+ * that drifts from this block fails "§9 Deck_Backend.gs verbatim", which is
+ * exactly what a declared edit is for.
+ * ======================================================================== */
+const DECK_LAYOUT_STORE = `  function templateId_() { return cfg_('TEMPLATE_ID', DECK_CONFIG.PROP_TEMPLATE); }
+  function folderId_() { return cfg_('FOLDER_ID', DECK_CONFIG.PROP_FOLDER); }
+
+  /* ======================================================================
+   * THE LAYOUT MAP - which template layout each recipe row is built from
+   * ----------------------------------------------------------------------
+   * DECK_RECIPE names a layout per row. That is the DEFAULT, and it is now
+   * overridable from the Deck Builder page: pick a different layout for a
+   * slide and it is written here, shared, and used by every build after it
+   * until somebody picks again.
+   *
+   * ONLY THE DIFFERENCES ARE STORED. A row built from its recipe layout has
+   * no key at all, which is what keeps an edit to DECK_RECIPE meaningful:
+   * copying all 43 rows in here the first time anyone touched one would
+   * freeze the recipe, and the next person to re-point a slide in the code
+   * would change nothing and have no way to see why.
+   *
+   * NOTHING HERE VALIDATES AGAINST THE TEMPLATE, deliberately. This runs
+   * with no Slides call, DECK_getRecipe is the page's first request, and
+   * opening the template to check a name would put a multi-second API call
+   * in front of the one stage that is meant to be instant. An override
+   * naming a layout the template does not have is caught where every other
+   * bad layout already is - readTemplate returns the real list, and the page
+   * banners the mismatch before a build can start. Saving is checked instead
+   * at the point of saving, where the page has the template open anyway.
+   * ==================================================================== */
+  function layoutMap_() {
+    var raw = '';
+    try { raw = PropertiesService.getScriptProperties().getProperty(DECK_CONFIG.PROP_LAYOUTS) || ''; }
+    catch (e) { return {}; }
+    if (!raw) return {};
+    var o;
+    /* A property that will not parse is not worth an error on every Plan:
+       one bad write would lock the page out of a stage that has a perfectly
+       good default sitting in DECK_RECIPE. Fall back to no overrides and
+       say so in the log. */
+    try { o = JSON.parse(raw); } catch (e) {
+      Logger.log('DECK layout map is not valid JSON - ignoring it. Value: %s', raw);
+      return {};
+    }
+    if (!o || typeof o !== 'object' || o instanceof Array) return {};
+    var out = {};
+    for (var k in o) {
+      if (o.hasOwnProperty(k) && typeof o[k] === 'string' && o[k]) out[k] = o[k];
+    }
+    return out;
+  }
+
+  function writeLayoutMap_(map) {
+    var props = PropertiesService.getScriptProperties();
+    var keys = Object.keys(map);
+    /* An empty map is a DELETED property, not the string "{}" - so "has
+       anybody overridden anything?" stays one question with one answer. */
+    if (!keys.length) props.deleteProperty(DECK_CONFIG.PROP_LAYOUTS);
+    else props.setProperty(DECK_CONFIG.PROP_LAYOUTS, JSON.stringify(map));
+    return map;
+  }
+
+  /* Set one row's layout. Passing the row's own recipe layout, or '', REMOVES
+     the override rather than storing a key that says "the default" - see the
+     only-the-differences rule above. Returns the whole map so the caller can
+     see the state it just produced instead of assuming it. */
+  function setLayout_(recipeId, layoutId) {
+    recipeId = String(recipeId || '');
+    layoutId = String(layoutId || '');
+    if (!recipeId) fail_('setLayout needs a recipe row id.');
+
+    var row = null;
+    for (var i = 0; i < DECK_RECIPE.length; i++) {
+      if (DECK_RECIPE[i].id === recipeId) { row = DECK_RECIPE[i]; break; }
+    }
+    if (!row) fail_('No recipe row with id "' + recipeId + '".');
+
+    /* Checked HERE and not in layoutMap_ because this is the one path that
+       already has a reason to open the template: a name that does not exist
+       must never reach the store, or every later Plan carries the mistake. */
+    if (layoutId) {
+      var tpl = readTemplate(null), ok = false, names = [];
+      for (var j = 0; j < tpl.layouts.length; j++) {
+        if (tpl.layouts[j].role !== 'report') continue;
+        names.push(tpl.layouts[j].layoutId);
+        if (tpl.layouts[j].layoutId === layoutId) ok = true;
+      }
+      if (!ok) {
+        fail_('"' + layoutId + '" is not a report layout in this template. ' +
+          'It has: ' + (names.join(', ') || 'none') + '.');
+      }
+    }
+
+    var map = layoutMap_();
+    if (!layoutId || layoutId === row.layout) delete map[recipeId];
+    else map[recipeId] = layoutId;
+
+    writeLayoutMap_(map);
+    Logger.log('DECK layout: %s -> %s', recipeId, map[recipeId] || (row.layout + ' (default)'));
+    return { recipeId: recipeId, layout: map[recipeId] || row.layout,
+             overridden: !!map[recipeId], map: map };
+  }
+
+  /* Put every row back on the layout DECK_RECIPE names. */
+  function resetLayouts_() {
+    writeLayoutMap_({});
+    Logger.log('DECK layout map cleared - every row is back on its recipe layout.');
+    return { map: {} };
+  }
+`;
+
+/* ===========================================================================
  * The complete list of every edit chunk 12 made to the merged sources.
  * Anything not declared here must be byte-for-byte what it was.
  * ======================================================================== */
@@ -791,6 +905,51 @@ var DECK = (function () {\n` },
            'No caller.',
       from: '/*****************************************************************************\n * DECK_smokeTest - run this from the Apps Script editor, before any UI exists.\n',
       to: 'EOF' },
+
+  /* ---- WHICH LAYOUT EACH RECIPE ROW USES, CHOSEN FROM THE PAGE -------------
+     DECK_RECIPE's `layout` column was the only answer, and changing it meant a
+     code push by somebody with editor access — for a decision ("this slide
+     should be the full-width layout, not the one with a comment box") that is
+     nobody's idea of code. It is a stored override now: a shared Script
+     Property holding ONLY the rows that differ, applied by DECK_getRecipe.
+
+     THREE HUNKS, all additive. Nothing that was here changed behaviour; the
+     export block gained three names and the thin-globals block gained two. */
+    { kind: 'replace', gone: [],
+      why: 'the store itself, beside the other two Script Property readers it is modelled on ' +
+           '(templateId_ / folderId_ above). It holds the DIFFERENCES from DECK_RECIPE and not ' +
+           'a copy of it, which is what keeps editing the recipe meaningful: writing all 43 rows ' +
+           'in the first time anyone touched one would freeze the array, and the next person to ' +
+           're-point a slide in the code would change nothing and have no way to see why. ' +
+           'setLayout_ is the one path that validates against the template, because it is the ' +
+           'one path that already has a reason to open it — DECK_getRecipe must stay instant.',
+      from: `  function templateId_() { return cfg_('TEMPLATE_ID', DECK_CONFIG.PROP_TEMPLATE); }
+  function folderId_() { return cfg_('FOLDER_ID', DECK_CONFIG.PROP_FOLDER); }
+`,
+      to: DECK_LAYOUT_STORE },
+
+    { kind: 'replace', gone: [],
+      why: 'and the namespace exports the three, so DECK_getRecipe and the two thin globals have ' +
+           'one implementation to reach rather than a second copy of the same property key.',
+      from: `  return {
+    readTemplate: readTemplate, validateTemplate: validateTemplate,
+    create: create, addSlide: addSlide, finish: finish, status: status
+  };`,
+      to: `  return {
+    readTemplate: readTemplate, validateTemplate: validateTemplate,
+    create: create, addSlide: addSlide, finish: finish, status: status,
+    layoutMap: layoutMap_, setLayout: setLayout_, resetLayouts: resetLayouts_
+  };` },
+
+    { kind: 'replace', gone: [], added: ['DECK_setLayout', 'DECK_resetLayouts'],
+      why: 'and the page can reach them. google.script.run only sees top-level functions, so ' +
+           'the same thin-wrapper pattern as the six above it.',
+      from: `function DECK_status(deckId) { return DECK.status(deckId); }`,
+      to: `function DECK_status(deckId) { return DECK.status(deckId); }
+/* The layout map. setLayout opens the template to check the name, so it is the
+   slow one of the three and the only one that can fail. */
+function DECK_setLayout(recipeId, layoutId) { return DECK.setLayout(recipeId, layoutId); }
+function DECK_resetLayouts() { return DECK.resetLayouts(); }` },
   ],
 
   'Deck_Recipe.gs': [
@@ -820,6 +979,93 @@ var DECK = (function () {\n` },
 
 /*****************************************************************************
  * DECK_getRecipe` },
+
+    { kind: 'replace', gone: [],
+      why: 'and the file\'s own header stops telling people to edit code. "Change \'layout\' on ' +
+           'these five rows" was the instruction for switching the Top 10 slides to an ' +
+           'L_FULL_STACK; it is a dropdown now, and a header that still names a code push is ' +
+           'how somebody ends up asking for editor access they do not need. Comment only.',
+      from: ` *   Deck_Backend.gs but that layout is NOT in the shipped template. To switch:
+ *   add the layout to the template, then change 'layout' on these five rows.`,
+      to: ` *   Deck_Backend.gs but that layout is NOT in the shipped template. To switch:
+ *   add the layout to the template, then pick it on those five rows in the Plan
+ *   stage - which is now a dropdown, and no longer needs a code push.` },
+
+  /* ---- THE LAYOUT MAP IS APPLIED HERE ------------------------------------
+     DECK_getRecipe is the Plan stage's only request and it must stay instant,
+     so this reads ONE Script Property and makes no Slides call. Two hunks:
+     the read, and what a row now carries. */
+    { kind: 'replace', gone: [],
+      why: 'the saved overrides, read once for the whole recipe rather than per row.',
+      from: `function DECK_getRecipe() {
+  var seen = {}, problems = [], rows = [];
+
+  for (var i = 0; i < DECK_RECIPE.length; i++) {`,
+      to: `function DECK_getRecipe() {
+  var seen = {}, problems = [], rows = [];
+
+  /* Whatever anybody has re-pointed from the Deck Builder page. Only the rows
+     that differ are in here; everything else keeps the layout below. Read ONCE
+     for the whole recipe rather than per row - it is a single property. */
+  var over = DECK.layoutMap();
+
+  for (var i = 0; i < DECK_RECIPE.length; i++) {` },
+
+    { kind: 'replace', gone: [],
+      why: 'and a row says which layout it is BUILT from, which layout the recipe NAMES, and ' +
+           'whether those differ. All three, because one on its own is a trap: the page offers ' +
+           '"back to the default" from the second, and the third is the only way anybody can ' +
+           'tell a deliberate override from one somebody picked by accident three months ago. ' +
+           'The orphan check at the end is the same argument — an override whose row has since ' +
+           'been deleted from DECK_RECIPE does nothing and explains nothing, so it is SAID. It ' +
+           'is not deleted here: a read is not the place to write.',
+      from: `    rows.push({
+      id: r.id, source: r.source, market: r.market || '',
+      /* a within-market narrowing, e.g. Southwest -> Land. The source decides
+         what it means; nothing here needs to know. */
+      refine: r.refine || '',
+      period: r.period || '', layout: r.layout, title: r.title,
+      subtitle: r.subtitle || '', group: r.group || 'Other',
+      optional: !!r.optional
+    });
+  }
+
+  return { rows: rows, count: rows.length, problems: problems };
+}`,
+      to: `    /* An override on a row with no layout of its own is still an override, so
+       the check above stays about the RECIPE and this stays about the store. */
+    var chosen = over[r.id] || r.layout;
+
+    rows.push({
+      id: r.id, source: r.source, market: r.market || '',
+      /* a within-market narrowing, e.g. Southwest -> Land. The source decides
+         what it means; nothing here needs to know. */
+      refine: r.refine || '',
+      period: r.period || '', layout: chosen, title: r.title,
+      /* WHAT THE RECIPE SAYS, alongside what is being used. The page offers
+         "back to default" from these two, and showing which rows have been
+         moved is the only way anyone can tell a deliberate override from a
+         layout somebody picked by accident three months ago. */
+      recipeLayout: r.layout,
+      layoutOverridden: !!(over[r.id] && over[r.id] !== r.layout),
+      subtitle: r.subtitle || '', group: r.group || 'Other',
+      optional: !!r.optional
+    });
+  }
+
+  /* An override whose row has since been deleted from DECK_RECIPE would sit in
+     the store forever, doing nothing and explaining nothing. Say so; do not
+     delete it here, because a read is not the place to write. */
+  for (var k in over) {
+    if (over.hasOwnProperty(k) && !seen[k]) {
+      problems.push('The saved layout for "' + k + '" points at a recipe row ' +
+        'that no longer exists. It is being ignored. Use Reset layouts to clear it.');
+    }
+  }
+
+  return { rows: rows, count: rows.length, problems: problems,
+           overrides: over, overrideCount: Object.keys(over).length };
+}` },
   ],
 
   'FSC_Backend.gs': [
@@ -1582,7 +1828,9 @@ function pvMonthFor_(rows, period, sel) {
    merge invented without saying so. */
 const ADDED = ['APP_LOG_LEVELS_', 'APP_logLevel_', 'APP_logData_', 'APP_log', 'APP_logTimed',
                'APP_verifyPermissions', 'APP_permAnySheetId_', 'APP_permErr_', 'APP_permPad_',
-               'APP_PAGES'];
+               'APP_PAGES',
+               /* the deck's layout map — the page writes it, DECK_getRecipe reads it */
+               'DECK_setLayout', 'DECK_resetLayouts'];
 
 /* PLAN.md §5 order. QlikSync.gs is NOT in this list: it is the one file that
    lands in two places — the engine in §5, its trigger and editor entry points

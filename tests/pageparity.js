@@ -222,14 +222,19 @@ function deckModel() {
       layouts: [layout('L_FULL_IMAGE', {}), layout('L_COMMENT_IMAGE', { comment: true })],
       reportCount: 2, slideCount: 3
     },
+    /* recipeLayout / layoutOverridden are part of DECK_getRecipe's answer now —
+       the layout a row is BUILT from can be overridden from the page, so the
+       row carries what the recipe NAMES alongside it. Nothing here is
+       overridden: this fixture is the default state, which is what the parity
+       comparison is about. */
     recipe: {
       rows: [
-        { id:'fsc_mtd', source:'fsc',  market:'',            refine:'', period:'MTD', layout:'L_FULL_IMAGE',    title:'AGG Fuel Recovery — MTD', subtitle:'', group:'Fuel',   optional:false },
-        { id:'pv_gta',  source:'pv',   market:'GTA',         refine:'', period:'MTD', layout:'L_COMMENT_IMAGE', title:'AGG Price & Volume — GTA', subtitle:'', group:'AGG',   optional:false },
-        { id:'seg_sk',  source:'seg',  market:'SASKATCHEWAN',refine:'', period:'YTD', layout:'L_COMMENT_IMAGE', title:'Product Segment — SK',     subtitle:'', group:'RMX',   optional:true  },
-        { id:'nope',    source:'ghost',market:'',            refine:'', period:'',    layout:'L_FULL_IMAGE',    title:'A source nothing registers',subtitle:'', group:'Other', optional:false }
+        { id:'fsc_mtd', source:'fsc',  market:'',            refine:'', period:'MTD', layout:'L_FULL_IMAGE',    recipeLayout:'L_FULL_IMAGE',    layoutOverridden:false, title:'AGG Fuel Recovery — MTD', subtitle:'', group:'Fuel',   optional:false },
+        { id:'pv_gta',  source:'pv',   market:'GTA',         refine:'', period:'MTD', layout:'L_COMMENT_IMAGE', recipeLayout:'L_COMMENT_IMAGE', layoutOverridden:false, title:'AGG Price & Volume — GTA', subtitle:'', group:'AGG',   optional:false },
+        { id:'seg_sk',  source:'seg',  market:'SASKATCHEWAN',refine:'', period:'YTD', layout:'L_COMMENT_IMAGE', recipeLayout:'L_COMMENT_IMAGE', layoutOverridden:false, title:'Product Segment — SK',     subtitle:'', group:'RMX',   optional:true  },
+        { id:'nope',    source:'ghost',market:'',            refine:'', period:'',    layout:'L_FULL_IMAGE',    recipeLayout:'L_FULL_IMAGE',    layoutOverridden:false, title:'A source nothing registers',subtitle:'', group:'Other', optional:false }
       ],
-      count: 4, problems: []
+      count: 4, problems: [], overrides: {}, overrideCount: 0
     }
   };
 }
@@ -575,7 +580,33 @@ const PAGES = [
     normalise: t => t
       .replace(/ onchange="db(?:PickKpi|Toggle)\([^"]*\)"/g, '')
       .replace(/ onclick="dbOpenLb\([^"]*\)"/g, '')
-      .replace(/ data-db-(?:kpi|toggle|lb)="\d+"/g, ''),
+      .replace(/ data-db-(?:kpi|toggle|lb)="\d+"/g, '')
+      /* ---- THE LAYOUT CELL IS A DROPDOWN NOW, AND THAT IS DELIBERATE -------
+         The legacy page printed the row's layout as text, because the only way
+         to change it was to edit DECK_RECIPE and push. It is a picker of the
+         template's report layouts today, so the cell CANNOT be byte-identical
+         and pretending otherwise would mean either deleting this case or
+         softening it into meaninglessness.
+         WHAT IS NARROWED, EXACTLY: this cell is reduced on the merged side to
+         the layout name it is showing — the SELECTED option — so the claim it
+         still makes is "the same layout is on screen for the same row". Every
+         other byte of those four rows, the checkbox, the number, the title,
+         the source line, the Region picker, the status and the thumbnail, is
+         still compared verbatim. What the picker does when you use it is not
+         this harness's job and is not asserted here: deckstatic.js covers the
+         store and the recipe's side of it.
+         PLAN.md's rule for a comparison that stops being wholly true is to
+         narrow the CLAIM to what is still provable and say so, not to weaken
+         the comparison. This is that. */
+      /* `selected` serialises as a bare attribute in one engine and as
+         selected="" in another, so the option is matched on its ATTRIBUTES
+         rather than on one spelling of them. */
+      .replace(/<div class="db-layout">.*?<option value="([^"]*)"[^>]*\sselected[^>]*>.*?<\/select><\/div>/g,
+               '<div class="db-layout">$1</div>')
+      /* the same cell before the template lands, when there is nothing to
+         choose from and the page falls back to printing the name */
+      .replace(/<div class="db-layout"><div class="db-lay-flat"[^>]*>([^<]*)<\/div><\/div>/g,
+               '<div class="db-layout">$1</div>'),
     chrome: {
       /* no guide and no "?" hint on this page — asserting either would fail
          for the right reason on the wrong page */

@@ -369,15 +369,35 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
 
 /* ---- the recipe ---------------------------------------------------------- */
 {
-  const ctx = {};
-  /* TWO REGIONS, because chunk 22 split the recipe from its checker: DECK_RECIPE
-     is config and moved to §1, DECK_getRecipe is code and stayed in §9. Apps
-     Script evaluates both into one global scope, so evaluating both into one
-     context is what models the runtime — the same reason scriptgs.js installs
-     APP_log before any region. Config.gs first: the array has to exist before
-     the function that walks it is called, not before it is declared. */
+  /* THE SCRIPT PROPERTY STORE, stubbed, because the recipe now reads one.
+     DECK_getRecipe applies the saved layout map, so a harness that cannot
+     answer PropertiesService is not modelling the thing under test — and a
+     stub that can be WRITTEN is what lets the override cases below exist at
+     all. Everything else about the deck backend stays untouched: nothing in
+     these regions calls SlidesApp until something invokes it. */
+  let PROPS = {};
+  const propsStub = {
+    getScriptProperties: () => ({
+      getProperty: k => (k in PROPS ? PROPS[k] : null),
+      setProperty: (k, v) => { PROPS[k] = String(v); },
+      deleteProperty: k => { delete PROPS[k]; },
+    }),
+  };
+  const ctx = { PropertiesService: propsStub, Logger: { log() {} } };
+
+  /* THREE REGIONS, because chunk 22 split the recipe from its checker:
+     DECK_RECIPE is config and moved to §1, DECK_getRecipe is code and stayed
+     in §9 — and the layout map it applies belongs to the DECK namespace in
+     Deck_Backend.gs, which owns the one implementation of that store. Apps
+     Script evaluates all of them into one global scope, so evaluating them
+     into one context is what models the runtime — the same reason scriptgs.js
+     installs APP_log before any region. Config.gs first: the array has to
+     exist before the function that walks it is called, not before it is
+     declared. */
   require('vm').runInNewContext(read('Config.gs'), ctx, { filename: 'script.gs (Config.gs)' });
+  require('vm').runInNewContext(read('Deck_Backend.gs'), ctx, { filename: 'script.gs (Deck_Backend.gs)' });
   require('vm').runInNewContext(read('Deck_Recipe.gs'), ctx, { filename: 'script.gs (Deck_Recipe.gs)' });
+  const LAYOUT_PROP = ctx.DECK_CONFIG.PROP_LAYOUTS;
   const out = ctx.DECK_getRecipe();
 
   check('recipe · no structural problems', out.problems.length === 0, out.problems.join('; '));
@@ -398,6 +418,79 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
     !out.rows.some(r => /^southwest (land|docks)$/i.test(r.market)));
   check('recipe · every other row still has an empty refine',
     out.rows.filter(r => r.refine).length === 4);
+
+  /* ---- the saved layout map ---------------------------------------------
+     Which template layout a row is built from is editable from the Deck
+     Builder page and stored shared, so DECK_RECIPE's `layout` is a DEFAULT
+     now. Two things have to stay true or the feature is a trap: an untouched
+     row must read exactly as it did before this existed, and an override must
+     be visible AS an override rather than looking like what the recipe says.
+     The second is what lets anyone tell a deliberate change from one somebody
+     made by accident months ago. */
+  check('layout map · with nothing stored, every row is on its recipe layout',
+    out.rows.every(r => r.layout === r.recipeLayout && !r.layoutOverridden),
+    out.rows.filter(r => r.layout !== r.recipeLayout).map(r => r.id).join(', '));
+  check('layout map · and the recipe reports no overrides',
+    out.overrideCount === 0 && Object.keys(out.overrides).length === 0);
+
+  {
+    /* one row moved to a layout the recipe does not name for it */
+    const target = out.rows[0], other = out.rows.find(r => r.recipeLayout !== target.recipeLayout);
+    PROPS[LAYOUT_PROP] = JSON.stringify({ [target.id]: other.recipeLayout });
+    const o2 = ctx.DECK_getRecipe();
+    const moved = o2.rows.find(r => r.id === target.id);
+
+    check('layout map · a stored override is what the row is BUILT from',
+      moved.layout === other.recipeLayout,
+      `${target.id} built from ${moved.layout}, expected ${other.recipeLayout}`);
+    check('layout map · ...and the recipe default travels beside it',
+      moved.recipeLayout === target.recipeLayout,
+      `recipeLayout=${moved.recipeLayout}, expected ${target.recipeLayout}`);
+    check('layout map · ...and the row is flagged as moved',
+      moved.layoutOverridden === true);
+    check('layout map · exactly one row is affected',
+      o2.rows.filter(r => r.layoutOverridden).length === 1 && o2.overrideCount === 1,
+      o2.rows.filter(r => r.layoutOverridden).map(r => r.id).join(', '));
+    check('layout map · every other row is untouched',
+      o2.rows.filter(r => r.id !== target.id).every(r => r.layout === r.recipeLayout));
+  }
+
+  {
+    /* an override that names the row's OWN default is not a change. It should
+       never be written — setLayout deletes the key instead — but a store
+       edited by hand can hold one, and calling it "moved" would send somebody
+       hunting for a difference that is not there. */
+    const target = out.rows[0];
+    PROPS[LAYOUT_PROP] = JSON.stringify({ [target.id]: target.recipeLayout });
+    const o3 = ctx.DECK_getRecipe();
+    check('layout map · an override equal to the default is not a change',
+      o3.rows.find(r => r.id === target.id).layoutOverridden === false);
+  }
+
+  {
+    /* a key for a row that has since been deleted from DECK_RECIPE. It does
+       nothing and explains nothing, so it has to be SAID rather than silently
+       ignored — this is the one that would otherwise outlive everyone who
+       knew about it. */
+    PROPS[LAYOUT_PROP] = JSON.stringify({ a_row_that_was_deleted: 'L_FULL_IMAGE' });
+    const o4 = ctx.DECK_getRecipe();
+    check('layout map · an override for a row that no longer exists is reported',
+      o4.problems.some(p => /a_row_that_was_deleted/.test(p)),
+      o4.problems.join('; ') || 'no problems reported');
+    check('layout map · ...and does not move any live row',
+      o4.rows.every(r => r.layout === r.recipeLayout));
+  }
+
+  {
+    /* a property that will not parse must not lock the page out of Plan: the
+       recipe has a perfectly good default sitting in DECK_RECIPE. */
+    PROPS[LAYOUT_PROP] = 'not json {{{';
+    const o5 = ctx.DECK_getRecipe();
+    check('layout map · an unparseable store falls back to the recipe',
+      o5.rows.length === out.rows.length && o5.rows.every(r => r.layout === r.recipeLayout));
+  }
+
+  PROPS = {};
 }
 
 console.log(failed ? '\n' + failed + ' check(s) FAILED' : '\nall checks passed');

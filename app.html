@@ -1498,11 +1498,15 @@ body[data-page="deckbuilder"] .db-group{background:var(--blue-10); border-top:1p
   border-bottom:1px solid var(--line); padding:7px 14px;
   font:800 11px Archivo; letter-spacing:.06em; text-transform:uppercase; color:var(--blue-100)}
 body[data-page="deckbuilder"] .db-group:first-child{border-top:0}
-body[data-page="deckbuilder"] .db-row{display:grid; grid-template-columns:30px 34px minmax(0,1fr) 128px 132px 96px 176px;
+body[data-page="deckbuilder"] .db-row{display:grid; grid-template-columns:30px 34px minmax(0,1fr) 152px 132px 96px 176px;
   gap:12px; align-items:center; padding:9px 14px; border-bottom:1px solid #F0F4FA}
 body[data-page="deckbuilder"] .db-row:last-child{border-bottom:0}
-@media (max-width:1180px){ body[data-page="deckbuilder"] .db-row{grid-template-columns:30px 34px minmax(0,1fr) 132px 96px 176px}
-  body[data-page="deckbuilder"] .db-row .db-layout{display:none} }
+/* THE LAYOUT COLUMN SURVIVES TO 980px, where the Region picker also goes. It
+   used to drop at 1180 because it was a label and a label is only worth its
+   width; it is a dropdown now, and hiding it is hiding the only way to change
+   which template slide a row is built from. */
+@media (max-width:1180px){ body[data-page="deckbuilder"] .db-row{grid-template-columns:30px 34px minmax(0,1fr) 140px 132px 96px} 
+  body[data-page="deckbuilder"] .db-row .db-thumb{display:none} }
 @media (max-width:980px){ body[data-page="deckbuilder"] .db-row{grid-template-columns:30px 34px minmax(0,1fr) 96px}
   body[data-page="deckbuilder"] .db-row .db-layout, body[data-page="deckbuilder"] .db-row .db-kpi-wrap, body[data-page="deckbuilder"] .db-row .db-kpi-none, body[data-page="deckbuilder"] .db-row .db-thumb{display:none} }
 
@@ -1518,7 +1522,22 @@ body[data-page="deckbuilder"] .db-num{font:600 11px Inter; color:var(--muted); t
 body[data-page="deckbuilder"] .db-ttl{font:600 12.5px Inter; color:var(--ink); overflow:hidden; text-overflow:ellipsis;
   white-space:nowrap}
 body[data-page="deckbuilder"] .db-sub{font:500 10.5px Inter; color:var(--muted); margin-top:1px}
-body[data-page="deckbuilder"] .db-layout{font:500 11px Inter; color:var(--muted); overflow:hidden;
+/* THE PER-ROW LAYOUT PICKER — which template slide this row is built from.
+   Styled like the Region picker beside it because it does the same kind of
+   thing, with one difference that matters: this one is SHARED. The caption
+   says so when a row has been moved off its recipe default. */
+body[data-page="deckbuilder"] .db-layout{display:flex; flex-direction:column; gap:3px; min-width:0}
+body[data-page="deckbuilder"] .db-layout-cap{font:700 8.5px Archivo; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+body[data-page="deckbuilder"] .db-layout-cap.moved{color:var(--blue-70)}
+body[data-page="deckbuilder"] .db-lay{width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:7px;
+  background:#F4F7FC; padding:5px 7px; font:600 11px Inter; color:var(--ink); cursor:pointer}
+body[data-page="deckbuilder"] .db-lay:hover{border-color:var(--blue-40)}
+body[data-page="deckbuilder"] .db-lay.moved{border-color:var(--blue-40); background:#EAF1FB}
+body[data-page="deckbuilder"] .db-lay:disabled{cursor:default; opacity:.6}
+/* No template loaded yet: the recipe's own name, as plain text, because there
+   is nothing to offer a choice from until DECK_readTemplate has answered. */
+body[data-page="deckbuilder"] .db-lay-flat{font:500 11px Inter; color:var(--muted); overflow:hidden;
   text-overflow:ellipsis; white-space:nowrap}
 body[data-page="deckbuilder"] .db-st{font:700 10.5px Inter; letter-spacing:.03em; text-transform:uppercase}
 body[data-page="deckbuilder"] .db-st.pending{color:var(--muted)}
@@ -11192,7 +11211,9 @@ MB Submarket, plus Region&rarr;Country.<br>
         if(!STATE.upload && window.AmrCache) AmrCache.set('lookupcheck', d);
         renderUnmapped(d);
       })
-      .withFailureHandler(function(){ $m('mapHost').style.display='none'; })
+      .withFailureHandler(function(){
+        var h=$m('mapHost'); if(h) h.style.display='none';  // the page may be gone
+      })
       .getPvUnmapped({ upload: STATE.upload });
   }
 
@@ -13275,8 +13296,9 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
       STATE.mapCache[ck]=d;
       if(!STATE.upload && window.AmrCache) AmrCache.set('unmapped', d);
       renderUnmapped(d);
-    }).withFailureHandler(function(){ $('mapHost').style.display='none'; })
-      .RMX_getUnmapped({ upload: STATE.upload });
+    }).withFailureHandler(function(){
+      var h=$('mapHost'); if(h) h.style.display='none';   // the page may be gone
+    }).RMX_getUnmapped({ upload: STATE.upload });
   }
 
   /* Suggestions are only fetched when someone actually opens the dialog. */
@@ -13308,7 +13330,14 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
 
   /* ---------- the card ---------- */
   function renderUnmapped(d){
-    var host=$('mapHost'); if(!d){ host.style.display='none'; return; }
+    /* THE PAGE MAY BE GONE. loadUnmapped fires a google.script.run and this is
+       its handler, so a switch away while the call is in flight lands here with
+       #mapHost unmounted — and an unguarded host.style throws out of a callback
+       nothing is catching. The Price & Volume copy of this function has carried
+       the same two-line guard since the Inventory Report fix; this one was
+       missed, and only ever showed up as an uncaught error in pageswitch.js. */
+    var host=$('mapHost'); if(!host) return;
+    if(!d){ host.style.display='none'; return; }
     var counts = { product:(d.product||[]).length, extras:(d.extras||[]).length, flag:(d.flag||[]).length };
     STATE.mapCounts = counts;
     var n = (d.total!=null) ? d.total : (counts.product+counts.extras+counts.flag);
@@ -20715,6 +20744,16 @@ AMR.page('overview', {
     </div>
 
     <div class="db-panel">
+      <h3>Slide layouts</h3>
+      <p class="db-note">Each slide in the list picks its own template layout. A change
+        is saved for <b>everybody</b> &mdash; it is the deck&rsquo;s setting, not this
+        browser&rsquo;s &mdash; and stays until somebody changes it again.</p>
+      <div id="dbLayoutCount" class="db-note" style="margin-top:6px">&mdash;</div>
+      <button class="dbbtn wide" id="dbResetLayouts" style="margin-top:10px" disabled>
+        &#8630; Reset to recipe defaults</button>
+    </div>
+
+    <div class="db-panel">
       <h3>Deck</h3>
       <label class="db-lbl" for="dbMonth">Report month</label>
       <select class="db-in" id="dbMonth"></select>
@@ -20916,6 +20955,8 @@ AMR.page('deckbuilder', {
     document.getElementById('dbBtnRender').disabled  = b || !ROWS.length;
     document.getElementById('dbBtnPublish').disabled = b || !countReady();
     document.getElementById('dbReloadTpl').disabled  = b;
+    /* the reset button has a second condition - something to reset */
+    dbLayoutCount();
   }
 
   function countOn(){ return ROWS.filter(function(r){ return r.on; }).length; }
@@ -21417,6 +21458,27 @@ AMR.page('deckbuilder', {
     });
     host.innerHTML = html;
     ROWS.forEach(function(r, i){ paintThumb(i); });
+    dbLayoutCount();
+  }
+
+  /* How many rows are off their recipe layout, in the rail. This is the only
+     place the fact is visible without reading all 43 rows, and it is what makes
+     "somebody changed something months ago" a thing anyone can notice. */
+  function dbLayoutCount(){
+    var el = document.getElementById('dbLayoutCount');
+    var btn = document.getElementById('dbResetLayouts');
+    if(!el || !btn) return;
+    if(!ROWS.length){
+      el.innerHTML = '&mdash;';
+      btn.disabled = true;
+      return;
+    }
+    var n = ROWS.filter(function(r){ return r.spec.layoutOverridden; }).length;
+    el.innerHTML = n
+      ? '<b>' + n + '</b> of ' + ROWS.length + ' slide' + (n===1?' is':'s are') +
+        ' on a layout somebody chose here rather than the one the recipe names.'
+      : 'All ' + ROWS.length + ' slides are on their recipe layout.';
+    btn.disabled = BUSY || !n;
   }
 
   /* Some slides carry a KPI strip whose numbers come from ONE region sheet of
@@ -21524,6 +21586,135 @@ AMR.page('deckbuilder', {
     setBusy(BUSY);                 // recompute the buttons; do not end a render
   }
 
+  /* WHICH TEMPLATE SLIDE THIS ROW IS BUILT FROM.
+     DECK_RECIPE names one; this offers every report layout the template
+     actually has, so re-pointing a slide is a dropdown rather than a code push.
+     The list comes from TPL, which is the template as it is right now — so a
+     layout added to the deck this morning is offered this afternoon without
+     anything here knowing its name in advance.
+
+     COVER LAYOUTS ARE NOT OFFERED. create() fills the cover in place rather
+     than duplicating it, so a recipe row pointing at one would produce nothing;
+     DECK_readTemplate tags them role:'cover' for exactly this. */
+  function layoutPickerHtml(r, i){
+    var cur = r.spec.layout || '';
+    var moved = !!r.spec.layoutOverridden;
+
+    /* Before the template has loaded there is no list to choose from, and an
+       empty dropdown that silently discards the row's real layout is worse than
+       the name on its own. This is also what a 404'd template leaves behind. */
+    if(!TPL){
+      return '<div class="db-layout"><div class="db-lay-flat" title="'+
+        esc('The template has not loaded, so there is nothing to choose from yet. '+
+            'This is the layout the recipe names.')+'">'+esc(cur)+'</div></div>';
+    }
+
+    var opts = (TPL.layouts||[]).filter(function(L){ return L.role === 'report'; })
+                                .map(function(L){ return L.layoutId; });
+    /* A row whose layout is not in the template still has to show what it is
+       set to, or the dropdown quietly reads as some OTHER layout and the banner
+       about it makes no sense. Offer it, marked, and let the banner explain. */
+    if(cur && opts.indexOf(cur) === -1) opts.unshift(cur);
+
+    var def = r.spec.recipeLayout || cur;
+    var cap = moved ? 'Layout ·  changed' : 'Layout';
+    var tip = moved
+      ? 'Built from ' + cur + '. The recipe says ' + def + '. This choice is '+
+        'SHARED — it is what everybody gets until somebody changes it. Pick ' +
+        def + ' again to go back to the default.'
+      : 'Which template slide this row is built from. Changing it is saved for '+
+        'everybody, not just this browser.';
+
+    return '<div class="db-layout"><span class="db-layout-cap'+(moved?' moved':'')+'">'+
+      esc(cap)+'</span>'+
+      '<select class="db-lay'+(moved?' moved':'')+'" title="'+esc(tip)+'" '+
+      'data-db-layout="'+i+'">'+
+      opts.map(function(L){
+        var miss = !layoutOf(L);
+        return '<option value="'+esc(L)+'"'+(L===cur?' selected':'')+'>'+
+          esc(L + (L === def ? '  (default)' : '') + (miss ? '  — not in template' : ''))+
+          '</option>';
+      }).join('')+'</select></div>';
+  }
+
+  /* CHANGING A LAYOUT INVALIDATES THE PICTURE, which is the whole reason this
+     is not just a saved string. renderOne takes the capture's HEIGHT and its
+     pixel width from the layout's {{IMAGE}} box: a picture taken for a
+     full-width slot is the wrong shape for a half-width one, and nothing
+     downstream would notice — the deck would just come out with a stretched or
+     letterboxed table on that slide. So a row that already has a PNG has it
+     dropped and goes back on the live queue, exactly as dbPickKpi does for a
+     region change.
+
+     THE SAVE IS OPTIMISTIC ON SCREEN AND CHECKED ON THE SERVER. The row
+     repaints immediately, because waiting on a round trip to show a dropdown
+     move reads as a broken control; if the server rejects the name the row is
+     put back and the reason is bannered. */
+  function dbPickLayout(i, layoutId){
+    var r = ROWS[i];
+    if(!r || !layoutId || layoutId === r.spec.layout) return;
+
+    var was = r.spec.layout, wasOver = !!r.spec.layoutOverridden;
+    var def = r.spec.recipeLayout || was;
+
+    r.spec.layout = layoutId;
+    r.spec.layoutOverridden = (layoutId !== def);
+
+    var requeued = 0;
+    if(r.png){
+      r.png = null; r.w = r.h = 0; r.status = 'pending'; r.err = '';
+      requeued = 1;
+      /* only if a pass is running AND has already gone past this row */
+      if(RQ && RQ.list.indexOf(r) < RQ.i) RQ.list.push(r);
+    }
+    drawRow(r);                 // repaints the thumbnail too
+    prog('Saving layout…');
+
+    srv('DECK_setLayout', [r.spec.id, layoutId === def ? '' : layoutId])
+      .then(function(res){
+        /* Trust the server's answer over the optimistic one - it is the thing
+           that knows what was actually stored. */
+        r.spec.layout = (res && res.layout) || layoutId;
+        r.spec.layoutOverridden = !!(res && res.overridden);
+        drawRow(r);
+        /* prog() writes textContent, so this is NOT escaped - esc() here would
+           put literal &amp;s on screen. Same as every other prog() call. */
+        prog(r.spec.title + ' → ' + r.spec.layout +
+             (r.spec.layoutOverridden ? ' · saved for everybody' : ' · back to the recipe default') +
+             (requeued ? ' · picture dropped, press Render' : ''));
+        setBusy(BUSY);
+      })
+      .catch(function(e){
+        r.spec.layout = was; r.spec.layoutOverridden = wasOver;
+        drawRow(r);
+        prog('');
+        banner('bad', '<b>Could not save the layout for ' + esc(r.spec.title) + ':</b> ' +
+          esc(e && e.message ? e.message : String(e)) +
+          (requeued ? ' The picture was already dropped, so press <b>Render</b> to rebuild it.' : ''));
+        setBusy(BUSY);
+      });
+  }
+
+  /* Put every row back on the layout DECK_RECIPE names. One call, then a
+     re-Plan, because the server is the thing that knows what the defaults
+     were - re-deriving them here from recipeLayout would work right up until
+     somebody edited the recipe. */
+  function dbResetLayouts(){
+    if(!ROWS.length){ banner('warn', 'Press <b>Plan</b> first.'); return; }
+    var n = ROWS.filter(function(r){ return r.spec.layoutOverridden; }).length;
+    if(!n){ prog('No layouts have been changed - nothing to reset.'); return; }
+    if(!window.confirm('Put all ' + n + ' changed slide' + (n===1?'':'s') +
+       ' back on the layout the recipe names?\n\nThis is shared: it resets them for everybody.')) return;
+
+    clearBanners(); setBusy(true); prog('Resetting layouts…');
+    srv('DECK_resetLayouts')
+      .then(function(){ setBusy(false); dbPlan(); })
+      .catch(function(e){
+        setBusy(false); prog('');
+        banner('bad', esc(e && e.message ? e.message : String(e)));
+      });
+  }
+
   function rowHtml(r, i){
     /* refine sits next to the market it narrows, so a Land row is readable as
        "pv · Southwest · Land · MTD" rather than looking like a duplicate of the
@@ -21536,7 +21727,7 @@ AMR.page('deckbuilder', {
       '<div><div class="db-ttl">'+esc(r.spec.title)+'</div>'+
         '<div class="db-sub">'+esc(sub)+'</div>'+
         (r.err ? '<div class="db-err">'+esc(r.err)+'</div>' : '')+'</div>'+
-      '<div class="db-layout">'+esc(r.spec.layout)+'</div>'+
+      layoutPickerHtml(r, i)+
       kpiPickerHtml(r, i)+
       '<div class="db-st '+stCls(r.status)+'">'+stTxt(r.status)+'</div>'+
       '<div class="db-thumb'+(r.png?'':' empty')+'" id="dbThumb'+i+'" '+
@@ -21652,6 +21843,7 @@ AMR.page('deckbuilder', {
     /* The four rail / stage buttons, by id — they are in the template and
        never redrawn, so a listener each is simpler than delegating. */
     document.getElementById('dbReloadTpl').addEventListener('click', function(){ dbLoadTemplate(); });
+    document.getElementById('dbResetLayouts').addEventListener('click', dbResetLayouts);
     document.getElementById('dbBtnPlan').addEventListener('click', dbPlan);
     document.getElementById('dbBtnRender').addEventListener('click', dbRenderAll);
     document.getElementById('dbBtnPublish').addEventListener('click', dbPublish);
@@ -21662,6 +21854,7 @@ AMR.page('deckbuilder', {
     list.addEventListener('change', function(e){
       var t = e.target;
       if (t.hasAttribute && t.hasAttribute('data-db-kpi'))    dbPickKpi(Number(t.getAttribute('data-db-kpi')), t.value);
+      else if (t.hasAttribute && t.hasAttribute('data-db-layout')) dbPickLayout(Number(t.getAttribute('data-db-layout')), t.value);
       else if (t.hasAttribute && t.hasAttribute('data-db-toggle')) dbToggle(Number(t.getAttribute('data-db-toggle')), t.checked);
     });
     list.addEventListener('click', function(e){
