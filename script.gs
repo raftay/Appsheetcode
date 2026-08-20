@@ -4183,6 +4183,12 @@ function metrics_(s) {
   var cyAsp = s.cyVol ? s.cyRev / s.cyVol : 0, pyAsp = s.pyVol ? s.pyRev / s.pyVol : 0;
   return {
     cyVol: s.cyVol, pyVol: s.pyVol, volPct: s.pyVol ? (s.cyVol - s.pyVol) / s.pyVol : 0,
+    /* Revenue is reported in its own right now (the Overview's tables carry a
+       Rev CY / Rev PY / Rev % group), so it is sent rather than left to be read
+       back off ASP. The two agree everywhere except the one row that matters:
+       volume zero with revenue on it — a credit or a freight-only line — where
+       ASP is 0 and ASP x volume drops the dollars entirely. */
+    cyRev: s.cyRev, pyRev: s.pyRev,
     cyAsp: cyAsp, pyAsp: pyAsp, aspPct: pyAsp ? (cyAsp - pyAsp) / pyAsp : 0,
     ppi: s.cyRevPpi ? s.factorCy / s.cyRevPpi : 0
   };
@@ -9893,6 +9899,7 @@ function getOverview(opts){
     var t = table.total || {};
     out.aggAll = {
       cyVol: t.cyVol || 0, pyVol: t.pyVol || 0,
+      cyRev: t.cyRev || 0, pyRev: t.pyRev || 0,
       cyAsp: t.cyAsp || 0, pyAsp: t.pyAsp || 0,
       aspPct: t.aspPct || 0, volPct: t.volPct || 0,
       ppi: t.ppi || 0
@@ -9973,6 +9980,10 @@ function getOverview(opts){
             return {
               label: g.label, cyVol: g.cyVol, pyVol: g.pyVol,
               volPct: g.pyVol ? (g.cyVol - g.pyVol) / g.pyVol : 0,
+              /* base concrete revenue in its own right - the Overview's tables
+                 report it beside volume, and ASP x volume loses a row that has
+                 dollars on no volume */
+              baseCY: g.baseCY, basePY: g.basePY,
               aspBaseCY: aCY, aspBasePY: aPY,
               aspIncBase: aPY ? (aCY - aPY) / aPY : 0,
               rfiBase: wf.w, facBase: wf.f,

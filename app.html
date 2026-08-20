@@ -1145,6 +1145,10 @@ body[data-page="overview"] .ov-line-head .rule{flex:1; height:1px; background:va
   body[data-page="overview"] .kpi-row{display:grid; grid-template-columns:minmax(0,1fr) 110px minmax(0,1fr) 110px minmax(0,1fr); gap:12px}
   body[data-page="overview"] .kpi-unit{display:contents}
   body[data-page="overview"] .kpi.na{grid-column:1/-1}
+  /* A window longer than a year reports TWO measures and no % boxes at all —
+     see volRev(). Two equal cards, and the same prefix as the rule above on
+     purpose: a :where() version scores below it and would never apply. */
+  body[data-page="overview"] .kpi-row.two{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
   @media (max-width:980px){          /* --bp-mid; was 860px */
     body[data-page="overview"] .kpi-row{display:flex; flex-wrap:wrap}
     body[data-page="overview"] .kpi-unit{display:flex; gap:8px; align-items:stretch; flex:1 1 240px; min-width:0}
@@ -1350,6 +1354,11 @@ body[data-page="overview"] .ov-cust-grid{display:grid; grid-template-columns:1fr
 @media (max-width:980px){body[data-page="overview"] .ov-cust-grid{grid-template-columns:1fr}}   /* --bp-mid; was 900px */
 body[data-page="overview"] .ov-mini{min-height:120px; display:flex; align-items:center; justify-content:center; color:var(--muted); font:600 12px Inter}
 body[data-page="overview"] .ov-table{width:100%; border-collapse:collapse; margin-top:18px; font:500 12px Inter}
+/* Volume, revenue and the price pair is nine columns. A table that wide scrolls
+   inside its own box rather than pushing the whole panel sideways — the panel is
+   1180px and the columns are what they are. */
+body[data-page="overview"] .ov-scroll{overflow-x:auto}
+body[data-page="overview"] .ov-scroll.wide > .ov-table{min-width:760px}
 body[data-page="overview"] .ov-table th{font:700 9.5px Archivo; letter-spacing:.1em; text-transform:uppercase; color:var(--blue-70);
   background:var(--blue-10); text-align:right; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap}
 body[data-page="overview"] .ov-table th:first-child{text-align:left}
@@ -4266,9 +4275,20 @@ window.AmrCube = (function(){
     months: months,
     has: has,
     manifest: function(line){ return S[line] ? S[line].man : null; },
+    /* A plant-derived field has TWO names — the field ('submarket1', which is
+       what query() and buildMasks() take) and the plantMap it resolves through
+       ('sm1', which is what the dictionary is filed under). Callers hold the
+       field name, because that is the one the cube's other two entry points
+       want, so both are accepted here rather than making every caller keep the
+       pair straight. Asking for the wrong one used to return an empty list,
+       which reads as "the cube has never heard of this value" and quietly drops
+       the filter. */
     dict: function(line, name){
       var m = S[line] && S[line].man;
-      return (m && m.dict[name]) ? m.dict[name].filter(function(x){ return x !== ''; }) : [];
+      if (!m) return [];
+      var key = m.dict[name] ? name
+        : ((line === 'rmx') ? (VIA_PLANT_RMX[name] || VIA_MIX_RMX[name]) : VIA_PLANT_AGG[name]);
+      return (key && m.dict[key]) ? m.dict[key].filter(function(x){ return x !== ''; }) : [];
     },
     unmapped: function(line){ var m = S[line] && S[line].man; return m ? m.unmapped : null; },
     progress: progress,
@@ -15111,6 +15131,20 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
       <div class="kpi-row" id="kpiAgg"></div>
     </div>
 
+    <!-- Market summary (Aggregates) — one row per market with its submarkets
+         underneath, for whatever Period is on. It sits ABOVE Month by month
+         because it is the same numbers the strip above reports, opened out by
+         market: the shape of the period before its shape over time. -->
+    <div class="ov-panel" id="colMktSum">
+      <div class="ov-phead">
+        <div class="ph-t">
+          <h3>Market summary</h3>
+          <p class="sub" id="mktSumSub">Volume, revenue, ASP and PPI by market · click a market to open its submarkets.</p>
+        </div>
+      </div>
+      <div id="mktSumBody"><div class="ov-mini">Loading…</div></div>
+    </div>
+
     <!-- Month by month (Aggregates) — sits directly under the KPIs; the window
          is set by the Months slider in the top controls. -->
     <div class="ov-panel" id="colAggTrend">
@@ -15242,6 +15276,18 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
 
     <div>
       <div class="kpi-row" id="kpiRmx"></div>
+    </div>
+
+    <!-- Market summary (Ready-Mix) — the Aggregates panel's twin, off the same
+         renderer and the same cube, in m³ and against the RMX market names. -->
+    <div class="ov-panel" id="colRmxMktSum">
+      <div class="ov-phead">
+        <div class="ph-t">
+          <h3>Market summary</h3>
+          <p class="sub" id="rmxMktSumSub">Volume, revenue, ASP and PPI by market · click a market to open its submarkets.</p>
+        </div>
+      </div>
+      <div id="rmxMktSumBody"><div class="ov-mini">Loading…</div></div>
     </div>
 
     <!-- Month by month (Ready-Mix) — same renderer as the Aggregates tab, plus
@@ -15520,6 +15566,77 @@ AMR.page('overview', {
     function nPct(n){ return (n==null) ? nDash() : fPct(n); }
     function nPpi(n){ return (n==null) ? nDash() : fPpi(n); }
     function nAsp(n, f){ return (n==null) ? nDash() : (f||fAsp)(n); }
+    /* $ on a chart axis, where fMoneyFull's fourteen characters do not fit */
+    function fMoneyAxis(n){
+      var v=Number(n)||0, a=Math.abs(v), sgn=(v<0?'-$':'$');
+      if(a>=1e9) return sgn+(Math.round(a/1e8)/10)+'B';
+      if(a>=1e6) return sgn+(Math.round(a/1e5)/10)+'M';
+      if(a>=1e3) return sgn+Math.round(a/1e3)+'k';
+      return sgn+Math.round(a);
+    }
+    /* A percentage on an axis, not in a cell: no sign, and never the fifteen
+       decimals a computed bound arrives with. */
+    function fAxisPct(v){ return (Math.round((Number(v)||0)*10)/10)+'%'; }
+
+    /* ---- REVENUE, off whatever shape the row arrived in ---------------------
+       Revenue reaches this page under three names and no payload is missing it:
+         · the month cube and both cross reports say cyRev / pyRev;
+         · every Ready-Mix report says baseCY / basePY, because for Ready-Mix
+           this figure IS base concrete revenue - the same number under the name
+           the RMX side has always used for it;
+         · PV.getReport's own dimension tables leave it to be read off ASP,
+           which is exact: ASP is defined as revenue over volume, and
+           getOverview already derives out.pv's cyRev exactly this way.
+       One reader for all three, so no painter below has to know which report it
+       is looking at. */
+    function revCY(r){
+      if(!r) return 0;
+      if(r.cyRev!=null) return Number(r.cyRev)||0;
+      if(r.baseCY!=null) return Number(r.baseCY)||0;
+      return (Number(r.aspBaseCY!=null?r.aspBaseCY:r.cyAsp)||0)*(Number(r.cyVol)||0);
+    }
+    function revPY(r){
+      if(!r) return 0;
+      if(r.pyRev!=null) return Number(r.pyRev)||0;
+      if(r.basePY!=null) return Number(r.basePY)||0;
+      return (Number(r.aspBasePY!=null?r.aspBasePY:r.pyAsp)||0)*(Number(r.pyVol)||0);
+    }
+    /* null, not zero, when there is no prior year to divide by - the cell then
+       prints a dash rather than claiming the revenue did not move. */
+    function revPctOf(r){ var py=revPY(r); return py ? (revCY(r)-py)/Math.abs(py) : null; }
+
+    /* ---- THE MEASURE COLUMNS, WRITTEN ONCE ---------------------------------
+       Plant type, product class, plants, materials, customers, submarkets, both
+       tabs: every breakdown table on this page reports the same measures in the
+       same order, and with revenue among them that is eight columns. Writing the
+       header and the cells in one place is what keeps the eight in step across
+       six tables - and it is the only way a long window drops the same six from
+       all of them without six chances to miss one.
+
+       `asp` and `ppi` are passed in rather than read off the row because the two
+       lines name them differently (aspPct / ppi on Aggregates, aspIncBase /
+       ppiBase on Ready-Mix) and neither name is worth normalising across four
+       payloads that all still have to reconcile against Qlik. */
+    function measHead(unit, aspLab){
+      if(volRev()) return '<th>Volume ('+esc(unit)+')</th><th>Revenue</th>';
+      return '<th>Vol ('+esc(unit)+') CY</th><th>Vol ('+esc(unit)+') PY</th><th>Vol %</th>'
+        +'<th>Rev CY</th><th>Rev PY</th><th>Rev %</th>'
+        +'<th>'+esc(aspLab||'ASP % inc')+'</th><th>PPI</th>';
+    }
+    function measCells(r, asp, ppi){
+      if(volRev()) return '<td>'+fInt(r.cyVol)+'</td><td>'+fMoneyFull(revCY(r))+'</td>';
+      var rp=revPctOf(r);
+      return '<td>'+fInt(r.cyVol)+'</td><td>'+nInt(r.pyVol)+'</td>'
+        +'<td class="'+cls(r.volPct)+'">'+nPct(r.volPct)+'</td>'
+        +'<td>'+fMoneyFull(revCY(r))+'</td><td>'+fMoneyFull(revPY(r))+'</td>'
+        +'<td class="'+cls(rp)+'">'+nPct(rp)+'</td>'
+        +'<td class="'+cls(asp)+'">'+nPct(asp)+'</td>'
+        +'<td class="'+cls(ppi)+'">'+nPpi(ppi)+'</td>';
+    }
+    /* Nine columns do not fit a half-width panel and will not be made to. The
+       wide form scrolls inside its own box; the three-column long-window form
+       has nothing to scroll and is not given a minimum. */
+    function measWrap(){ return '<div class="ov-scroll'+(volRev()?'':' wide')+'">'; }
 
     /* ===================== A PANEL WITH NOTHING IN IT IS NOT SHOWN ============
        There is exactly one rule on this page for a section that has no numbers
@@ -15538,15 +15655,15 @@ AMR.page('overview', {
     var PANEL_OF = {
       aggBody:'colAgg', dimBody:'colDims', expBody:'colExplore', custBody:'colCust',
       fscBody:'colFsc', fscCustBody:'colFscCust', aggTrendBody:'colAggTrend',
-      aggKpiBody:'colAggKpi', bridgeBody:'colBridge',
+      aggKpiBody:'colAggKpi', bridgeBody:'colBridge', mktSumBody:'colMktSum',
       rmxBody:'colRmx', rmxDimBody:'colRmxDims', pcatBody:'colProdCat',
       rmxAspBody:'colRmxAsp', rmxFuelBody:'colRmxFuel', extBody:'colExtras',
-      rmxTrendBody:'colRmxTrend', rmxKpiBody:'colRmxKpi'
+      rmxTrendBody:'colRmxTrend', rmxKpiBody:'colRmxKpi', rmxMktSumBody:'colRmxMktSum'
     };
     /* the cards on each tab, so a repaint can put everything back before the
        painters decide again what has nothing to show */
-    var AGG_PANELS = ['colAggTrend','colAggKpi','colAgg','colDims','colBridge','colExplore','colCust','colFsc','colFscCust'];
-    var RMX_PANELS = ['colRmxTrend','colRmxKpi','colRmx','colRmxDims','colProdCat','colRmxAsp','colRmxFuel','colExtras'];
+    var AGG_PANELS = ['colMktSum','colAggTrend','colAggKpi','colAgg','colDims','colBridge','colExplore','colCust','colFsc','colFscCust'];
+    var RMX_PANELS = ['colRmxMktSum','colRmxTrend','colRmxKpi','colRmx','colRmxDims','colProdCat','colRmxAsp','colRmxFuel','colExtras'];
 
     function panelShow(colId, on){
       var p=$(colId); if(!p) return;
@@ -16204,10 +16321,14 @@ AMR.page('overview', {
     }
 
     /* ---- KPI cards (smaller main box + its own % box to the right) ---- */
+    /* lyLab empty = no prior-year line at all, which is not the same as a muted
+       one: past twelve months there is no comparison to make, so the card is a
+       card about one number rather than a card with a dash under it. */
     function kpiMain(k, big, lyLab, lyVal, muted){
       return '<div class="kpi"><p class="k">'+esc(k)+'</p>'
         +'<div class="big">'+big+'</div>'
-        +'<div class="ly'+(muted?' na':'')+'">'+esc(lyLab)+' <b>'+lyVal+'</b></div></div>';
+        +(lyLab ? '<div class="ly'+(muted?' na':'')+'">'+esc(lyLab)+' <b>'+lyVal+'</b></div>' : '')
+        +'</div>';
     }
     function kpiDelta(lab, val){
       if(val==null) return '<div class="kpi-d flat na"><p class="dl">'+esc(lab)+'</p><div class="dv">'+nDash()+'</div></div>';
@@ -16216,22 +16337,32 @@ AMR.page('overview', {
     }
     function renderKpiRow(hostId, t, unit, aspFmt){
       var host=$(hostId);
+      host.classList.remove('two');
       if(!t || !t.present){
         host.innerHTML='<div class="kpi na">No data for this selection.</div>';
         return;
       }
       var uSpan = '<span class="u">'+unit+'</span>';
       /* A null on the prior-year side is deliberate, not missing data - see
-         pyStale(). The card keeps its shape so the strip does not jump; the
-         numbers that cannot be trusted simply stop being printed. */
+         pyStale(). */
       var pyOff = (t.pyVol==null);
-      var ppiCls = pyOff ? '' : (sign(t.ppi)==='up'?'pos':(sign(t.ppi)==='down'?'neg':''));
+      /* Past twelve months the strip is the two measures that add, and nothing
+         else: no "Last year —", no empty % boxes, no PPI card holding a dash.
+         Two cards, both full width, and the row says so in its class. */
+      if(pyOff){
+        host.classList.add('two');
+        host.innerHTML =
+            '<div class="kpi-unit">'+kpiMain('Volume', fInt(t.cyVol)+uSpan, '', '', false)+'</div>'
+          + '<div class="kpi-unit">'+kpiMain('Revenue', fMoneyFull(revCY(t)), '', '', false)+'</div>';
+        return;
+      }
+      var ppiCls = sign(t.ppi)==='up'?'pos':(sign(t.ppi)==='down'?'neg':'');
       host.innerHTML =
           '<div class="kpi-unit">'+kpiMain('Volume', fInt(t.cyVol)+uSpan, 'Last year',
-              (t.pyVol==null ? nDash() : fInt(t.pyVol)+' '+unit), pyOff)
+              fInt(t.pyVol)+' '+unit, false)
             + kpiDelta('VOL % inc', t.volPct) + '</div>'
         + '<div class="kpi-unit">'+kpiMain('Avg selling price', aspFmt(t.cyAsp), 'Last year',
-              nAsp(t.pyAsp, aspFmt), pyOff)
+              nAsp(t.pyAsp, aspFmt), false)
             + kpiDelta('ASP % inc', t.aspPct) + '</div>'
         + '<div class="kpi-unit"><div class="kpi ppi"><p class="k">PPI</p>'
             + '<div class="big '+ppiCls+'">'+nPpi(t.ppi)+'</div></div></div>';
@@ -16263,20 +16394,39 @@ AMR.page('overview', {
         plugins:[ChartDataLabels] }));
     }
 
-    function volBarG(sec, canvas, items, onPick){
+    /* "This year / last year" grouped bars, ONE implementation and two measures.
+       Past twelve months the prior-year series is not drawn at all rather than
+       drawn at zero: a row of zero-height bars under a legend reading "Last
+       year" is a claim about the business, and it is the wrong one - those
+       months are inside the window, not beside it. What is left is one series,
+       named for the measure, with no legend to read. */
+    function pairBarG(sec, canvas, items, cfg){
+      var solo=volRev(), fmt=cfg.fmt||fInt;
+      var ds=[{ label: solo?cfg.name:'This year', data:items.map(cfg.cyOf),
+                backgroundColor:C.b70, borderRadius:5, maxBarThickness:34 }];
+      if(!solo) ds.push({ label:'Last year', data:items.map(cfg.pyOf),
+                backgroundColor:C.b30, borderRadius:5, maxBarThickness:34 });
       CH[sec].push(new Chart(canvas,{ type:'bar',
-        data:{ labels:items.map(function(i){return i.label;}),
-          datasets:[
-            { label:'This year', data:items.map(function(i){return i.cyVol;}), backgroundColor:C.b70, borderRadius:5, maxBarThickness:34 },
-            { label:'Last year', data:items.map(function(i){return i.pyVol;}), backgroundColor:C.b30, borderRadius:5, maxBarThickness:34 }
-          ]},
-        options:Object.assign(pickOpt(onPick),{ responsive:true, maintainAspectRatio:false,
-          plugins:{ legend:{display:true, position:'bottom', labels:{font:{size:11,family:'Inter'},color:C.ink,boxWidth:12,boxHeight:12,usePointStyle:true,pointStyle:'rectRounded'}},
+        data:{ labels:items.map(function(i){return i.label;}), datasets:ds },
+        options:Object.assign(pickOpt(cfg.onPick),{ responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{display:!solo, position:'bottom', labels:{font:{size:11,family:'Inter'},color:C.ink,boxWidth:12,boxHeight:12,usePointStyle:true,pointStyle:'rectRounded'}},
             datalabels:{display:false},
-            tooltip:{ callbacks:{ label:function(c){ return c.dataset.label+': '+fInt(c.raw); } } } },
+            tooltip:{ callbacks:{ label:function(c){ return c.dataset.label+': '+fmt(c.raw); } } } },
           scales:{ x:{ grid:{display:false}, ticks:{font:{size:10,family:'Inter'},color:C.muted} },
                    y:{ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                         callback:function(v){ return v>=1000?(v/1000)+'k':v; }} } } }) }));
+                         callback:cfg.tick} } } }) }));
+    }
+    function volBarG(sec, canvas, items, onPick){
+      pairBarG(sec, canvas, items, { name:'Volume', onPick:onPick,
+        cyOf:function(i){ return i.cyVol; }, pyOf:function(i){ return i.pyVol; },
+        fmt:fInt, tick:function(v){ return v>=1000?(v/1000)+'k':v; } });
+    }
+    /* the same bars in dollars. Revenue is the measure that survives a long
+       window beside volume, so it is drawn the same way and sits next to it. */
+    function revBarG(sec, canvas, items, onPick){
+      pairBarG(sec, canvas, items, { name:'Revenue', onPick:onPick,
+        cyOf:function(i){ return revCY(i); }, pyOf:function(i){ return revPY(i); },
+        fmt:fMoneyFull, tick:fMoneyAxis });
     }
 
     /* robust axis bounds: extreme outliers stop dictating the scale — their bar
@@ -16318,7 +16468,7 @@ AMR.page('overview', {
               font:{size:9.5,weight:'600',family:'Inter'},
               formatter:function(v){ return (v>0?'+':'')+v.toFixed(1)+'%'; } },
             tooltip:{ callbacks:{ label:function(c){ return c.dataset.label+': '+(c.raw>0?'+':'')+c.raw.toFixed(1)+'%'; } } } },
-          scales:{ x:Object.assign({ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted, callback:function(v){return v+'%';}} }, sc?{min:sc.min, max:sc.max}:{}),
+          scales:{ x:Object.assign({ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted, callback:fAxisPct} }, sc?{min:sc.min, max:sc.max}:{}),
                    y:{ grid:{display:false}, ticks:{font:{size:10.5,family:'Inter'},color:C.ink} } } }),
         plugins:[ChartDataLabels] }));
     }
@@ -16341,27 +16491,38 @@ AMR.page('overview', {
               font:{size:9.5,weight:'600',family:'Inter'},
               formatter:function(v){ return (v>0?'+':'')+v.toFixed(1)+'%'; } },
             tooltip:{ callbacks:{ label:function(c){ return name+': '+(c.raw>0?'+':'')+c.raw.toFixed(1)+'%'; } } } },
-          scales:{ x:Object.assign({ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted, callback:function(v){return v+'%';}} }, sc?{min:sc.min, max:sc.max}:{}),
+          scales:{ x:Object.assign({ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted, callback:fAxisPct} }, sc?{min:sc.min, max:sc.max}:{}),
                    y:{ grid:{display:false}, ticks:{font:{size:10.5,family:'Inter'},color:C.ink} } } },
         plugins:[ChartDataLabels] }));
     }
 
-    /* one breakdown layout for every dimension: donuts + volume bar + price bar.
+    /* ONE BREAKDOWN LAYOUT FOR EVERY DIMENSION, AND WHAT A LONG WINDOW DOES TO IT.
+       Normally: two donuts (this year / last year by volume), the legend, volume
+       against last year, REVENUE against last year, and the price pair.
        opt.field (optional) makes every slice / bar / legend item click-to-filter:
-       items[].value is the raw value fed to toggleXf(opt.field, value).       */
+       items[].value is the raw value fed to toggleXf(opt.field, value).
+       Past twelve months the second donut has nothing to show, the two "vs last
+       year" series are comparing months with months inside the same window, and
+       the price bars come out as a column of +0.0% - which is what the panel
+       looked like on a two-year span and is exactly the report of a screenshot
+       that started this. So the second donut becomes REVENUE SHARE, the two bar
+       charts lose their prior-year series, and the price chart is not drawn.
+       The panel is full either way; it just answers a narrower question. */
     function renderBreakdown(bodyId, items, opt){
       var body=$(bodyId);
       clearCH('bd');
       if(!items.length){ hidePanel(bodyId); return; }
       showPanel(bodyId);
+      var solo=volRev();
       body.innerHTML =
         '<div class="ov-donuts">'
-        + '<div class="ov-donut"><p class="cap">This year</p><div class="ov-cbox"><canvas id="'+opt.id+'_cy"></canvas></div></div>'
-        + '<div class="ov-donut"><p class="cap">Last year</p><div class="ov-cbox"><canvas id="'+opt.id+'_py"></canvas></div></div>'
+        + '<div class="ov-donut"><p class="cap">'+(solo?'Volume share':'This year')+'</p><div class="ov-cbox"><canvas id="'+opt.id+'_cy"></canvas></div></div>'
+        + '<div class="ov-donut"><p class="cap">'+(solo?'Revenue share':'Last year')+'</p><div class="ov-cbox"><canvas id="'+opt.id+'_py"></canvas></div></div>'
         + '</div>'
         + '<div class="ov-legend" id="'+opt.id+'_leg"></div>'
-        + '<div class="ov-block"><p class="lab">Volume vs last year</p><div class="ov-cbox tall"><canvas id="'+opt.id+'_vol"></canvas></div></div>'
-        + '<div class="ov-block"><p class="lab">Price movement · ASP % inc &amp; PPI</p><div class="ov-cbox tall"><canvas id="'+opt.id+'_price"></canvas></div></div>';
+        + '<div class="ov-block"><p class="lab">'+(solo?'Volume':'Volume vs last year')+'</p><div class="ov-cbox tall"><canvas id="'+opt.id+'_vol"></canvas></div></div>'
+        + '<div class="ov-block"><p class="lab">'+(solo?'Revenue':'Revenue vs last year')+'</p><div class="ov-cbox tall"><canvas id="'+opt.id+'_rev"></canvas></div></div>'
+        + (solo?'':'<div class="ov-block"><p class="lab">Price movement · ASP % inc &amp; PPI</p><div class="ov-cbox tall"><canvas id="'+opt.id+'_price"></canvas></div></div>');
 
       var F=opt.field||null;
       $(opt.id+'_leg').innerHTML = items.map(function(i){
@@ -16372,9 +16533,10 @@ AMR.page('overview', {
 
       var pick = F ? function(idx){ var it=items[idx]; if(it && it.value!=null) toggleXf(F, it.value); } : null;
       donutG('bd', $(opt.id+'_cy'), items, function(i){ return i.cyVol; }, pick);
-      donutG('bd', $(opt.id+'_py'), items, function(i){ return i.pyVol; }, pick);
+      donutG('bd', $(opt.id+'_py'), items, solo?function(i){ return revCY(i); }:function(i){ return i.pyVol; }, pick);
       volBarG('bd', $(opt.id+'_vol'), items, pick);
-      priceBarG('bd', $(opt.id+'_price'), items, pick);
+      revBarG('bd', $(opt.id+'_rev'), items, pick);
+      if(!solo) priceBarG('bd', $(opt.id+'_price'), items, pick);
     }
 
     /* ===================== GROWTH BRIDGES (waterfalls) =====================
@@ -16502,7 +16664,7 @@ AMR.page('overview', {
       /* past twelve months every "vs last year" here compares months with months
          already inside the window, so there is no bridge to draw */
       if(!tot || !(tot.cyVol&&tot.pyVol) || pyStale()) return null;
-      var region=cubeMixItem('market',tot), sub=cubeMixItem('sm1',tot),
+      var region=cubeMixItem('market',tot), sub=cubeMixItem('submarket1',tot),
           geo=cubeMixItem('matFam',tot), pt=cubeMixItem('plantType',tot), pc=cubeMixItem('prodClass',tot);
       if(region==null||sub==null||geo==null||pt==null||pc==null) return null;
       var rm=(region+sub)/2;
@@ -16517,6 +16679,7 @@ AMR.page('overview', {
 
     function renderBridges(){
       clearCH('bridge');
+      if(volRev()){ hidePanel('bridgeBody'); return; }   // see renderWinBridges
       var keys=selectedKeys();
       var t=aggTotals(keys);
       var note=$('bridgeNote');
@@ -16603,6 +16766,7 @@ AMR.page('overview', {
           scheduleDims();        // …then the (debounced) fetch fills them in
         }
         renderAggTrend();
+        renderMktSum('agg');
         if(!winMode()){
           renderAggKpis();
           scheduleCustomers(); // debounced (rapid chip changes fire one server call); FSC customers always, Top-10 only when unfiltered
@@ -16639,6 +16803,7 @@ AMR.page('overview', {
           paintRxfPanels();
           scheduleRxf();
         }
+        renderMktSum('rmx');
         if(!winMode()){
           renderRmxKpis();
           // footer diagnostics (segment markets not mapped on this page)
@@ -16686,36 +16851,8 @@ AMR.page('overview', {
       if(!t){ $('kpiAgg').innerHTML='<div class="kpi na">Loading months…</div>'; winWaiting('aggBody'); winWaiting('dimBody'); return; }
       renderKpiRow('kpiAgg', t, 't', fAsp);
 
-      /* breakdown: markets at All, submarkets inside one market — the same
-         pivot rule the server path uses */
-      var seg=$('bdModeSeg'), showSeg=isAll();
-      if(seg){
-        seg.style.display=showSeg?'':'none';
-        [].forEach.call(seg.querySelectorAll('button'), function(b){ b.setAttribute('aria-pressed', b.dataset.bd===BD_MODE); });
-      }
-      var byMarket=(showSeg && BD_MODE==='MARKET');
-      var g=cubeWinRows('agg', byMarket?'market':'sm1');
-      $('aggBdTitle').textContent = byMarket ? 'Market breakdown' : 'Submarket breakdown';
-      $('aggBdSub').textContent = (pyStale()
-        ? (byMarket?'Volume share and volume by market':'Submarkets · volume share and volume')
-        : (byMarket?'Volume share, volume vs last year, and price movement by market':
-          'Submarkets · volume share, volume vs last year, and price movement'))
-        +' · '+winLabel()+' · click to filter.';
-      if(!g){ winWaiting('aggBody'); }
-      else renderBreakdown('aggBody', cubeRowsToItems(g.rows),
-        { id:'agg', name:byMarket?'Aggregates':'submarket', field:byMarket?'MARKET':'SUBMARKET1' });
-
-      /* dimension table */
-      var fld=AGG_CUBE_FIELD[DIM_TAB]||'plantType';
-      var dg=cubeWinRows('agg', fld);
-      $('dimSub').textContent=(pyStale()?'Volume share and volume':'CY volume share, volume vs last year, ASP % inc and PPI')
-        +' · '+scopeLabel()+' · '+winLabel()+' · click a row to filter by it';
-      var body=$('dimBody');
-      clearCH('dim');
-      if(!dg) winWaiting('dimBody');
-      else if(!dg.rows.length) hidePanel('dimBody');
-      else paintDimTable(body, dg.rows.map(winDimRow), dg.total?winDimRow(dg.total):null);
-
+      renderWinBreakdown();
+      renderWinDims();
       renderWinBridges(t);
       renderWinExplorer();
       renderWinCustomers();
@@ -16724,8 +16861,50 @@ AMR.page('overview', {
         +' · computed in your browser from the month fact table, not the server report.';
     }
 
+    /* Each of the two panels below is its own function because each has a
+       TOGGLE of its own — Markets / Submarkets, Plant Type / Product Class — and
+       a toggle must repaint from whatever is driving the page. See
+       repaintPanel(). */
+    function renderWinBreakdown(){
+      /* breakdown: markets at All, submarkets inside one market — the same
+         pivot rule the server path uses */
+      var seg=$('bdModeSeg'), showSeg=isAll();
+      if(seg){
+        seg.style.display=showSeg?'':'none';
+        [].forEach.call(seg.querySelectorAll('button'), function(b){ b.setAttribute('aria-pressed', b.dataset.bd===BD_MODE); });
+      }
+      var byMarket=(showSeg && BD_MODE==='MARKET');
+      var g=cubeWinRows('agg', byMarket?'market':'submarket1');
+      $('aggBdTitle').textContent = byMarket ? 'Market breakdown' : 'Submarket breakdown';
+      $('aggBdSub').textContent = (volRev()
+        ? (byMarket?'Volume and revenue by market':'Submarkets · volume and revenue')
+        : (byMarket?'Volume share, volume vs last year, and price movement by market':
+          'Submarkets · volume share, volume vs last year, and price movement'))
+        +' · '+winLabel()+' · click to filter.';
+      if(!g){ winWaiting('aggBody'); }
+      else renderBreakdown('aggBody', cubeRowsToItems(g.rows),
+        { id:'agg', name:byMarket?'Aggregates':'submarket', field:byMarket?'MARKET':'SUBMARKET1' });
+    }
+    function renderWinDims(){
+      var fld=AGG_CUBE_FIELD[DIM_TAB]||'plantType';
+      var dg=cubeWinRows('agg', fld);
+      $('dimSub').textContent=(volRev()?'Volume and revenue':'CY volume share, volume vs last year, ASP % inc and PPI')
+        +' · '+scopeLabel()+' · '+winLabel()+' · click a row to filter by it';
+      var body=$('dimBody');
+      clearCH('dim');
+      if(!dg) winWaiting('dimBody');
+      else if(!dg.rows.length) hidePanel('dimBody');
+      else paintDimTable(body, dg.rows.map(winDimRow), dg.total?winDimRow(dg.total):null);
+    }
+
     /* ---- the two waterfalls, from the cube ---- */
     function renderWinBridges(){
+      /* BOTH bridges are prior-year decompositions - the revenue one splits PY
+         revenue into volume and price impact, the ASP one splits ASP % inc. Past
+         twelve months the prior year is inside the window, so neither has a
+         question left to answer and the card goes rather than drawing a
+         waterfall from PY revenue that is partly the same months. */
+      if(volRev()){ clearCH('bridge'); hidePanel('bridgeBody'); return; }
       var tot=cubeTotal('agg');
       if(!tot || !(tot.cyVol||tot.pyVol)){ clearCH('bridge'); hidePanel('bridgeBody'); return; }
       showPanel('bridgeBody');
@@ -16851,6 +17030,7 @@ AMR.page('overview', {
          Total row is a total, not a value */
       var k=String(g.key==null?'':g.key), st=pyStale();
       return { label:(!k || k.charCodeAt(0)===1) ? 'Total' : k, cyVol:g.cyVol, pyVol:st?null:g.pyVol,
+               cyRev:g.cyRev, pyRev:st?null:g.pyRev,
                volPct:st?null:g.volPct, aspPct:st?null:g.aspPct, ppi:st?null:g.ppi };
     }
 
@@ -16859,30 +17039,8 @@ AMR.page('overview', {
       if(!t){ $('kpiRmx').innerHTML='<div class="kpi na">Loading months\u2026</div>'; winWaiting('rmxBody'); winWaiting('rmxDimBody'); return; }
       renderKpiRow('kpiRmx', t, 'm\u00b3', fAsp);
 
-      var seg=$('rmxBdModeSeg'), showSeg=isAll();
-      if(seg){
-        seg.style.display=showSeg?'':'none';
-        [].forEach.call(seg.querySelectorAll('button'), function(b){ b.setAttribute('aria-pressed', b.dataset.rbd===RBD_MODE); });
-      }
-      var byMarket=(showSeg && RBD_MODE==='MARKET');
-      var g=cubeWinRows('rmx', byMarket?'market':'submarket');
-      $('rmxBdTitle').textContent = byMarket ? 'Market breakdown' : 'Submarket breakdown';
-      $('rmxBdSub').textContent = (pyStale()?'Volume share and volume':'Volume share, volume vs last year, and price movement')
-        +' \u00b7 '+winLabel()+' \u00b7 base concrete \u00b7 click to filter.';
-      if(!g){ winWaiting('rmxBody'); }
-      else renderBreakdown('rmxBody', cubeRowsToItems(g.rows),
-        { id:'rmx', name:byMarket?'Ready-Mix':'submarket', field:byMarket?'MARKET':'SUBMARKET' });
-
-      var fld=RMX_CUBE_FIELD[RDIM_TAB]||'submarket';
-      var dg=cubeWinRows('rmx', fld);
-      $('rmxDimSub').textContent=(pyStale()?'Volume share and volume':'CY volume share, volume vs last year, BASE ASP % inc and PPI')
-        +' · '+scopeLabel()+' · '+winLabel();
-      var body=$('rmxDimBody');
-      clearCH('rdim');
-      if(!dg) winWaiting('rmxDimBody');
-      else if(!dg.rows.length) hidePanel('rmxDimBody');
-      else body.innerHTML=winDimTableHtml(dg.rows.map(winDimRow), dg.total?winDimRow(dg.total):null, 'm³');
-
+      renderWinRmxBreakdown();
+      renderWinRmxDims();
       renderWinRmxAsp();
       /* the month/quarter trend, which paintRxfPanels normally owns - the cube
          draws it either way, and the all-in overlay (extras per month) is left
@@ -16898,6 +17056,35 @@ AMR.page('overview', {
         +' · computed in your browser from the month fact table, not the server report.';
     }
 
+    /* Both carry a toggle of their own, so both have to be repaintable without
+       redrawing the tab around them. See repaintPanel(). */
+    function renderWinRmxBreakdown(){
+      var seg=$('rmxBdModeSeg'), showSeg=isAll();
+      if(seg){
+        seg.style.display=showSeg?'':'none';
+        [].forEach.call(seg.querySelectorAll('button'), function(b){ b.setAttribute('aria-pressed', b.dataset.rbd===RBD_MODE); });
+      }
+      var byMarket=(showSeg && RBD_MODE==='MARKET');
+      var g=cubeWinRows('rmx', byMarket?'market':'submarket');
+      $('rmxBdTitle').textContent = byMarket ? 'Market breakdown' : 'Submarket breakdown';
+      $('rmxBdSub').textContent = (volRev()?'Volume and revenue':'Volume share, volume vs last year, and price movement')
+        +' \u00b7 '+winLabel()+' \u00b7 base concrete \u00b7 click to filter.';
+      if(!g){ winWaiting('rmxBody'); }
+      else renderBreakdown('rmxBody', cubeRowsToItems(g.rows),
+        { id:'rmx', name:byMarket?'Ready-Mix':'submarket', field:byMarket?'MARKET':'SUBMARKET' });
+    }
+    function renderWinRmxDims(){
+      var fld=RMX_CUBE_FIELD[RDIM_TAB]||'submarket';
+      var dg=cubeWinRows('rmx', fld);
+      $('rmxDimSub').textContent=(volRev()?'Volume and revenue':'CY volume share, volume vs last year, BASE ASP % inc and PPI')
+        +' · '+scopeLabel()+' · '+winLabel();
+      var body=$('rmxDimBody');
+      clearCH('rdim');
+      if(!dg) winWaiting('rmxDimBody');
+      else if(!dg.rows.length) hidePanel('rmxDimBody');
+      else body.innerHTML=winDimTableHtml(dg.rows.map(winDimRow), dg.total?winDimRow(dg.total):null, 'm³');
+    }
+
     /* ---- ASP build-up, from the cube -------------------------------------
        Extras and VAP revenue are columns in the Ready-Mix fact table (ex / va),
        which is exactly what this panel is: three revenue streams over ONE
@@ -16906,6 +17093,9 @@ AMR.page('overview', {
        column — which is why the Extras & VAP panel below is not shown. */
     function renderWinRmxAsp(){
       clearCH('rasp');
+      /* every row here is a $/m3 and every column is a year-on-year move; past
+         twelve months there is neither a price nor a comparison to report */
+      if(volRev()){ hidePanel('rmxAspBody'); return; }
       var g=cubeTotal('rmx');
       if(!g){ showPanel('rmxAspBody'); winWaiting('rmxAspBody'); return; }
       if(!(g.cyVol||g.pyVol)){ hidePanel('rmxAspBody'); return; }
@@ -16930,17 +17120,14 @@ AMR.page('overview', {
     function winDimTableHtml(rows, total, unit){
       function tr(r, tot){
         return '<tr'+(tot?' class="tot"':'')+'><td>'+esc(r.label)+'</td>'
-          +'<td>'+fInt(r.cyVol)+'</td><td>'+nInt(r.pyVol)+'</td>'
-          +'<td class="'+cls(r.volPct)+'">'+nPct(r.volPct)+'</td>'
-          +'<td class="'+cls(r.aspPct)+'">'+nPct(r.aspPct)+'</td>'
-          +'<td class="'+cls(r.ppi)+'">'+nPpi(r.ppi)+'</td></tr>';
+          +measCells(r, r.aspPct, r.ppi)+'</tr>';
       }
-      return '<table class="ov-table"><thead><tr><th>Value</th>'
-        +'<th>Vol ('+unit+') CY</th><th>Vol ('+unit+') PY</th><th>Vol %</th><th>BASE ASP % inc</th><th>PPI</th>'
+      return measWrap()+'<table class="ov-table"><thead><tr><th>Value</th>'
+        +measHead(unit,'BASE ASP % inc')
         +'</tr></thead><tbody>'
         +rows.map(function(r){ return tr(r,false); }).join('')
         +(total?tr(total,true):'')
-        +'</tbody></table>';
+        +'</tbody></table></div>';
     }
 
     /* ---- market/submarket breakdowns (auto-pivot on a single market) ---- */
@@ -16960,7 +17147,8 @@ AMR.page('overview', {
           var m=STATE.data.pv[k]; if(!m||!m.present) return;
           var mkt=markets().filter(function(x){ return x.key===k; })[0];
           items.push({ label:labelOf(k), value:(mkt&&mkt.pvName)||null, color:colorOf(k),
-                       cyVol:m.cyVol, pyVol:m.pyVol, asp:m.aspPct, ppi:m.ppi });
+                       cyVol:m.cyVol, pyVol:m.pyVol, cyRev:revCY(m), pyRev:revPY(m),
+                       asp:m.aspPct, ppi:m.ppi });
         });
         renderBreakdown('aggBody', items, { id:'agg', name:'Aggregates', field:'MARKET' });
         return;
@@ -16974,7 +17162,8 @@ AMR.page('overview', {
       if(!d){ clearCH('bd'); $('aggBody').innerHTML='<div class="ov-mini">Loading submarkets…</div>'; return; }
       var t=(d.tables||[]).filter(function(x){ return x.key==='SUBMARKET1'; })[0];
       var items=((t&&t.rows)||[]).map(function(r,idx){
-        return { label:r.label, value:r.label, color:MK_COLORS[idx%MK_COLORS.length], cyVol:r.cyVol, pyVol:r.pyVol, asp:r.aspPct, ppi:r.ppi };
+        return { label:r.label, value:r.label, color:MK_COLORS[idx%MK_COLORS.length], cyVol:r.cyVol, pyVol:r.pyVol,
+                 cyRev:revCY(r), pyRev:revPY(r), asp:r.aspPct, ppi:r.ppi };
       });
       renderBreakdown('aggBody', items, { id:'agg', name:'submarket', field:'SUBMARKET1' });
     }
@@ -17054,28 +17243,25 @@ AMR.page('overview', {
     /* ---- Plant Type / Product Class views (shared painter: unfiltered getReport
        data and the cross-report both feed it; rows/slices/bars click-to-filter) ---- */
     function paintDimTable(body, rows, total){
+      var solo=volRev();
       body.innerHTML=
         '<div class="ov-cols">'
-        +'<div><p class="ov-lab">CY volume share</p><div class="ov-cbox tall"><canvas id="dim_pie"></canvas></div></div>'
-        +'<div><p class="ov-lab">Volume vs last year</p><div class="ov-cbox tall"><canvas id="dim_vol"></canvas></div></div>'
+        +'<div><p class="ov-lab">'+(solo?'Volume share':'CY volume share')+'</p><div class="ov-cbox tall"><canvas id="dim_pie"></canvas></div></div>'
+        +'<div><p class="ov-lab">'+(solo?'Volume':'Volume vs last year')+'</p><div class="ov-cbox tall"><canvas id="dim_vol"></canvas></div></div>'
         +'</div>'
-        +'<div class="ov-block"><p class="lab">ASP % inc &amp; PPI</p><div class="ov-cbox tall"><canvas id="dim_bar"></canvas></div></div>'
-        +'<table class="ov-table"><thead><tr>'
-        +'<th>'+esc(DIM_LABEL[DIM_TAB]||DIM_TAB)+'</th><th>Vol (t) CY</th><th>Vol (t) PY</th><th>Vol %</th><th>ASP % inc</th><th>PPI</th>'
+        /* one slot, two answers: the price pair where it means something, and
+           revenue where it does not - see volRev() */
+        +'<div class="ov-block"><p class="lab">'+(solo?'Revenue':'ASP % inc &amp; PPI')+'</p><div class="ov-cbox tall"><canvas id="dim_bar"></canvas></div></div>'
+        +measWrap()+'<table class="ov-table"><thead><tr>'
+        +'<th>'+esc(DIM_LABEL[DIM_TAB]||DIM_TAB)+'</th>'+measHead('t')
         +'</tr></thead><tbody>'
         +rows.map(function(r){
           return '<tr class="xfrow'+(xfHas(DIM_TAB,r.label)?' xfsel':'')
             +'" data-xf-f="'+esc(DIM_TAB)+'" data-xf-v="'+esc(r.label)+'">'
-            +'<td>'+esc(r.label)+'</td><td>'+fInt(r.cyVol)+'</td><td>'+nInt(r.pyVol)+'</td>'
-            +'<td class="'+cls(r.volPct)+'">'+nPct(r.volPct)+'</td>'
-            +'<td class="'+cls(r.aspPct)+'">'+nPct(r.aspPct)+'</td>'
-            +'<td class="'+cls(r.ppi)+'">'+nPpi(r.ppi)+'</td></tr>';
+            +'<td>'+esc(r.label)+'</td>'+measCells(r, r.aspPct, r.ppi)+'</tr>';
         }).join('')
-        +(total?('<tr class="tot"><td>Total</td><td>'+fInt(total.cyVol)+'</td><td>'+nInt(total.pyVol)+'</td>'
-            +'<td class="'+cls(total.volPct)+'">'+nPct(total.volPct)+'</td>'
-            +'<td class="'+cls(total.aspPct)+'">'+nPct(total.aspPct)+'</td>'
-            +'<td class="'+cls(total.ppi)+'">'+nPpi(total.ppi)+'</td></tr>'):'')
-        +'</tbody></table>';
+        +(total?('<tr class="tot"><td>Total</td>'+measCells(total, total.aspPct, total.ppi)+'</tr>'):'')
+        +'</tbody></table></div>';
       var pick=function(i){ var r=rows[i]; if(r) toggleXf(DIM_TAB, r.label); };
       custDonut('dim', $('dim_pie'),
         rows.map(function(r){ return truncate(r.label,22); }),
@@ -17084,7 +17270,10 @@ AMR.page('overview', {
       volBarG('dim', $('dim_vol'), rows.map(function(r){
         return { label:truncate(r.label,16), cyVol:r.cyVol, pyVol:r.pyVol };
       }), pick);
-      priceBarG('dim', $('dim_bar'), rows.map(function(r){
+      if(solo) revBarG('dim', $('dim_bar'), rows.map(function(r){
+        return { label:truncate(r.label,16), cyRev:revCY(r), pyRev:revPY(r) };
+      }), pick);
+      else priceBarG('dim', $('dim_bar'), rows.map(function(r){
         return { label:truncate(r.label,18), asp:r.aspPct, ppi:r.ppi };
       }), pick);
     }
@@ -17101,21 +17290,43 @@ AMR.page('overview', {
       showPanel('dimBody');
       paintDimTable(body, t.rows, t.total);
     }
+    /* WHO REPAINTS A PANEL WHEN AN IN-PANEL TOGGLE MOVES.
+       Pressing "Product Class", "Submarkets" or "Split by segment" is not a new
+       selection: the period, the window and the market have not moved, only what
+       this one panel is showing of them. So the repaint has to come from
+       whatever is already DRIVING the page — the same three-way answer
+       renderTab() gives and srvOwnsAgg() states, in the one other place it has
+       to be given.
+
+       Every one of these toggles used to call the server painter
+       unconditionally, and the server painter fetches STATE.period. On a
+       Prev-month pick or a dragged span that put the month-to-date back into the
+       panel a moment after the click, under the window's own heading — so
+       flipping "Split by segment" read as the page forgetting which months were
+       selected, while every panel around it still showed them. */
+    function repaintPanel(win, xf, srv){
+      if(winMode()) return win && win();
+      if(xf && xfActive() && STATE.tab==='agg') return xf();
+      return srv && srv();
+    }
+
       $('dimTabs').addEventListener('click', function(e){
       var b=e.target.closest('button'); if(!b) return;
       if(b.dataset.dim===DIM_TAB) return;
       DIM_TAB=b.dataset.dim;
       [].forEach.call(this.querySelectorAll('button'),function(x){x.setAttribute('aria-pressed', x===b);});
-      if(xfActive() && STATE.tab==='agg'){ var sig=xfSig(); renderXfDims(XF_CACHE[sig], XF_ERR[sig]); }
-      else renderDimPies();
+      repaintPanel(renderWinDims,
+        function(){ var sig=xfSig(); renderXfDims(XF_CACHE[sig], XF_ERR[sig]); },
+        renderDimPies);
     });
     $('bdModeSeg').addEventListener('click', function(e){
       var b=e.target.closest('button'); if(!b || b.dataset.bd===BD_MODE) return;
       BD_MODE=b.dataset.bd;
       [].forEach.call(this.querySelectorAll('button'),function(x){x.setAttribute('aria-pressed', x===b);});
       if(STATE.tab!=='agg') return;
-      if(xfActive()){ var sig=xfSig(); renderXfBreakdown(XF_CACHE[sig], XF_ERR[sig]); }
-      else renderAggBreakdown();
+      repaintPanel(renderWinBreakdown,
+        function(){ var sig=xfSig(); renderXfBreakdown(XF_CACHE[sig], XF_ERR[sig]); },
+        renderAggBreakdown);
     });
 
     /* Month / Quarter. One setting for both tabs \u2014 the two controls are the
@@ -17198,9 +17409,12 @@ AMR.page('overview', {
         +'<div class="ov-search"><input id="'+pid+'_in" type="text" placeholder="Search '+title.toLowerCase()+' to filter…" autocomplete="off">'
         +'<div class="ov-results" id="'+pid+'_res"></div></div>'
         +'<div class="ov-cols" style="margin-top:12px">'
-          +'<div><p class="ov-lab">Share of '+esc(title.toLowerCase())+' volume · CY</p><div class="ov-cbox tall"><canvas id="'+pid+'_pie"></canvas></div></div>'
-          +'<div><p class="ov-lab">Volume vs last year</p><div class="ov-cbox tall"><canvas id="'+pid+'_vol"></canvas></div></div>'
+          +'<div><p class="ov-lab">Share of '+esc(title.toLowerCase())+' volume'+(volRev()?'':' · CY')+'</p><div class="ov-cbox tall"><canvas id="'+pid+'_pie"></canvas></div></div>'
+          +'<div><p class="ov-lab">'+(volRev()?'Volume':'Volume vs last year')+'</p><div class="ov-cbox tall"><canvas id="'+pid+'_vol"></canvas></div></div>'
         +'</div>'
+        /* this panel has no price chart to give up, so in a long window revenue
+           is added rather than swapped in */
+        +(volRev()?('<div class="ov-block"><p class="lab">Revenue</p><div class="ov-cbox tall"><canvas id="'+pid+'_rev"></canvas></div></div>'):'')
         +'<div id="'+pid+'_tbl"></div>'
         +'</div>';
     }
@@ -17208,10 +17422,10 @@ AMR.page('overview', {
        and the cross-filtered view (getCrossReport data). Rows / slices / bars
        toggle that value in the cross-filter. */
     function paintExpBlock(field, pid, list, tot, capNote){
-      /* every paint replaces this block's two charts — drop the old pair only */
+      /* every paint replaces this block's own charts — drop that set only */
       CH.exp=CH.exp.filter(function(c){
         var id=c.canvas&&c.canvas.id;
-        if(id===pid+'_pie' || id===pid+'_vol'){ try{c.destroy();}catch(e){} return false; }
+        if(id===pid+'_pie' || id===pid+'_vol' || id===pid+'_rev'){ try{c.destroy();}catch(e){} return false; }
         return true;
       });
       var pick=function(i){ var r=list[i]; if(r) toggleXf(field, r.label); };
@@ -17228,23 +17442,19 @@ AMR.page('overview', {
       volBarG('exp', $(pid+'_vol'), list.map(function(r){
         return { label:truncate(r.label,16), cyVol:r.cyVol, pyVol:r.pyVol };
       }), pick);
-      var html='<table class="ov-table compact"><thead><tr>'
-        +'<th>Name</th><th>Vol CY</th><th>Vol PY</th><th>Vol %</th><th>ASP % inc</th><th>PPI</th>'
+      if(volRev() && $(pid+'_rev')) revBarG('exp', $(pid+'_rev'), list.map(function(r){
+        return { label:truncate(r.label,16), cyRev:revCY(r), pyRev:revPY(r) };
+      }), pick);
+      var html=measWrap()+'<table class="ov-table compact"><thead><tr>'
+        +'<th>Name</th>'+measHead('t')
         +'</tr></thead><tbody>'
-        +'<tr class="tot"><td>Total · '+esc(scopeLabel())+'</td><td>'+fInt(tot.cyVol)+'</td><td>'+nInt(tot.pyVol)+'</td>'
-          +'<td class="'+cls(tot.volPct)+'">'+nPct(tot.volPct)+'</td>'
-          +'<td class="'+cls(tot.aspPct)+'">'+nPct(tot.aspPct)+'</td>'
-          +'<td class="'+cls(tot.ppi)+'">'+nPpi(tot.ppi)+'</td></tr>'
+        +'<tr class="tot"><td>Total · '+esc(scopeLabel())+'</td>'+measCells(tot, tot.aspPct, tot.ppi)+'</tr>'
         +list.map(function(r){
           return '<tr class="xfrow'+(xfHas(field,r.label)?' xfsel':'')
             +'" data-xf-f="'+esc(field)+'" data-xf-v="'+esc(r.label)+'">'
-            +'<td>'+esc(r.label)+'</td>'
-            +'<td>'+fInt(r.cyVol)+'</td><td>'+nInt(r.pyVol)+'</td>'
-            +'<td class="'+cls(r.volPct)+'">'+nPct(r.volPct)+'</td>'
-            +'<td class="'+cls(r.aspPct)+'">'+nPct(r.aspPct)+'</td>'
-            +'<td class="'+cls(r.ppi)+'">'+nPpi(r.ppi)+'</td></tr>';
+            +'<td>'+esc(r.label)+'</td>'+measCells(r, r.aspPct, r.ppi)+'</tr>';
         }).join('')
-        +'</tbody></table>'
+        +'</tbody></table></div>'
         +(capNote?'<p class="ov-foot" style="margin:6px 0 0">'+capNote+'</p>':'');
       $(pid+'_tbl').innerHTML=html;
     }
@@ -17298,7 +17508,8 @@ AMR.page('overview', {
           var mk=markets().filter(function(x){ return x.pvName===r.label; })[0];
           return { label:mk?labelOf(mk.key):r.label, value:r.label,
                    color:mk?colorOf(mk.key):MK_COLORS[idx%MK_COLORS.length],
-                   cyVol:r.cyVol, pyVol:r.pyVol, asp:r.aspPct, ppi:r.ppi };
+                   cyVol:r.cyVol, pyVol:r.pyVol, cyRev:revCY(r), pyRev:revPY(r),
+                   asp:r.aspPct, ppi:r.ppi };
         });
         renderBreakdown('aggBody', items, { id:'agg', name:'market', field:'MARKET' });
         return;
@@ -17306,7 +17517,8 @@ AMR.page('overview', {
       var t2=xfTableOf(d,'SUBMARKET1');
       items=((t2&&t2.rows)||[]).map(function(r,idx){
         return { label:r.label, value:r.label, color:MK_COLORS[idx%MK_COLORS.length],
-                 cyVol:r.cyVol, pyVol:r.pyVol, asp:r.aspPct, ppi:r.ppi };
+                 cyVol:r.cyVol, pyVol:r.pyVol, cyRev:revCY(r), pyRev:revPY(r),
+                 asp:r.aspPct, ppi:r.ppi };
       });
       renderBreakdown('aggBody', items, { id:'agg', name:'submarket', field:'SUBMARKET1' });
     }
@@ -17821,7 +18033,8 @@ AMR.page('overview', {
         allKeys().forEach(function(k){
           var m=STATE.data.rmx[k]; if(!m||!m.present) return;
           items.push({ label:labelOf(k), value:k, color:colorOf(k),
-                       cyVol:m.cyVol, pyVol:m.pyVol, asp:m.aspIncBase, ppi:m.ppiBase });
+                       cyVol:m.cyVol, pyVol:m.pyVol, cyRev:revCY(m), pyRev:revPY(m),
+                       asp:m.aspIncBase, ppi:m.ppiBase });
         });
         /* the market breakdown is deliberately NOT filtered: it is how you pick a
            market, and the numbers behind it come from getOverview, which is
@@ -17847,7 +18060,8 @@ AMR.page('overview', {
       showPanel('rmxBody');
       var items=rows.map(function(g,idx){
         return { label:g.label, value:g.label, color:MK_COLORS[idx%MK_COLORS.length],
-                 cyVol:g.cyVol, pyVol:g.pyVol, asp:g.aspIncBase, ppi:g.ppiBase };
+                 cyVol:g.cyVol, pyVol:g.pyVol, cyRev:revCY(g), pyRev:revPY(g),
+                 asp:g.aspIncBase, ppi:g.ppiBase };
       });
       renderBreakdownRmx('rmxBody', items, function(i){
         var it=items[i]; if(it) toggleRxf('SUBMARKET', it.value);
@@ -17865,14 +18079,16 @@ AMR.page('overview', {
       clearCH('bd');
       if(!items.length){ hidePanel(bodyId); return; }
       showPanel(bodyId);
+      var solo=volRev();
       body.innerHTML =
         '<div class="ov-donuts">'
-        + '<div class="ov-donut"><p class="cap">This year</p><div class="ov-cbox"><canvas id="rmx_cy"></canvas></div></div>'
-        + '<div class="ov-donut"><p class="cap">Last year</p><div class="ov-cbox"><canvas id="rmx_py"></canvas></div></div>'
+        + '<div class="ov-donut"><p class="cap">'+(solo?'Volume share':'This year')+'</p><div class="ov-cbox"><canvas id="rmx_cy"></canvas></div></div>'
+        + '<div class="ov-donut"><p class="cap">'+(solo?'Revenue share':'Last year')+'</p><div class="ov-cbox"><canvas id="rmx_py"></canvas></div></div>'
         + '</div>'
         + '<div class="ov-legend" id="rmx_leg"></div>'
-        + '<div class="ov-block"><p class="lab">Volume vs last year</p><div class="ov-cbox tall"><canvas id="rmx_vol"></canvas></div></div>'
-        + '<div class="ov-block"><p class="lab">Price movement \u00b7 BASE ASP % inc &amp; PPI</p><div class="ov-cbox tall"><canvas id="rmx_price"></canvas></div></div>';
+        + '<div class="ov-block"><p class="lab">'+(solo?'Volume':'Volume vs last year')+'</p><div class="ov-cbox tall"><canvas id="rmx_vol"></canvas></div></div>'
+        + '<div class="ov-block"><p class="lab">'+(solo?'Revenue (base concrete)':'Revenue vs last year \u00b7 base concrete')+'</p><div class="ov-cbox tall"><canvas id="rmx_rev"></canvas></div></div>'
+        + (solo?'':'<div class="ov-block"><p class="lab">Price movement \u00b7 BASE ASP % inc &amp; PPI</p><div class="ov-cbox tall"><canvas id="rmx_price"></canvas></div></div>');
       $('rmx_leg').innerHTML = items.map(function(i,idx){
         var selCls = (field && rxfHas(field, i.value)) ? ' xfsel' : '';
         return '<span class="it'+selCls+'" data-i="'+idx+'"><span class="sw" style="background:'+i.color+'"></span>'+esc(i.label)+'</span>';
@@ -17882,9 +18098,10 @@ AMR.page('overview', {
         el.addEventListener('click', function(){ pick(Number(el.getAttribute('data-i'))); });
       });
       donutG('bd', $('rmx_cy'), items, function(i){ return i.cyVol; }, pick);
-      donutG('bd', $('rmx_py'), items, function(i){ return i.pyVol; }, pick);
+      donutG('bd', $('rmx_py'), items, solo?function(i){ return revCY(i); }:function(i){ return i.pyVol; }, pick);
       volBarG('bd', $('rmx_vol'), items, pick);
-      priceBarG('bd', $('rmx_price'), items, pick);
+      revBarG('bd', $('rmx_rev'), items, pick);
+      if(!solo) priceBarG('bd', $('rmx_price'), items, pick);
     }
 
     /* ---- dimension tables ---- */
@@ -17922,30 +18139,25 @@ AMR.page('overview', {
       showPanel('rmxDimBody');
       var total = d && d.totals;
       var lab=RXF_FIELD_LABEL[RDIM_TAB];
+      var solo=volRev();
       body.innerHTML=
         '<div class="ov-cols">'
-        +'<div><p class="ov-lab">CY volume share</p><div class="ov-cbox tall"><canvas id="rdim_pie"></canvas></div></div>'
-        +'<div><p class="ov-lab">Volume vs last year</p><div class="ov-cbox tall"><canvas id="rdim_vol"></canvas></div></div>'
+        +'<div><p class="ov-lab">'+(solo?'Volume share':'CY volume share')+'</p><div class="ov-cbox tall"><canvas id="rdim_pie"></canvas></div></div>'
+        +'<div><p class="ov-lab">'+(solo?'Volume':'Volume vs last year')+'</p><div class="ov-cbox tall"><canvas id="rdim_vol"></canvas></div></div>'
         +'</div>'
-        +'<div class="ov-block"><p class="lab">BASE ASP % inc &amp; PPI</p><div class="ov-cbox tall"><canvas id="rdim_bar"></canvas></div></div>'
-        +'<table class="ov-table"><thead><tr>'
-        +'<th>'+esc(lab)+'</th><th>Vol (m\u00b3) CY</th><th>Vol (m\u00b3) PY</th><th>Vol %</th><th>BASE ASP % inc</th><th>PPI</th>'
+        +'<div class="ov-block"><p class="lab">'+(solo?'Revenue (base concrete)':'BASE ASP % inc &amp; PPI')+'</p><div class="ov-cbox tall"><canvas id="rdim_bar"></canvas></div></div>'
+        +measWrap()+'<table class="ov-table"><thead><tr>'
+        +'<th>'+esc(lab)+'</th>'+measHead('m\u00b3','BASE ASP % inc')
         +'</tr></thead><tbody>'
         +rows.map(function(r){
           return '<tr class="xfrow'+(rxfHas(RDIM_TAB,r.label)?' xfsel':'')
             +'" data-rxf-v="'+esc(r.label)+'">'
-            +'<td>'+esc(r.label)+'</td><td>'+fInt(r.cyVol)+'</td><td>'+fInt(r.pyVol)+'</td>'
-            +'<td class="'+cls(r.volPct)+'">'+fPct(r.volPct)+'</td>'
-            +'<td class="'+cls(r.aspIncBase)+'">'+fPct(r.aspIncBase)+'</td>'
-            +'<td class="'+cls(r.ppiBase)+'">'+fPpi(r.ppiBase)+'</td></tr>';
+            +'<td>'+esc(r.label)+'</td>'+measCells(r, r.aspIncBase, r.ppiBase)+'</tr>';
         }).join('')
-        +(total?('<tr class="tot"><td>Total</td><td>'+fInt(total.cyVol)+'</td><td>'+fInt(total.pyVol)+'</td>'
-            +'<td class="'+cls(total.volPct)+'">'+fPct(total.volPct)+'</td>'
-            +'<td class="'+cls(total.aspIncBase)+'">'+fPct(total.aspIncBase)+'</td>'
-            +'<td class="'+cls(total.ppiBase)+'">'+fPpi(total.ppiBase)+'</td></tr>'):'')
-        +'</tbody></table>'
+        +(total?('<tr class="tot"><td>Total</td>'+measCells(total, total.aspIncBase, total.ppiBase)+'</tr>'):'')
+        +'</tbody></table></div>'
         +((t&&t.trimmed)?'<p class="ov-note">'+fInt(t.trimmed)+' smaller '+esc(lab.toLowerCase())+' rows not shown \u2014 use the search to reach them.</p>':'')
-        +'<p class="ov-note">PPI is re-indexed at plant \u00d7 mix inside each row, so the rows do not weight-average back to the Total. That is how Qlik reports a selection.</p>';
+        +(solo?'':'<p class="ov-note">PPI is re-indexed at plant \u00d7 mix inside each row, so the rows do not weight-average back to the Total. That is how Qlik reports a selection.</p>');
       [].forEach.call(body.querySelectorAll('tr.xfrow'), function(tr){
         tr.addEventListener('click', function(){ toggleRxf(RDIM_TAB, tr.getAttribute('data-rxf-v')); });
       });
@@ -17957,7 +18169,10 @@ AMR.page('overview', {
       volBarG('rdim', $('rdim_vol'), rows.map(function(r){
         return { label:truncate(r.label,16), cyVol:r.cyVol, pyVol:r.pyVol };
       }), pick);
-      priceBarG('rdim', $('rdim_bar'), rows.map(function(r){
+      if(solo) revBarG('rdim', $('rdim_bar'), rows.map(function(r){
+        return { label:truncate(r.label,16), cyRev:revCY(r), pyRev:revPY(r) };
+      }), pick);
+      else priceBarG('rdim', $('rdim_bar'), rows.map(function(r){
         return { label:truncate(r.label,18), asp:r.aspIncBase, ppi:r.ppiBase };
       }), pick);
     }
@@ -18595,12 +18810,22 @@ AMR.page('overview', {
     }
 
     /* ---- page filters -> cube column names ---- */
-    var AGG_CUBE_FIELD = { SUBMARKET1:'sm1', PLANT_TYPE:'plantType', MATERIAL_FAM:'matFam',
+    /* SUBMARKET1 is 'submarket1', NOT 'sm1'. The cube keys a plant-derived field
+       by the FIELD name; sm1 is the plantMap it resolves through, and asking for
+       that matched nothing — and the cube's answer to a groupBy it cannot
+       resolve is not an error, it is one bucket keyed '\u0001all'. That single
+       row was then dropped as a sentinel, so the submarket breakdown simply was
+       not there on any window, a submarket cross-filter was ignored by every
+       cube-fed panel, and the ASP bridge's submarket mix item came out as a flat
+       zero (halving Region / Market mix, which is the average of the two). The
+       Price & Volume page hit this first and its PV_CUBE_FIELD carries the same
+       note. */
+    var AGG_CUBE_FIELD = { SUBMARKET1:'submarket1', PLANT_TYPE:'plantType', MATERIAL_FAM:'matFam',
                            PROD_CLASS:'prodClass', PLANT:'plant', MATERIAL:'material',
                            CUST_PARENT:'custParent', SOLD_TO:'soldTo' };
     var RMX_CUBE_FIELD = { SUBMARKET:'submarket', SEGMENT:'segment', STRENGTH:'strength',
                            CLASS:'cls', PLANT:'plant' };
-    var CUBE_FIELD_LABEL = { market:'Market', sm1:'Submarket', submarket:'Submarket',
+    var CUBE_FIELD_LABEL = { market:'Market', submarket1:'Submarket', submarket:'Submarket',
       plantType:'Plant Type', matFam:'Material Family', prodClass:'Product Class',
       cls:'Product Class', plant:'Plant', material:'Material', custParent:'Customer',
       soldTo:'Sold To',
@@ -18701,6 +18926,23 @@ AMR.page('overview', {
        any window length. */
     function pyStale(){ return winMode() && winSpan().length > 12; }
 
+    /* THE SAME TEST, AND THE OTHER HALF OF THE ANSWER. pyStale() above says why
+       the prior-year side goes. This says what is left when it does.
+
+       Past twelve months nothing that DIVIDES survives. ASP over a multi-year
+       pool is not a price anyone charged — it is two or three years' prices
+       averaged by whatever the volume mix happened to be, and it moves when the
+       window grows rather than when prices do. PPI, ASP % inc, VOL % and both
+       growth bridges are prior-year comparisons outright, and the months they
+       compare against are already inside the window.
+
+       What survives is what ADDS: volume and revenue. So the panels do not
+       print dashes where those numbers used to be — they drop the columns, the
+       series, the second donut and the whole charts, and what is left fills the
+       space. A blank chart under a live heading and a table of em dashes are
+       both worse than not asking the question. */
+    function volRev(){ return pyStale(); }
+
     /* The months of the window this LINE actually holds, plus their comparison
        months. null when the cube is not ready to answer yet. */
     function winCy(line){
@@ -18727,7 +18969,8 @@ AMR.page('overview', {
                            filters:R.filters });
       if(!g) return { present:false };
       var st=pyStale();
-      return { present:!!(g.cyVol||g.pyVol), cyVol:g.cyVol, pyVol:st?null:g.pyVol, volPct:st?null:g.volPct,
+      return { present:!!(g.cyVol||g.pyVol||g.cyRev), cyVol:g.cyVol, pyVol:st?null:g.pyVol, volPct:st?null:g.volPct,
+               cyRev:g.cyRev, pyRev:st?null:g.pyRev,
                cyAsp:g.cyAsp, pyAsp:st?null:g.pyAsp, aspPct:st?null:g.aspPct, ppi:st?null:g.ppi };
     }
     /* Grouped rows for the window. Returns the cube's own row objects, which
@@ -18764,7 +19007,8 @@ AMR.page('overview', {
       var st=pyStale();
       return rows.map(function(g,i){
         return { label:String(g.key), value:String(g.key), color:MK_COLORS[i%MK_COLORS.length],
-                 cyVol:g.cyVol, pyVol:st?0:g.pyVol, asp:st?null:g.aspPct, ppi:st?null:g.ppi };
+                 cyVol:g.cyVol, pyVol:st?0:g.pyVol, cyRev:g.cyRev, pyRev:st?0:g.pyRev,
+                 asp:st?null:g.aspPct, ppi:st?null:g.ppi };
       });
     }
     /* the cube's row shape in the shape the server-fed tables are painted from */
@@ -18997,12 +19241,92 @@ AMR.page('overview', {
       step();
     }
 
+    /* ===================== MARKET SUMMARY =====================
+       One table above Month by month: every market with its submarkets folded
+       underneath, for whatever Period is showing.
+
+       IT IS FED BY THE MONTH CUBE, and that is the point. Period has four
+       settings and only two of them exist on the server; a table built off a
+       report would mean one thing under MTD and nothing at all under Prev month
+       (YTD). The cube answers all four and a dragged span besides, so this table
+       means the same thing under every one of them, and switching Period changes
+       the numbers rather than the method. PPI is re-pooled on the span exactly
+       as the KPI strip above it is - never averaged out of the months inside it,
+       which is not the span's index.
+
+       Submarkets are one more query per market, filtered to that market. Five
+       markets is six passes over a fact table already in memory - the same order
+       of work the quarter view does twelve times. */
+    function cubeMktLabel(line, key){
+      var k=String(key==null?'':key);
+      var m=markets().filter(function(x){ return (line==='agg'?x.pvName:x.rmxName)===k; })[0];
+      return m ? labelOf(m.key) : (k||'(blank)');
+    }
+    function mktSumData(line){
+      var cy=winCy(line); if(!cy) return null;
+      var rows=cubeGroups(line,'market');
+      if(rows===null) return null;
+      function live(g){ return g.key && g.key!=='\u0001all' && (g.cyVol||g.pyVol||g.cyRev||g.pyRev); }
+      function rank(a,b){ return b.cyVol-a.cyVol; }
+      rows=(rows||[]).filter(live).sort(rank);
+      var subField=(line==='agg')?'submarket1':'submarket';
+      rows.forEach(function(g){
+        var kids=cubeGroups(line, subField, { market:[String(g.key)] });
+        g.kids=(kids||[]).filter(live).sort(rank);
+      });
+      return { rows:rows, total:cubeTotal(line) };
+    }
+    function renderMktSum(line){
+      var isAgg=(line==='agg');
+      var bodyId=isAgg?'mktSumBody':'rmxMktSumBody';
+      var subId =isAgg?'mktSumSub':'rmxMktSumSub';
+      var body=$(bodyId); if(!body) return;
+      var d=mktSumData(line);
+      if(!d){ showPanel(bodyId); winWaiting(bodyId); return; }
+      if(!d.rows.length){ hidePanel(bodyId); return; }
+      showPanel(bodyId);
+      var sub=$(subId);
+      if(sub) sub.textContent=(volRev()?'Volume and revenue':'Volume, revenue, ASP and PPI')
+        +' by market'+(isAgg?'':' \u00b7 base concrete')+' \u00b7 '+scopeLabel()
+        +(winLabel()?(' \u00b7 '+winLabel()):'')
+        +' \u00b7 click a market to open its submarkets.';
+      var out=measWrap()+'<table class="ov-table"><thead><tr><th>Market</th>'
+        +measHead(isAgg?'t':'m\u00b3', isAgg?'ASP % inc':'BASE ASP % inc')
+        +'</tr></thead><tbody>';
+      d.rows.forEach(function(g,i){
+        var kids=g.kids||[], exp=kids.length>0;
+        out+='<tr class="parent'+(exp?' expandable':'')+'" data-i="'+i+'"><td>'
+          +(exp?'<span class="caret">\u25b8</span> ':'')+esc(cubeMktLabel(line,g.key))+'</td>'
+          +measCells(g, g.aspPct, g.ppi)+'</tr>';
+        kids.forEach(function(k){
+          out+='<tr class="child" data-p="'+i+'"><td>'+esc(String(k.key||'(blank)'))+'</td>'
+            +measCells(k, k.aspPct, k.ppi)+'</tr>';
+        });
+      });
+      if(d.total) out+='<tr class="tot"><td>Total \u00b7 '+esc(scopeLabel())+'</td>'
+        +measCells(d.total, d.total.aspPct, d.total.ppi)+'</tr>';
+      body.innerHTML=out+'</tbody></table></div>';
+      /* the caret opens the market's submarkets; nothing here filters the page,
+         because the market chips above already are that control */
+      [].forEach.call(body.querySelectorAll('tr.parent.expandable'), function(tr){
+        var cell=tr.querySelector('td');
+        cell.addEventListener('click', function(){
+          tr.classList.toggle('open');
+          var idx=tr.getAttribute('data-i');
+          [].forEach.call(body.querySelectorAll('tr.child[data-p="'+idx+'"]'), function(cr){ cr.classList.toggle('show'); });
+        });
+      });
+    }
+
     /* ------------------------------- the charts ------------------------------- */
     function renderAggTrend(){ renderTrendPanel('agg'); }
     function renderRmxTrendPanel(d, err){ renderTrendPanel('rmx', d, err); }
     function renderTrendNow(){
       if(!STATE.data) return;
       renderPill();
+      /* the market summary is fed by the same cube and lands at the same moment,
+         so it repaints on the same signal */
+      renderMktSum(STATE.tab);
       if(STATE.tab==='agg') renderAggTrend();
       else renderRmxTrendPanel(rxfData(), RXF_ERR[rxfSig()]);
     }
@@ -19031,15 +19355,39 @@ AMR.page('overview', {
         font:{size:9.5,weight:'600',family:'Inter'},
         formatter:function(v){ return v==null?'':fmt(v); } };
     }
-    /* Auto-scaled charts still need room for the label that sits above the tallest
-       bar — without it the top bar touches the frame and its number is clipped. */
+    /* A ROUND STEP FOR A COMPUTED BOUND, AND ROOM ABOVE THE TALLEST BAR.
+       Chart.js lays its ticks out between the min and max it is handed, so a
+       bound of 9.1318562625202050 prints exactly that under the axis - all
+       sixteen digits of it, and the same on the negative side, which is where it
+       read worst. The fix is to hand it a ROUND bound: 9.13 becomes 10 and
+       -3.45 becomes -4, so the axis reads in whole steps and the bars still
+       clear the frame because the snap is always outward.
+
+       The step is picked off the span, so this works for percentages and for
+       eighteen million tonnes alike, and the snapped value is rounded because
+       3 x 0.2 is 0.6000000000000001 in binary and that is what the tick would
+       otherwise say. */
+    function niceStep(span){
+      if(!(span>0) || !isFinite(span)) return 1;
+      var raw=span/8, mag=Math.pow(10, Math.floor(Math.log(raw)/Math.LN10)), n=raw/mag;
+      return (n<=1?1:(n<=2?2:(n<=2.5?2.5:(n<=5?5:10))))*mag;   // about eight ticks
+    }
+    function snapOut(v, step, up){
+      if(!isFinite(v) || !(step>0)) return v;
+      var k=up?Math.ceil(v/step):Math.floor(v/step);
+      /* a bound that lands exactly on the extreme leaves the tallest bar flush
+         with the frame, and on the PPI chart its datalabel outside it */
+      if(k*step===v) k+=(up?1:-1);
+      var dp=Math.max(0, Math.min(10, -Math.floor(Math.log(step)/Math.LN10)+1));
+      return Number((k*step).toFixed(dp));
+    }
     function headroom(vals){
       var v=vals.filter(function(x){ return x!=null && isFinite(x); });
       if(!v.length) return {};
       var mx=Math.max.apply(null,v), mn=Math.min.apply(null,v);
-      var span=Math.max(mx-Math.min(mn,0), Math.abs(mx), 1);
-      return { max: mx>0 ? mx+span*0.14 : undefined,
-               min: mn<0 ? mn-span*0.14 : undefined };
+      var step=niceStep(Math.max(mx-Math.min(mn,0), Math.abs(mx), 1));
+      return { max: mx>0 ? snapOut(mx, step, true)  : undefined,
+               min: mn<0 ? snapOut(mn, step, false) : undefined };
     }
 
     /* The Extras / VAP build-up, keyed by ym. The cross-report only carries the
@@ -19315,7 +19663,7 @@ AMR.page('overview', {
               return c.raw==null ? 'No last-year comparison' : 'PPI: '+(c.raw>0?'+':'')+c.raw.toFixed(2)+'%'; } } } },
           scales:{ x:{ grid:{display:false}, ticks:xTicks },
                    y:Object.assign({ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                         callback:function(v){ return v+'%'; }} },
+                         callback:fAxisPct} },
                          sc?{min:sc.min,max:sc.max}:{min:ppiHead.min,max:ppiHead.max}) } },
         plugins:[ChartDataLabels] }));
 
@@ -19662,13 +20010,16 @@ AMR.page('overview', {
       var b=e.target.closest('button'); if(!b || b.dataset.rdim===RDIM_TAB) return;
       RDIM_TAB=b.dataset.rdim;
       [].forEach.call(this.querySelectorAll('button'),function(x){x.setAttribute('aria-pressed', x===b);});
-      renderRmxDims(rxfData(), RXF_ERR[rxfSig()]);
+      repaintPanel(renderWinRmxDims, null,
+        function(){ renderRmxDims(rxfData(), RXF_ERR[rxfSig()]); });
     });
     $('rmxBdModeSeg').addEventListener('click', function(e){
       var b=e.target.closest('button'); if(!b || b.dataset.rbd===RBD_MODE) return;
       RBD_MODE=b.dataset.rbd;
       [].forEach.call(this.querySelectorAll('button'),function(x){x.setAttribute('aria-pressed', x===b);});
-      if(STATE.tab!=='agg') renderRmxBreakdown(rxfData(), RXF_ERR[rxfSig()]);
+      if(STATE.tab==='agg') return;
+      repaintPanel(renderWinRmxBreakdown, null,
+        function(){ renderRmxBreakdown(rxfData(), RXF_ERR[rxfSig()]); });
     });
     /* ---- Month window (both tabs). The history pill is wired in boot(),
            once AmrProgress is known to exist. ---- */
@@ -20296,7 +20647,12 @@ AMR.page('overview', {
             var merged=mergeCustReports(reports);
             CUST_CACHE[mergedKey]=merged;
             if(window.AmrCache) AmrCache.set('c:'+mergedKey, merged);
-            if(mergedKey===custKey()){
+            /* A SERVER ANSWER CAN LAND AFTER THE SELECTION MOVED. This fetch is
+               for STATE.period; by the time it returns the user may have opened
+               a window, and then the cube owns both panels. Same rule as
+               srvOwnsAgg() and repaintPanel() - the key check below catches a
+               changed market or split, but not a changed OWNER. */
+            if(mergedKey===custKey() && !winMode()){
               if(!(xfActive() && STATE.tab==='agg')) renderCustomers(merged);
               renderFscCustomers(merged);
               xfDropsRefresh();
@@ -20327,6 +20683,7 @@ AMR.page('overview', {
         var cyAsp=a.cyVol?a.cyRev/a.cyVol:0, pyAsp=a.pyVol?a.pyRev/a.pyVol:0;
         var ppi=(a.cyRevPpi>0 && a.cyRev>0 && a.pyRev>0)?a.factorCy/a.cyRevPpi:0;
         return { cyVol:a.cyVol, pyVol:a.pyVol, volPct:a.pyVol?(a.cyVol-a.pyVol)/a.pyVol:0,
+                 cyRev:a.cyRev, pyRev:a.pyRev,
                  cyAsp:cyAsp, pyAsp:pyAsp, aspPct:pyAsp?(cyAsp-pyAsp)/pyAsp:0,
                  ppi:ppi, cyFsc:a.cyFsc, pyFsc:a.pyFsc };
       }
@@ -20357,33 +20714,24 @@ AMR.page('overview', {
 
     function custTableHtml(d){
       var top=d.top||[];
-      var out='<table class="ov-table"><thead><tr>'
-        +'<th>Customer</th><th>Vol (t) CY</th><th>Vol (t) PY</th><th>Vol %</th><th>ASP % inc</th><th>PPI</th>'
+      var out=measWrap()+'<table class="ov-table"><thead><tr>'
+        +'<th>Customer</th>'+measHead('t')
         +'</tr></thead><tbody>';
       top.forEach(function(c,i){
         var exp = STATE.split && c.children && c.children.length;
         out+='<tr class="parent xfrow'+(exp?' expandable':'')+(xfHas('CUST_PARENT',c.label)?' xfsel':'')
           +'" data-i="'+i+'" data-xf-f="CUST_PARENT" data-xf-v="'+esc(c.label)+'">'
           +'<td>'+(exp?'<span class="caret">▸</span> ':'')+esc(c.label)+'</td>'
-          +'<td>'+fInt(c.cyVol)+'</td><td>'+nInt(c.pyVol)+'</td>'
-          +'<td class="'+cls(c.volPct)+'">'+nPct(c.volPct)+'</td>'
-          +'<td class="'+cls(c.aspPct)+'">'+nPct(c.aspPct)+'</td>'
-          +'<td class="'+cls(c.ppi)+'">'+nPpi(c.ppi)+'</td></tr>';
+          +measCells(c, c.aspPct, c.ppi)+'</tr>';
         if(exp){ c.children.forEach(function(ch){
           out+='<tr class="child" data-p="'+i+'"><td>'+esc(ch.label)+'</td>'
-            +'<td>'+fInt(ch.cyVol)+'</td><td>'+nInt(ch.pyVol)+'</td>'
-            +'<td class="'+cls(ch.volPct)+'">'+nPct(ch.volPct)+'</td>'
-            +'<td class="'+cls(ch.aspPct)+'">'+nPct(ch.aspPct)+'</td>'
-            +'<td class="'+cls(ch.ppi)+'">'+nPpi(ch.ppi)+'</td></tr>';
+            +measCells(ch, ch.aspPct, ch.ppi)+'</tr>';
         }); }
       });
       var t=d.total||{};
       out+='<tr class="tot"><td>All customers ('+(d.customerCount||top.length)+')</td>'
-        +'<td>'+fInt(t.cyVol)+'</td><td>'+nInt(t.pyVol)+'</td>'
-        +'<td class="'+cls(t.volPct)+'">'+nPct(t.volPct)+'</td>'
-        +'<td class="'+cls(t.aspPct)+'">'+nPct(t.aspPct)+'</td>'
-        +'<td class="'+cls(t.ppi)+'">'+nPpi(t.ppi)+'</td></tr>';
-      return out+'</tbody></table>';
+        +measCells(t, t.aspPct, t.ppi)+'</tr>';
+      return out+'</tbody></table></div>';
     }
 
     function custDonut(sec, canvas, labels, data, colors, onPick){
@@ -20399,15 +20747,15 @@ AMR.page('overview', {
     }
 
     function custBar(sec, canvas, top){
+      /* past twelve months the prior-year bars are not drawn - see volRev() */
+      var solo=volRev();
+      var ds=[{ label: solo?'Volume':'This year', data:top.map(function(c){return c.cyVol;}), backgroundColor:C.b70, borderRadius:4, maxBarThickness:12 }];
+      if(!solo) ds.push({ label:'Last year', data:top.map(function(c){return c.pyVol;}), backgroundColor:C.b30, borderRadius:4, maxBarThickness:12 });
       CH[sec].push(new Chart(canvas,{ type:'bar',
-        data:{ labels:top.map(function(c){return truncate(c.label,20);}),
-          datasets:[
-            { label:'This year', data:top.map(function(c){return c.cyVol;}), backgroundColor:C.b70, borderRadius:4, maxBarThickness:12 },
-            { label:'Last year', data:top.map(function(c){return c.pyVol;}), backgroundColor:C.b30, borderRadius:4, maxBarThickness:12 }
-          ]},
+        data:{ labels:top.map(function(c){return truncate(c.label,20);}), datasets:ds },
         options:Object.assign(pickOpt(function(i){ var c=top[i]; if(c) toggleXf('CUST_PARENT', c.label); }),
         { indexAxis:'y', responsive:true, maintainAspectRatio:false,
-          plugins:{ legend:{display:true, position:'bottom', labels:{font:{size:11,family:'Inter'},color:C.ink,boxWidth:12,boxHeight:12,usePointStyle:true,pointStyle:'rectRounded'}},
+          plugins:{ legend:{display:!solo, position:'bottom', labels:{font:{size:11,family:'Inter'},color:C.ink,boxWidth:12,boxHeight:12,usePointStyle:true,pointStyle:'rectRounded'}},
             datalabels:{display:false},
             tooltip:{ callbacks:{ label:function(c){ return c.dataset.label+': '+fInt(c.raw)+' t'; } } } },
           scales:{ x:{ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted, callback:function(v){ return v>=1000?(v/1000)+'k':v; }} },
@@ -20424,12 +20772,12 @@ AMR.page('overview', {
       body.innerHTML =
         '<div class="ov-cust-grid">'
         + '<div>'
-          + '<p style="'+LAB+'">Customer share · this year</p>'
+          + '<p style="'+LAB+'">Customer share · '+(volRev()?'volume':'this year')+'</p>'
           + '<div class="ov-cbox tall"><canvas id="cust_share"></canvas></div>'
           + (STATE.split ? '<p style="'+LAB+';margin-top:16px">Segment mix · top 10</p><div class="ov-cbox tall"><canvas id="cust_seg"></canvas></div>' : '')
         + '</div>'
         + '<div>'
-          + '<p style="'+LAB+'">Top 10 · volume vs last year</p>'
+          + '<p style="'+LAB+'">Top 10 · '+(volRev()?'volume':'volume vs last year')+'</p>'
           + '<div class="ov-cbox xtall"><canvas id="cust_bar"></canvas></div>'
         + '</div>'
         + '</div>'
@@ -20515,6 +20863,9 @@ AMR.page('overview', {
 
     function renderFsc(){
       var body=$('fscBody');
+      /* in a window this panel is renderWinFsc's, and this data is the server's
+         period - a background revalidate must not paint over it */
+      if(winMode()) return;
       clearCH('fsc');
       if(!FSC_DATA || !FSC_DATA.summary){ hidePanel('fscBody'); return; }
       var rows=(FSC_DATA.summary[STATE.period]||[]);
@@ -20612,12 +20963,11 @@ AMR.page('overview', {
       if(on===STATE.split) return;
       STATE.split=on;
       [].forEach.call(this.querySelectorAll('button'),function(x){x.setAttribute('aria-pressed', x===b);});
-      if(xfActive() && STATE.tab==='agg'){
-        var sig=xfSig();
-        renderXfCustomers(XF_CACHE[sig], XF_ERR[sig]);   // segment children ride along in the cross payload
-      } else {
-        loadCustomers();
-      }
+      /* the cube splits by customer segment too - cubeCustomers() reads
+         STATE.split - so a window answers this toggle itself */
+      repaintPanel(renderWinCustomers,
+        function(){ var sig=xfSig(); renderXfCustomers(XF_CACHE[sig], XF_ERR[sig]); },  // segment children ride along in the cross payload
+        loadCustomers);
     });
 
     /* ---- go ---------------------------------------------------------------
