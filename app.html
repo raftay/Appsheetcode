@@ -3981,13 +3981,10 @@ window.AmrCube = (function(){
        Customer Parent, so that is what the third part is. `cpairs` is only built
        on the Aggregates line, which is the only one carrying soldTo.
 
-       A cpair carries SIX slots, not four: volume, netted revenue, and PRICED
-       revenue — the dollars on fact rows that also carried tonnes. CPI's ASP is
-       built from the priced pair and its weight from the netted one, because a
-       credit row moves the money without moving the tonnes and so destroys a
-       price rather than reducing one. script.gs piIndex_ carries the measurement
-       and the Qlik expression it comes from; this is the same rule where the
-       browser can see the individual fact rows. */
+       Both indexes carry the same four slots and the same arithmetic; CPI
+       differs only in its key and in the outlier threshold it passes to pool().
+       See script.gs piIndex_ for what the threshold is and how it was read off
+       Qlik's own exports. */
     var G = {}, order = [];
     var soldToCol = (isAgg && man.dims.indexOf('soldTo') !== -1) ? 'soldTo' : null;
     function bucket(key){
@@ -4044,7 +4041,7 @@ window.AmrCube = (function(){
         function cpairOf(g){
           if (!ckey) return null;
           var pr = g.cpairs[ckey];
-          if (!pr) pr = g.cpairs[ckey] = [0, 0, 0, 0, 0, 0];   // +cyRevPriced, pyRevPriced
+          if (!pr) pr = g.cpairs[ckey] = [0, 0, 0, 0];
           return pr;
         }
         if (cSlot !== undefined){
@@ -4055,8 +4052,7 @@ window.AmrCube = (function(){
           if (vex) gc.cyEx  += vex[i];
           if (vva) gc.cyVa  += vva[i];
           prc[0] += vv[i]; prc[2] += vr[i];
-          var crc = cpairOf(gc);
-          if (crc){ crc[0] += vv[i]; crc[2] += vr[i]; if (vv[i] > 0) crc[4] += vr[i]; }
+          var crc = cpairOf(gc); if (crc){ crc[0] += vv[i]; crc[2] += vr[i]; }
         }
         if (pSlot !== undefined){
           var gp = bucket(keyFor(pSlot)), prp = pairOf(gp);
@@ -4066,8 +4062,7 @@ window.AmrCube = (function(){
           if (vex) gp.pyEx  += vex[i];
           if (vva) gp.pyVa  += vva[i];
           prp[1] += vv[i]; prp[3] += vr[i];
-          var crp = cpairOf(gp);
-          if (crp){ crp[1] += vv[i]; crp[3] += vr[i]; if (vv[i] > 0) crp[5] += vr[i]; }
+          var crp = cpairOf(gp); if (crp){ crp[1] += vv[i]; crp[3] += vr[i]; }
         }
       }
     });
@@ -4077,30 +4072,30 @@ window.AmrCube = (function(){
        arithmetic to script.gs piIndex_ - coverage, weight = CY revenue, factor =
        weight x the pair's own ASP move, index = Sum f / Sum w - which is what
        keeps the browser's answer and the server's the same number. */
-    var cpiCap = cov.cpiAspCap || 0;
-    function pool(pairs, priced){
+    var cpiOut = cov.cpiOutlier || 0;
+    /* THE DENOMINATOR IS EVERY COVERED PAIR; the threshold takes a pair out of
+       the FACTOR only. Same shape as script.gs piIndex_, and the reason CPI now
+       divides by Qlik's TotalWeight rather than by the sum of the weights it
+       actually used. PPI passes 0 and so has both sums over the same pairs,
+       which is arithmetically what it has always computed. */
+    function pool(pairs, aspCap){
       var w = 0, f = 0;
       for (var pk in pairs){
         var o2 = pairs[pk];
-        /* the ASP is read off priced revenue for CPI and netted revenue for PPI;
-           the WEIGHT is the netted figure either way */
-        var cr = priced ? o2[4] : o2[2], pr = priced ? o2[5] : o2[3];
-        if (!(o2[0] > 0 && o2[1] > 0 && cr > 0 && pr > 0)) continue;          // the app's own coverage
-        if (!(o2[0] > mv && o2[1] > mv && cr > mr && pr > mr)) continue;      // Qlik's floors
-        var pyAsp = pr / o2[1], cyAsp = cr / o2[0];
-        var asp = (cyAsp - pyAsp) / pyAsp;
-        /* the CPI-only exclusion (APP_CONFIG \u00a71 cpiAspCap). PPI passes priced
-           = false and is never capped, so its published index does not move. */
-        if (priced && cpiCap > 0 && Math.abs(asp) > cpiCap) continue;
-        f += o2[2] * asp;
+        if (!(o2[0] > 0 && o2[1] > 0 && o2[2] > 0 && o2[3] > 0)) continue;   // the app's own coverage
+        if (!(o2[0] > mv && o2[1] > mv && o2[2] > mr && o2[3] > mr)) continue; // Qlik's floors
         w += o2[2];
+        var pyAsp = o2[3] / o2[1], cyAsp = o2[2] / o2[0];
+        var asp = (cyAsp - pyAsp) / pyAsp;
+        if (aspCap > 0 && Math.abs(asp) > aspCap) continue;
+        f += o2[2] * asp;
       }
       return { w: w, f: f };
     }
     var rows = order.map(function(k){
       var g = G[k];
-      var pi = pool(g.pairs, false);
-      var ci = soldToCol ? pool(g.cpairs, true) : null;
+      var pi = pool(g.pairs, 0);
+      var ci = soldToCol ? pool(g.cpairs, cpiOut) : null;
       delete g.pairs; delete g.cpairs;                 // don't hand the caller the scratch indexes
       g.cyAsp = g.cyVol ? g.cyRev / g.cyVol : 0;
       g.pyAsp = g.pyVol ? g.pyRev / g.pyVol : 0;
@@ -15555,7 +15550,7 @@ AMR.page('overview', {
     function isPrevPick(){ return STATE.pick==='PMTD' || STATE.pick==='PYTD'; }
     var CH = { bd:[], dim:[], exp:[], bridge:[], cust:[], fsc:[], fscc:[], seg:[], pcat:[], ext:[],
                rdim:[], rasp:[], rtrend:[], atrend:[], rfuel:[] };   // live Chart instances, per section
-    var CACHE  = {};                       // period -> overview payload
+    var CACHE  = {};                       // period|month -> overview payload
     var CUST_CACHE = {};                   // period|scope|split -> MERGED customers payload
     var RAW_CUST = {};                     // JSON(params) -> raw getCustomerReport payload
     var FSC_DATA = null;                   // getFscData payload (one call, both periods inside)
@@ -16114,29 +16109,23 @@ AMR.page('overview', {
         var k=D._pm[i2], c=o.pm[k]; if(!c) c=o.pm[k]={pv:0,cv:0,pr:0,cr:0};
         c.pv+=nums.pyVol[i2]; c.cv+=nums.cyVol[i2]; c.pr+=nums.pyRev[i2]; c.cr+=nums.cyRev[i2];
         if(D._pc){
-          var k2=D._pc[i2], c2=o.pc[k2];
-          if(!c2) c2=o.pc[k2]={pv:0,cv:0,pr:0,cr:0,prp:0,crp:0};
+          var k2=D._pc[i2], c2=o.pc[k2]; if(!c2) c2=o.pc[k2]={pv:0,cv:0,pr:0,cr:0};
           c2.pv+=nums.pyVol[i2]; c2.cv+=nums.cyVol[i2]; c2.pr+=nums.pyRev[i2]; c2.cr+=nums.cyRev[i2];
-          /* PRICED revenue: dollars on rows that also carried tonnes. A credit
-             row is revenue with no volume - real money, but not a price. */
-          if(nums.pyVol[i2]>0) c2.prp+=nums.pyRev[i2];
-          if(nums.cyVol[i2]>0) c2.crp+=nums.cyRev[i2];
         }
       }
       /* ONE pooling pass, run at each grain - the same arithmetic as script.gs
          piIndex_ and as the cube's pool(), which is what makes the three agree.
-         `priced` switches the ASP onto credit-free revenue and turns the CPI
-         exclusion on; the weight stays the netted figure either way. */
-      var CPICAP=(D && D.cpiAspCap) || 0;
-      function poolPairs(bag, priced){
+         The threshold takes a pair out of the FACTOR only; every covered pair
+         stays in the weight, which is Qlik's TotalWeight. */
+      var CPIOUT=(D && D.cpiOutlier) || 0;
+      function poolPairs(bag, aspCap){
         var w=0,f=0;
         for(var k in bag){ var c=bag[k];
-          var cr=priced?c.crp:c.cr, pr=priced?c.prp:c.pr;
-          if(c.pv>0&&c.cv>0&&pr>0&&cr>0){
-            var pa=pr/c.pv, ca=cr/c.cv;
-            var asp=(ca-pa)/pa;
-            if(priced && CPICAP>0 && Math.abs(asp)>CPICAP) continue;
-            f+=c.cr*asp; w+=c.cr;
+          if(c.pv>0&&c.cv>0&&c.pr>0&&c.cr>0){
+            w+=c.cr;
+            var pa=c.pr/c.pv, ca=c.cr/c.cv, asp=(ca-pa)/pa;
+            if(aspCap>0 && Math.abs(asp)>aspCap) continue;
+            f+=c.cr*asp;
           }
         }
         return { w:w, f:f };
@@ -16144,8 +16133,8 @@ AMR.page('overview', {
       function finAcc(o,label){
         var cyAsp=o.cyVol?o.cyRev/o.cyVol:0, pyAsp=o.pyVol?o.pyRev/o.pyVol:0;
         var live=(o.cyRev>0&&o.pyRev>0);
-        var pi=poolPairs(o.pm, false);            // PPI: plant x material, netted
-        var ci=D._pc?poolPairs(o.pc, true):null;  // CPI: plant x sold-to x material, priced
+        var pi=poolPairs(o.pm, 0);                    // PPI: plant x material
+        var ci=D._pc?poolPairs(o.pc, CPIOUT):null;    // CPI: plant x sold-to x material
         return { label:label, cyVol:o.cyVol, pyVol:o.pyVol,
           volPct:o.pyVol?(o.cyVol-o.pyVol)/o.pyVol:0,
           cyAsp:cyAsp, pyAsp:pyAsp, aspPct:pyAsp?(cyAsp-pyAsp)/pyAsp:0,
@@ -17408,7 +17397,7 @@ AMR.page('overview', {
        is now what the Period buttons anchor on (anchorMonth) - so naming it here
        makes the two agree out loud instead of by coincidence. */
     function kpiPeriodLabel(){
-      var a=(WIN.months.length>1) ? anchorMonth() : null;
+      var a=(WIN.months.length>1) ? kpiMonth() : null;
       var half=periodLabel();
       return a ? (ymLong(a)+' \u00b7 '+half) : half;
     }
@@ -18815,45 +18804,37 @@ AMR.page('overview', {
        Only the first two exist on the server. The Prev-month pair is computed in
        the browser from the month cube, which is why they stay disabled until it
        holds the month they need.                                            */
-    /* THE PERIOD ANCHOR IS THE REPORTING MONTH, NOT THE NEWEST BLOCK.
-       This page draws two ways at once and they have to agree about which month
-       "this month" is. The server reports land on the REPORTING MONTH - last
-       calendar month (README §7), because the running month is part-billed and
-       reading it as MTD prints a collapse that is really just the calendar. The
-       month cube holds the running month too, so anchoring on the newest block
-       it carries picked a DIFFERENT month.
+    /* THE PERIOD ANCHOR IS THE NEWEST MONTH THE CUBE HOLDS.
+       "This month" means the latest month there is data for, and "Prev month"
+       the one before it. That is the plain reading, and it is the one the
+       slider shows.
 
-       What that cost was not a rounding difference. On an August visit the KPI
-       strip (server, July) read 2,266,577 t while the market table directly
-       under it (cube, August) read 1,067,541 t for the same selection, with
-       every market showing -50% or worse - the part-month against a full one.
-       And "Prev month (MTD)" is one back from the anchor, so with the anchor on
-       August it landed on July: the same month "This month" was already
-       showing on the server side. The two Period buttons drew the same view.
+       IT WAS BRIEFLY THE REPORTING MONTH INSTEAD - last calendar month - to
+       stop the page reporting two different months at once: the server reports
+       land on the reporting month, so a KPI strip built from them sat above a
+       cube-fed table on the newest month, and on an August visit those read
+       2,266,577 t and 1,067,541 t for the same selection. That fixed the
+       disagreement by moving the wrong half. The page now moves the OTHER half:
+       getOverview takes a month, the Overview passes this anchor, and both
+       halves answer for the newest month.
 
-       So the anchor is the month the SERVER says it answered for, which arrives
-       on the payload (getOverview.reportMonth, read off the data by
-       pvReportMonth_ - not off the clock, §7). The clock rule is the fallback
-       for a payload that predates the field, and the newest block the fallback
-       to that. The part-billed month is not lost: it is one drag of the slider
-       away, as a custom window, which is what it actually is. */
+       What genuinely belongs to the closed month is the EBITDA workbook, and
+       that is handled where it is read (kpiMonth) rather than by moving every
+       period on the page back to meet it. */
     function anchorMonth(){
       var ms=WIN.months; if(ms.length<2) return null;
-      var newest=ms[ms.length-1], year=Math.floor(newest/100);
-      /* 1. the server's own answer, mapped onto the newest year the cube holds */
-      var rm=(STATE.data && STATE.data.reportMonth) || 0;
-      if(rm>=1 && rm<=12){
-        var want=year*100+rm;
-        /* the report month can sit a year back when the newest block is January */
-        if(ms.indexOf(want)!==-1) return want;
-        if(rm>(newest%100) && ms.indexOf((year-1)*100+rm)!==-1) return (year-1)*100+rm;
-      }
-      /* 2. last calendar month, the same rule the server applies */
-      var now=new Date(), pm=now.getMonth();      // 0-based month = last month, 1-12
-      var closed = pm ? (now.getFullYear()*100+pm) : ((now.getFullYear()-1)*100+12);
-      if(ms.indexOf(closed)!==-1) return closed;
-      /* 3. nothing closed is in yet - the newest month the cube holds */
-      return newest;
+      return ms[ms.length-1];
+    }
+    /* The month the SAP / USGAAP workbook is for. It is a closed-month
+       statement and it arrives during the month after the one it covers, so it
+       is always the month BEFORE the newest one the fact tables carry - which
+       is what the KPI cards have to be labelled and read for, while every other
+       panel on the page stays on "this month". */
+    function kpiMonth(){
+      var ms=WIN.months, a=anchorMonth();
+      if(a==null) return null;
+      var p=ymAdd(a,-1);
+      return (ms.length && p>=ms[0]) ? p : a;
     }
     function prevMonthOf(){
       var ms=WIN.months; if(ms.length<2) return null;
@@ -20324,15 +20305,30 @@ AMR.page('overview', {
     }
 
     /* ---- load a period from the server ---- */
+    /* THE SERVER IS ASKED FOR THE MONTH THE SLIDER IS ANCHORED ON.
+       Left to itself getOverview answers for the REPORTING month (last calendar
+       month), while the cube anchors on the newest block - and the page then
+       reported two months at once, a server KPI strip above a cube table. The
+       month is part of the cache key on both sides, so the two periods stay
+       independently cached. 0 until the cube has landed, which is the server's
+       own default and the right answer while there is nothing better. */
+    function loadMonth(){
+      var a=(WIN.months.length>1) ? anchorMonth() : null;
+      return a ? (a%100) : 0;
+    }
+    function loadKey(){ return STATE.period+'|m'+loadMonth(); }
+    var LOADED_KEY='';
     function load(){
-      if(!CACHE[STATE.period] && window.AmrCache){          // per-device copy, wiped when a base table updates
-        var dev=AmrCache.get('ov:'+STATE.period);
-        if(dev) CACHE[STATE.period]=dev;
+      var key=loadKey();
+      LOADED_KEY=key;
+      if(!CACHE[key] && window.AmrCache){          // per-device copy, wiped when a base table updates
+        var dev=AmrCache.get('ov:'+key);
+        if(dev) CACHE[key]=dev;
       }
-      if(CACHE[STATE.period]){
+      if(CACHE[key]){
         hideLoader();                       // the pill is running from boot(); this path is done
-        STATE.data=CACHE[STATE.period];
-        syncWindow();                       // anchorMonth() reads the payload's reportMonth
+        STATE.data=CACHE[key];
+        syncWindow();
         renderChips(); renderActiveTab(); return;
       }
       if(!IS_LIVE){
@@ -20345,10 +20341,8 @@ AMR.page('overview', {
         .withSuccessHandler(function(d){
           hideLoader();
           if(!d || !d.ok){ banner('Could not load the overview data.'); return; }
-          if(window.AmrCache && d.generation!=null){ AmrCache.check(d.generation); AmrCache.set('ov:'+STATE.period, d); }
-          CACHE[STATE.period]=d; STATE.data=d;
-          /* the month the server answered for is the window's anchor, so the
-             handles move onto it as soon as the first payload lands */
+          if(window.AmrCache && d.generation!=null){ AmrCache.check(d.generation); AmrCache.set('ov:'+key, d); }
+          CACHE[key]=d; STATE.data=d;
           syncWindow();
           renderChips(); renderActiveTab();
           prefetchPeriod();          // so the OTHER button is instant when pressed
@@ -20357,7 +20351,7 @@ AMR.page('overview', {
           hideLoader();
           banner('Could not load the overview: '+((err&&err.message)||err));
         })
-        .getOverview({ period: STATE.period });
+        .getOverview({ period: STATE.period, month: loadMonth() });
     }
 
     /* The only reason pressing the other Period button ever waited is that its
@@ -20368,21 +20362,22 @@ AMR.page('overview', {
     function prefetchPeriod(){
       if(!IS_LIVE) return;
       var other = (STATE.period==='MTD') ? 'YTD' : 'MTD';
-      if(CACHE[other] || PREFETCHING[other]) return;
-      PREFETCHING[other]=1;
+      var mo=loadMonth(), key=other+'|m'+mo;
+      if(CACHE[key] || PREFETCHING[key]) return;
+      PREFETCHING[key]=1;
       if(window.AmrCache){
-        var dev=AmrCache.get('ov:'+other);
-        if(dev){ CACHE[other]=dev; return; }
+        var dev=AmrCache.get('ov:'+key);
+        if(dev){ CACHE[key]=dev; PREFETCHING[key]=0; return; }
       }
       google.script.run
         .withSuccessHandler(function(d){
-          PREFETCHING[other]=0;
+          PREFETCHING[key]=0;
           if(!d || !d.ok) return;                  // opportunistic: never surfaces
-          CACHE[other]=d;
-          if(window.AmrCache && d.generation!=null) AmrCache.set('ov:'+other, d);
+          CACHE[key]=d;
+          if(window.AmrCache && d.generation!=null) AmrCache.set('ov:'+key, d);
         })
-        .withFailureHandler(function(){ PREFETCHING[other]=0; })   // the button still works without it
-        .getOverview({ period: other });
+        .withFailureHandler(function(){ PREFETCHING[key]=0; })   // the button still works without it
+        .getOverview({ period: other, month: mo });
     }
 
     /* ---- Ready-Mix panel controls ---- */
@@ -21420,6 +21415,12 @@ AMR.page('overview', {
            current year has finished streaming */
         syncWindow(); renderPill(); dqBadge();
         if(ev==='ready') maybeBuildHistory();
+        /* The first load() runs before the cube exists, so it asks for month 0 -
+           the server's own default, which is the REPORTING month. Once the cube
+           lands the anchor is known and it may be a different month; re-fetch so
+           the server-fed half of the page reports the same month as the cube-fed
+           half. Cache-first on both sides, so this is usually free. */
+        if(LOADED_KEY && LOADED_KEY!==loadKey()){ load(); return; }
         if(winMode()) renderActiveTab(); else renderTrendSoon();
       });
       try{

@@ -542,37 +542,35 @@ var APP_CONFIG = {
      *
      *
      * ------------------------------------------------------------------
-     * cpiAspCap \u2014 A CPI RULE, AND ONLY A CPI RULE.
+     * cpiOutlier \u2014 A CPI RULE, AND ONLY A CPI RULE.
      * ------------------------------------------------------------------
-     * The Aggregates report states it in its own footnote: "CPI is
-     * PLANT/PRODUCT/CUSTOMER to CY REV MIX excluding combinations when
-     * CY/PY VOL is 0, or ASP% showing +/-50%".
+     * CALIBRATED against Qlik's own Cust Price Detail exports for 2026
+     * Jan-Jul \u2014 all markets and each of GTA, SW, Manitoba, Saskatchewan.
+     * Those exports carry Qlik's per-pair Weight and CPI Factor, so the
+     * rule is read off the answer rather than guessed:
      *
-     * NOT applied to PPI. PPI's published figures reconcile as they stand
-     * and must not move; the same cap shifts them 3.22% -> 3.03% on the
-     * Jan-Aug 2026 export, which is a change to numbers the business
-     * already signs off. CPI is new and CPI is the grain that needs it: a
-     * plant x product pair is big enough to absorb one freak line, a
-     * plant x customer x product pair often IS that one line.
+     *   - Qlik zeroes the Weight of exactly 10 of 3,127 covered pairs.
+     *   - The pairs it KEEPS run to |ASP%| = 330%; the pairs it zeroes
+     *     start at |ASP%| = 647%. Any threshold in that gap reproduces
+     *     Qlik's selection EXACTLY on all five exports (0.000pp).
+     *   - It is NOT the +/-50% the report footnote states. A 50% cap
+     *     throws away real pairs and costs 1.26pp on SW Ontario.
      *
-     * WHAT IT IS WORTH, and what it is not. On the August 2026 CPI export,
-     * 2026 Jan-Jun, with the priced-revenue rule in piIndex_ this reads
-     * CPI 3.06% for Central Canada and 2.76% for GTA. The figures those
-     * are being checked against are 2.95% and 2.67%. The remaining ~0.1pp
-     * is NOT explained by any row exclusion in Qlik's expression (P3A*
-     * sold-to, fuel surcharge, VA products \u2014 this export carries none of
-     * them) nor by the TotalWeight denominator; it needs the revenue
-     * COMPONENTS Qlik indexes on (_rev_base, _disc_comp, _Enviro_Fees,
-     * _Govt_Fees, _credit_debit, _rebate), and the export nets all six
-     * into one "Rev exWorks" column before we ever see it. Tune here when
-     * a component-level export exists; do not tune it to fit a number.
+     * 5.0 = 500%, sitting in the middle of the 330%-647% gap. This is a
+     * guard against a pair whose prior-year revenue has been all but
+     * cancelled \u2014 the worst on record is a plant/customer/product whose
+     * March 2025 invoice of $693.98 met an April credit of $693.84,
+     * leaving 14 cents against 47 tonnes and an ASP move of +492,409%
+     * that carried 95.6% of Sum factor by itself. That one pair is why
+     * the page published +206.7%.
      *
-     * 0 disables it. Ready-Mix has no CPI \u2014 no sold-to on that line.
+     * NOT applied to PPI. PPI passes 0 and is bit-for-bit the index it
+     * has always published.
      * ---------------------------------------------------------------- */
     COVERAGE: {
       agg: { minVol: 0, minRev: 0    },    // \u2190 awaiting the Aggregates Qlik expression
       rmx: { minVol: 1, minRev: 110  },    // Qlik: vol > 1, revenue > 110
-      cpiAspCap: 0.50                      // CPI only \u2014 see above. 0 = off
+      cpiOutlier: 5.0                      // CPI only \u2014 |ASP%| above this earns no FACTOR
     }
   }
 };
@@ -3873,20 +3871,14 @@ function saskMonthly_() {
 var PIVOT_COLS_MARKET = ['REGION', 'SUBREGION', 'MARKET', 'COUNTRY', 'SUBMARKET1', 'SUBMARKET2', 'MB SUBMARKET',
   'REVENUE TYPE', 'Month', 'Plant Type', 'Material Family', 'Product Class [Rock]', 'Plant', 'Material',
   'PY Volume', 'CY Volume', 'PY ASP ex-Works', 'CY ASP ex-Works', 'PY REV', 'CY REV',
-  'ASP %', 'PY REV (FOR PPI)', 'FACTOR (PY REV%)', 'CY REV (FOR PPI)', 'FACTOR (CY REV %)',
-  /* revenue on the rows that carried VOLUME — a price, with reversal and credit
-     rows left out. CPI's ASP is built from these; see piIndex_. */
-  'PY REV PRICED', 'CY REV PRICED'];
+  'ASP %', 'PY REV (FOR PPI)', 'FACTOR (PY REV%)', 'CY REV (FOR PPI)', 'FACTOR (CY REV %)'];
 
 var PIVOT_COLS_CUST = ['REGION', 'SUBREGION', 'MARKET', 'COUNTRY', 'SUBMARKET1', 'SUBMARKET2', 'MB SUBMARKET',
   'REVENUE TYPE', 'Month', 'Plant Type', 'Material Family', 'Product Class [Rock]', 'Cust Segment [Rock]',
   'Product Application', 'Plant', 'Material', 'Customer Parent', 'Sold To',
   'PY Volume', 'CY Volume', 'PY ASP ex-Works', 'CY ASP ex-Works', 'PY REV', 'CY REV',
   'PY Fuel Surcharge', 'CY Fuel Surcharge', 'FSC PY Volume', 'FSC CY Volume',
-  'ASP %', 'PY REV (FOR PPI)', 'FACTOR (PY REV%)', 'CY REV (FOR PPI)', 'FACTOR (CY REV %)',
-  /* revenue on the rows that carried VOLUME — a price, with reversal and credit
-     rows left out. CPI's ASP is built from these; see piIndex_. */
-  'PY REV PRICED', 'CY REV PRICED'];
+  'ASP %', 'PY REV (FOR PPI)', 'FACTOR (PY REV%)', 'CY REV (FOR PPI)', 'FACTOR (CY REV %)'];
 
 /* ==========================================================================
  * THE MONTH MODEL
@@ -4030,14 +4022,8 @@ function buildPivot_(period, withCustomer, upToken, monthSel) {
       ? [collapseMonth ? '' : r.month, r.plantType, r.materialFam, r.prodClass, r.custSeg, r.prodApp, r.plant, r.material, r.custParent, r.soldTo]
       : [collapseMonth ? '' : r.month, r.plantType, r.materialFam, r.prodClass, r.plant, r.material];
     var k = kp.join('|\u2016|'), g = groups[k];
-    if (!g) g = groups[k] = { s: r, pyVol: 0, cyVol: 0, pyRev: 0, cyRev: 0, pyFsc: 0, cyFsc: 0,
-                              pyRevP: 0, cyRevP: 0, fm: null };
+    if (!g) g = groups[k] = { s: r, pyVol: 0, cyVol: 0, pyRev: 0, cyRev: 0, pyFsc: 0, cyFsc: 0, fm: null };
     g.pyVol += r.pyVol; g.cyVol += r.cyVol; g.pyRev += r.pyRev; g.cyRev += r.cyRev; g.pyFsc += r.pyFsc; g.cyFsc += r.cyFsc;
-    /* PRICED revenue: this row's dollars count towards a PRICE only if the row
-       also carried tonnes. A reversal or credit is its own row with revenue and
-       no volume — real money, but not a price anybody was charged. */
-    if (r.pyVol > 0) g.pyRevP += r.pyRev;
-    if (r.cyVol > 0) g.cyRevP += r.cyRev;
     /* Applied tonnes have to be decided PER MONTH, BEFORE the YTD collapse merges
        the months into one group. Deciding it afterwards marks a customer's whole
        Jan-Jul volume as "applied" when the surcharge only started in April, which
@@ -4075,7 +4061,6 @@ function buildPivot_(period, withCustomer, upToken, monthSel) {
     set('PY REV', g.pyRev); set('CY REV', g.cyRev); set('ASP %', aspPct);
     set('PY REV (FOR PPI)', pyPpi); set('FACTOR (PY REV%)', aspPct * pyPpi);
     set('CY REV (FOR PPI)', cyPpi); set('FACTOR (CY REV %)', aspPct * cyPpi);
-    set('PY REV PRICED', g.pyRevP); set('CY REV PRICED', g.cyRevP);
     if (withCustomer) {
       set('Cust Segment [Rock]', s.custSeg); set('Product Application', s.prodApp);
       set('Customer Parent', s.custParent); set('Sold To', s.soldTo);
@@ -4395,68 +4380,51 @@ var CUST_SECONDARY = { CUST_SEGMENT: 'Cust Segment [Rock]', PRODUCT_APP: 'Produc
  * ====================================================================== */
 var PI_SEP_ = '|\u2016|';
 
-/* ---- PRICED REVENUE, AND WHY CPI NEEDS IT AND PPI DOES NOT ----------------
- * A reversal or credit is booked as its own raw row: revenue, no volume. Netted
- * into the pair it belongs to, it moves the DOLLARS without moving the TONNES —
- * so it does not reduce a price, it destroys one.
+/* ---- THE DENOMINATOR IS NOT THE SUM OF THE WEIGHTS ------------------------
+ * Read off Qlik's own Cust Price Detail exports (2026 Jan-Jul, all markets and
+ * each of the four): CPI is [CPI Factor] / [TotalWeight], and TotalWeight is NOT
+ * the sum of the Weight column. On the all-markets export they are $136,727,744
+ * against $123,520,166 - a tenth apart, and the difference is the whole reason
+ * the page read 3.6% where Qlik reads 3.33%.
  *
- * Qlik knows this. The CPI weight variable's prior-year test is
- *     sum(_rev_base + _Enviro_Fees + _Govt_Fees + _disc_comp)
- * — no _credit_debit and no _rebate, while the CURRENT-year side keeps both.
- * The price components decide whether a pair has a prior-year price; the
- * settlement components do not.
+ *   TotalWeight = CY revenue of EVERY covered pair
+ *   Factor      = CY revenue x ASP%, over covered pairs that are not outliers
  *
- * Our pivot carries one netted figure per side, so the same rule is expressed
- * the way this data can express it: PRICED revenue is revenue on rows that
- * carried volume. The credit rows keep their dollars in CY REV / PY REV, which
- * every total on every page still reports; they are only kept out of the ASP
- * the index is built from.
+ * So a pair excluded as an outlier still counts in the denominator. It is
+ * dropped from the numerator, not from the population - which is what makes the
+ * exclusion a dilution rather than a deletion, and it is exactly what the two
+ * columns in Qlik's export show. Verified: Sum(covered CY revenue) reproduces
+ * TotalWeight to five significant figures on all five exports.
  *
- * MEASURED, on the August 2026 CPI export, Jan-Aug. Plant 3P36 / Brock
- * Aggregates / 9141 concrete sand billed 47.04 t for $693.98 in March 2025 and
- * took a $693.84 credit in April. Netted, prior-year revenue is FOURTEEN CENTS
- * against 47 tonnes — an ASP of a third of a cent, and a price "move" of
- * +492,409% carrying 95.6% of Sum factor on its own. On priced revenue the same
- * pair reads -0.6%. CPI goes 141.72% -> 3.56% (the page had published +206.7%).
- *
- * PPI IS NOT GIVEN THIS, deliberately: its published figures reconcile as they
- * stand and must not move, and at plant x material grain one customer's credit
- * is diluted by every other customer's tonnes on the same material — the whole
- * index shifts 3.22% -> 3.24%. CPI's grain is often that one line by itself,
- * which is why the same flaw is fatal there and invisible here.
+ * PPI passes no outlier threshold, so for PPI every covered pair is in both
+ * sums and this is arithmetically identical to what it has always computed.
  * ------------------------------------------------------------------------- */
-/* `priced` picks which revenue the ASP and the coverage test read. The WEIGHT is
-   the netted CY revenue either way — the credit is real money and belongs in
-   what the pair is worth, just not in what it was charged. */
-function piCpiCap_() {
+function piCpiOutlier_() {
   var C = (typeof APP_CONFIG !== 'undefined' && APP_CONFIG.CUBE && APP_CONFIG.CUBE.COVERAGE)
         ? APP_CONFIG.CUBE.COVERAGE : {};
-  return C.cpiAspCap || 0;
+  return C.cpiOutlier || 0;
 }
-function piIndex_(rows, ix, keyOf, priced, aspCap) {
-  var pR = (priced && ix.pyRevP != null && ix.pyRevP !== -1) ? ix.pyRevP : ix.pyRev;
-  var cR = (priced && ix.cyRevP != null && ix.cyRevP !== -1) ? ix.cyRevP : ix.cyRev;
+
+function piIndex_(rows, ix, keyOf, aspCap) {
   var g = {};
   rows.forEach(function (r) {
     var k = keyOf(r);
-    var o = g[k] || (g[k] = { pyVol: 0, cyVol: 0, pyRev: 0, cyRev: 0, pyP: 0, cyP: 0 });
+    var o = g[k] || (g[k] = { pyVol: 0, cyVol: 0, pyRev: 0, cyRev: 0 });
     o.pyVol += toNum_(r[ix.pyVol]); o.cyVol += toNum_(r[ix.cyVol]);
     o.pyRev += toNum_(r[ix.pyRev]); o.cyRev += toNum_(r[ix.cyRev]);
-    o.pyP   += toNum_(r[pR]);       o.cyP   += toNum_(r[cR]);
   });
   var weight = 0, factor = 0;
   Object.keys(g).forEach(function (k) {
     var o = g[k];
-    /* Qlik's Weight: CY revenue when BOTH years carry volume and revenue,
-       otherwise zero. A pair that exists in only one year has no price MOVE to
-       measure, so it earns neither weight nor factor. */
-    if (o.pyVol > 0 && o.cyVol > 0 && o.pyP > 0 && o.cyP > 0) {
-      var pyAsp = o.pyP / o.pyVol, cyAsp = o.cyP / o.cyVol;
-      var asp = (cyAsp - pyAsp) / pyAsp;
-      if (aspCap > 0 && Math.abs(asp) > aspCap) return;   // the CPI exclusion, \u00a71
-      factor += o.cyRev * asp;                         // PI / CPI Factor = Weight * ASP%
-      weight += o.cyRev;                               // Weight = CY REV if covered
-    }
+    /* Qlik's coverage: both years carry volume AND revenue. A pair that exists
+       in only one year has no price MOVE to measure. */
+    if (!(o.pyVol > 0 && o.cyVol > 0 && o.pyRev > 0 && o.cyRev > 0)) return;
+    weight += o.cyRev;                                 // TotalWeight: every covered pair
+    var pyAsp = o.pyRev / o.pyVol, cyAsp = o.cyRev / o.cyVol;
+    var asp = (cyAsp - pyAsp) / pyAsp;
+    /* the outlier keeps its weight and loses its factor (see \u00a71 cpiOutlier) */
+    if (aspCap > 0 && Math.abs(asp) > aspCap) return;
+    factor += o.cyRev * asp;                           // PI / CPI Factor = Weight * ASP%
   });
   return { weight: weight, factor: factor, index: weight ? factor / weight : 0 };
 }
@@ -4479,12 +4447,12 @@ function piKeyCpi_(ix) {
 }
 
 function custPpi_(rows, ix) {
-  var p = piIndex_(rows, ix, piKeyPpi_(ix), false, 0);   // netted, no cap: PPI is unchanged
+  var p = piIndex_(rows, ix, piKeyPpi_(ix), 0);        // no threshold: PPI is unchanged
   return { weight: p.weight, factor: p.factor, ppi: p.index };
 }
 function custCpi_(rows, ix) {
   var k = piKeyCpi_(ix); if (!k) return null;
-  var c = piIndex_(rows, ix, k, true, piCpiCap_());   // priced revenue + the CPI cap
+  var c = piIndex_(rows, ix, k, piCpiOutlier_());
   return { weight: c.weight, factor: c.factor, cpi: c.index };
 }
 
@@ -4524,8 +4492,7 @@ function getCustomerReport(opts) {
     cyRevPpi: colIndex_(H, 'CY REV (FOR PPI)'), factorCy: colIndex_(H, 'FACTOR (CY REV %)'),
     pyFsc: colIndex_(H, 'PY Fuel Surcharge'), cyFsc: colIndex_(H, 'CY Fuel Surcharge'),
     fscPyVol: colIndex_(H, 'FSC PY Volume'), fscCyVol: colIndex_(H, 'FSC CY Volume'),
-    plantCol: colIndex_(H, 'Plant'), matCol: colIndex_(H, 'Material'),
-    pyRevP: colIndex_(H, 'PY REV PRICED'), cyRevP: colIndex_(H, 'CY REV PRICED')
+    plantCol: colIndex_(H, 'Plant'), matCol: colIndex_(H, 'Material')
   };
   var secIdx = (secondary !== 'NONE') ? colIndex_(H, CUST_SECONDARY[secondary]) : -1;
 
@@ -4838,8 +4805,7 @@ function getCrossReport(opts) {
     pyFsc: colIndex_(H, 'PY Fuel Surcharge'), cyFsc: colIndex_(H, 'CY Fuel Surcharge'),
     revType: colIndex_(H, 'REVENUE TYPE'),
     plantCol: colIndex_(H, 'Plant'), matCol: colIndex_(H, 'Material'),
-    soldTo: colIndex_(H, 'Sold To'), custSeg: colIndex_(H, 'Cust Segment [Rock]'),
-    pyRevP: colIndex_(H, 'PY REV PRICED'), cyRevP: colIndex_(H, 'CY REV PRICED')
+    soldTo: colIndex_(H, 'Sold To'), custSeg: colIndex_(H, 'Cust Segment [Rock]')
   };
   var fIdx = {}; XF_ORDER.forEach(function (f) { fIdx[f] = colIndex_(H, XF_FIELDS[f]); });
   var mbIdx = colIndex_(H, 'MB SUBMARKET');
@@ -5027,8 +4993,8 @@ function getCrossData(opts) {
   var payload = { ok: true, period: period, n: cols.MARKET.length,
                   dicts: dicts, cols: cols, nums: nums,
                   /* the CPI-only ASP exclusion, so the local path indexes on the
-                     same rule as the server (\u00a71 cpiAspCap) */
-                  cpiAspCap: ((ovcCfg_().COVERAGE || {}).cpiAspCap) || 0,
+                     same rule as the server (\u00a71 cpiOutlier) */
+                  cpiOutlier: ((ovcCfg_().COVERAGE || {}).cpiOutlier) || 0,
                   generation: generation_() };
   var size = 0;
   try { size = JSON.stringify(payload).length; } catch (e) { size = XF_DATA_CAP + 1; }
@@ -10001,6 +9967,14 @@ function getRmxFuelDataFromUpload(p){
 function getOverview(opts){
   opts = opts || {};
   var period = (opts.period === 'YTD') ? 'YTD' : 'MTD';
+  /* WHICH MONTH TO ANSWER FOR. 0 = let the data decide, which is the REPORTING
+     month (last calendar month). The Overview passes the newest month the month
+     cube holds instead, because that is what its slider calls "This month" and
+     the two halves of that page have to be reporting the same month - the
+     alternative is a KPI strip on July above a table on August, which is what
+     it did. See app.html anchorMonth(). */
+  var monthSel = Number(opts.month) || 0;
+  if (monthSel < 1 || monthSel > 12) monthSel = 0;
 
   /* Server-side memo, keyed by ALL THREE source generations: pressing
      "Update from source" on the Price & Volume, RMX or Product Segment page
@@ -10009,7 +9983,7 @@ function getOverview(opts){
      from Code.gs. */
   var pvG = APP_getGen_('pricevolume'), rmxG = APP_getGen_('rmx'), sbG = APP_getGen_('segment');
   var gen = pvG + '-' + rmxG + '-' + sbG;
-  var ck  = 'ov|g' + gen + '|' + period;
+  var ck  = 'ov|g' + gen + '|' + period + '|m' + monthSel;
   var hit = APP_cacheGet_(ck);
   if (hit) return hit;
 
@@ -10048,6 +10022,7 @@ function getOverview(opts){
   try {
     var rep = PV.getReport({
       period: period,
+      month: monthSel,
       dimensions: ['MARKET'],
       filterField: 'MARKET',
       filterValue: '__ALL__'
@@ -11320,7 +11295,7 @@ function ovcBuild_(line){
     coverage: (function(){
       var C = ovcCfg_().COVERAGE || {};
       var c = C[line] || { minVol:0, minRev:0 };
-      return { minVol: c.minVol||0, minRev: c.minRev||0, cpiAspCap: C.cpiAspCap||0 };
+      return { minVol: c.minVol||0, minRev: c.minRev||0, cpiOutlier: C.cpiOutlier||0 };
     })(),
     skipped: cube.skipped || 0,
     history: !!hist,
