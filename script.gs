@@ -4310,14 +4310,52 @@ function buildCustSegTable_(period, upload, filterField, filterValue, refineValu
 /* ===================== CUSTOMER report ===================== */
 var CUST_SECONDARY = { CUST_SEGMENT: 'Cust Segment [Rock]', PRODUCT_APP: 'Product Application', SOLD_TO: 'Sold To' };
 
-/* Qlik-parity PPI: within the given rows (already sliced to one table row's
-   context — market filter + customer parent [+ segment/app/sold-to]), aggregate
-   to Plant+Material; lines with both-year volume AND revenue > 0 get
-   weight = CY REV and factor = weight * ASP%;  PPI = Σ factor / Σ weight. */
-function custPpi_(rows, ix) {
+/* ===================== ONE PRICE INDEX, TWO GRAINS =====================
+ * Qlik measures a price move at a fixed GRAIN and pools the result. Inside the
+ * rows already sliced to one table row's context (market filter + customer
+ * parent [+ segment / application / sold-to]), aggregate to that grain; a pair
+ * carrying BOTH years' volume and revenue earns weight = its CY revenue and
+ * factor = weight × its own ASP move; the index is Σ factor ÷ Σ weight.
+ *
+ * THE GRAIN IS THE ONLY DIFFERENCE between the two indices the business runs:
+ *
+ *     PPI   plant × material              Qlik: aggr(…, %plant, %material)
+ *     CPI   plant × sold-to × material    Qlik's Cust Price Detail — whose
+ *                                          "Customer" column is SOLD TO, not
+ *                                          Customer Parent
+ *
+ * PPI asks what a product's price did; CPI asks what a customer was charged for
+ * it. Adding sold-to splits one covered pair into many, and a customer who
+ * bought a product in only one of the two years drops out of CPI while staying
+ * in PPI — which is why the two carry different total weights and are not two
+ * views of one number.
+ *
+ * Everything else — the coverage test, the weight, the factor, the pooling — is
+ * the same arithmetic, so it is written ONCE here and every caller that starts
+ * from RAW ROWS goes through it (custPpi_, custCpi_, applyPpi_, xfMetrics_,
+ * segMetrics_ and the customer report).
+ *
+ * THE ONE PATH THAT DOES NOT, AND WHY IT IS LEFT ALONE. metrics_() reads the
+ * pivot's OWN precomputed weight columns ("CY REV (FOR PPI)" / "FACTOR (CY REV
+ * %)"), which buildPivot_ writes per pivot group — and that key is FINER than
+ * plant × material: it carries plant type, material family and product class,
+ * and on the customer variant segment and application too. A pair split across
+ * two product classes is two pairs there, each coverage-tested on its own, so
+ * the two methods do not have to agree and in general do not.
+ *
+ * That is NOT tidied away, because those are the numbers the Price & Volume
+ * report has always published and the business reconciles against Qlik. Moving
+ * metrics_ onto this function would move every PPI on that page in the same
+ * commit as adding a column, with nothing failing. It is a real difference,
+ * written down rather than unified — see README §7 and the toNum_ family for
+ * the same rule applied to a different set of near-duplicates.
+ * ====================================================================== */
+var PI_SEP_ = '|\u2016|';
+
+function piIndex_(rows, ix, keyOf) {
   var g = {};
   rows.forEach(function (r) {
-    var k = String(r[ix.plantCol] || '') + '|\u2016|' + String(r[ix.matCol] || '');
+    var k = keyOf(r);
     var o = g[k] || (g[k] = { pyVol: 0, cyVol: 0, pyRev: 0, cyRev: 0 });
     o.pyVol += toNum_(r[ix.pyVol]); o.cyVol += toNum_(r[ix.cyVol]);
     o.pyRev += toNum_(r[ix.pyRev]); o.cyRev += toNum_(r[ix.cyRev]);
@@ -4325,21 +4363,53 @@ function custPpi_(rows, ix) {
   var weight = 0, factor = 0;
   Object.keys(g).forEach(function (k) {
     var o = g[k];
+    /* Qlik's Weight: CY revenue when BOTH years carry volume and revenue,
+       otherwise zero. A pair that exists in only one year has no price MOVE to
+       measure, so it earns neither weight nor factor. */
     if (o.pyVol > 0 && o.cyVol > 0 && o.pyRev > 0 && o.cyRev > 0) {
       var pyAsp = o.pyRev / o.pyVol, cyAsp = o.cyRev / o.cyVol;
-      factor += o.cyRev * ((cyAsp - pyAsp) / pyAsp);   // PI Factor = Weight * ASP%
+      factor += o.cyRev * ((cyAsp - pyAsp) / pyAsp);   // PI / CPI Factor = Weight * ASP%
       weight += o.cyRev;                               // Weight = CY REV if covered
     }
   });
-  return { weight: weight, factor: factor, ppi: weight ? factor / weight : 0 };
+  return { weight: weight, factor: factor, index: weight ? factor / weight : 0 };
+}
+
+function piKeyPpi_(ix) {
+  return function (r) {
+    return String(r[ix.plantCol] || '') + PI_SEP_ + String(r[ix.matCol] || '');
+  };
+}
+/* CPI needs Sold To, and only the CUSTOMER variant of the pivot carries it.
+   null when it is absent, so a caller reading the market variant reports NO CPI
+   rather than a plant × material index under a CPI heading — which is the same
+   number as PPI and would read as agreement rather than as an absent column. */
+function piKeyCpi_(ix) {
+  if (ix.soldTo == null || ix.soldTo === -1) return null;
+  return function (r) {
+    return String(r[ix.plantCol] || '') + PI_SEP_ + String(r[ix.soldTo] || '')
+         + PI_SEP_ + String(r[ix.matCol] || '');
+  };
+}
+
+function custPpi_(rows, ix) {
+  var p = piIndex_(rows, ix, piKeyPpi_(ix));
+  return { weight: p.weight, factor: p.factor, ppi: p.index };
+}
+function custCpi_(rows, ix) {
+  var k = piKeyCpi_(ix); if (!k) return null;
+  var c = piIndex_(rows, ix, k);
+  return { weight: c.weight, factor: c.factor, cpi: c.index };
 }
 
 /* Qlik's outer guard: if the table row itself lacks positive both-year
-   revenue, PPI shows 0 regardless. */
+   revenue, the index shows 0 regardless. Applied to both. */
 function applyPpi_(m, rows, ix) {
+  var live = (m.cyRev > 0 && m.pyRev > 0);
   var pp = custPpi_(rows, ix);
-  if (!(m.cyRev > 0 && m.pyRev > 0)) pp = { weight: pp.weight, factor: pp.factor, ppi: 0 };
-  m.ppi = pp.ppi; m.cyRevPpi = pp.weight; m.factorCy = pp.factor;
+  m.ppi = live ? pp.ppi : 0; m.cyRevPpi = pp.weight; m.factorCy = pp.factor;
+  var cc = custCpi_(rows, ix);
+  if (cc) { m.cpi = live ? cc.cpi : 0; m.cyRevCpi = cc.weight; m.factorCpi = cc.factor; }
   return m;
 }
 
@@ -4611,11 +4681,15 @@ function xfMetrics_(grpRows, ix) {
     if (ix.cyFsc !== -1) s.cyFsc += toNum_(r[ix.cyFsc]);
   });
   var cyAsp = s.cyVol ? s.cyRev / s.cyVol : 0, pyAsp = s.pyVol ? s.pyRev / s.pyVol : 0;
-  var pp = custPpi_(grpRows, ix);
+  var live = (s.cyRev > 0 && s.pyRev > 0);
+  var pp = custPpi_(grpRows, ix), cc = custCpi_(grpRows, ix);
   return {
     cyVol: s.cyVol, pyVol: s.pyVol, volPct: s.pyVol ? (s.cyVol - s.pyVol) / s.pyVol : 0,
     cyAsp: cyAsp, pyAsp: pyAsp, aspPct: pyAsp ? (cyAsp - pyAsp) / pyAsp : 0,
-    ppi: (s.cyRev > 0 && s.pyRev > 0) ? pp.ppi : 0,
+    ppi: live ? pp.ppi : 0,
+    /* null, not 0, when this pivot cannot answer for CPI: the page prints a dash
+       rather than a flat zero that reads as "no price movement". */
+    cpi: cc ? (live ? cc.cpi : 0) : null,
     cyRev: s.cyRev, pyRev: s.pyRev, cyFsc: s.cyFsc, pyFsc: s.pyFsc,
     present: !!(s.cyVol || s.pyVol || s.cyRev || s.pyRev)
   };
@@ -4818,7 +4892,14 @@ function getCrossData(opts) {
   var fIdx = {}; XF_ORDER.forEach(function (f) { fIdx[f] = colIndex_(H, XF_FIELDS[f]); });
   var mbIdx = colIndex_(H, 'MB SUBMARKET');
 
-  var FIELDS = XF_ORDER.concat(['MB', 'CUST_SEG']);
+  /* SOLD_TO rides along so the BROWSER can compute CPI on this dataset too.
+     Without it the cross-filtered tables gained or lost the CPI column purely
+     on whether the payload fitted under XF_DATA_CAP - the local path could not
+     answer, the server path could. It is one dictionary-coded column and it is
+     nearly 1:1 with CUST_PARENT (which already falls back to it when blank), so
+     the cost is small; and if it does push a period over the cap, the fallback
+     is getCrossReport, which computes the same CPI. Consistent either way. */
+  var FIELDS = XF_ORDER.concat(['MB', 'CUST_SEG', 'SOLD_TO']);
   var dicts = {}, maps = {}, cols = {};
   FIELDS.forEach(function (f) { dicts[f] = []; maps[f] = {}; cols[f] = []; });
   var nums = { pyVol: [], cyVol: [], pyRev: [], cyRev: [], pyFsc: [], cyFsc: [] };
@@ -4847,6 +4928,7 @@ function getCrossData(opts) {
       cols[f].push(code(f, val));
     });
     cols.MB.push(code('MB', (mbIdx !== -1) ? String(row[mbIdx] || '').trim() : ''));
+    cols.SOLD_TO.push(code('SOLD_TO', (ix.soldTo !== -1) ? (String(row[ix.soldTo] || '').trim() || '(blank)') : '(blank)'));
     cols.CUST_SEG.push(code('CUST_SEG', (ix.custSeg !== -1) ? (String(row[ix.custSeg] || '').trim() || '(blank)') : '(blank)'));
     nums.pyVol.push(r3(pv)); nums.cyVol.push(r3(cv));
     nums.pyRev.push(r2(pr)); nums.cyRev.push(r2(cr));
@@ -9851,7 +9933,23 @@ function getOverview(opts){
     seg: null,        // Product Segment (Ready-Mix): { ok, monthIdx, cyYear, markets:{key:[rows]}, unmatched:[] }
     prodCat: null,    // Product Category (Ready-Mix): { ok, markets:{key:[rows]}, missing:[keys] }
     errors: {},       // { pv:'…', rmx:'…', seg:'…' } when a source can't be read
-    unmatched: { pv: [] }   // PV markets present in the sheet but not in OVERVIEW.MARKETS
+    unmatched: { pv: [] },  // PV markets present in the sheet but not in OVERVIEW.MARKETS
+
+    /* WHICH MONTH THIS ANSWER IS FOR, 1-12, taken off the report below rather
+       than the clock. The Overview draws two ways at once — the server reports
+       here, and the browser month cube — and the two used to disagree about
+       what "this month" meant: the server lands on the REPORTING MONTH (last
+       calendar month, §7), while the cube naturally anchors on the newest block
+       it holds, which in the running month is a part-billed month nobody has
+       finished billing. The page then showed the server's July in its KPI strip
+       and the cube's August in the table directly underneath it, and "Prev
+       month" — August minus one — reproduced the server's July exactly, so the
+       two Period buttons drew the same view.
+       Sending the month makes one of them the anchor and it is this one: it
+       comes from the DATA (pvReportMonth_ reads the months the rows actually
+       carry) and it is the month every server-fed panel on the page is already
+       showing. 0 when the report could not be read. */
+    reportMonth: 0
   };
 
   /* ---------------- Aggregates (Price & Volume) ---------------- */
@@ -9863,6 +9961,10 @@ function getOverview(opts){
       filterValue: '__ALL__'
     });
     var table = (rep.tables && rep.tables[0]) ? rep.tables[0] : { rows: [], total: {} };
+
+    /* pvStampMonth_ puts the month this report landed on onto every PV answer.
+       Forwarded verbatim - the page anchors its month window on it. */
+    out.reportMonth = rep.latestMonth || 0;
 
     /* the SAME bridges the Price & Volume report draws (all markets) */
     out.bridges.all = { rev: rep.revenueBridge || null, asp: rep.priceBridge || null };
