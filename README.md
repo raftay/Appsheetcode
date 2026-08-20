@@ -557,6 +557,45 @@ stamp (`QLIK_REPORT_MONTH`) is informational only.
 Pre-aggregated tabs (Slide Segment, Slide Product) have **no month column at all** and cannot
 be re-sliced: whatever month the export was run for, both tabs are for that month.
 
+### PPI and CPI — one formula, two keys
+
+Both are Qlik's weighted price index, and both are the same three lines of arithmetic.
+Only the **key** differs:
+
+| | the pair it indexes on |
+|---|---|
+| **PPI** | Plant × Product |
+| **CPI** | Plant × **Sold To** × Product |
+
+For every pair, inside the rows already sliced to the row's own context:
+
+```
+Weight = CY revenue — but only where BOTH years carry volume AND revenue
+                      on that pair; otherwise 0
+ASP%   = (CY rev ÷ CY vol) ÷ (PY rev ÷ PY vol) − 1
+Factor = Weight × ASP%
+Index  = Σ Factor ÷ Σ Weight
+```
+
+Weight and Factor are summed **before** anything divides, so the index is a
+revenue-weighted average of like-for-like price moves — never an average of row
+percentages, and it does not weight-average back from its own rows.
+
+**Why the two differ.** PPI asks what a *product's* price did; CPI asks what a *customer*
+was charged for it. Adding Sold To splits one PPI pair into many, and a customer who bought
+a product in only one of the two years fails the coverage test and drops out of CPI while
+staying in PPI. So the two carry different total weights and are two measures, not two
+views of one.
+
+Neither survives a window longer than twelve months: every month would be compared against
+a month already inside it (`pyStale`).
+
+The arithmetic is written once per runtime — `piIndex_` (`script.gs` §6), `pool()` in
+`AmrCube`, and `poolPairs()` in the Overview's local cross-filter path — and CPI is reported
+only where Sold To exists. `metrics_()` is the deliberate exception: it sums the pivot's own
+precomputed weight columns at a **finer** key, those are the numbers Price & Volume has
+always published, and it is left alone rather than unified. See the banner over `piIndex_`.
+
 ### RMX PPI
 
 - PPI uses **plant × mix grain** (Qlik's `aggr(..., %plant, %material)`) — context-dependent
@@ -669,6 +708,17 @@ there with the input that moved.
   and max it is handed, so a headroom of `9.1318562625202050` was the axis label. `headroom()`
   snaps both ends outward to a round step first — 9.13 becomes 10, −3.45 becomes −4 — and
   `fAxisPct()` rounds the label, because 3 × 0.2 is `0.6000000000000001` in binary.
+- **The month window anchors on the REPORTING MONTH, not the newest block the cube holds.**
+  The page draws two ways at once and they have to agree about which month "this month" is.
+  The server reports land on last calendar month (§7 above); the cube also holds the running
+  month, which is part-billed. Anchoring on the newest block picked that one, so on an August
+  visit the KPI strip (server, July) read 2,266,577 t while the market table directly under it
+  (cube, August) read 1,067,541 t for the same selection, every market at −50% or worse — the
+  part-month against a full one. And "Prev month (MTD)" is one back from the anchor, so it
+  landed on July: **the two Period buttons drew the same view.** `getOverview` now echoes
+  `reportMonth` off the data (`pvReportMonth_`, never the clock) and `anchorMonth()` uses it;
+  the clock rule is the fallback and the newest block the fallback to that. The part-billed
+  month is still one drag of the slider away, as the custom window it actually is.
 - **Period has four settings and only two exist on the server.** `MTD` and `YTD` are what the
   backends answer for. `PMTD` / `PYTD` are the same two shapes one month back, computed in the
   browser from the month cube. `STATE.pick` is the button; `STATE.period` stays the *server*
@@ -676,6 +726,12 @@ there with the input that moved.
   `windowPeriod()` tests the Prev-month spans FIRST, against the union's own last month — when
   Ready-Mix runs a month ahead of Aggregates a single month is both "Aggregates' MTD" and "the
   previous month", and the two answers drive different panels.
+- **The opening screen waits for the opening WINDOW, not the whole history.** `AmrBoot`'s
+  `month history` step used to be released only when every calendar-year block had streamed
+  *and* every linked closed-year book had been read — minutes of a modal over a page whose own
+  pill says "Nothing else on the page is waiting on this". `histBootReady()` releases it once
+  the cube can answer the month the page opens on (that month and the same month a year
+  earlier — two blocks); the rest keeps arriving behind the pill, which is not modal.
 - **A panel with nothing in it is not shown.** One rule, no exceptions: no rows, no data, not
   computable for this window → `hidePanel(bodyId)`. `resetPanels()` runs at the top of
   `renderTab()`. Only genuine *faults* still speak — a sheet that has not been set, a call that
@@ -1092,6 +1148,9 @@ or was forgotten.**
 | 2026-08-19 | **The mail watch, second pass.** The folder keeps **one file per month** now — a re-issue replaces its predecessor rather than superseding it by rename, filed and pointed at before the old copy is trashed, and trashed rather than deleted. The heading and the filename are `MMM, YYYY` (`Inventory Report - Jul, 2026`), with a 2005–2100 floor so a four-digit figure in a subject cannot be read as a year. **The no-month fallback is the month BEFORE the send date**, year rolled back with it — a report is published after the period it covers, so a January mail with a bare subject means last December | ✅ |
 | 2026-08-20 | **The Overview past twelve months: volume and revenue, and the columns that cannot be honest are gone rather than dashed.** ASP, PPI, every `vs last year` series, both growth bridges and the Ready-Mix ASP build-up drop out; the KPI strip becomes two cards, the second donut becomes revenue share and the price chart becomes a revenue chart, so every panel is full rather than blank. Revenue is now a first-class measure at every grain — market, submarket, plant type, product class, plant, material, customer, both lines — through one `measHead()` / `measCells()` pair. A **Market summary** table (market → submarkets, CY/PY volume, revenue, ASP and PPI) sits above Month by month on both tabs, cube-fed so it answers for all four Period settings. Two defects fell out of it: the Overview asked the cube for `sm1` where the field is `submarket1`, and **a `groupBy` the cube cannot resolve is not an error** — it returns one `\u0001all` bucket the page discards, so the submarket breakdown was missing from every window, a submarket cross-filter was silently ignored, and the ASP bridge's submarket mix item was a flat zero; and `headroom()` handed Chart.js raw bounds, which is how an axis came to read `9.1318562625202050%` | ✅ |
 | 2026-08-20 | **An in-panel toggle was dropping the window.** Reported for *Split by segment*, and it was all five: *Product Class*, *Submarkets* on both tabs and *Project Segment* too. None of them is a new selection, but each called the **server** painter unconditionally and the server painter fetches `STATE.period` — so on a Prev-month or dragged span the panel came back holding the month-to-date under the window's own heading, a fifth of a second after the click, while every panel around it still showed the window. One rule now (`repaintPanel`), the same three-way answer `renderTab()` already gives. `ovperiod.js` check 8 presses all five; **its legacy side is retired** on this repo's own rule — the page was deliberately changed, and keeping the side would have meant skipping the new checks for it | ✅ |
+| 2026-08-20 | **The Overview's two halves disagreed about which month "this month" is, and the fix is one anchor.** The server reports land on the reporting month — last calendar month — while the month cube also holds the running, part-billed month and the window anchored on *that*. So on an August visit the KPI strip read July's 2,266,577 t while the market table under it read August's 1,067,541 t for the same selection, every market at −50% or worse; and **"Prev month (MTD)", one back from the anchor, landed on the server's July, so the two Period buttons drew the same view.** `getOverview` echoes `reportMonth` off the data (`pvReportMonth_`, never the clock) and `anchorMonth()` uses it, clock rule as fallback; the part-billed month is still a drag away as the custom window it is. The KPI cards now name their month, so the workbook's MTD and YTD halves can no longer read as "unchanged" beside a Period that did move | ✅ |
+| 2026-08-20 | **The opening screen stopped waiting for the whole history.** `AmrBoot`'s `month history` step was released only once every calendar-year block had streamed *and* every linked closed-year book had been read end to end — minutes of a modal over a page whose own pill says "Nothing else on the page is waiting on this". `histBootReady()` releases it when the cube can answer the month the page opens on; the rest arrives behind the pill | ✅ |
+| 2026-08-20 | **CPI joins PPI: one formula, two keys.** They are the same weighted index — coverage-gated pairs, weight = CY revenue, factor = weight × the pair's own ASP move, Σfactor ÷ Σweight — differing only in what a *pair* is: PPI keys on plant × product, CPI on plant × **sold-to** × product (Qlik's Cust Price Detail calls that column "Customer", and it is Sold To). Written once per runtime: `piIndex_` on the server, `pool()` in `AmrCube`, `poolPairs()` in the Overview's local cross-filter path; `SOLD_TO` rides the cross dataset so both cross paths agree. **The column is drawn only where its source can answer it** — never as dashes, never filled with PPI, which would read as the two indices agreeing. `metrics_()` is left alone deliberately: it sums the pivot's precomputed weights at a finer key and those are the figures Price & Volume publishes | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |

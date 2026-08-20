@@ -3956,12 +3956,20 @@ window.AmrCube = (function(){
     var groupBy = o.groupBy || null;
     var cov = o.coverage || man.coverage || { minVol:0, minRev:0 };
 
-    /* group key -> { sums, pairs{plant|item: [cyV,pyV,cyR,pyR]} } */
+    /* group key -> { sums, pairs{plant|item: [cyV,pyV,cyR,pyR]}, cpairs{…} }
+       TWO pair indexes, because the two price indices are the same arithmetic at
+       two different grains (see script.gs piIndex_):
+         pairs   plant | item             -> PPI
+         cpairs  plant | sold-to | item   -> CPI
+       Qlik's Cust Price Detail keys its "Customer" column on SOLD TO, not
+       Customer Parent, so that is what the third part is. `cpairs` is only built
+       on the Aggregates line, which is the only one carrying soldTo. */
     var G = {}, order = [];
+    var soldToCol = (isAgg && man.dims.indexOf('soldTo') !== -1) ? 'soldTo' : null;
     function bucket(key){
       var g = G[key];
       if (!g){ g = G[key] = { key:key, cyVol:0, pyVol:0, cyRev:0, pyRev:0, cyFsc:0, pyFsc:0,
-                            cyFv:0, pyFv:0, cyEx:0, pyEx:0, cyVa:0, pyVa:0, pairs:{} }; order.push(key); }
+                            cyFv:0, pyFv:0, cyEx:0, pyEx:0, cyVa:0, pyVa:0, pairs:{}, cpairs:{} }; order.push(key); }
       return g;
     }
     var groupVia = null, groupDirect = null;
@@ -3997,6 +4005,7 @@ window.AmrCube = (function(){
         if (skip) continue;
 
         var pkey = p + '|' + itemCol[i];
+        var ckey = soldToCol ? (p + '|' + v[soldToCol][i] + '|' + itemCol[i]) : null;
         function keyFor(s){
           if (groupVia === 'ym') return s;
           if (groupDirect) return man.dict[groupDirect][v[groupDirect][i]];
@@ -4008,6 +4017,12 @@ window.AmrCube = (function(){
           if (!pr) pr = g.pairs[pkey] = [0, 0, 0, 0];
           return pr;
         }
+        function cpairOf(g){
+          if (!ckey) return null;
+          var pr = g.cpairs[ckey];
+          if (!pr) pr = g.cpairs[ckey] = [0, 0, 0, 0];
+          return pr;
+        }
         if (cSlot !== undefined){
           var gc = bucket(keyFor(cSlot)), prc = pairOf(gc);
           gc.cyVol += vv[i]; gc.cyRev += vr[i];
@@ -4016,6 +4031,7 @@ window.AmrCube = (function(){
           if (vex) gc.cyEx  += vex[i];
           if (vva) gc.cyVa  += vva[i];
           prc[0] += vv[i]; prc[2] += vr[i];
+          var crc = cpairOf(gc); if (crc){ crc[0] += vv[i]; crc[2] += vr[i]; }
         }
         if (pSlot !== undefined){
           var gp = bucket(keyFor(pSlot)), prp = pairOf(gp);
@@ -4025,31 +4041,48 @@ window.AmrCube = (function(){
           if (vex) gp.pyEx  += vex[i];
           if (vva) gp.pyVa  += vva[i];
           prp[1] += vv[i]; prp[3] += vr[i];
+          var crp = cpairOf(gp); if (crp){ crp[1] += vv[i]; crp[3] += vr[i]; }
         }
       }
     });
 
     var mv = cov.minVol || 0, mr = cov.minRev || 0;
-    var rows = order.map(function(k){
-      var g = G[k], w = 0, f = 0;
-      for (var pk in g.pairs){
-        var o2 = g.pairs[pk];
+    /* ONE pooling pass over a pair index, run twice at two grains. Identical
+       arithmetic to script.gs piIndex_ - coverage, weight = CY revenue, factor =
+       weight x the pair's own ASP move, index = Sum f / Sum w - which is what
+       keeps the browser's answer and the server's the same number. */
+    function pool(pairs){
+      var w = 0, f = 0;
+      for (var pk in pairs){
+        var o2 = pairs[pk];
         if (!(o2[0] > 0 && o2[1] > 0 && o2[2] > 0 && o2[3] > 0)) continue;   // the app's own coverage
         if (!(o2[0] > mv && o2[1] > mv && o2[2] > mr && o2[3] > mr)) continue; // Qlik's floors
         var pyAsp = o2[3] / o2[1], cyAsp = o2[2] / o2[0];
         f += o2[2] * ((cyAsp - pyAsp) / pyAsp);
         w += o2[2];
       }
-      delete g.pairs;                                  // don't hand the caller the scratch index
+      return { w: w, f: f };
+    }
+    var rows = order.map(function(k){
+      var g = G[k];
+      var pi = pool(g.pairs);
+      var ci = soldToCol ? pool(g.cpairs) : null;
+      delete g.pairs; delete g.cpairs;                 // don't hand the caller the scratch indexes
       g.cyAsp = g.cyVol ? g.cyRev / g.cyVol : 0;
       g.pyAsp = g.pyVol ? g.pyRev / g.pyVol : 0;
       g.aspPct = g.pyAsp ? (g.cyAsp - g.pyAsp) / g.pyAsp : 0;
       g.volPct = g.pyVol ? (g.cyVol - g.pyVol) / g.pyVol : 0;
-      g.ppiW = w; g.ppiF = f;
+      g.ppiW = pi.w; g.ppiF = pi.f;
       /* Qlik re-applies the same floors to the displayed row, so a row that is
          itself too small shows no index rather than a noisy one. */
       var okRow = (g.cyVol > mv && g.pyVol > mv && g.cyRev > mr && g.pyRev > mr);
-      g.ppi = (w && okRow && g.cyRev > 0 && g.pyRev > 0) ? f / w : 0;
+      var live = okRow && g.cyRev > 0 && g.pyRev > 0;
+      g.ppi = (pi.w && live) ? pi.f / pi.w : 0;
+      /* null when this line carries no sold-to at all (Ready-Mix): the page
+         prints a dash and drops the column rather than repeating PPI under a
+         CPI heading. */
+      if (ci){ g.cpiW = ci.w; g.cpiF = ci.f; g.cpi = (ci.w && live) ? ci.f / ci.w : 0; }
+      else   { g.cpiW = 0;    g.cpiF = 0;    g.cpi = null; }
       return g;
     });
     if (groupVia === 'ym') rows.sort(function(a, b){ return a.key - b.key; });
@@ -15617,13 +15650,29 @@ AMR.page('overview', {
        lines name them differently (aspPct / ppi on Aggregates, aspIncBase /
        ppiBase on Ready-Mix) and neither name is worth normalising across four
        payloads that all still have to reconcile against Qlik. */
-    function measHead(unit, aspLab){
+    /* ---- CPI IS A COLUMN THAT IS THERE OR IS NOT --------------------------
+       PPI and CPI are the same arithmetic at two grains (plant x material, and
+       plant x SOLD TO x material - see script.gs piIndex_), so they sit side by
+       side. But they do not come from the same places: the month cube carries
+       sold-to and so does the customer / cross-filter report, while the plain
+       market pivot behind the MTD and YTD breakdowns does not.
+
+       Where it cannot be answered the column is NOT DRAWN, rather than drawn as
+       a row of dashes or - worse - filled with the PPI figure, which would read
+       as the two indices agreeing. Same rule as a panel with nothing in it. */
+    function hasCpi(list){
+      if(volRev()) return false;                  // past a year no index survives
+      for(var i=0;i<(list||[]).length;i++){ if(list[i] && list[i].cpi!=null) return true; }
+      return false;
+    }
+    function measHead(unit, aspLab, cpi){
       if(volRev()) return '<th>Volume ('+esc(unit)+')</th><th>Revenue</th>';
       return '<th>Vol ('+esc(unit)+') CY</th><th>Vol ('+esc(unit)+') PY</th><th>Vol %</th>'
         +'<th>Rev CY</th><th>Rev PY</th><th>Rev %</th>'
-        +'<th>'+esc(aspLab||'ASP % inc')+'</th><th>PPI</th>';
+        +'<th>'+esc(aspLab||'ASP % inc')+'</th><th>PPI</th>'
+        +(cpi?'<th>CPI</th>':'');
     }
-    function measCells(r, asp, ppi){
+    function measCells(r, asp, ppi, cpi){
       if(volRev()) return '<td>'+fInt(r.cyVol)+'</td><td>'+fMoneyFull(revCY(r))+'</td>';
       var rp=revPctOf(r);
       return '<td>'+fInt(r.cyVol)+'</td><td>'+nInt(r.pyVol)+'</td>'
@@ -15631,7 +15680,8 @@ AMR.page('overview', {
         +'<td>'+fMoneyFull(revCY(r))+'</td><td>'+fMoneyFull(revPY(r))+'</td>'
         +'<td class="'+cls(rp)+'">'+nPct(rp)+'</td>'
         +'<td class="'+cls(asp)+'">'+nPct(asp)+'</td>'
-        +'<td class="'+cls(ppi)+'">'+nPpi(ppi)+'</td>';
+        +'<td class="'+cls(ppi)+'">'+nPpi(ppi)+'</td>'
+        +(cpi?('<td class="'+cls(r.cpi)+'">'+nPpi(r.cpi)+'</td>'):'');
     }
     /* Nine columns do not fit a half-width panel and will not be made to. The
        wide form scrolls inside its own box; the three-column long-window form
@@ -15936,6 +15986,17 @@ AMR.page('overview', {
         var pmArr=new Array(D.n), P=D.cols.PLANT, M=D.cols.MATERIAL, W=D.dicts.MATERIAL.length;
         for(var z=0; z<D.n; z++) pmArr[z]=P[z]*W+M[z];
         D._pm=pmArr; D._rev={};
+        /* the CPI grain: the same pair plus SOLD TO, which is what Qlik's Cust
+           Price Detail keys its "Customer" column on. A string key here rather
+           than an arithmetic one - three dictionaries multiplied together
+           overflow the safe integer range on a big period. Absent on a payload
+           built before SOLD_TO was carried, and then CPI is simply not reported
+           and the column is not drawn. */
+        if(D.cols.SOLD_TO){
+          var pcArr=new Array(D.n), S=D.cols.SOLD_TO;
+          for(var z2=0; z2<D.n; z2++) pcArr[z2]=P[z2]+'|'+S[z2]+'|'+M[z2];
+          D._pc=pcArr;
+        }
       }
       function rev(f){
         var r=D._rev[f];
@@ -15972,27 +16033,40 @@ AMR.page('overview', {
         }
       }
 
-      function newAcc(){ return {pyVol:0,cyVol:0,pyRev:0,cyRev:0,pyFsc:0,cyFsc:0,pm:{}}; }
+      function newAcc(){ return {pyVol:0,cyVol:0,pyRev:0,cyRev:0,pyFsc:0,cyFsc:0,pm:{},pc:{}}; }
       function accRow(o,i2){
         o.pyVol+=nums.pyVol[i2]; o.cyVol+=nums.cyVol[i2];
         o.pyRev+=nums.pyRev[i2]; o.cyRev+=nums.cyRev[i2];
         o.pyFsc+=nums.pyFsc[i2]; o.cyFsc+=nums.cyFsc[i2];
         var k=D._pm[i2], c=o.pm[k]; if(!c) c=o.pm[k]={pv:0,cv:0,pr:0,cr:0};
         c.pv+=nums.pyVol[i2]; c.cv+=nums.cyVol[i2]; c.pr+=nums.pyRev[i2]; c.cr+=nums.cyRev[i2];
+        if(D._pc){
+          var k2=D._pc[i2], c2=o.pc[k2]; if(!c2) c2=o.pc[k2]={pv:0,cv:0,pr:0,cr:0};
+          c2.pv+=nums.pyVol[i2]; c2.cv+=nums.cyVol[i2]; c2.pr+=nums.pyRev[i2]; c2.cr+=nums.cyRev[i2];
+        }
+      }
+      /* ONE pooling pass, run at each grain - the same arithmetic as script.gs
+         piIndex_ and as the cube's pool(), which is what makes the three agree. */
+      function poolPairs(bag){
+        var w=0,f=0;
+        for(var k in bag){ var c=bag[k];
+          if(c.pv>0&&c.cv>0&&c.pr>0&&c.cr>0){
+            var pa=c.pr/c.pv, ca=c.cr/c.cv;
+            f+=c.cr*((ca-pa)/pa); w+=c.cr;
+          }
+        }
+        return { w:w, f:f };
       }
       function finAcc(o,label){
         var cyAsp=o.cyVol?o.cyRev/o.cyVol:0, pyAsp=o.pyVol?o.pyRev/o.pyVol:0;
-        var w=0,fct=0;
-        for(var k in o.pm){ var c=o.pm[k];
-          if(c.pv>0&&c.cv>0&&c.pr>0&&c.cr>0){
-            var pa=c.pr/c.pv, ca=c.cr/c.cv;
-            fct+=c.cr*((ca-pa)/pa); w+=c.cr;      // coverage-gated Plant+Material PPI (custPpi_)
-          }
-        }
+        var live=(o.cyRev>0&&o.pyRev>0);
+        var pi=poolPairs(o.pm);                   // PPI: plant x material
+        var ci=D._pc?poolPairs(o.pc):null;        // CPI: plant x sold-to x material
         return { label:label, cyVol:o.cyVol, pyVol:o.pyVol,
           volPct:o.pyVol?(o.cyVol-o.pyVol)/o.pyVol:0,
           cyAsp:cyAsp, pyAsp:pyAsp, aspPct:pyAsp?(cyAsp-pyAsp)/pyAsp:0,
-          ppi:(o.cyRev>0&&o.pyRev>0&&w)?fct/w:0,
+          ppi:(live&&pi.w)?pi.f/pi.w:0,
+          cpi:ci?((live&&ci.w)?ci.f/ci.w:0):null,
           cyRev:o.cyRev, pyRev:o.pyRev, cyFsc:o.cyFsc, pyFsc:o.pyFsc,
           present:!!(o.cyVol||o.pyVol||o.cyRev||o.pyRev) };
       }
@@ -16335,6 +16409,47 @@ AMR.page('overview', {
       var s=sign(val);
       return '<div class="kpi-d '+s+'"><p class="dl">'+esc(lab)+'</p><div class="dv">'+fPct(val)+'</div></div>';
     }
+    /* CPI FOR A SERVER-FED TOTAL.
+       The market pivot behind getOverview carries no Sold To, so the server
+       cannot answer for CPI there — but the cube can, and since anchorMonth()
+       the window IS the server's period, month for month. So the strip asks the
+       cube for this one figure rather than showing a CPI card on two of the four
+       Period settings and not the other two, which is the same "same button,
+       different answer" confusion the anchor was fixed to remove.
+
+       null whenever the cube cannot stand in — no months yet, or the handles
+       have been dragged off the period the server answered for — and then the
+       card is simply not drawn. */
+    /* CPI ONTO A SERVER-FED TABLE.
+       Same stand-in as serverCpi() below, for a table instead of one figure. The
+       market pivot behind the Aggregates dimension and explorer tables has no
+       Sold To, so the server cannot report CPI for them — but since anchorMonth()
+       the cube is answering for the same months, grouped on the same field, off
+       the same source column. So the cube's CPI is joined on by label.
+
+       THE JOIN IS ALL OR NOTHING. If a single row on the table has no matching
+       cube row, nothing is attached and hasCpi() drops the column. An absent
+       column is a fact about the source; a half-filled one would be a fact about
+       the join, and the reader cannot tell those apart from the table. */
+    function joinCpi(rows, total, line, field){
+      if(!field || !winReady() || !cube()) return false;
+      if(windowPeriod()!==STATE.pick) return false;   // handles dragged off the period
+      var g=cubeGroups(line, field);
+      if(!g || !g.length) return false;
+      var m={}, got=false;
+      g.forEach(function(r){ if(r.cpi!=null){ m[String(r.key)]=r.cpi; got=true; } });
+      if(!got) return false;
+      for(var i=0;i<rows.length;i++){ if(!(String(rows[i].label) in m)) return false; }
+      rows.forEach(function(r){ r.cpi=m[String(r.label)]; });
+      if(total){ var t=cubeWinTotals(line); if(t && t.cpi!=null) total.cpi=t.cpi; }
+      return true;
+    }
+    function serverCpi(line){
+      if(!winReady() || !cube()) return null;
+      if(windowPeriod()!==STATE.pick) return null;   // handles no longer on this period
+      var t=cubeWinTotals(line);
+      return (t && t.present && t.cpi!=null) ? t.cpi : null;
+    }
     function renderKpiRow(hostId, t, unit, aspFmt){
       var host=$(hostId);
       host.classList.remove('two');
@@ -16356,7 +16471,9 @@ AMR.page('overview', {
           + '<div class="kpi-unit">'+kpiMain('Revenue', fMoneyFull(revCY(t)), '', '', false)+'</div>';
         return;
       }
-      var ppiCls = sign(t.ppi)==='up'?'pos':(sign(t.ppi)==='down'?'neg':'');
+      function idxCls(v){ return sign(v)==='up'?'pos':(sign(v)==='down'?'neg':''); }
+      /* CPI rides beside PPI when the source can answer it - same rule as the
+         table column (hasCpi): present or absent, never a dash. */
       host.innerHTML =
           '<div class="kpi-unit">'+kpiMain('Volume', fInt(t.cyVol)+uSpan, 'Last year',
               fInt(t.pyVol)+' '+unit, false)
@@ -16365,7 +16482,11 @@ AMR.page('overview', {
               nAsp(t.pyAsp, aspFmt), false)
             + kpiDelta('ASP % inc', t.aspPct) + '</div>'
         + '<div class="kpi-unit"><div class="kpi ppi"><p class="k">PPI</p>'
-            + '<div class="big '+ppiCls+'">'+nPpi(t.ppi)+'</div></div></div>';
+            + '<div class="big '+idxCls(t.ppi)+'">'+nPpi(t.ppi)+'</div></div></div>'
+        + (t.cpi!=null
+            ? '<div class="kpi-unit"><div class="kpi ppi"><p class="k">CPI</p>'
+                + '<div class="big '+idxCls(t.cpi)+'">'+nPpi(t.cpi)+'</div></div></div>'
+            : '');
     }
 
     /* ---- charts ---- */
@@ -16758,7 +16879,9 @@ AMR.page('overview', {
           var keys=selectedKeys();
           renderXfBar();
           renderRefine();
-          renderKpiRow('kpiAgg', aggTotals(keys), 't', fAsp);
+          var aggT=aggTotals(keys);
+          if(aggT && aggT.present && aggT.cpi==null) aggT.cpi=serverCpi('agg');
+          renderKpiRow('kpiAgg', aggT, 't', fAsp);
           renderAggBreakdown();
           renderBridges();
           renderDimPies();       // paints cached data or a loading state…
@@ -17118,12 +17241,13 @@ AMR.page('overview', {
     /* the Ready-Mix dimension table is a plain table (its painter is bound to the
        cross-report's own row shape), so window mode renders it directly */
     function winDimTableHtml(rows, total, unit){
+      var xcpi=hasCpi(rows.concat(total?[total]:[]));
       function tr(r, tot){
         return '<tr'+(tot?' class="tot"':'')+'><td>'+esc(r.label)+'</td>'
-          +measCells(r, r.aspPct, r.ppi)+'</tr>';
+          +measCells(r, r.aspPct, r.ppi, xcpi)+'</tr>';
       }
       return measWrap()+'<table class="ov-table"><thead><tr><th>Value</th>'
-        +measHead(unit,'BASE ASP % inc')
+        +measHead(unit,'BASE ASP % inc', xcpi)
         +'</tr></thead><tbody>'
         +rows.map(function(r){ return tr(r,false); }).join('')
         +(total?tr(total,true):'')
@@ -17189,6 +17313,19 @@ AMR.page('overview', {
     }
     function dimsKey(){ return STATE.period+'|'+scopeSig(); }
     function periodLabel(){ return STATE.period==='YTD'?'year to date':'month to date'; }
+    /* THE KPI CARDS SAY WHICH MONTH THEY ARE. The EBITDA workbook holds exactly
+       two blocks per region - an MTD one and a YTD one - for the single month it
+       was published for, and nothing on the card used to say which month that
+       was. So the cards read the same either side of a Period change that DID
+       move everything else, and the only way to notice was to know the workbook.
+       They are the closed month's statement, which is the reporting month, which
+       is now what the Period buttons anchor on (anchorMonth) - so naming it here
+       makes the two agree out loud instead of by coincidence. */
+    function kpiPeriodLabel(){
+      var a=(WIN.months.length>1) ? anchorMonth() : null;
+      var half=periodLabel();
+      return a ? (ymLong(a)+' \u00b7 '+half) : half;
+    }
 
     function scheduleDims(){ if(dimsTimer) clearTimeout(dimsTimer); dimsTimer=setTimeout(loadDims, 220); }
     /* WHO OWNS THE PANELS RIGHT NOW.
@@ -17244,6 +17381,8 @@ AMR.page('overview', {
        data and the cross-report both feed it; rows/slices/bars click-to-filter) ---- */
     function paintDimTable(body, rows, total){
       var solo=volRev();
+      if(!solo) joinCpi(rows, total, 'agg', AGG_CUBE_FIELD[DIM_TAB]);
+      var cpi=hasCpi(rows.concat(total?[total]:[]));
       body.innerHTML=
         '<div class="ov-cols">'
         +'<div><p class="ov-lab">'+(solo?'Volume share':'CY volume share')+'</p><div class="ov-cbox tall"><canvas id="dim_pie"></canvas></div></div>'
@@ -17253,14 +17392,14 @@ AMR.page('overview', {
            revenue where it does not - see volRev() */
         +'<div class="ov-block"><p class="lab">'+(solo?'Revenue':'ASP % inc &amp; PPI')+'</p><div class="ov-cbox tall"><canvas id="dim_bar"></canvas></div></div>'
         +measWrap()+'<table class="ov-table"><thead><tr>'
-        +'<th>'+esc(DIM_LABEL[DIM_TAB]||DIM_TAB)+'</th>'+measHead('t')
+        +'<th>'+esc(DIM_LABEL[DIM_TAB]||DIM_TAB)+'</th>'+measHead('t', null, cpi)
         +'</tr></thead><tbody>'
         +rows.map(function(r){
           return '<tr class="xfrow'+(xfHas(DIM_TAB,r.label)?' xfsel':'')
             +'" data-xf-f="'+esc(DIM_TAB)+'" data-xf-v="'+esc(r.label)+'">'
-            +'<td>'+esc(r.label)+'</td>'+measCells(r, r.aspPct, r.ppi)+'</tr>';
+            +'<td>'+esc(r.label)+'</td>'+measCells(r, r.aspPct, r.ppi, cpi)+'</tr>';
         }).join('')
-        +(total?('<tr class="tot"><td>Total</td>'+measCells(total, total.aspPct, total.ppi)+'</tr>'):'')
+        +(total?('<tr class="tot"><td>Total</td>'+measCells(total, total.aspPct, total.ppi, cpi)+'</tr>'):'')
         +'</tbody></table></div>';
       var pick=function(i){ var r=rows[i]; if(r) toggleXf(DIM_TAB, r.label); };
       custDonut('dim', $('dim_pie'),
@@ -17429,6 +17568,8 @@ AMR.page('overview', {
         return true;
       });
       var pick=function(i){ var r=list[i]; if(r) toggleXf(field, r.label); };
+      if(!volRev()) joinCpi(list, tot, 'agg', AGG_CUBE_FIELD[field]);
+      var ecpi=hasCpi(list.concat(tot?[tot]:[]));
       var pieLabels=list.map(function(r){ return truncate(r.label,22); });
       var pieData=list.map(function(r){ return r.cyVol; });
       var pieCols=list.map(function(_,idx){ return CUST_COLORS[idx%CUST_COLORS.length]; });
@@ -17446,13 +17587,13 @@ AMR.page('overview', {
         return { label:truncate(r.label,16), cyRev:revCY(r), pyRev:revPY(r) };
       }), pick);
       var html=measWrap()+'<table class="ov-table compact"><thead><tr>'
-        +'<th>Name</th>'+measHead('t')
+        +'<th>Name</th>'+measHead('t', null, ecpi)
         +'</tr></thead><tbody>'
-        +'<tr class="tot"><td>Total · '+esc(scopeLabel())+'</td>'+measCells(tot, tot.aspPct, tot.ppi)+'</tr>'
+        +'<tr class="tot"><td>Total · '+esc(scopeLabel())+'</td>'+measCells(tot, tot.aspPct, tot.ppi, ecpi)+'</tr>'
         +list.map(function(r){
           return '<tr class="xfrow'+(xfHas(field,r.label)?' xfsel':'')
             +'" data-xf-f="'+esc(field)+'" data-xf-v="'+esc(r.label)+'">'
-            +'<td>'+esc(r.label)+'</td>'+measCells(r, r.aspPct, r.ppi)+'</tr>';
+            +'<td>'+esc(r.label)+'</td>'+measCells(r, r.aspPct, r.ppi, ecpi)+'</tr>';
         }).join('')
         +'</tbody></table></div>'
         +(capNote?'<p class="ov-foot" style="margin:6px 0 0">'+capNote+'</p>':'');
@@ -18015,6 +18156,9 @@ AMR.page('overview', {
         return;
       }
       if(rxfActive()) return;                 // filtered but not loaded: keep the last strip
+      /* Ready-Mix carries no sold-to at all, so there is no CPI on this line
+         and serverCpi() is not asked - the card stays off, as it does in the
+         window painters. */
       renderKpiRow('kpiRmx', rmxTotals(selectedKeys()), 'm\u00b3', fAsp);
     }
 
@@ -18139,7 +18283,7 @@ AMR.page('overview', {
       showPanel('rmxDimBody');
       var total = d && d.totals;
       var lab=RXF_FIELD_LABEL[RDIM_TAB];
-      var solo=volRev();
+      var solo=volRev(), rcpi=hasCpi(rows.concat(total?[total]:[]));
       body.innerHTML=
         '<div class="ov-cols">'
         +'<div><p class="ov-lab">'+(solo?'Volume share':'CY volume share')+'</p><div class="ov-cbox tall"><canvas id="rdim_pie"></canvas></div></div>'
@@ -18147,14 +18291,14 @@ AMR.page('overview', {
         +'</div>'
         +'<div class="ov-block"><p class="lab">'+(solo?'Revenue (base concrete)':'BASE ASP % inc &amp; PPI')+'</p><div class="ov-cbox tall"><canvas id="rdim_bar"></canvas></div></div>'
         +measWrap()+'<table class="ov-table"><thead><tr>'
-        +'<th>'+esc(lab)+'</th>'+measHead('m\u00b3','BASE ASP % inc')
+        +'<th>'+esc(lab)+'</th>'+measHead('m\u00b3','BASE ASP % inc', rcpi)
         +'</tr></thead><tbody>'
         +rows.map(function(r){
           return '<tr class="xfrow'+(rxfHas(RDIM_TAB,r.label)?' xfsel':'')
             +'" data-rxf-v="'+esc(r.label)+'">'
-            +'<td>'+esc(r.label)+'</td>'+measCells(r, r.aspIncBase, r.ppiBase)+'</tr>';
+            +'<td>'+esc(r.label)+'</td>'+measCells(r, r.aspIncBase, r.ppiBase, rcpi)+'</tr>';
         }).join('')
-        +(total?('<tr class="tot"><td>Total</td>'+measCells(total, total.aspIncBase, total.ppiBase)+'</tr>'):'')
+        +(total?('<tr class="tot"><td>Total</td>'+measCells(total, total.aspIncBase, total.ppiBase, rcpi)+'</tr>'):'')
         +'</tbody></table></div>'
         +((t&&t.trimmed)?'<p class="ov-note">'+fInt(t.trimmed)+' smaller '+esc(lab.toLowerCase())+' rows not shown \u2014 use the search to reach them.</p>':'')
         +(solo?'':'<p class="ov-note">PPI is re-indexed at plant \u00d7 mix inside each row, so the rows do not weight-average back to the Total. That is how Qlik reports a selection.</p>');
@@ -18585,14 +18729,55 @@ AMR.page('overview', {
        Only the first two exist on the server. The Prev-month pair is computed in
        the browser from the month cube, which is why they stay disabled until it
        holds the month they need.                                            */
+    /* THE PERIOD ANCHOR IS THE REPORTING MONTH, NOT THE NEWEST BLOCK.
+       This page draws two ways at once and they have to agree about which month
+       "this month" is. The server reports land on the REPORTING MONTH - last
+       calendar month (README §7), because the running month is part-billed and
+       reading it as MTD prints a collapse that is really just the calendar. The
+       month cube holds the running month too, so anchoring on the newest block
+       it carries picked a DIFFERENT month.
+
+       What that cost was not a rounding difference. On an August visit the KPI
+       strip (server, July) read 2,266,577 t while the market table directly
+       under it (cube, August) read 1,067,541 t for the same selection, with
+       every market showing -50% or worse - the part-month against a full one.
+       And "Prev month (MTD)" is one back from the anchor, so with the anchor on
+       August it landed on July: the same month "This month" was already
+       showing on the server side. The two Period buttons drew the same view.
+
+       So the anchor is the month the SERVER says it answered for, which arrives
+       on the payload (getOverview.reportMonth, read off the data by
+       pvReportMonth_ - not off the clock, §7). The clock rule is the fallback
+       for a payload that predates the field, and the newest block the fallback
+       to that. The part-billed month is not lost: it is one drag of the slider
+       away, as a custom window, which is what it actually is. */
+    function anchorMonth(){
+      var ms=WIN.months; if(ms.length<2) return null;
+      var newest=ms[ms.length-1], year=Math.floor(newest/100);
+      /* 1. the server's own answer, mapped onto the newest year the cube holds */
+      var rm=(STATE.data && STATE.data.reportMonth) || 0;
+      if(rm>=1 && rm<=12){
+        var want=year*100+rm;
+        /* the report month can sit a year back when the newest block is January */
+        if(ms.indexOf(want)!==-1) return want;
+        if(rm>(newest%100) && ms.indexOf((year-1)*100+rm)!==-1) return (year-1)*100+rm;
+      }
+      /* 2. last calendar month, the same rule the server applies */
+      var now=new Date(), pm=now.getMonth();      // 0-based month = last month, 1-12
+      var closed = pm ? (now.getFullYear()*100+pm) : ((now.getFullYear()-1)*100+12);
+      if(ms.indexOf(closed)!==-1) return closed;
+      /* 3. nothing closed is in yet - the newest month the cube holds */
+      return newest;
+    }
     function prevMonthOf(){
       var ms=WIN.months; if(ms.length<2) return null;
-      var p=ymAdd(ms[ms.length-1], -1);
+      var a=anchorMonth(); if(a==null) return null;
+      var p=ymAdd(a, -1);
       return (p>=ms[0]) ? p : null;
     }
     function periodSpan(p){
       var ms=WIN.months; if(ms.length<2) return null;
-      var end=(p==='PMTD'||p==='PYTD') ? prevMonthOf() : ms[ms.length-1];
+      var end=(p==='PMTD'||p==='PYTD') ? prevMonthOf() : anchorMonth();
       if(end==null) return null;
       if(p==='MTD' || p==='PMTD') return { from:end, to:end };
       var jan=Math.floor(end/100)*100+1;
@@ -18602,10 +18787,13 @@ AMR.page('overview', {
        The two lines can end on DIFFERENT months and the slider spans their union,
        so "the newest month" is ambiguous: a window ending on the Aggregates line's
        last month is still Year to date even when Ready-Mix runs a month further.
-       Every plausible end month is accepted, not just the union's. */
+       Every plausible end month is accepted - the anchor, the union's own last
+       month, and each line's - not just one of them. */
     function windowEnds(){
       var ms=WIN.months, ends=[];
-      if(ms.length) ends.push(ms[ms.length-1]);
+      /* the anchor first: it is the month the Period buttons actually snap to */
+      var a=anchorMonth(); if(a!=null) ends.push(a);
+      if(ms.length && ends.indexOf(ms[ms.length-1])===-1) ends.push(ms[ms.length-1]);
       ['agg','rmx'].forEach(function(l){
         var m=cube() && cube().manifest(l);
         if(m && m.ym && m.ym.length){
@@ -18615,14 +18803,15 @@ AMR.page('overview', {
       });
       return ends;
     }
-    /* PREV MONTH IS TESTED FIRST, and only against the union's own last month.
-       When Ready-Mix runs a month ahead of Aggregates, the Aggregates line's last
-       month is BOTH "its MTD" and "the previous month" — and the two answers now
-       lead to different buttons, different panels and a different Product
-       Category state, so the ambiguity has to be resolved rather than inherited.
-       Previous month wins: it is the newer, narrower claim (this exact month, one
-       back from the newest the page holds), and the numbers underneath are the
-       same either way — the cube computes that month whichever name it goes by. */
+    /* PREV MONTH IS TESTED FIRST. Since the anchor moved onto the REPORTING
+       month the common collision is gone - "this month" and "one month back" are
+       now two different months by construction, which is the whole point of
+       anchorMonth() above. One edge survives: a line that has not got the anchor
+       month yet ends on the anchor minus one, so that month is both "its MTD"
+       and "the previous month". Previous month still wins there - it is the
+       newer, narrower claim (this exact month, one back from the anchor), and the
+       numbers underneath are the same either way, since the cube computes that
+       month whichever name it goes by. */
     function windowPeriod(){
       var ms=WIN.months; if(ms.length<2) return null;
       var prev=prevMonthOf();
@@ -18971,7 +19160,8 @@ AMR.page('overview', {
       var st=pyStale();
       return { present:!!(g.cyVol||g.pyVol||g.cyRev), cyVol:g.cyVol, pyVol:st?null:g.pyVol, volPct:st?null:g.volPct,
                cyRev:g.cyRev, pyRev:st?null:g.pyRev,
-               cyAsp:g.cyAsp, pyAsp:st?null:g.pyAsp, aspPct:st?null:g.aspPct, ppi:st?null:g.ppi };
+               cyAsp:g.cyAsp, pyAsp:st?null:g.pyAsp, aspPct:st?null:g.aspPct,
+               ppi:st?null:g.ppi, cpi:st?null:g.cpi };
     }
     /* Grouped rows for the window. Returns the cube's own row objects, which
        already carry label-compatible key / cyVol / pyVol / volPct / aspPct / ppi,
@@ -19008,7 +19198,7 @@ AMR.page('overview', {
       return rows.map(function(g,i){
         return { label:String(g.key), value:String(g.key), color:MK_COLORS[i%MK_COLORS.length],
                  cyVol:g.cyVol, pyVol:st?0:g.pyVol, cyRev:g.cyRev, pyRev:st?0:g.pyRev,
-                 asp:st?null:g.aspPct, ppi:st?null:g.ppi };
+                 asp:st?null:g.aspPct, ppi:st?null:g.ppi, cpi:st?null:g.cpi };
       });
     }
     /* the cube's row shape in the shape the server-fed tables are painted from */
@@ -19016,7 +19206,8 @@ AMR.page('overview', {
       var st=pyStale(), k=String(g.key==null?'':g.key);
       return { label:k||'(blank)',
                cyVol:g.cyVol, pyVol:st?null:g.pyVol, volPct:st?null:g.volPct,
-               cyAsp:g.cyAsp, pyAsp:st?null:g.pyAsp, aspPct:st?null:g.aspPct, ppi:st?null:g.ppi,
+               cyAsp:g.cyAsp, pyAsp:st?null:g.pyAsp, aspPct:st?null:g.aspPct,
+               ppi:st?null:g.ppi, cpi:st?null:g.cpi,
                cyRev:g.cyRev, pyRev:g.pyRev, cyFsc:g.cyFsc||0, pyFsc:g.pyFsc||0,
                cyFv:g.cyFv||0, pyFv:g.pyFv||0 };
     }
@@ -19131,9 +19322,36 @@ AMR.page('overview', {
        month history now shares one indicator with every other job on the page
        instead of having a second one of its own. */
     var PILL_DONE=false;
+
+    /* WHAT THE OPENING SCREEN IS ALLOWED TO WAIT FOR.
+       The boot step named 'month history' used to be released only when
+       histState() had nothing left to say - every block of every calendar year
+       streamed, AND every closed-year book that has a sheet link but no built
+       file read end to end, one server call each. That is minutes of a MODAL
+       screen over a page that is already usable, and the pill's own text says so
+       out loud: "Nothing else on the page is waiting on this."
+
+       The page is worth looking at the moment the cube can answer the window it
+       OPENS on - the reporting month and the same month a year earlier, which is
+       two blocks, not the whole history. So the step is released there and the
+       remaining years keep arriving behind the pill, which is not modal and which
+       already explains itself. Everything after this point was always meant to be
+       the pill's job.
+
+       AmrBoot.done() is idempotent and boot ends for good on the last outstanding
+       step, so calling this on every block is safe and calling it late is not
+       possible - once over, need() is ignored. */
+    function histBootReady(){
+      if(!histHave().any) return false;         // no manifest yet: nothing to answer with
+      if(!winReady()) return false;             // the slider has not got a span yet
+      return winCy('agg')!==null || winCy('rmx')!==null;
+    }
     function renderPill(){
       if(!window.AmrProgress) return;
       var s=histState();
+      /* BEFORE the boot branch below, or the screen goes back up for the years
+         that are still streaming. */
+      if(window.AmrBoot && !AmrBoot.finished() && histBootReady()) AmrBoot.done('month history');
       if(s.hide){
         /* Nothing left to say. No tick either: a tick that flashes for a second and
            is replaced by the next job is the flicker this is meant to remove. */
@@ -19290,21 +19508,23 @@ AMR.page('overview', {
         +' by market'+(isAgg?'':' \u00b7 base concrete')+' \u00b7 '+scopeLabel()
         +(winLabel()?(' \u00b7 '+winLabel()):'')
         +' \u00b7 click a market to open its submarkets.';
+      var kidsAll=d.rows.reduce(function(a,g){ return a.concat(g.kids||[]); }, []);
+      var cpi=hasCpi(d.rows.concat(kidsAll).concat(d.total?[d.total]:[]));
       var out=measWrap()+'<table class="ov-table"><thead><tr><th>Market</th>'
-        +measHead(isAgg?'t':'m\u00b3', isAgg?'ASP % inc':'BASE ASP % inc')
+        +measHead(isAgg?'t':'m\u00b3', isAgg?'ASP % inc':'BASE ASP % inc', cpi)
         +'</tr></thead><tbody>';
       d.rows.forEach(function(g,i){
         var kids=g.kids||[], exp=kids.length>0;
         out+='<tr class="parent'+(exp?' expandable':'')+'" data-i="'+i+'"><td>'
           +(exp?'<span class="caret">\u25b8</span> ':'')+esc(cubeMktLabel(line,g.key))+'</td>'
-          +measCells(g, g.aspPct, g.ppi)+'</tr>';
+          +measCells(g, g.aspPct, g.ppi, cpi)+'</tr>';
         kids.forEach(function(k){
           out+='<tr class="child" data-p="'+i+'"><td>'+esc(String(k.key||'(blank)'))+'</td>'
-            +measCells(k, k.aspPct, k.ppi)+'</tr>';
+            +measCells(k, k.aspPct, k.ppi, cpi)+'</tr>';
         });
       });
       if(d.total) out+='<tr class="tot"><td>Total \u00b7 '+esc(scopeLabel())+'</td>'
-        +measCells(d.total, d.total.aspPct, d.total.ppi)+'</tr>';
+        +measCells(d.total, d.total.aspPct, d.total.ppi, cpi)+'</tr>';
       body.innerHTML=out+'</tbody></table></div>';
       /* the caret opens the market's submarkets; nothing here filters the page,
          because the market chips above already are that control */
@@ -19818,7 +20038,7 @@ AMR.page('overview', {
       meta.innerHTML = need
         ? '<span style="color:var(--neg);font-weight:700">Pick the region that matches '+esc(scopeName)+'</span>'
           +' · it will be remembered for this market'
-        : esc(AKPI.sheet)+' · '+(STATE.period==='YTD'?'year to date':'month to date');
+        : esc(AKPI.sheet)+' · '+esc(kpiPeriodLabel());
       var x=akExtract();
       if(!x){ hidePanel('aggKpiBody'); return; }
       var qv = (STATE.data && !(STATE.data.errors&&STATE.data.errors.pv)) ? aggTotals(selectedKeys()) : null;
@@ -19923,7 +20143,7 @@ AMR.page('overview', {
         });
       }
       meta.textContent = got.map(function(g){ return labelOf(g.key); }).join(', ')
-        +' · '+(STATE.period==='YTD'?'year to date':'month to date');
+        +' · '+kpiPeriodLabel();
       var h='';
       if(m.units) h+=rkUnitsCard(m.units);
       if(m.rev)   h+=rkMoneyCard('Total Revenue', m.rev);
@@ -19956,7 +20176,9 @@ AMR.page('overview', {
       }
       if(CACHE[STATE.period]){
         hideLoader();                       // the pill is running from boot(); this path is done
-        STATE.data=CACHE[STATE.period]; renderChips(); renderActiveTab(); return;
+        STATE.data=CACHE[STATE.period];
+        syncWindow();                       // anchorMonth() reads the payload's reportMonth
+        renderChips(); renderActiveTab(); return;
       }
       if(!IS_LIVE){
         banner('Open this inside the Apps Script web app to load live data. (Preview mode shows no numbers.)');
@@ -19970,6 +20192,9 @@ AMR.page('overview', {
           if(!d || !d.ok){ banner('Could not load the overview data.'); return; }
           if(window.AmrCache && d.generation!=null){ AmrCache.check(d.generation); AmrCache.set('ov:'+STATE.period, d); }
           CACHE[STATE.period]=d; STATE.data=d;
+          /* the month the server answered for is the window's anchor, so the
+             handles move onto it as soon as the first payload lands */
+          syncWindow();
           renderChips(); renderActiveTab();
           prefetchPeriod();          // so the OTHER button is instant when pressed
         })
@@ -20676,16 +20901,27 @@ AMR.page('overview', {
     }
 
     function mergeCustReports(reports){
-      var FLDS=['cyVol','pyVol','cyRev','pyRev','cyRevPpi','factorCy','cyFsc','pyFsc'];
-      function zero(){ var z={children:{},childOrder:[]}; FLDS.forEach(function(f){z[f]=0;}); return z; }
-      function addTo(a,r){ FLDS.forEach(function(f){ a[f]+=Number(r[f])||0; }); }
+      /* WEIGHT AND FACTOR MERGE; AN INDEX DOES NOT. Each market's report carries
+         its own Sum weight and Sum factor for both grains, so merging markets is
+         adding those four and dividing once - never averaging the markets' own
+         PPI or CPI, which would be an average of ratios. Same reason the tables
+         say the rows do not weight-average back to the Total. */
+      var FLDS=['cyVol','pyVol','cyRev','pyRev','cyRevPpi','factorCy','cyRevCpi','factorCpi','cyFsc','pyFsc'];
+      function zero(){ var z={children:{},childOrder:[],anyCpi:false}; FLDS.forEach(function(f){z[f]=0;}); return z; }
+      function addTo(a,r){
+        FLDS.forEach(function(f){ a[f]+=Number(r[f])||0; });
+        if(r.cpi!=null) a.anyCpi=true;   // absent on a backend that predates CPI
+      }
       function fin(a){
         var cyAsp=a.cyVol?a.cyRev/a.cyVol:0, pyAsp=a.pyVol?a.pyRev/a.pyVol:0;
-        var ppi=(a.cyRevPpi>0 && a.cyRev>0 && a.pyRev>0)?a.factorCy/a.cyRevPpi:0;
+        var live=(a.cyRev>0 && a.pyRev>0);
+        var ppi=(a.cyRevPpi>0 && live)?a.factorCy/a.cyRevPpi:0;
         return { cyVol:a.cyVol, pyVol:a.pyVol, volPct:a.pyVol?(a.cyVol-a.pyVol)/a.pyVol:0,
                  cyRev:a.cyRev, pyRev:a.pyRev,
                  cyAsp:cyAsp, pyAsp:pyAsp, aspPct:pyAsp?(cyAsp-pyAsp)/pyAsp:0,
-                 ppi:ppi, cyFsc:a.cyFsc, pyFsc:a.pyFsc };
+                 ppi:ppi,
+                 cpi:a.anyCpi?((a.cyRevCpi>0 && live)?a.factorCpi/a.cyRevCpi:0):null,
+                 cyFsc:a.cyFsc, pyFsc:a.pyFsc };
       }
       var acc={}, order=[];
       reports.forEach(function(rep){
@@ -20714,23 +20950,25 @@ AMR.page('overview', {
 
     function custTableHtml(d){
       var top=d.top||[];
+      var kids=top.reduce(function(a,c){ return a.concat(c.children||[]); }, []);
+      var ccpi=hasCpi(top.concat(kids).concat(d.total?[d.total]:[]));
       var out=measWrap()+'<table class="ov-table"><thead><tr>'
-        +'<th>Customer</th>'+measHead('t')
+        +'<th>Customer</th>'+measHead('t', null, ccpi)
         +'</tr></thead><tbody>';
       top.forEach(function(c,i){
         var exp = STATE.split && c.children && c.children.length;
         out+='<tr class="parent xfrow'+(exp?' expandable':'')+(xfHas('CUST_PARENT',c.label)?' xfsel':'')
           +'" data-i="'+i+'" data-xf-f="CUST_PARENT" data-xf-v="'+esc(c.label)+'">'
           +'<td>'+(exp?'<span class="caret">▸</span> ':'')+esc(c.label)+'</td>'
-          +measCells(c, c.aspPct, c.ppi)+'</tr>';
+          +measCells(c, c.aspPct, c.ppi, ccpi)+'</tr>';
         if(exp){ c.children.forEach(function(ch){
           out+='<tr class="child" data-p="'+i+'"><td>'+esc(ch.label)+'</td>'
-            +measCells(ch, ch.aspPct, ch.ppi)+'</tr>';
+            +measCells(ch, ch.aspPct, ch.ppi, ccpi)+'</tr>';
         }); }
       });
       var t=d.total||{};
       out+='<tr class="tot"><td>All customers ('+(d.customerCount||top.length)+')</td>'
-        +measCells(t, t.aspPct, t.ppi)+'</tr>';
+        +measCells(t, t.aspPct, t.ppi, ccpi)+'</tr>';
       return out+'</tbody></table></div>';
     }
 
