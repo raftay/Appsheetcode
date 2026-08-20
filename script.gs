@@ -531,18 +531,48 @@ var APP_CONFIG = {
      * Verified on 2025 vs 2024: all-markets moves 5.19% -> 2.05% and North
      * 57.68% -> 3.74%, dropping 75 of 3,863 pairs worth 0.063% of weight.
      *
-     * AGG is left at 0/0 \u2014 the same floors change NOTHING there (its bad
-     * rows carry $404 and $53,542 of prior-year revenue, well clear of any
-     * $110 floor), so guessing a number would only invent a divergence.
-     * Fill these in once the Aggregates Qlik expression is to hand.
+     * AGG's volume/revenue floors are left at 0/0 \u2014 the same floors change
+     * NOTHING there (its bad rows carry $404 and $53,542 of prior-year
+     * revenue, well clear of any $110 floor), so guessing a number would
+     * only invent a divergence.
      *
      * NOTE: Qlik's Weight also carries Wildmatch(mix_prod_hier_1,'A*') and
      * a set of material exclusions that the export does not expose. See
      * the header comment in Ov_Backend.gs.
+     *
+     *
+     * ------------------------------------------------------------------
+     * cpiAspCap \u2014 A CPI RULE, AND ONLY A CPI RULE.
+     * ------------------------------------------------------------------
+     * The Aggregates report states it in its own footnote: "CPI is
+     * PLANT/PRODUCT/CUSTOMER to CY REV MIX excluding combinations when
+     * CY/PY VOL is 0, or ASP% showing +/-50%".
+     *
+     * NOT applied to PPI. PPI's published figures reconcile as they stand
+     * and must not move; the same cap shifts them 3.22% -> 3.03% on the
+     * Jan-Aug 2026 export, which is a change to numbers the business
+     * already signs off. CPI is new and CPI is the grain that needs it: a
+     * plant x product pair is big enough to absorb one freak line, a
+     * plant x customer x product pair often IS that one line.
+     *
+     * WHAT IT IS WORTH, and what it is not. On the August 2026 CPI export,
+     * 2026 Jan-Jun, with the priced-revenue rule in piIndex_ this reads
+     * CPI 3.06% for Central Canada and 2.76% for GTA. The figures those
+     * are being checked against are 2.95% and 2.67%. The remaining ~0.1pp
+     * is NOT explained by any row exclusion in Qlik's expression (P3A*
+     * sold-to, fuel surcharge, VA products \u2014 this export carries none of
+     * them) nor by the TotalWeight denominator; it needs the revenue
+     * COMPONENTS Qlik indexes on (_rev_base, _disc_comp, _Enviro_Fees,
+     * _Govt_Fees, _credit_debit, _rebate), and the export nets all six
+     * into one "Rev exWorks" column before we ever see it. Tune here when
+     * a component-level export exists; do not tune it to fit a number.
+     *
+     * 0 disables it. Ready-Mix has no CPI \u2014 no sold-to on that line.
      * ---------------------------------------------------------------- */
     COVERAGE: {
       agg: { minVol: 0, minRev: 0    },    // \u2190 awaiting the Aggregates Qlik expression
-      rmx: { minVol: 1, minRev: 110  }     // Qlik: vol > 1, revenue > 110
+      rmx: { minVol: 1, minRev: 110  },    // Qlik: vol > 1, revenue > 110
+      cpiAspCap: 0.50                      // CPI only \u2014 see above. 0 = off
     }
   }
 };
@@ -3843,14 +3873,20 @@ function saskMonthly_() {
 var PIVOT_COLS_MARKET = ['REGION', 'SUBREGION', 'MARKET', 'COUNTRY', 'SUBMARKET1', 'SUBMARKET2', 'MB SUBMARKET',
   'REVENUE TYPE', 'Month', 'Plant Type', 'Material Family', 'Product Class [Rock]', 'Plant', 'Material',
   'PY Volume', 'CY Volume', 'PY ASP ex-Works', 'CY ASP ex-Works', 'PY REV', 'CY REV',
-  'ASP %', 'PY REV (FOR PPI)', 'FACTOR (PY REV%)', 'CY REV (FOR PPI)', 'FACTOR (CY REV %)'];
+  'ASP %', 'PY REV (FOR PPI)', 'FACTOR (PY REV%)', 'CY REV (FOR PPI)', 'FACTOR (CY REV %)',
+  /* revenue on the rows that carried VOLUME — a price, with reversal and credit
+     rows left out. CPI's ASP is built from these; see piIndex_. */
+  'PY REV PRICED', 'CY REV PRICED'];
 
 var PIVOT_COLS_CUST = ['REGION', 'SUBREGION', 'MARKET', 'COUNTRY', 'SUBMARKET1', 'SUBMARKET2', 'MB SUBMARKET',
   'REVENUE TYPE', 'Month', 'Plant Type', 'Material Family', 'Product Class [Rock]', 'Cust Segment [Rock]',
   'Product Application', 'Plant', 'Material', 'Customer Parent', 'Sold To',
   'PY Volume', 'CY Volume', 'PY ASP ex-Works', 'CY ASP ex-Works', 'PY REV', 'CY REV',
   'PY Fuel Surcharge', 'CY Fuel Surcharge', 'FSC PY Volume', 'FSC CY Volume',
-  'ASP %', 'PY REV (FOR PPI)', 'FACTOR (PY REV%)', 'CY REV (FOR PPI)', 'FACTOR (CY REV %)'];
+  'ASP %', 'PY REV (FOR PPI)', 'FACTOR (PY REV%)', 'CY REV (FOR PPI)', 'FACTOR (CY REV %)',
+  /* revenue on the rows that carried VOLUME — a price, with reversal and credit
+     rows left out. CPI's ASP is built from these; see piIndex_. */
+  'PY REV PRICED', 'CY REV PRICED'];
 
 /* ==========================================================================
  * THE MONTH MODEL
@@ -3994,8 +4030,14 @@ function buildPivot_(period, withCustomer, upToken, monthSel) {
       ? [collapseMonth ? '' : r.month, r.plantType, r.materialFam, r.prodClass, r.custSeg, r.prodApp, r.plant, r.material, r.custParent, r.soldTo]
       : [collapseMonth ? '' : r.month, r.plantType, r.materialFam, r.prodClass, r.plant, r.material];
     var k = kp.join('|\u2016|'), g = groups[k];
-    if (!g) g = groups[k] = { s: r, pyVol: 0, cyVol: 0, pyRev: 0, cyRev: 0, pyFsc: 0, cyFsc: 0, fm: null };
+    if (!g) g = groups[k] = { s: r, pyVol: 0, cyVol: 0, pyRev: 0, cyRev: 0, pyFsc: 0, cyFsc: 0,
+                              pyRevP: 0, cyRevP: 0, fm: null };
     g.pyVol += r.pyVol; g.cyVol += r.cyVol; g.pyRev += r.pyRev; g.cyRev += r.cyRev; g.pyFsc += r.pyFsc; g.cyFsc += r.cyFsc;
+    /* PRICED revenue: this row's dollars count towards a PRICE only if the row
+       also carried tonnes. A reversal or credit is its own row with revenue and
+       no volume — real money, but not a price anybody was charged. */
+    if (r.pyVol > 0) g.pyRevP += r.pyRev;
+    if (r.cyVol > 0) g.cyRevP += r.cyRev;
     /* Applied tonnes have to be decided PER MONTH, BEFORE the YTD collapse merges
        the months into one group. Deciding it afterwards marks a customer's whole
        Jan-Jul volume as "applied" when the surcharge only started in April, which
@@ -4033,6 +4075,7 @@ function buildPivot_(period, withCustomer, upToken, monthSel) {
     set('PY REV', g.pyRev); set('CY REV', g.cyRev); set('ASP %', aspPct);
     set('PY REV (FOR PPI)', pyPpi); set('FACTOR (PY REV%)', aspPct * pyPpi);
     set('CY REV (FOR PPI)', cyPpi); set('FACTOR (CY REV %)', aspPct * cyPpi);
+    set('PY REV PRICED', g.pyRevP); set('CY REV PRICED', g.cyRevP);
     if (withCustomer) {
       set('Cust Segment [Rock]', s.custSeg); set('Product Application', s.prodApp);
       set('Customer Parent', s.custParent); set('Sold To', s.soldTo);
@@ -4352,13 +4395,54 @@ var CUST_SECONDARY = { CUST_SEGMENT: 'Cust Segment [Rock]', PRODUCT_APP: 'Produc
  * ====================================================================== */
 var PI_SEP_ = '|\u2016|';
 
-function piIndex_(rows, ix, keyOf) {
+/* ---- PRICED REVENUE, AND WHY CPI NEEDS IT AND PPI DOES NOT ----------------
+ * A reversal or credit is booked as its own raw row: revenue, no volume. Netted
+ * into the pair it belongs to, it moves the DOLLARS without moving the TONNES —
+ * so it does not reduce a price, it destroys one.
+ *
+ * Qlik knows this. The CPI weight variable's prior-year test is
+ *     sum(_rev_base + _Enviro_Fees + _Govt_Fees + _disc_comp)
+ * — no _credit_debit and no _rebate, while the CURRENT-year side keeps both.
+ * The price components decide whether a pair has a prior-year price; the
+ * settlement components do not.
+ *
+ * Our pivot carries one netted figure per side, so the same rule is expressed
+ * the way this data can express it: PRICED revenue is revenue on rows that
+ * carried volume. The credit rows keep their dollars in CY REV / PY REV, which
+ * every total on every page still reports; they are only kept out of the ASP
+ * the index is built from.
+ *
+ * MEASURED, on the August 2026 CPI export, Jan-Aug. Plant 3P36 / Brock
+ * Aggregates / 9141 concrete sand billed 47.04 t for $693.98 in March 2025 and
+ * took a $693.84 credit in April. Netted, prior-year revenue is FOURTEEN CENTS
+ * against 47 tonnes — an ASP of a third of a cent, and a price "move" of
+ * +492,409% carrying 95.6% of Sum factor on its own. On priced revenue the same
+ * pair reads -0.6%. CPI goes 141.72% -> 3.56% (the page had published +206.7%).
+ *
+ * PPI IS NOT GIVEN THIS, deliberately: its published figures reconcile as they
+ * stand and must not move, and at plant x material grain one customer's credit
+ * is diluted by every other customer's tonnes on the same material — the whole
+ * index shifts 3.22% -> 3.24%. CPI's grain is often that one line by itself,
+ * which is why the same flaw is fatal there and invisible here.
+ * ------------------------------------------------------------------------- */
+/* `priced` picks which revenue the ASP and the coverage test read. The WEIGHT is
+   the netted CY revenue either way — the credit is real money and belongs in
+   what the pair is worth, just not in what it was charged. */
+function piCpiCap_() {
+  var C = (typeof APP_CONFIG !== 'undefined' && APP_CONFIG.CUBE && APP_CONFIG.CUBE.COVERAGE)
+        ? APP_CONFIG.CUBE.COVERAGE : {};
+  return C.cpiAspCap || 0;
+}
+function piIndex_(rows, ix, keyOf, priced, aspCap) {
+  var pR = (priced && ix.pyRevP != null && ix.pyRevP !== -1) ? ix.pyRevP : ix.pyRev;
+  var cR = (priced && ix.cyRevP != null && ix.cyRevP !== -1) ? ix.cyRevP : ix.cyRev;
   var g = {};
   rows.forEach(function (r) {
     var k = keyOf(r);
-    var o = g[k] || (g[k] = { pyVol: 0, cyVol: 0, pyRev: 0, cyRev: 0 });
+    var o = g[k] || (g[k] = { pyVol: 0, cyVol: 0, pyRev: 0, cyRev: 0, pyP: 0, cyP: 0 });
     o.pyVol += toNum_(r[ix.pyVol]); o.cyVol += toNum_(r[ix.cyVol]);
     o.pyRev += toNum_(r[ix.pyRev]); o.cyRev += toNum_(r[ix.cyRev]);
+    o.pyP   += toNum_(r[pR]);       o.cyP   += toNum_(r[cR]);
   });
   var weight = 0, factor = 0;
   Object.keys(g).forEach(function (k) {
@@ -4366,9 +4450,11 @@ function piIndex_(rows, ix, keyOf) {
     /* Qlik's Weight: CY revenue when BOTH years carry volume and revenue,
        otherwise zero. A pair that exists in only one year has no price MOVE to
        measure, so it earns neither weight nor factor. */
-    if (o.pyVol > 0 && o.cyVol > 0 && o.pyRev > 0 && o.cyRev > 0) {
-      var pyAsp = o.pyRev / o.pyVol, cyAsp = o.cyRev / o.cyVol;
-      factor += o.cyRev * ((cyAsp - pyAsp) / pyAsp);   // PI / CPI Factor = Weight * ASP%
+    if (o.pyVol > 0 && o.cyVol > 0 && o.pyP > 0 && o.cyP > 0) {
+      var pyAsp = o.pyP / o.pyVol, cyAsp = o.cyP / o.cyVol;
+      var asp = (cyAsp - pyAsp) / pyAsp;
+      if (aspCap > 0 && Math.abs(asp) > aspCap) return;   // the CPI exclusion, \u00a71
+      factor += o.cyRev * asp;                         // PI / CPI Factor = Weight * ASP%
       weight += o.cyRev;                               // Weight = CY REV if covered
     }
   });
@@ -4393,12 +4479,12 @@ function piKeyCpi_(ix) {
 }
 
 function custPpi_(rows, ix) {
-  var p = piIndex_(rows, ix, piKeyPpi_(ix));
+  var p = piIndex_(rows, ix, piKeyPpi_(ix), false, 0);   // netted, no cap: PPI is unchanged
   return { weight: p.weight, factor: p.factor, ppi: p.index };
 }
 function custCpi_(rows, ix) {
   var k = piKeyCpi_(ix); if (!k) return null;
-  var c = piIndex_(rows, ix, k);
+  var c = piIndex_(rows, ix, k, true, piCpiCap_());   // priced revenue + the CPI cap
   return { weight: c.weight, factor: c.factor, cpi: c.index };
 }
 
@@ -4438,7 +4524,8 @@ function getCustomerReport(opts) {
     cyRevPpi: colIndex_(H, 'CY REV (FOR PPI)'), factorCy: colIndex_(H, 'FACTOR (CY REV %)'),
     pyFsc: colIndex_(H, 'PY Fuel Surcharge'), cyFsc: colIndex_(H, 'CY Fuel Surcharge'),
     fscPyVol: colIndex_(H, 'FSC PY Volume'), fscCyVol: colIndex_(H, 'FSC CY Volume'),
-    plantCol: colIndex_(H, 'Plant'), matCol: colIndex_(H, 'Material')
+    plantCol: colIndex_(H, 'Plant'), matCol: colIndex_(H, 'Material'),
+    pyRevP: colIndex_(H, 'PY REV PRICED'), cyRevP: colIndex_(H, 'CY REV PRICED')
   };
   var secIdx = (secondary !== 'NONE') ? colIndex_(H, CUST_SECONDARY[secondary]) : -1;
 
@@ -4751,7 +4838,8 @@ function getCrossReport(opts) {
     pyFsc: colIndex_(H, 'PY Fuel Surcharge'), cyFsc: colIndex_(H, 'CY Fuel Surcharge'),
     revType: colIndex_(H, 'REVENUE TYPE'),
     plantCol: colIndex_(H, 'Plant'), matCol: colIndex_(H, 'Material'),
-    soldTo: colIndex_(H, 'Sold To'), custSeg: colIndex_(H, 'Cust Segment [Rock]')
+    soldTo: colIndex_(H, 'Sold To'), custSeg: colIndex_(H, 'Cust Segment [Rock]'),
+    pyRevP: colIndex_(H, 'PY REV PRICED'), cyRevP: colIndex_(H, 'CY REV PRICED')
   };
   var fIdx = {}; XF_ORDER.forEach(function (f) { fIdx[f] = colIndex_(H, XF_FIELDS[f]); });
   var mbIdx = colIndex_(H, 'MB SUBMARKET');
@@ -4937,7 +5025,11 @@ function getCrossData(opts) {
   });
 
   var payload = { ok: true, period: period, n: cols.MARKET.length,
-                  dicts: dicts, cols: cols, nums: nums, generation: generation_() };
+                  dicts: dicts, cols: cols, nums: nums,
+                  /* the CPI-only ASP exclusion, so the local path indexes on the
+                     same rule as the server (\u00a71 cpiAspCap) */
+                  cpiAspCap: ((ovcCfg_().COVERAGE || {}).cpiAspCap) || 0,
+                  generation: generation_() };
   var size = 0;
   try { size = JSON.stringify(payload).length; } catch (e) { size = XF_DATA_CAP + 1; }
   if (size > XF_DATA_CAP) {
@@ -11223,7 +11315,13 @@ function ovcBuild_(line){
     chunks: plan.map(function(c){ return { i:c.i, from:c.from, to:c.to, rows:c.rows }; }),
     dict: cube.dict, plantMap: cube.plantMap,
     mixMap: cube.mixMap || null, revType: cube.revType || null,
-    coverage: (ovcCfg_().COVERAGE || {})[line] || { minVol:0, minRev:0 },
+    /* the line's floors, plus the CPI-only ASP exclusion (\u00a71) so the browser
+       indexes CPI on exactly the rule the server does */
+    coverage: (function(){
+      var C = ovcCfg_().COVERAGE || {};
+      var c = C[line] || { minVol:0, minRev:0 };
+      return { minVol: c.minVol||0, minRev: c.minRev||0, cpiAspCap: C.cpiAspCap||0 };
+    })(),
     skipped: cube.skipped || 0,
     history: !!hist,
     /* which closed-year books exist, which are linked, which are built - the

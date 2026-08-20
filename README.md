@@ -587,6 +587,38 @@ a product in only one of the two years fails the coverage test and drops out of 
 staying in PPI. So the two carry different total weights and are two measures, not two
 views of one.
 
+**Why a hand-built PPI and CPI come out identical.** They will, every time, if the ASP% is
+fixed *per row* and then revenue-weighted: `Σ(ASP%ᵢ × CYrevᵢ) ÷ Σ(CYrevᵢ)` does not care how
+the rows are grouped, so adding Customer to the key changes nothing. The grain only bites
+when volume and revenue are **summed into the bucket first and the ratio taken after** —
+the same "sum into its bucket before taking any ratio" rule the Bill Month note above states.
+Group first, divide second, and the two indices separate on their own.
+
+**CPI takes its ASP off PRICED revenue; PPI does not.** A reversal or credit is its own raw
+row — revenue, no volume. Netted into a pair it moves the dollars without moving the tonnes,
+so it does not reduce a price, it destroys one. Qlik knows this: the CPI weight variable's
+prior-year test is `sum(_rev_base + _Enviro_Fees + _Govt_Fees + _disc_comp)`, dropping
+`_credit_debit` and `_rebate`, while the current-year side keeps both. Our pivot carries one
+netted figure per side, so the rule is expressed the way this data can express it: priced
+revenue is revenue on rows that carried volume. Measured on the August 2026 CPI export,
+Jan–Aug: plant `3P36` / Brock Aggregates / `9141` billed 47.04 t for $693.98 in March 2025
+and took a $693.84 credit in April — netted, prior-year revenue is **fourteen cents against
+47 tonnes**, an ASP of a third of a cent and a "price move" of **+492,409%** carrying 95.6%
+of Σfactor on its own. The page published **+206.7%**. PPI is not given this rule: at plant ×
+material grain one customer's credit is diluted by every other customer's tonnes on the same
+material, and PPI's published figures reconcile as they stand.
+
+**The residual, stated rather than tuned away.** With priced revenue and the report's own
+`±50%` ASP exclusion (`cpiAspCap`, §1 — CPI only), 2026 Jan–Jun reads **CPI 3.06%** for
+Central Canada and **2.76%** for GTA, against **2.95%** and **2.67%** from Qlik. An exhaustive
+search over grain × revenue basis × weight basis × threshold finds nothing within 0.03pp of
+both, and the same harness reproduces the app's published volumes and revenues **to the
+dollar** for every market — so the gap is in the index rule, not the data. It needs the
+revenue *components* Qlik indexes on (`_rev_base`, `_disc_comp`, `_Enviro_Fees`, `_Govt_Fees`,
+`_credit_debit`, `_rebate`), and the export nets all six into one `Rev exWorks` column before
+we ever see it. Tune `cpiAspCap` when a component-level export exists; do not tune it to fit
+a number.
+
 Neither survives a window longer than twelve months: every month would be compared against
 a month already inside it (`pyStale`).
 
@@ -595,6 +627,9 @@ The arithmetic is written once per runtime — `piIndex_` (`script.gs` §6), `po
 only where Sold To exists. `metrics_()` is the deliberate exception: it sums the pivot's own
 precomputed weight columns at a **finer** key, those are the numbers Price & Volume has
 always published, and it is left alone rather than unified. See the banner over `piIndex_`.
+Unifying it is a one-line change and it is **not** blocked on effort — it is blocked on the
+fact that it moves every PPI on that page in the same commit, which is the opposite of
+"PPI is correct". Do it as its own change, against a reconciliation, or not at all.
 
 ### RMX PPI
 
@@ -1151,6 +1186,9 @@ or was forgotten.**
 | 2026-08-20 | **The Overview's two halves disagreed about which month "this month" is, and the fix is one anchor.** The server reports land on the reporting month — last calendar month — while the month cube also holds the running, part-billed month and the window anchored on *that*. So on an August visit the KPI strip read July's 2,266,577 t while the market table under it read August's 1,067,541 t for the same selection, every market at −50% or worse; and **"Prev month (MTD)", one back from the anchor, landed on the server's July, so the two Period buttons drew the same view.** `getOverview` echoes `reportMonth` off the data (`pvReportMonth_`, never the clock) and `anchorMonth()` uses it, clock rule as fallback; the part-billed month is still a drag away as the custom window it is. The KPI cards now name their month, so the workbook's MTD and YTD halves can no longer read as "unchanged" beside a Period that did move | ✅ |
 | 2026-08-20 | **The opening screen stopped waiting for the whole history.** `AmrBoot`'s `month history` step was released only once every calendar-year block had streamed *and* every linked closed-year book had been read end to end — minutes of a modal over a page whose own pill says "Nothing else on the page is waiting on this". `histBootReady()` releases it when the cube can answer the month the page opens on; the rest arrives behind the pill | ✅ |
 | 2026-08-20 | **CPI joins PPI: one formula, two keys.** They are the same weighted index — coverage-gated pairs, weight = CY revenue, factor = weight × the pair's own ASP move, Σfactor ÷ Σweight — differing only in what a *pair* is: PPI keys on plant × product, CPI on plant × **sold-to** × product (Qlik's Cust Price Detail calls that column "Customer", and it is Sold To). Written once per runtime: `piIndex_` on the server, `pool()` in `AmrCube`, `poolPairs()` in the Overview's local cross-filter path; `SOLD_TO` rides the cross dataset so both cross paths agree. **The column is drawn only where its source can answer it** — never as dashes, never filled with PPI, which would read as the two indices agreeing. `metrics_()` is left alone deliberately: it sums the pivot's precomputed weights at a finer key and those are the figures Price & Volume publishes | ✅ |
+| 2026-08-20 | **CPI published +206.7%, and the cause was a credit row.** A reversal is its own raw row \u2014 revenue, no volume \u2014 so netted into a pair it moves the dollars without moving the tonnes: it does not reduce a price, it destroys one. Plant `3P36` / Brock Aggregates / `9141` billed 47.04 t for $693.98 in March 2025 and took a $693.84 credit in April, leaving **fourteen cents against 47 tonnes** and a price "move" of **+492,409%** that carried 95.6% of \u03a3factor by itself. CPI's ASP now comes off **priced** revenue \u2014 revenue on rows that carried volume \u2014 which is how this data can express Qlik's own prior-year test (`_rev_base + _Enviro_Fees + _Govt_Fees + _disc_comp`, no `_credit_debit`, no `_rebate`). PPI is deliberately NOT given the rule: at plant \u00d7 material grain the credit is diluted, and its published figures reconcile as they stand. Written once per runtime and applied in all three. **The residual is stated, not tuned away**: 3.06% / 2.76% against Qlik's 2.95% / 2.67%, with an exhaustive search over grain \u00d7 revenue basis \u00d7 weight \u00d7 threshold finding nothing within 0.03pp of both, and the same harness reproducing every market's volume and revenue to the dollar | \u2705 |
+| 2026-08-20 | **Every numeric axis rounds now.** Chart.js walks a scale by repeated addition and 14.8 + 0.2 is 15.000000000000002, so "ASP by month" printed sixteen digits of it; `headroom()` had fixed the bounds last session but not the ticks the chart makes out of them. `axFix()` takes its precision from the tick SPACING, so one helper serves dollars, tonnes and percentages, and every raw `'$'+v` callback is gone. Magnitude suffixes are deliberately not unified \u2014 volume axes read in thousands, money axes in millions, and both are what their readers expect | \u2705 |
+| 2026-08-20 | **PPI and CPI share one chart, and the green is gone.** Colour is the SERIES, not the sign: one index drawn green-for-up borrowed a semantic the rest of the page spends on growth, and green is not in the palette at all. PPI takes navy and CPI the light blue, exactly as this year / last year do on every other paired chart in the panel. **Past twelve months \u2014 or in the oldest year the history holds \u2014 every same-period-last-year series is dropped**, the index chart with them, and the note says which of the two reasons applies. `pyAbsent()` is the new half: the 2023 chip selected a window where vs-last-year was blank everywhere at once, which reads as a broken page rather than as an absent prior year. The chip stays \u2014 the cube answers volume and revenue there perfectly well; it is the columns that go | \u2705 |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |

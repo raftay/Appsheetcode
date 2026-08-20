@@ -1149,6 +1149,22 @@ body[data-page="overview"] .ov-line-head .rule{flex:1; height:1px; background:va
      see volRev(). Two equal cards, and the same prefix as the rule above on
      purpose: a :where() version scores below it and would never apply. */
   body[data-page="overview"] .kpi-row.two{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  /* SIX cards once CPI is reported. The strip is one row or it is nothing: a
+     sixth card that wraps onto its own line reads as a different panel, which is
+     exactly how the CPI card first shipped. So the two index cards share the
+     width of the one they replace, the % boxes narrow, and every type size in
+     the row steps down — the cards are em-based below, so one font-size on the
+     row does most of the work. */
+  body[data-page="overview"] .kpi-row.six{
+    grid-template-columns:minmax(0,1.15fr) 92px minmax(0,1.15fr) 92px minmax(0,.8fr) minmax(0,.8fr); gap:9px}
+  body[data-page="overview"] .kpi-row.six .kpi{padding:10px 11px; min-width:0}
+  body[data-page="overview"] .kpi-row.six .kpi .k{font-size:8.5px; letter-spacing:.1em; margin-bottom:5px}
+  body[data-page="overview"] .kpi-row.six .kpi .big{font-size:18px}
+  body[data-page="overview"] .kpi-row.six .kpi .big .u{font-size:10px}
+  body[data-page="overview"] .kpi-row.six .kpi .ly{font-size:9.5px; margin-top:5px}
+  body[data-page="overview"] .kpi-row.six .kpi-d{padding:8px 6px}
+  body[data-page="overview"] .kpi-row.six .kpi-d .dl{font-size:8px; letter-spacing:.06em}
+  body[data-page="overview"] .kpi-row.six .kpi-d .dv{font-size:15px}
   @media (max-width:980px){          /* --bp-mid; was 860px */
     body[data-page="overview"] .kpi-row{display:flex; flex-wrap:wrap}
     body[data-page="overview"] .kpi-unit{display:flex; gap:8px; align-items:stretch; flex:1 1 240px; min-width:0}
@@ -3956,14 +3972,22 @@ window.AmrCube = (function(){
     var groupBy = o.groupBy || null;
     var cov = o.coverage || man.coverage || { minVol:0, minRev:0 };
 
-    /* group key -> { sums, pairs{plant|item: [cyV,pyV,cyR,pyR]}, cpairs{…} }
+    /* group key -> { sums, pairs{plant|item:[cyV,pyV,cyR,pyR]}, cpairs{…6…} }
        TWO pair indexes, because the two price indices are the same arithmetic at
        two different grains (see script.gs piIndex_):
          pairs   plant | item             -> PPI
          cpairs  plant | sold-to | item   -> CPI
        Qlik's Cust Price Detail keys its "Customer" column on SOLD TO, not
        Customer Parent, so that is what the third part is. `cpairs` is only built
-       on the Aggregates line, which is the only one carrying soldTo. */
+       on the Aggregates line, which is the only one carrying soldTo.
+
+       A cpair carries SIX slots, not four: volume, netted revenue, and PRICED
+       revenue — the dollars on fact rows that also carried tonnes. CPI's ASP is
+       built from the priced pair and its weight from the netted one, because a
+       credit row moves the money without moving the tonnes and so destroys a
+       price rather than reducing one. script.gs piIndex_ carries the measurement
+       and the Qlik expression it comes from; this is the same rule where the
+       browser can see the individual fact rows. */
     var G = {}, order = [];
     var soldToCol = (isAgg && man.dims.indexOf('soldTo') !== -1) ? 'soldTo' : null;
     function bucket(key){
@@ -4020,7 +4044,7 @@ window.AmrCube = (function(){
         function cpairOf(g){
           if (!ckey) return null;
           var pr = g.cpairs[ckey];
-          if (!pr) pr = g.cpairs[ckey] = [0, 0, 0, 0];
+          if (!pr) pr = g.cpairs[ckey] = [0, 0, 0, 0, 0, 0];   // +cyRevPriced, pyRevPriced
           return pr;
         }
         if (cSlot !== undefined){
@@ -4031,7 +4055,8 @@ window.AmrCube = (function(){
           if (vex) gc.cyEx  += vex[i];
           if (vva) gc.cyVa  += vva[i];
           prc[0] += vv[i]; prc[2] += vr[i];
-          var crc = cpairOf(gc); if (crc){ crc[0] += vv[i]; crc[2] += vr[i]; }
+          var crc = cpairOf(gc);
+          if (crc){ crc[0] += vv[i]; crc[2] += vr[i]; if (vv[i] > 0) crc[4] += vr[i]; }
         }
         if (pSlot !== undefined){
           var gp = bucket(keyFor(pSlot)), prp = pairOf(gp);
@@ -4041,7 +4066,8 @@ window.AmrCube = (function(){
           if (vex) gp.pyEx  += vex[i];
           if (vva) gp.pyVa  += vva[i];
           prp[1] += vv[i]; prp[3] += vr[i];
-          var crp = cpairOf(gp); if (crp){ crp[1] += vv[i]; crp[3] += vr[i]; }
+          var crp = cpairOf(gp);
+          if (crp){ crp[1] += vv[i]; crp[3] += vr[i]; if (vv[i] > 0) crp[5] += vr[i]; }
         }
       }
     });
@@ -4051,22 +4077,30 @@ window.AmrCube = (function(){
        arithmetic to script.gs piIndex_ - coverage, weight = CY revenue, factor =
        weight x the pair's own ASP move, index = Sum f / Sum w - which is what
        keeps the browser's answer and the server's the same number. */
-    function pool(pairs){
+    var cpiCap = cov.cpiAspCap || 0;
+    function pool(pairs, priced){
       var w = 0, f = 0;
       for (var pk in pairs){
         var o2 = pairs[pk];
-        if (!(o2[0] > 0 && o2[1] > 0 && o2[2] > 0 && o2[3] > 0)) continue;   // the app's own coverage
-        if (!(o2[0] > mv && o2[1] > mv && o2[2] > mr && o2[3] > mr)) continue; // Qlik's floors
-        var pyAsp = o2[3] / o2[1], cyAsp = o2[2] / o2[0];
-        f += o2[2] * ((cyAsp - pyAsp) / pyAsp);
+        /* the ASP is read off priced revenue for CPI and netted revenue for PPI;
+           the WEIGHT is the netted figure either way */
+        var cr = priced ? o2[4] : o2[2], pr = priced ? o2[5] : o2[3];
+        if (!(o2[0] > 0 && o2[1] > 0 && cr > 0 && pr > 0)) continue;          // the app's own coverage
+        if (!(o2[0] > mv && o2[1] > mv && cr > mr && pr > mr)) continue;      // Qlik's floors
+        var pyAsp = pr / o2[1], cyAsp = cr / o2[0];
+        var asp = (cyAsp - pyAsp) / pyAsp;
+        /* the CPI-only exclusion (APP_CONFIG \u00a71 cpiAspCap). PPI passes priced
+           = false and is never capped, so its published index does not move. */
+        if (priced && cpiCap > 0 && Math.abs(asp) > cpiCap) continue;
+        f += o2[2] * asp;
         w += o2[2];
       }
       return { w: w, f: f };
     }
     var rows = order.map(function(k){
       var g = G[k];
-      var pi = pool(g.pairs);
-      var ci = soldToCol ? pool(g.cpairs) : null;
+      var pi = pool(g.pairs, false);
+      var ci = soldToCol ? pool(g.cpairs, true) : null;
       delete g.pairs; delete g.cpairs;                 // don't hand the caller the scratch indexes
       g.cyAsp = g.cyVol ? g.cyRev / g.cyVol : 0;
       g.pyAsp = g.pyVol ? g.pyRev / g.pyVol : 0;
@@ -15611,6 +15645,45 @@ AMR.page('overview', {
        decimals a computed bound arrives with. */
     function fAxisPct(v){ return (Math.round((Number(v)||0)*10)/10)+'%'; }
 
+    /* ---- AXIS TICKS: ROUND NUMBERS, EVERY AXIS ------------------------------
+       Chart.js walks a scale by repeated addition, and 14.8 + 0.2 is
+       15.000000000000002 in binary — so an axis that should read $15.00 printed
+       sixteen digits of it. headroom() already hands the chart round BOUNDS;
+       this rounds what the chart makes out of them, which is the other half and
+       the half that shows.
+
+       THE PRECISION COMES FROM THE TICK SPACING, not from a fixed number of
+       decimals: a 0.2 step wants one, a 250,000 step wants none, and one helper
+       then serves dollars, tonnes and percentages alike. Chart.js hands the
+       whole tick array to the callback as its third argument, which is where
+       the spacing is read from; with a single tick there is no spacing to read
+       and the value is left alone.
+
+       Magnitude suffixes are deliberately NOT unified — volume axes read in
+       thousands (3500k) and money axes in millions, and both are what their
+       readers expect. Only the noise is removed. */
+    function axFix(v, ticks){
+      v=Number(v)||0;
+      if(!ticks || ticks.length<2) return v;
+      var a=Number(ticks[0].value), b=Number(ticks[1].value);
+      if(!isFinite(a) || !isFinite(b)) return v;
+      var step=Math.abs(b-a);
+      if(!(step>0)) return v;
+      var dp=Math.max(0, Math.min(8, -Math.floor(Math.log(step)/Math.LN10)+1));
+      return Number(v.toFixed(dp));
+    }
+    function axMoney(v, i, ticks){
+      var n=axFix(v, ticks), a=Math.abs(n), sgn=(n<0?'-$':'$');
+      if(a>=1e6) return sgn+(Math.round(a/1e5)/10)+'M';
+      if(a>=1e4) return sgn+(Math.round(a/1e2)/10)+'k';
+      return sgn+n;
+    }
+    function axMoneyPlain(v, i, ticks){ var n=axFix(v, ticks); return (n<0?'-$':'$')+Math.abs(n); }
+    function axThousands(v, i, ticks){
+      var n=axFix(v, ticks);
+      return Math.abs(n)>=1000 ? (Math.round(n/100)/10)+'k' : String(n);
+    }
+
     /* ---- REVENUE, off whatever shape the row arrived in ---------------------
        Revenue reaches this page under three names and no payload is missing it:
          · the month cube and both cross reports say cyRev / pyRev;
@@ -16041,18 +16114,29 @@ AMR.page('overview', {
         var k=D._pm[i2], c=o.pm[k]; if(!c) c=o.pm[k]={pv:0,cv:0,pr:0,cr:0};
         c.pv+=nums.pyVol[i2]; c.cv+=nums.cyVol[i2]; c.pr+=nums.pyRev[i2]; c.cr+=nums.cyRev[i2];
         if(D._pc){
-          var k2=D._pc[i2], c2=o.pc[k2]; if(!c2) c2=o.pc[k2]={pv:0,cv:0,pr:0,cr:0};
+          var k2=D._pc[i2], c2=o.pc[k2];
+          if(!c2) c2=o.pc[k2]={pv:0,cv:0,pr:0,cr:0,prp:0,crp:0};
           c2.pv+=nums.pyVol[i2]; c2.cv+=nums.cyVol[i2]; c2.pr+=nums.pyRev[i2]; c2.cr+=nums.cyRev[i2];
+          /* PRICED revenue: dollars on rows that also carried tonnes. A credit
+             row is revenue with no volume - real money, but not a price. */
+          if(nums.pyVol[i2]>0) c2.prp+=nums.pyRev[i2];
+          if(nums.cyVol[i2]>0) c2.crp+=nums.cyRev[i2];
         }
       }
       /* ONE pooling pass, run at each grain - the same arithmetic as script.gs
-         piIndex_ and as the cube's pool(), which is what makes the three agree. */
-      function poolPairs(bag){
+         piIndex_ and as the cube's pool(), which is what makes the three agree.
+         `priced` switches the ASP onto credit-free revenue and turns the CPI
+         exclusion on; the weight stays the netted figure either way. */
+      var CPICAP=(D && D.cpiAspCap) || 0;
+      function poolPairs(bag, priced){
         var w=0,f=0;
         for(var k in bag){ var c=bag[k];
-          if(c.pv>0&&c.cv>0&&c.pr>0&&c.cr>0){
-            var pa=c.pr/c.pv, ca=c.cr/c.cv;
-            f+=c.cr*((ca-pa)/pa); w+=c.cr;
+          var cr=priced?c.crp:c.cr, pr=priced?c.prp:c.pr;
+          if(c.pv>0&&c.cv>0&&pr>0&&cr>0){
+            var pa=pr/c.pv, ca=cr/c.cv;
+            var asp=(ca-pa)/pa;
+            if(priced && CPICAP>0 && Math.abs(asp)>CPICAP) continue;
+            f+=c.cr*asp; w+=c.cr;
           }
         }
         return { w:w, f:f };
@@ -16060,8 +16144,8 @@ AMR.page('overview', {
       function finAcc(o,label){
         var cyAsp=o.cyVol?o.cyRev/o.cyVol:0, pyAsp=o.pyVol?o.pyRev/o.pyVol:0;
         var live=(o.cyRev>0&&o.pyRev>0);
-        var pi=poolPairs(o.pm);                   // PPI: plant x material
-        var ci=D._pc?poolPairs(o.pc):null;        // CPI: plant x sold-to x material
+        var pi=poolPairs(o.pm, false);            // PPI: plant x material, netted
+        var ci=D._pc?poolPairs(o.pc, true):null;  // CPI: plant x sold-to x material, priced
         return { label:label, cyVol:o.cyVol, pyVol:o.pyVol,
           volPct:o.pyVol?(o.cyVol-o.pyVol)/o.pyVol:0,
           cyAsp:cyAsp, pyAsp:pyAsp, aspPct:pyAsp?(cyAsp-pyAsp)/pyAsp:0,
@@ -16452,7 +16536,7 @@ AMR.page('overview', {
     }
     function renderKpiRow(hostId, t, unit, aspFmt){
       var host=$(hostId);
-      host.classList.remove('two');
+      host.classList.remove('two'); host.classList.remove('six');
       if(!t || !t.present){
         host.innerHTML='<div class="kpi na">No data for this selection.</div>';
         return;
@@ -16473,7 +16557,9 @@ AMR.page('overview', {
       }
       function idxCls(v){ return sign(v)==='up'?'pos':(sign(v)==='down'?'neg':''); }
       /* CPI rides beside PPI when the source can answer it - same rule as the
-         table column (hasCpi): present or absent, never a dash. */
+         table column (hasCpi): present or absent, never a dash. Six cards need
+         the tighter grid, or the sixth wraps onto a line of its own. */
+      if(t.cpi!=null) host.classList.add('six');
       host.innerHTML =
           '<div class="kpi-unit">'+kpiMain('Volume', fInt(t.cyVol)+uSpan, 'Last year',
               fInt(t.pyVol)+' '+unit, false)
@@ -18511,7 +18597,7 @@ AMR.page('overview', {
             tooltip:{ callbacks:{ label:function(x){
               return x.dataset.label+': $'+Number(x.raw).toFixed(2)+'/m\u00b3'; } } } },
           scales:{ y:{ beginAtZero:true,
-            ticks:{ callback:function(v){ return '$'+Number(v).toFixed(0); } } } } }
+            ticks:{ callback:axMoneyPlain } } } }
       }));
     }
 
@@ -18568,7 +18654,7 @@ AMR.page('overview', {
                       headroom above the largest bar; beginAtZero keeps the bars honest. */
                    y:{ beginAtZero:true, grace:'14%',
                        grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                         callback:function(v){ return '$'+v; }} } } },
+                         callback:axMoneyPlain}} } },
         plugins:[ChartDataLabels] }));
     }
 
@@ -19113,7 +19199,38 @@ AMR.page('overview', {
        dimension tables). The month/quarter trend is NOT stale: every point there
        is one bucket against the same bucket a year earlier, which stays true at
        any window length. */
-    function pyStale(){ return winMode() && winSpan().length > 12; }
+    /* THE OLDEST YEAR THE CUBE HOLDS HAS NOTHING TO COMPARE AGAINST.
+       Every prior-year figure on this page is that month minus twelve, and for
+       the FIRST year in the history those months are simply not there. Selecting
+       it - the 2023 chip, on today's data - leaves vs-last-year blank everywhere
+       at once: PY volume zero, ASP % and both indices zero, the second donut
+       empty, the growth bridges undrawable. That reads as "the page is broken",
+       not as "there is no prior year".
+
+       The chip is NOT removed: the cube can answer volume and revenue for that
+       year perfectly well, and hiding the control would take a usable window
+       away to avoid explaining an empty column. Instead the window is treated as
+       exactly what it is - a window with no prior year - which is the same shape
+       the page already has for a window longer than twelve months. One rule, two
+       reasons to reach it.
+
+       Tested against the CUBE, not the slider: WIN.months is the union of both
+       lines and the floor, so "the oldest year" is not something the handles can
+       be read for. */
+    function pyAbsent(){
+      if(!winMode()) return false;
+      var C0=cube(); if(!C0) return false;
+      var sp=winSpan(); if(!sp.length) return false;
+      var any=false, saw=false;
+      ['agg','rmx'].forEach(function(l){
+        var m=C0.manifest(l); if(!m || !m.ym || !m.ym.length) return;
+        saw=true;
+        var have={}; m.ym.forEach(function(x){ have[x]=1; });
+        for(var i=0;i<sp.length;i++){ if(have[ymAdd(sp[i],-12)]){ any=true; return; } }
+      });
+      return saw && !any;
+    }
+    function pyStale(){ return winMode() && (winSpan().length > 12 || pyAbsent()); }
 
     /* THE SAME TEST, AND THE OTHER HALF OF THE ANSWER. pyStale() above says why
        the prior-year side goes. This says what is left when it does.
@@ -19693,7 +19810,8 @@ AMR.page('overview', {
                    pyFsc:Number(g.pyFsc)||0, pyFv:Number(g.pyFv)||0,
                    pyVol:(pyIn && pyVol)?pyVol:null,
                    pyAsp:(pyIn && pyVol)?(Number(g.pyAsp)||0):null,
-                   ppi:  (pyIn && pyVol)?pct(Number(g.ppi)||0):null };
+                   ppi:  (pyIn && pyVol)?pct(Number(g.ppi)||0):null,
+                   cpi:  (pyIn && pyVol && g.cpi!=null)?pct(Number(g.cpi)||0):null };
         });
       } else {
         var rows=C0.query({ line:line, cyMonths:cy, pyMonths:py, groupBy:'ym', filters:R.filters }) || [];
@@ -19706,10 +19824,23 @@ AMR.page('overview', {
                    pyFsc:Number(g.pyFsc)||0, pyFv:Number(g.pyFv)||0,
                    pyVol:(pyIn && pyVol)?pyVol:null,
                    pyAsp:(pyIn && pyVol)?(Number(g.pyAsp)||0):null,
-                   ppi:  (pyIn && pyVol)?pct(Number(g.ppi)||0):null };
+                   ppi:  (pyIn && pyVol)?pct(Number(g.ppi)||0):null,
+                   cpi:  (pyIn && pyVol && g.cpi!=null)?pct(Number(g.cpi)||0):null };
         });
       }
       var dense=M.length>13;
+      /* PAST TWELVE MONTHS THE LAST-YEAR SERIES GO.
+         Every one of them compares a bucket with the same bucket a year earlier,
+         which stays arithmetically true at any window length - but once the
+         window is longer than a year the comparison months are INSIDE the window
+         too, and the chart is drawing the same months twice under two names.
+         That is confusing rather than wrong, and confusing is enough: the
+         "same month last year" bars and lines are dropped, and the index chart -
+         which is nothing BUT a prior-year comparison - goes with them. The
+         this-year series stay and fill the space. Same threshold as pyStale(). */
+      var longWin = pyStale();
+      var cpiVals = M.map(function(m){ return m.cpi; });
+      var hasCpiTrend = !longWin && cpiVals.some(function(v){ return v!=null; });
 
       /* Fuel recovery, both ways up, on ONE chart: the RATE against the left axis
          and the DOLLARS against the right. Read alone the rate hides how much was
@@ -19755,6 +19886,13 @@ AMR.page('overview', {
           +'and this window sits outside the current data year.');
         if(d && d.notes && d.notes.mixFiltered) notes.push('A Strength or Product Class filter is on, so extras and VAP cannot follow it: the build-up is base only.');
       }
+      if(longWin) notes.push(pyAbsent()
+        ? ('This window is the oldest year the month history holds, so there is no prior year to '
+           +'compare against \u2014 every <b>same-'+GW+'-last-year</b> series has been dropped, along with '
+           +'the price-index chart.')
+        : ('This window is longer than twelve months, so every <b>same-'+GW+'-last-year</b> series has '
+           +'been dropped, along with the price-index chart \u2014 the '+GW+'s they compare against are '
+           +'inside the window itself.'));
       if(R.dropped.length) notes.push('Ignored in this chart: <b>'
         +R.dropped.map(function(k){ return esc(CUBE_FIELD_LABEL[k]||k); }).join(', ')
         +'</b> \u2014 no matching values in the month history.');
@@ -19767,8 +19905,9 @@ AMR.page('overview', {
         +'<div class="ov-cbox tall"><canvas id="tr_asp_'+line+'"></canvas></div></div>'
         +(buYm.length?('<div class="ov-block"><p class="lab">ASP build-up by month \u00b7 base, extras and VAP \u00b7 $/'+unit+'</p>'
           +'<div class="ov-cbox tall"><canvas id="tr_bu_'+line+'"></canvas></div></div>'):'')
-        +'<div class="ov-block"><p class="lab">PPI by '+GW+' \u00b7 vs the same '+GW+' last year</p>'
-        +'<div class="ov-cbox tall"><canvas id="tr_ppi_'+line+'"></canvas></div></div>'
+        +(longWin?'':('<div class="ov-block"><p class="lab">'+(hasCpiTrend?'PPI &amp; CPI':'PPI')+' by '+GW
+          +' \u00b7 vs the same '+GW+' last year</p>'
+          +'<div class="ov-cbox tall"><canvas id="tr_ppi_'+line+'"></canvas></div></div>'))
         +(hasFsc?('<div class="ov-block"><p class="lab">Fuel recovery by '+GW+' \u00b7 $/'+unit+' (bars: total $, right axis)</p>'
           +'<div class="ov-cbox tall"><canvas id="tr_fsc_'+line+'"></canvas></div></div>'):'')
         +'<p class="ov-note">'+notes.join('<br>')+'</p>';
@@ -19780,22 +19919,23 @@ AMR.page('overview', {
         labels:{font:{size:11,family:'Inter'},color:C.ink,boxWidth:12,boxHeight:12,usePointStyle:true,pointStyle:'rectRounded'} };
 
       /* volume */
-      var volAll=M.map(function(m){ return m.cyVol; }).concat(M.map(function(m){ return m.pyVol; }));
+      var volAll=M.map(function(m){ return m.cyVol; }).concat(longWin?[]:M.map(function(m){ return m.pyVol; }));
       var volHead=headroom(volAll);
       CH[sec].push(new Chart($('tr_vol_'+line),{ type:'bar',
         /* last year first so it sits on the LEFT of each pair and this year on
            the right \u2014 the eye reads the pair as older then newer */
-        data:{ labels:labels, datasets:[
-          { label:'Same '+GW+' last year', data:M.map(function(m){ return m.pyVol; }), backgroundColor:C.b30, borderRadius:4, maxBarThickness:dense?16:26 },
-          { label:'This year', data:M.map(function(m){ return m.cyVol; }), backgroundColor:C.b70, borderRadius:4, maxBarThickness:dense?16:26 }
-        ]},
+        data:{ labels:labels, datasets:(longWin?[]:[
+          { label:'Same '+GW+' last year', data:M.map(function(m){ return m.pyVol; }), backgroundColor:C.b30, borderRadius:4, maxBarThickness:dense?16:26 }
+        ]).concat([
+          { label:(longWin?'Volume':'This year'), data:M.map(function(m){ return m.cyVol; }), backgroundColor:C.b70, borderRadius:4, maxBarThickness:dense?16:26 }
+        ])},
         options:{ responsive:true, maintainAspectRatio:false,
           plugins:{ legend:LEG, datalabels:{display:false},
             tooltip:{ callbacks:{ label:function(c){
               return c.raw==null ? c.dataset.label+': no data' : c.dataset.label+': '+fInt(c.raw)+' '+unit; } } } },
           scales:{ x:{ grid:{display:false}, ticks:xTicks },
                    y:{ beginAtZero:true, max:volHead.max, grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                         callback:function(v){ return v>=1000?(Math.round(v/100)/10)+'k':v; }} } } } }));
+                         callback:axThousands}} } } }));
 
       /* ASP — line, both lines, identical on the two tabs. On Ready-Mix this is
          ALL-IN wherever the build-up exists (base + extras + VAP) and base
@@ -19814,19 +19954,20 @@ AMR.page('overview', {
       });
       CH[sec].push(new Chart($('tr_asp_'+line),{ type:'line',
         /* same order as the bars above, which also draws this year on top */
-        data:{ labels:labels, datasets:[
+        data:{ labels:labels, datasets:(longWin?[]:[
           { label:'Same '+GW+' last year', data:aspPY,
-            borderColor:C.b30, backgroundColor:C.b30, borderWidth:2, pointRadius:dense?2:3, fill:false, spanGaps:false, borderDash:[5,4], tension:.25 },
-          { label:'This year', data:aspCY,
+            borderColor:C.b30, backgroundColor:C.b30, borderWidth:2, pointRadius:dense?2:3, fill:false, spanGaps:false, borderDash:[5,4], tension:.25 }
+        ]).concat([
+          { label:(longWin?'ASP':'This year'), data:aspCY,
             borderColor:C.navy, backgroundColor:C.navy, borderWidth:2.4, pointRadius:dense?2:3, fill:false, spanGaps:false, tension:.25 }
-        ]},
+        ])},
         options:{ responsive:true, maintainAspectRatio:false,
           plugins:{ legend:LEG, datalabels:{display:false},
             tooltip:{ callbacks:{ label:function(c){
               return c.raw==null ? c.dataset.label+': no data' : c.dataset.label+': '+fAsp(c.raw); } } } },
           scales:{ x:{ grid:{display:false}, ticks:xTicks },
                    y:{ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                         callback:function(v){ return '$'+v; }} } } } }));
+                         callback:axMoneyPlain}} } } }));
 
       /* ASP build-up (Ready-Mix only, and only where the cross-report reaches).
          Stacked bars for this year, a plain dashed line for last year's all-in.
@@ -19862,30 +20003,44 @@ AMR.page('overview', {
                                 autoSkip:false, maxRotation:buDense?60:0, minRotation:buDense?60:0} },
                      y:{ stacked:true, beginAtZero:true, grid:{color:C.line},
                          ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                                callback:function(v){ return '$'+v; }} } } } }));
+                                callback:axMoneyPlain}} } } }));
       }
 
-      /* PPI */
-      var ppiVals=M.map(function(m){ return m.ppi; });
-      var sc=outlierScale(ppiVals.filter(function(v){ return v!=null; }));
-      var ppiHead=sc?{}:headroom(ppiVals);
-      CH[sec].push(new Chart($('tr_ppi_'+line),{ type:'bar',
-        data:{ labels:labels, datasets:[
-          { label:'PPI', data:ppiVals,
-            backgroundColor:ppiVals.map(function(v){ return (v==null||v>=0)?C.pos:C.neg; }),
-            borderRadius:4, maxBarThickness:dense?18:30 }
-        ]},
-        options:{ responsive:true, maintainAspectRatio:false,
-          layout:{ padding:{ top:14 } },
-          plugins:{ legend:{display:false},
-            datalabels:vBarLabels(ppiVals, sc, function(v){ return (v>0?'+':'')+v.toFixed(1)+'%'; }, dense),
-            tooltip:{ callbacks:{ label:function(c){
-              return c.raw==null ? 'No last-year comparison' : 'PPI: '+(c.raw>0?'+':'')+c.raw.toFixed(2)+'%'; } } } },
-          scales:{ x:{ grid:{display:false}, ticks:xTicks },
-                   y:Object.assign({ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                         callback:fAxisPct} },
-                         sc?{min:sc.min,max:sc.max}:{min:ppiHead.min,max:ppiHead.max}) } },
-        plugins:[ChartDataLabels] }));
+      /* PPI, and CPI beside it where the line carries sold-to.
+         COLOUR IS THE SERIES, NOT THE SIGN. One index drawn green-for-up and
+         red-for-down borrowed a semantic the rest of this page spends on
+         growth, and green is not in the palette at all - every other paired
+         chart in this panel is navy against light blue. Two indices settle it:
+         with two series the colour has to say WHICH index, so PPI takes navy
+         and CPI the light blue, exactly as "this year"/"last year" do above,
+         and the sign is read off the axis where it belongs. */
+      if(!longWin){
+        var ppiVals=M.map(function(m){ return m.ppi; });
+        var idxAll=ppiVals.concat(hasCpiTrend?cpiVals:[]);
+        var sc=outlierScale(idxAll.filter(function(v){ return v!=null; }));
+        var ppiHead=sc?{}:headroom(idxAll);
+        var idxSets=[{ label:'PPI', data:ppiVals, backgroundColor:C.navy,
+                       borderRadius:4, maxBarThickness:dense?(hasCpiTrend?10:18):(hasCpiTrend?16:30) }];
+        if(hasCpiTrend) idxSets.push({ label:'CPI', data:cpiVals, backgroundColor:C.b30,
+                       borderRadius:4, maxBarThickness:dense?10:16 });
+        CH[sec].push(new Chart($('tr_ppi_'+line),{ type:'bar',
+          data:{ labels:labels, datasets:idxSets },
+          options:{ responsive:true, maintainAspectRatio:false,
+            layout:{ padding:{ top:14 } },
+            /* one series keeps its value labels; two would overprint each other,
+               so the pair is read off the axis and the tooltip instead */
+            plugins:{ legend:(hasCpiTrend?LEG:{display:false}),
+              datalabels:(hasCpiTrend?{display:false}
+                          :vBarLabels(ppiVals, sc, function(v){ return (v>0?'+':'')+v.toFixed(1)+'%'; }, dense)),
+              tooltip:{ callbacks:{ label:function(c){
+                return c.raw==null ? c.dataset.label+': no last-year comparison'
+                                   : c.dataset.label+': '+(c.raw>0?'+':'')+c.raw.toFixed(2)+'%'; } } } },
+            scales:{ x:{ grid:{display:false}, ticks:xTicks },
+                     y:Object.assign({ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
+                           callback:fAxisPct} },
+                           sc?{min:sc.min,max:sc.max}:{min:ppiHead.min,max:ppiHead.max}) } },
+          plugins:[ChartDataLabels] }));
+      }
 
       /* Fuel recovery \u2014 dollars as bars on the RIGHT axis, rate as lines on the
          left. Last year is drawn first in each pair, matching the volume chart, so
@@ -19916,12 +20071,12 @@ AMR.page('overview', {
                         puts the number the reader is following */
                      y:{ position:'left', beginAtZero:true, grid:{color:C.line},
                          ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                                callback:function(v){ return '$'+v; }} },
+                                callback:axMoneyPlain} },
                      /* dollars on the right, its own gridlines off so the two
                         scales do not draw two sets of lines over each other */
                      y1:{ position:'right', beginAtZero:true, grid:{drawOnChartArea:false},
                           ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                                callback:function(v){ return v>=1000 ? '$'+(Math.round(v/100)/10)+'k' : '$'+v; }} } } } }));
+                                callback:axMoney}} } } }));
       }
     }
 
@@ -20996,7 +21151,7 @@ AMR.page('overview', {
           plugins:{ legend:{display:!solo, position:'bottom', labels:{font:{size:11,family:'Inter'},color:C.ink,boxWidth:12,boxHeight:12,usePointStyle:true,pointStyle:'rectRounded'}},
             datalabels:{display:false},
             tooltip:{ callbacks:{ label:function(c){ return c.dataset.label+': '+fInt(c.raw)+' t'; } } } },
-          scales:{ x:{ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted, callback:function(v){ return v>=1000?(v/1000)+'k':v; }} },
+          scales:{ x:{ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted, callback:axThousands} },
                    y:{ grid:{display:false}, ticks:{font:{size:10.5,family:'Inter'},color:C.ink} } } }) }));
     }
 
