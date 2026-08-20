@@ -22,16 +22,27 @@
  *      mode is a card that stays behind after the selection moved past it —
  *      again, no error, just a stale panel.
  *
+ *   3. AN IN-PANEL TOGGLE MUST NOT DROP THE WINDOW. "Split by segment",
+ *      "Product Class", "Submarkets" — none of them is a new selection, so each
+ *      has to repaint from whatever is driving the page. Every one of them
+ *      called the SERVER painter unconditionally, and the server painter fetches
+ *      STATE.period: on a Prev-month or custom span the panel came back holding
+ *      the month-to-date under the window's own heading. Nothing throws; the
+ *      page simply looks as though it forgot which months were selected.
+ *
  * So this boots the REAL page with google.script.run stubbed and a synthetic
  * month cube, presses each Period button, and reads what is on the page.
  * It is a wiring test, not a data test: the payloads are made up.
  *
- * IT RUNS TWICE, against the legacy Page_Overview.html and against app.html's
- * port of it (chunks 8-9), with the same fixture, the same clicks and the same
- * checks. That is what makes it a gate on the MERGE and not only on the page:
- * every failure names the side it happened on, so "both broke" and "the port
- * broke" cannot be confused. Delete the legacy side at chunk 13, when the file
- * it reads is gone.
+ * IT USED TO RUN TWICE, against the legacy Page_Overview.html as well, which is
+ * what made it a gate on the merge rather than only on the page. That side is
+ * retired, on the rule in tests/README.md: the legacy half of a comparison goes
+ * when the page is deliberately changed, not when its file is deleted. The
+ * Overview was deliberately changed — a long window now reports volume and
+ * revenue and drops the columns that cannot be honest, a Market summary panel
+ * was added, and check 3 below fixes behaviour the legacy page never had. Kept,
+ * the legacy side could only be carried by skipping the new checks for it, and
+ * a gate with a side that skips checks is the weakening that README forbids.
  */
 const fs = require('fs');
 const path = require('path');
@@ -73,10 +84,10 @@ function expand(src, depth) {
     .replace(/<\?[=!]?[\s\S]*?\?>/g, '');
 }
 
-/* The two sides. `merged` is app.html mounted on the overview route; it is the
-   same file the live app serves, with the same stub spliced into its body. */
+/* app.html mounted on the overview route: the same file the live app serves,
+   with the stub spliced into its body. (This was a list of two — see the header
+   for why the legacy side retired.) */
 const SIDES = [
-  { name: 'legacy', file: 'Page_Overview.html' },
   { name: 'merged', file: 'app.html' }
 ];
 
@@ -325,6 +336,17 @@ const IN_BROWSER = {
       excuses: [].filter.call(document.querySelectorAll('.ov-notice, .ov-exempt'), n => vis(n))
                  .map(n => (n.textContent || '').trim().slice(0, 90)),
       aspCol: vis(document.getElementById('aspCol')),
+      /* every subtitle a window path stamps its own span onto. The server
+         painters do not, so "does this still name the window" is the whole of
+         check 8 — and it is exactly what a user sees go wrong. */
+      subs: ['custScope','dimSub','aggBdSub','rmxDimSub','rmxBdSub'].reduce(function(o,id){
+        var el=document.getElementById(id);
+        o[id]=el ? (el.textContent||'').trim() : null;
+        return o;
+      }, {}),
+      toggles: ['custSplit','dimTabs','bdModeSeg','rmxDimTabs','rmxBdModeSeg'].reduce(function(o,id){
+        o[id]=vis(document.getElementById(id)); return o;
+      }, {}),
       tables: {
         cust: document.querySelectorAll('#custBody table tr').length,
         exp: document.querySelectorAll('#expBody table tr').length,
@@ -491,6 +513,38 @@ async function run(side, browser, allFails) {
   if (s.panels.colAggKpi.shown) bad('YTD: the SAP / USGAAP card is on the page with no workbook behind it');
   if (s.panels.colExplore.shown) bad('YTD: Plants & materials is on the page with no rows in it');
 
+  /* ---- 8. an in-panel toggle repaints from whatever is driving the page ----
+     A Prev-month pick is a cube span. Pressing a toggle inside a panel is not a
+     new selection, so the panel must come back for THAT span — the window label
+     each window painter stamps on its own subtitle is the proof, because the
+     server painters do not write one. This used to call the server loader every
+     time, so the panel silently reverted to STATE.period. */
+  const WINLAB = 'Jul 2025';
+  async function toggleKeepsWindow(tabName, segId, buttonSel, subId, what) {
+    const before = await snap();
+    if (!before.toggles[segId]) { bad('Prev month (' + tabName + '): ' + what + ' is not on the page to press'); return; }
+    if (before.subs[subId] == null || before.subs[subId].indexOf(WINLAB) === -1) {
+      bad('Prev month (' + tabName + '): ' + subId + ' does not name the window before the toggle — "'
+        + before.subs[subId] + '"');
+      return;
+    }
+    await pg.click('#' + segId + ' ' + buttonSel);
+    await pg.waitForTimeout(700);
+    const after = await snap();
+    if (after.subs[subId] == null || after.subs[subId].indexOf(WINLAB) === -1) {
+      bad('Prev month (' + tabName + '): pressing ' + what + ' dropped the window — ' + subId
+        + ' is now "' + after.subs[subId] + '", which is the server period, not ' + WINLAB);
+    }
+  }
+  await press('PMTD');
+  await toggleKeepsWindow('Aggregates', 'custSplit',  'button[data-split="on"]',        'custScope', 'Split by segment');
+  await toggleKeepsWindow('Aggregates', 'dimTabs',    'button[data-dim="PROD_CLASS"]',  'dimSub',    'Product Class');
+  await toggleKeepsWindow('Aggregates', 'bdModeSeg',  'button[data-bd="SUBMARKET1"]',   'aggBdSub',  'Submarkets');
+  await tab('rmx');
+  await toggleKeepsWindow('Ready-Mix', 'rmxDimTabs',   'button[data-rdim="SEGMENT"]',   'rmxDimSub', 'Project Segment');
+  await toggleKeepsWindow('Ready-Mix', 'rmxBdModeSeg', 'button[data-rbd="SUBMARKET"]',  'rmxBdSub',  'Submarkets');
+  await tab('agg');
+
   if (SHOTS) {
     fs.mkdirSync(SHOTS, { recursive: true });
     const shot = n => path.join(SHOTS, side.name + '-' + n + '.png');
@@ -528,7 +582,6 @@ async function run(side, browser, allFails) {
     fails.forEach(f => console.error('  ✗ ' + f));
     process.exit(1);
   }
-  console.log('ovperiod: ok on both sides (' + SIDES.map(s => s.name).join(' + ') +
-    ') — four Period settings, Product Category on Prev month only, ' +
-    'no panel left explaining itself.');
+  console.log('ovperiod: ok — four Period settings, Product Category on Prev month ' +
+    'only, no panel left explaining itself, and no in-panel toggle drops the window.');
 })();

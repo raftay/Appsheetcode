@@ -635,7 +635,40 @@ there with the input that moved.
 - PPI accuracy: RMX rows expose `rfiBase`/`facBase` for exact subset PPI. AGG all-markets
   returns the exact `aggAll.ppi`; a single market is exact; **2+ market subsets** use a
   CY-revenue-weighted blend labelled ⓘ *"Estimate for a mix of markets"*.
-- `pyStale()` greys out prior-year-derived metrics when the window exceeds 12 months.
+- **Past twelve months the page reports volume and revenue, and nothing else.** `pyStale()`
+  is the test — every "vs last year" is comparing months with months already inside the window
+  — and `volRev()` is the consequence. Nothing that *divides* survives it: a pooled ASP across
+  several years is not a price anyone charged, so ASP % inc, PPI, VOL %, both growth bridges
+  and the Ready-Mix ASP build-up go with the prior-year columns. What is left is what **adds**.
+  The panels do not print dashes where those numbers were — the KPI strip drops to two cards
+  (`.kpi-row.two`), the tables drop six of their eight measure columns, the second donut becomes
+  **revenue share**, the "vs last year" bars lose their prior-year series and the price chart is
+  replaced by a revenue one. A blank chart under a live heading and a table of em dashes are
+  both worse than not asking the question. `measHead()` / `measCells()` are the single place the
+  columns are decided, which is what keeps six tables in step.
+- **Revenue reaches this page under three names and every payload has it.** The cube and both
+  cross reports say `cyRev` / `pyRev`; every Ready-Mix report says `baseCY` / `basePY`, because
+  for Ready-Mix that figure *is* base concrete revenue; `PV.getReport` now sends `cyRev` too
+  rather than leaving it to be read back off ASP. `revCY()` / `revPY()` read all three, and the
+  ASP fallback is still there for a cached payload built before the field existed — exact
+  except on a row with dollars and no volume, where ASP is 0 and ASP × volume drops them.
+- **The cube keys a plant-derived field by the FIELD name, not by the plantMap it resolves
+  through.** Aggregates submarkets are `submarket1`, and `sm1` is the dictionary. Asking for
+  `sm1` matched nothing, and *the cube's answer to a `groupBy` it cannot resolve is not an
+  error* — it drops every row into one bucket keyed `\u0001all`, which the page then discards
+  as a sentinel. So on any window the submarket breakdown was simply absent, a submarket
+  cross-filter was ignored by every cube-fed panel, and the ASP bridge's submarket mix item
+  came out a flat zero, halving Region / Market mix (their average). Price & Volume hit this
+  first; `AmrCube.dict()` now accepts either spelling so the two entry points cannot disagree.
+- **Market summary sits above Month by month on both tabs, and it is cube-fed on purpose.**
+  Period has four settings and only two exist on the server, so a table built off a report
+  would mean one thing under MTD and nothing at all under Prev month (YTD). The cube answers
+  all four and a dragged span besides. PPI is re-pooled on the span, never averaged out of the
+  months in it.
+- **A computed axis bound prints every digit it has.** Chart.js lays its ticks between the min
+  and max it is handed, so a headroom of `9.1318562625202050` was the axis label. `headroom()`
+  snaps both ends outward to a round step first — 9.13 becomes 10, −3.45 becomes −4 — and
+  `fAxisPct()` rounds the label, because 3 × 0.2 is `0.6000000000000001` in binary.
 - **Period has four settings and only two exist on the server.** `MTD` and `YTD` are what the
   backends answer for. `PMTD` / `PYTD` are the same two shapes one month back, computed in the
   browser from the month cube. `STATE.pick` is the button; `STATE.period` stays the *server*
@@ -653,6 +686,19 @@ there with the input that moved.
   August heading. `pcatFits()` shows it only when a Prev-month pick is active AND the month it
   lands on is the tabs' own month, and it is decided FIRST in the Ready-Mix branch so nothing
   later can throw and leave it showing.
+- **An in-panel toggle repaints from whatever is DRIVING the page, never from the server.**
+  `repaintPanel(win, xf, srv)` is the same three-way answer `renderTab()` gives and
+  `srvOwnsAgg()` states, in the one other place it has to be given. Pressing *Split by
+  segment*, *Product Class* or *Submarkets* is not a new selection — period, window and market
+  have not moved — but all five toggles called the server painter unconditionally, and the
+  server painter fetches `STATE.period`. On a Prev-month or dragged span that put the
+  month-to-date back into the panel a moment after the click, under the window's own heading,
+  so the page read as having forgotten which months were selected while every panel around it
+  still showed them. `ovperiod.js` check 8 presses all five and fails if the panel's subtitle
+  stops naming the window. **A late server ANSWER is the same rule**: the customer merge and
+  `renderFsc()` test `winMode()` too, because a fetch issued for `STATE.period` can land after
+  the user has opened a window, and the request-key check catches a changed market but not a
+  changed owner.
 - **In window mode the server reports must not paint.** `loadDims` / `loadPM` / `paintRxfPanels`
   still run — they keep the filter lists and the shared cache warm — but they fetch for the
   *server* period, so `srvOwnsAgg()` and an early return stop them repainting a fifth of a
@@ -1044,6 +1090,8 @@ or was forgotten.**
 | 2026-08-19 | **`gsparity.js` and `modparity.js` deleted**, on the rule their own headers gave: a legitimate change landed inside a moved region of both files, so neither is a copy of anything and the gates could only be weakened, never passed. `script.gs` and `app.html` also lost every reference to `README.md`, `PLAN.md`, `tests/` and chunk numbers — they explain themselves and each other now, and nothing outside | ✅ |
 | 2026-08-19 | **The Inventory Report publishes itself.** A second hourly trigger (`inventoryReportMailCheck`) watches the mailbox for the Qlik Sense report mail, files its PDF into the Drive folder and calls the same `IR.saveSource` the modal calls — so there is still exactly one setting. **The month is read off the subject, never off the calendar**: June's report is mailed in July as often as not, and stamping `new Date()` on it would mislabel it precisely when a late report made it matter. Old copies are superseded by rename, never overwritten or trashed. The grant is `gmail.readonly` because the "already published" list is a Script Property rather than a Gmail label | ✅ |
 | 2026-08-19 | **The mail watch, second pass.** The folder keeps **one file per month** now — a re-issue replaces its predecessor rather than superseding it by rename, filed and pointed at before the old copy is trashed, and trashed rather than deleted. The heading and the filename are `MMM, YYYY` (`Inventory Report - Jul, 2026`), with a 2005–2100 floor so a four-digit figure in a subject cannot be read as a year. **The no-month fallback is the month BEFORE the send date**, year rolled back with it — a report is published after the period it covers, so a January mail with a bare subject means last December | ✅ |
+| 2026-08-20 | **The Overview past twelve months: volume and revenue, and the columns that cannot be honest are gone rather than dashed.** ASP, PPI, every `vs last year` series, both growth bridges and the Ready-Mix ASP build-up drop out; the KPI strip becomes two cards, the second donut becomes revenue share and the price chart becomes a revenue chart, so every panel is full rather than blank. Revenue is now a first-class measure at every grain — market, submarket, plant type, product class, plant, material, customer, both lines — through one `measHead()` / `measCells()` pair. A **Market summary** table (market → submarkets, CY/PY volume, revenue, ASP and PPI) sits above Month by month on both tabs, cube-fed so it answers for all four Period settings. Two defects fell out of it: the Overview asked the cube for `sm1` where the field is `submarket1`, and **a `groupBy` the cube cannot resolve is not an error** — it returns one `\u0001all` bucket the page discards, so the submarket breakdown was missing from every window, a submarket cross-filter was silently ignored, and the ASP bridge's submarket mix item was a flat zero; and `headroom()` handed Chart.js raw bounds, which is how an axis came to read `9.1318562625202050%` | ✅ |
+| 2026-08-20 | **An in-panel toggle was dropping the window.** Reported for *Split by segment*, and it was all five: *Product Class*, *Submarkets* on both tabs and *Project Segment* too. None of them is a new selection, but each called the **server** painter unconditionally and the server painter fetches `STATE.period` — so on a Prev-month or dragged span the panel came back holding the month-to-date under the window's own heading, a fifth of a second after the click, while every panel around it still showed the window. One rule now (`repaintPanel`), the same three-way answer `renderTab()` already gives. `ovperiod.js` check 8 presses all five; **its legacy side is retired** on this repo's own rule — the page was deliberately changed, and keeping the side would have meant skipping the new checks for it | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |

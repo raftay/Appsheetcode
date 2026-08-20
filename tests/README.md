@@ -563,7 +563,7 @@ DBG=1 node tests/ovperiod.js            # dump the boot state and stop guessing
 CHROMIUM_PATH=/path/to/chrome node tests/ovperiod.js
 ```
 
-Two Overview changes are only visible in a browser, and both fail **silently**.
+Three Overview changes are only visible in a browser, and all three fail **silently**.
 
 *Period now has four settings.* `Prev month (MTD)` and `Prev month (YTD)` are not server
 periods — they are spans on the month cube — so pressing one has to move the slider, light
@@ -574,6 +574,13 @@ breaks: it shows the wrong month's numbers, which is the exact bug Product Categ
 *A panel with nothing in it is not shown.* There is no notice and no empty frame left
 anywhere on the page, so the failure mode is a card that stays behind after the selection
 moved past it — again, no error, just a stale panel.
+
+*An in-panel toggle must not drop the window.* `Split by segment`, `Product Class`,
+`Submarkets` — none is a new selection, so each has to repaint from whatever is driving the
+page. All five called the **server** painter unconditionally, and the server painter fetches
+`STATE.period`, so on a Prev-month or dragged span the panel came back holding the
+month-to-date under the window's own heading. The window label each window painter stamps on
+its own subtitle is what the check reads, because the server painters do not write one.
 
 So it boots the **real page** with `google.script.run` stubbed and a **synthetic month
 cube**: two years, eight months each, four rows a month, so the newest month is Aug-2025 and
@@ -586,8 +593,18 @@ tab**; Product Category showing under `MTD` or `YTD`, or missing under either Pr
 pick; an empty plants / customers / fuel / ASP-build-up table under a Prev-month span (those
 all come from the cube now, so empty means the wiring went); the SAP cards or the extras-by-
 type panel surviving a cube span; a single-month pick leaving *Month by month* on the page;
-a 2024 window keeping the surcharge panels (their columns are a live-book field); and a card
-that does not come back when a server period is pressed again.
+a 2024 window keeping the surcharge panels (their columns are a live-book field); a card
+that does not come back when a server period is pressed again; and any of the five in-panel
+toggles leaving its subtitle no longer naming the window.
+
+**The legacy side is retired.** This ran twice — against `Page_Overview.html` out of git as
+well — which is what made it a gate on the merge rather than only on the page. The Overview
+has now been deliberately changed (a window longer than a year reports volume and revenue and
+drops the columns that cannot be honest; a Market summary panel was added; the toggle check
+above fixes behaviour the legacy page never had), so the rule at the top of this file applies:
+the legacy half goes when the page changes on purpose. Carrying it would have meant skipping
+the new checks for that one side, and a gate with a side that skips checks is the weakening
+that rule forbids.
 
 Chart.js is stubbed to a no-op constructor. Every assertion is about a table or about whether
 a card is on the page — but the stub matters more than that sounds: a chart that throws
