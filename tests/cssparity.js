@@ -96,6 +96,11 @@ const EXPAND = {
   'border-right':  ['border-right-width', 'border-right-style', 'border-right-color'],
   'border-radius': ['border-top-left-radius', 'border-top-right-radius',
                     'border-bottom-right-radius', 'border-bottom-left-radius'],
+  /* The §A4 block gained this with the .impact strip the chunk-6 port dropped —
+     `.impact-go:hover` sets border-color alone. Expanding it widens what the
+     run compares; it is not a property being waved through. */
+  'border-color':  ['border-top-color', 'border-right-color',
+                    'border-bottom-color', 'border-left-color'],
   background:    ['background-color', 'background-image'],
   flex:          ['flex-grow', 'flex-shrink', 'flex-basis'],
   gap:           ['row-gap', 'column-gap'],

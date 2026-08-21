@@ -734,6 +734,10 @@ table.cust tfoot td{background:#fff; font-weight:700; border-top:2px solid var(-
 .mapHost .mapsec.open .mapsec-head{background:var(--blue-10); border-bottom:1px solid var(--line)}
 .mapHost .mapsec-toggle{flex:1 1 260px; display:flex; align-items:center; gap:9px; background:none; border:0;
   padding:3px 0; cursor:pointer; text-align:left; min-width:0}
+/* `mchev`, not `chev`: §A3 took Price & Volume's name for this arrow and
+   Ready-Mix's copy kept its own until it was renamed to match. While they
+   differed, Ready-Mix's fell through to the generic `.chev` above — 10px, and
+   no rotation, so an open section looked exactly like a shut one. */
 .mapHost .mapsec-toggle .mchev{flex:none; width:16px; font:700 15px Inter; color:var(--blue-70);
   transition:transform .15s ease; line-height:1}
 .mapHost .mapsec.open .mapsec-toggle .mchev{transform:rotate(90deg)}
@@ -763,7 +767,14 @@ a.mapbtn{display:inline-block; text-decoration:none; line-height:1.25}
 
 /* ---- the add-row dialog the mapping check opens ----
    Was `#sugHost …`. Its own overlay rather than .amr-modal: it is a wide
-   data grid with a sticky foot, not a card of prose. */
+   data grid with a sticky foot, not a card of prose.
+
+   BOTH mapping checks open this dialog, and the two pages named its state
+   class differently before the promotion — Price & Volume `map-open`, Ready-Mix
+   `sug-open`. Only one name could survive in a shared rule and this is it, so
+   Ready-Mix toggled a class no rule matched and the page behind its dialog kept
+   scrolling. Same shape as `.mchev` in the block above: a promoted rule is only
+   shared if every caller uses the promoted NAME. */
 body.map-open{overflow:hidden}
 .sugHost .sugback{position:fixed; inset:0; background:rgba(1,30,106,.34); z-index:60}
 .sugHost .sugbox{position:fixed; z-index:61; top:50%; left:50%; transform:translate(-50%,-50%);
@@ -1085,9 +1096,44 @@ body[data-page="pricevolume"] .shell{grid-template-columns:264px 1fr; max-width:
 
 :where(body[data-page="rmx"]) .previewCard{margin-top:4px}
 
-/* the mapping check's two small deltas from §A3's shared block */
+/* the mapping check's small deltas from §A3's shared block */
 :where(body[data-page="rmx"]) .mapHost .card-head{padding:revert}
-:where(body[data-page="rmx"]) .mapHost td.val{max-width:460px; font:inherit}/* ---- §P overview -----------------------------------------------------------
+:where(body[data-page="rmx"]) .mapHost td.val{max-width:460px; font:inherit}
+/* the Market(s) column is Ready-Mix's alone — Price & Volume's mapping check
+   lists no markets, which is why this one did not travel with `td.val` when the
+   block was promoted. Without it the page's own `td{text-align:right;
+   white-space:nowrap}` takes the cell, and a list of markets right-aligns and
+   refuses to wrap: two markets already push the table past its scroll box. */
+:where(body[data-page="rmx"]) .mapHost td.mkt{text-align:left; white-space:normal; color:var(--muted)}
+
+/* ---- "this table is affected" strip on the report cards --------------------
+   THIS BLOCK WAS DROPPED IN THE CHUNK-6 PORT and nothing in the suite could
+   see it. setStrip() builds the strip from JS, so no markup gate ever meets
+   the class; and no fixture in tests/ answers RMX_getUnmapped with a row, so
+   the strip does not exist in any harness run — cssparity walks the table
+   hosts and compares only the properties THIS block declares, which is a list
+   the missing rules were not in. What shipped instead was the raw markup: the
+   "!" badge run straight into the sentence as "!339 products", and a UA-grey
+   "Fix mapping" button sitting in the text.
+
+   It stays in §A4 rather than joining .mapHost in §A3, on §A3's own test:
+   impactFor() reads mapCounts, and Ready-Mix is the only page that ever has
+   any. AmrRmxSlide emits the same markup, deliberately with mapCounts null —
+   a strip is a call to action for the page, not something to present.
+
+   :where() because scoping may not add weight: legacy was a bare `.impact` at
+   (0,1,0) and every rule here is still (0,1,0). */
+:where(body[data-page="rmx"]) .impact{display:flex; align-items:center; gap:10px; margin:0 0 2px;
+  padding:9px 13px; background:var(--neg-bg); border:1px solid #F0C9CF; border-radius:10px}
+:where(body[data-page="rmx"]) .impact-i{flex:none; width:17px; height:17px; border-radius:50%;
+  background:var(--neg); color:#fff; font:800 11px Inter; line-height:17px; text-align:center}
+:where(body[data-page="rmx"]) .impact-t{flex:1; font:500 11.5px Inter; color:#7A3039; line-height:1.45}
+:where(body[data-page="rmx"]) .impact-t b{font-weight:800}
+:where(body[data-page="rmx"]) .impact-go{flex:none; border:1px solid #E3AEB6; background:var(--white);
+  color:var(--neg); border-radius:8px; padding:5px 10px; font:700 11px Inter; cursor:pointer}
+:where(body[data-page="rmx"]) .impact-go:hover{background:#fff; border-color:var(--neg)}
+
+/* ---- §P overview -----------------------------------------------------------
    The biggest page block in the file, and the reason is not that anything here
    is shared-looking: 136 ids and 234 rules, every one of them the Executive
    Overview's own. .ov-* is the page frame, .kpi* the headline strip, .dq-* /
@@ -8182,7 +8228,7 @@ var AmrRmxSlide = (function(){
     }).join('');
     $('tablesHost').innerHTML = html || '<div class="card"><div class="empty">No data.</div></div>';
 
-    if(window.paintImpact) paintImpact();
+    paintImpact();          /* inert here: the deck passes no mapCounts */
     renderRmxPreview();
   }
 
@@ -8194,7 +8240,7 @@ var AmrRmxSlide = (function(){
     }
     $('extrasHost').innerHTML = html;
 
-    if(window.paintImpact) paintImpact();
+    paintImpact();          /* inert here: the deck passes no mapCounts */
     renderRmxPreview();
   }
 
@@ -13369,7 +13415,15 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
     }).join('');
     $('tablesHost').innerHTML = html || '<div class="card"><div class="empty">No data.</div></div>';
 
-    if(window.paintImpact) paintImpact();
+    /* NOT `if(window.paintImpact)`. On Page_Rmx.html every function was
+       declared at file scope, so that guard was a page function asking whether
+       it existed and the answer was always yes. In here the page is a module:
+       window.paintImpact is undefined, the guard never passes, and the mapping
+       strip these two renders are supposed to repaint stayed painted only until
+       the first re-render. Changing market, period, the N/A toggle or the
+       export theme replaces innerHTML and the warning was gone until a reload —
+       measured, 3 strips to 0 on one period click. */
+    paintImpact();
     renderRmxPreview();
     hideLoader();          // the tables are on the page: THIS is "ready"
   }
@@ -13483,7 +13537,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
     }
     $('extrasHost').innerHTML = html;
 
-    if(window.paintImpact) paintImpact();
+    paintImpact();       /* unguarded, for the reason renderReport gives */
     renderRmxPreview();
     hideLoader();          // the tables are on the page: THIS is "ready"
   }
@@ -13682,7 +13736,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
     return '<div class="mapsec'+(open?' open':'')+'">'
       + '<div class="mapsec-head">'
       +   '<button class="mapsec-toggle" data-sec="'+kind+'" aria-expanded="'+open+'">'
-      +     '<span class="chev">\u203a</span>'
+      +     '<span class="mchev">\u203a</span>'
       +     '<span class="mapsec-title">'+esc(M.title)+'</span>'
       +     '<span class="mapsec-n">'+fInt(n)+'</span>'
       +   '</button>'
@@ -13797,8 +13851,8 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
   function renderSugModal(){
     var host=$('sugHost'); if(!host) return;
     var kind=STATE.sugModal;
-    if(!kind){ host.innerHTML=''; document.body.classList.remove('sug-open'); return; }
-    document.body.classList.add('sug-open');
+    if(!kind){ host.innerHTML=''; document.body.classList.remove('map-open'); return; }
+    document.body.classList.add('map-open');
     var M=SUGMETA[kind], inner, foot='';
 
     if(STATE.sugErr){
