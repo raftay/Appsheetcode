@@ -950,3 +950,39 @@ restoring TP01's `indexOf('2026 Volume')`, and letting one `2026` back into a ta
 **This one does not retire.** It is not a comparison against a previous version of anything —
 it is a property the suite has to keep, and the only harness in the folder that will still be
 saying something true in 2031.
+
+## `cpiindex.js` — the CPI exclusion, and the reason it did nothing
+
+`cpiOutlier` was added, was correct, and changed nothing anyone could see. The Overview went on
+publishing **+141.7%** for 2026 Jan–Aug against Qlik's 2.86%, and **+243.0%** for GTA against
+2.48%. Nothing about the arithmetic was wrong. **The threshold never arrived** — it travels
+inside the cube manifest and the cross-filter dataset, every cache key in that chain was built
+from the *data's* generation, and `cov.cpiOutlier || 0` reads a missing key as *no threshold at
+all*. See README §7.
+
+```bash
+node tests/cpiindex.js            # no dependencies
+```
+
+| check | what would have happened without it |
+|---|---|
+| `ovcCovTok_` is in `ovcGen_`, moves on any `COVERAGE` edit — a threshold, a floor, a **deleted** key — and comes back when the edit is undone | the exact failure above. A token that did not move leaves every cache serving the pre-edit copy; one that moved on its own would wipe and re-fetch the whole cube on every boot |
+| `getCrossData`'s key carries the same token | the local cross-filter path indexes CPI off a payload cached before the edit, for the cache's six hours, while the cube path has already caught up — two panels on one screen disagreeing |
+| `piIndex_` at both grains, with and without the threshold | the weight is **every covered pair** and only the factor loses the outlier. A version that dropped it from both would silently move the denominator too |
+| `AmrCube.query` == `piIndex_` on one fixture | the server and the browser are two copies of one method, and the browser's is what the Overview publishes |
+| a manifest with **no** `coverage` block reports `cpi: null` | the one that would have caught it. That manifest is what a warm device held; unexcluded, it reads 3,323% on the fixture and +141.7% on the real window |
+| a deliberate `cpiOutlier: 0` still disables the guard | fail-closed must distinguish *absent* from *off*, or `0` becomes unsettable |
+| PPI is untouched at its own grain | the two sold-tos pool into ONE pair there, so there is nothing extreme left to catch — the actual reason PPI never needed the rule and must not be given it |
+| source text: `revalidate()` writes the confirmed manifest back | it was only ever stored by `adoptGen()`, which runs on a **cold** start, so a warm device painted from the manifest it first saw for as long as the generation held |
+
+**The fixture is the real pair.** `3P36` / Brock Aggregates / `9141` — 47.04 t for $0.14 last
+year against 2,918.59 t for $42,780.71 this year, +492,409% — beside one ordinary pair at the
+same plant and material. That pairing is the point: at the CPI grain they are two pairs and the
+exclusion has something to catch; at the PPI grain they are one.
+
+Mutation-tested both ways, each caught by name: restoring `cov.cpiOutlier || 0` in `pool()`
+fails four checks, and taking the token back out of `ovcGen_` fails five.
+
+**This one does not retire.** It is not a comparison against a previous version of anything —
+the general rule it holds is that a tunable shipping inside a cached payload belongs in that
+payload's cache key, and this suite has three such payloads.

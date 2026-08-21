@@ -165,6 +165,11 @@
  *     §7   RXF_TABLE_CAP / RXF_DRILL_CAP / RXF_EXCL_CAP  the Ready-Mix equivalents
  *     §7   SG_OLD2NEW_LIST, SG_TECTS   the product suggester's vocabulary
  *     §8   OVCUBE_SHAPE_VER_       the month cube's shape version
+ *     §8   ovcCovTok_              hashes §1's COVERAGE into the cube's
+ *                                  generation, because the browser pools with
+ *                                  those thresholds and they travel in a
+ *                                  CACHED manifest. Not a tunable — the thing
+ *                                  that makes editing one take effect
  *     §10  TP_RECIP_KEY            names the PROPERTY the TP01 recipient map is
  *                                  stored in — the map itself is not in this file
  *
@@ -544,28 +549,52 @@ var APP_CONFIG = {
      * ------------------------------------------------------------------
      * cpiOutlier \u2014 A CPI RULE, AND ONLY A CPI RULE.
      * ------------------------------------------------------------------
-     * CALIBRATED against Qlik's own Cust Price Detail exports for 2026
-     * Jan-Jul \u2014 all markets and each of GTA, SW, Manitoba, Saskatchewan.
-     * Those exports carry Qlik's per-pair Weight and CPI Factor, so the
-     * rule is read off the answer rather than guessed:
+     * IT IS A GUARD, NOT QLIK'S RULE, AND THE DIFFERENCE IS WRITTEN DOWN
+     * BECAUSE IT WAS GOT WRONG ONCE. An earlier reading of these exports
+     * said Qlik zeroes a pair when |ASP%| passes a threshold somewhere
+     * between 330% and 647%. The Aug-2026 pair matches Qlik's per-pair
+     * Weight column row for row and says otherwise:
      *
-     *   - Qlik zeroes the Weight of exactly 10 of 3,127 covered pairs.
-     *   - The pairs it KEEPS run to |ASP%| = 330%; the pairs it zeroes
-     *     start at |ASP%| = 647%. Any threshold in that gap reproduces
-     *     Qlik's selection EXACTLY on all five exports (0.000pp).
-     *   - It is NOT the +/-50% the report footnote states. A 50% cap
-     *     throws away real pairs and costs 1.26pp on SW Ontario.
+     *   - Of 3,407 covered pairs in 2026 Jan-Aug, Qlik zeroes 10. Five of
+     *     them move by less than 100%, two by less than 5% \u2014 +4.55% and
+     *     +0.26%. Meanwhile it KEEPS pairs at -115.9%, +225.4% and, on
+     *     the Aug MTD export, +472.8%. No |ASP%| threshold selects that
+     *     set, and the one quoted above only looked like it did because
+     *     the Jan-Jul window happened to hold no counter-example.
      *
-     * 5.0 = 500%, sitting in the middle of the 330%-647% gap. This is a
-     * guard against a pair whose prior-year revenue has been all but
-     * cancelled \u2014 the worst on record is a plant/customer/product whose
-     * March 2025 invoice of $693.98 met an April credit of $693.84,
-     * leaving 14 cents against 47 tonnes and an ASP move of +492,409%
-     * that carried 95.6% of Sum factor by itself. That one pair is why
-     * the page published +206.7%.
+     *   - What actually selects it: QLIK'S WEIGHT IS CY REVENUE NET OF
+     *     THE PER-TONNE AGGREGATE LEVY, and its coverage runs on that net
+     *     figure. The levy is $2.248/t in Ontario, $0.60/t in Manitoba,
+     *     $0.90/t in Saskatchewan and nil on recycled material \u2014 read
+     *     off (CY revenue - Weight) / CY volume, which lands on those
+     *     four values across 3,397 pairs and both exports. A pair that
+     *     billed nothing but the levy in one of the two years has no
+     *     price to compare, so it earns no weight: 9 of the 10 have a
+     *     net-of-levy ASP at or below 10 cents in one year. The tenth
+     *     carries $2,179 and is not explained.
+     *
+     * The levy is not a column this export has, so that rule cannot be
+     * written here. What CAN be written is the guard 5.0 = 500% is: a
+     * pair whose prior year has been all but cancelled. The worst on
+     * record is plant 3P36 / Brock Aggregates / 9141, whose March 2025
+     * invoice of $693.98 met an April credit of $693.84 \u2014 fourteen cents
+     * against 47 tonnes, an ASP move of +492,409%, and 135pp of a 141.7%
+     * answer by itself.
+     *
+     * WHAT THE GUARD COSTS AGAINST QLIK'S OWN SELECTION: nothing worth
+     * measuring. Zeroing exactly the 10 pairs Qlik zeroes reads 3.0934%
+     * for 2026 Jan-Aug; the 500% guard reads 3.0933%. It drops no pair
+     * Qlik keeps on either export. The gap that remains against Qlik's
+     * published 2.86% is the WEIGHT BASIS, not the selection \u2014 see
+     * README \u00a77.
      *
      * NOT applied to PPI. PPI passes 0 and is bit-for-bit the index it
      * has always published.
+     *
+     * AND IT IS ONLY REAL IF IT TRAVELS. The browser does the pooling, so
+     * this number ships inside cached payloads; ovcCovTok_ (\u00a78) is what
+     * makes editing it an invalidation. Read that comment before changing
+     * anything here.
      * ---------------------------------------------------------------- */
     COVERAGE: {
       agg: { minVol: 0, minRev: 0    },    // \u2190 awaiting the Aggregates Qlik expression
@@ -4932,7 +4961,13 @@ var XF_DATA_CAP = 8 * 1024 * 1024;   // ~8MB JSON
 function getCrossData(opts) {
   opts = opts || {};
   var period = (opts.period === 'YTD') ? 'YTD' : 'MTD';
-  var ck = gk_('xfdata:' + period);
+  /* The payload CARRIES cpiOutlier (below), so the coverage token belongs in the
+     key that stores it — same rule and the same reason as ovcGen_ (§8). Without
+     it a threshold edit is invisible here for the cache's six hours. Scoped to
+     this one key rather than folded into gk_: nothing else under gk_ carries a
+     coverage threshold, and widening it would throw away every PV cache for a
+     change that touches one payload. */
+  var ck = gk_('xfdata:' + period + '|c' + ovcCovTok_());
   var hit = cacheGet_(ck); if (hit) return hit;
 
   var data = buildPivot_(period, true, null), H = data.header;
@@ -11214,8 +11249,48 @@ function ovcHistTok_(){
   try { return PropertiesService.getScriptProperties().getProperty(OVCUBE_TOK_PROP_) || '0'; }
   catch (e) { return '0'; }
 }
+/* ---- A TUNABLE THAT SHIPS INSIDE A CACHED PAYLOAD NEEDS TO BE IN ITS KEY ----
+ * §1's COVERAGE block is not read where it is used. The browser does the
+ * pooling, so the thresholds TRAVEL — in the cube manifest (below) and in the
+ * cross-filter dataset (getCrossData, §6) — and every cache key in that chain
+ * was built from the DATA's generation and the cube's SHAPE. Neither moves when
+ * a threshold is edited.
+ *
+ * So adding cpiOutlier changed nothing anyone could see. The server-side
+ * manifest cache answered from the copy it built before the edit; the browser's
+ * IndexedDB copy of that manifest is only ever wiped when the generation moves,
+ * so it warm-painted from the pre-edit manifest indefinitely; and `cov.cpiOutlier
+ * || 0` reads a missing key as "no threshold at all". The Overview published
+ * +141.7% for 2026 Jan-Aug against Qlik's 2.86% — one pair, plant 3P36 / Brock
+ * Aggregates / 9141, whose prior year was a $0.14 residue after a credit,
+ * carrying an ASP move of +492,409% and 135pp of the answer by itself. The
+ * exclusion that exists to catch exactly that row was on the server the whole
+ * time and never reached the code that pools.
+ *
+ * The token below is what makes a COVERAGE edit an invalidation. It hashes the
+ * whole block, so a floor changing is the same kind of event as a shape change
+ * and needs no second thing to remember. Pair it with the fail-closed read in
+ * app.html's pool(): a payload that carries no threshold reports NO CPI rather
+ * than an unexcluded one, so the gap between an edit and a warm device catching
+ * up is an absent column instead of a wrong number.
+ * ------------------------------------------------------------------------- */
+function ovcCovTok_(){
+  var C = ovcCfg_().COVERAGE || {}, parts = [];
+  Object.keys(C).sort().forEach(function(k){
+    var v = C[k];
+    if (v && typeof v === 'object'){
+      var inner = [];
+      Object.keys(v).sort().forEach(function(k2){ inner.push(k2 + ':' + v[k2]); });
+      parts.push(k + '{' + inner.join(',') + '}');
+    } else parts.push(k + ':' + v);
+  });
+  var s = parts.join(';'), h = 5381;
+  for (var i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
 function ovcGen_(){
-  return APP_getGen_('pricevolume') + '-' + APP_getGen_('rmx') + '-h' + ovcHistTok_() + '-s' + OVCUBE_SHAPE_VER_;
+  return APP_getGen_('pricevolume') + '-' + APP_getGen_('rmx') + '-h' + ovcHistTok_()
+       + '-s' + OVCUBE_SHAPE_VER_ + '-c' + ovcCovTok_();
 }
 
 

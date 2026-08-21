@@ -4072,7 +4072,18 @@ window.AmrCube = (function(){
        arithmetic to script.gs piIndex_ - coverage, weight = CY revenue, factor =
        weight x the pair's own ASP move, index = Sum f / Sum w - which is what
        keeps the browser's answer and the server's the same number. */
-    var cpiOut = cov.cpiOutlier || 0;
+    /* NULL, NOT ZERO, WHEN THE MANIFEST DOES NOT CARRY THE THRESHOLD.
+       `cov.cpiOutlier || 0` read a manifest built before the threshold existed
+       as "no threshold at all", and a manifest is cached on the device: the
+       Overview published +141.7% for 2026 Jan-Aug against Qlik's 2.86% for as
+       long as that copy stood, because one credit-cancelled pair moved
+       +492,409% and nothing took it out. ovcCovTok_ (script.gs §8) now makes a
+       COVERAGE edit move the generation, which wipes that copy — this is the
+       other half: until the fresh manifest lands, CPI is NOT REPORTED. The
+       column is dropped exactly as it is on a line with no sold-to. An absent
+       column is a question the page declines to answer; a wrong one is not.
+       A deliberate 0 still arrives as the number 0 and disables the guard. */
+    var cpiOut = (cov && cov.cpiOutlier != null) ? cov.cpiOutlier : null;
     /* THE DENOMINATOR IS EVERY COVERED PAIR; the threshold takes a pair out of
        the FACTOR only. Same shape as script.gs piIndex_, and the reason CPI now
        divides by Qlik's TotalWeight rather than by the sum of the weights it
@@ -4095,7 +4106,7 @@ window.AmrCube = (function(){
     var rows = order.map(function(k){
       var g = G[k];
       var pi = pool(g.pairs, 0);
-      var ci = soldToCol ? pool(g.cpairs, cpiOut) : null;
+      var ci = (soldToCol && cpiOut !== null) ? pool(g.cpairs, cpiOut) : null;
       delete g.pairs; delete g.cpairs;                 // don't hand the caller the scratch indexes
       g.cyAsp = g.cyVol ? g.cyRev / g.cyVol : 0;
       g.pyAsp = g.pyVol ? g.pyRev / g.pyVol : 0;
@@ -4233,6 +4244,13 @@ window.AmrCube = (function(){
       if (!man || !man.ok) return true;                 // keep the warm copy
       if (man.gen === gen){
         install(man);
+        /* AND WRITE IT BACK. The device's copy was only ever stored by
+           adoptGen(), which runs on a COLD start — so a warm device kept
+           painting from the manifest it first saw, for as long as the
+           generation held, however many times the server rebuilt it. The blocks
+           are keyed by generation and unaffected; this is one small record and
+           it is the one carrying the coverage thresholds. */
+        idbPut('meta', 'man', man);
         return replayThenFetch();                       // fill any block still missing
       }
       emit('stale', man.gen);
@@ -16117,7 +16135,10 @@ AMR.page('overview', {
          piIndex_ and as the cube's pool(), which is what makes the three agree.
          The threshold takes a pair out of the FACTOR only; every covered pair
          stays in the weight, which is Qlik's TotalWeight. */
-      var CPIOUT=(D && D.cpiOutlier) || 0;
+      /* null, not 0, when the payload predates the threshold — same rule and
+         the same reason as the cube's pool(): a dataset that cannot say what
+         the exclusion is reports NO CPI rather than an unexcluded one. */
+      var CPIOUT=(D && D.cpiOutlier!=null) ? D.cpiOutlier : null;
       function poolPairs(bag, aspCap){
         var w=0,f=0;
         for(var k in bag){ var c=bag[k];
@@ -16134,7 +16155,7 @@ AMR.page('overview', {
         var cyAsp=o.cyVol?o.cyRev/o.cyVol:0, pyAsp=o.pyVol?o.pyRev/o.pyVol:0;
         var live=(o.cyRev>0&&o.pyRev>0);
         var pi=poolPairs(o.pm, 0);                    // PPI: plant x material
-        var ci=D._pc?poolPairs(o.pc, CPIOUT):null;    // CPI: plant x sold-to x material
+        var ci=(D._pc && CPIOUT!==null)?poolPairs(o.pc, CPIOUT):null;  // CPI: plant x sold-to x material
         return { label:label, cyVol:o.cyVol, pyVol:o.pyVol,
           volPct:o.pyVol?(o.cyVol-o.pyVol)/o.pyVol:0,
           cyAsp:cyAsp, pyAsp:pyAsp, aspPct:pyAsp?(cyAsp-pyAsp)/pyAsp:0,

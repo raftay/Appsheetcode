@@ -607,35 +607,96 @@ Factor      = CY revenue × ASP%, over covered pairs
 
 A pair excluded as an outlier **keeps its weight and loses its factor**. The exclusion is a
 dilution, not a deletion. Summing covered CY revenue reproduces `TotalWeight` to the dollar on
-all five exports. PPI passes no threshold, so both its sums run over the same pairs and it is
-arithmetically what it has always computed — unchanged.
+all five Jan–Jul exports, and **to the penny** on both August ones — `$155,497,057.14` for
+Jan–Aug and `$13,041,331.22` for Aug MTD, from the app's own raw rows at the app's own grain.
+The denominator is not the part that is wrong. PPI passes no threshold, so both its sums run
+over the same pairs and it is arithmetically what it has always computed — unchanged.
 
-**The outlier threshold is read off the answer, not guessed.** Qlik zeroes the Weight of
-exactly **10 of 3,127** covered pairs. The pairs it *keeps* run to |ASP%| = 330%; the pairs it
-*zeroes* start at |ASP%| = 647%. Any threshold in that gap reproduces Qlik's selection
-**exactly** — 0.000pp on all five exports — so `cpiOutlier` is 5.0 (500%), the middle of it.
-It is **not** the ±50% the report footnote states: a 50% cap throws away real pairs and costs
-1.26pp on SW Ontario alone. The worst pair on record is a plant/customer/product whose March
-2025 invoice of $693.98 met an April credit of $693.84, leaving fourteen cents against 47
-tonnes, an ASP move of **+492,409%** and 95.6% of Σfactor on its own — the reason the page
-published **+206.7%**.
+**`cpiOutlier` is a guard. It is NOT Qlik's rule, and the difference is written down here
+because it was got wrong once.** An earlier reading of the Jan–Jul exports said Qlik zeroes a
+pair when |ASP%| passes a threshold between 330% and 647%, and set `cpiOutlier` to 5.0 (500%)
+in the middle of that gap. The August exports match Qlik's per-pair `Weight` column row for
+row and say otherwise:
 
-**What is left, and why it cannot be closed here.** With the denominator exact and the row
-selection exact, the remaining error is entirely `Weight` being a *rebate-adjusted* revenue
-that our export does not carry — it runs ~0.82× ex-Works on 2,788 of the 3,117 kept rows, and
-the ratio varies per row, so no constant recovers it:
+- Of **3,407** covered pairs in 2026 Jan–Aug, Qlik zeroes **10**. Five move by less than 100%,
+  and two by less than 5% — **+4.55%** and **+0.26%**. Meanwhile it *keeps* pairs at −115.9%,
+  +225.4% and, on the Aug MTD export, **+472.8%**. No |ASP%| threshold selects that set. The
+  330–647% gap only looked like one because the Jan–Jul window held no counter-example.
+- **What actually selects it: Qlik's `Weight` is CY revenue net of the per-tonne aggregate
+  levy, and its coverage runs on that net figure.** The levy reads straight off
+  `(CY revenue − Weight) ÷ CY volume`, which lands on **$2.248/t in Ontario, $0.60/t in
+  Manitoba, $0.90/t in Saskatchewan and nil on recycled material** across 3,397 pairs and both
+  exports. A pair that billed nothing but the levy in one of the two years has no price to
+  compare, so it earns no weight — 9 of the 10 have a net-of-levy ASP at or below ten cents in
+  one year. The tenth carries $2,179 and is not explained.
 
-| | Qlik | app | residual |
+The levy is not a column this export has, so that rule cannot be written into the app. What
+*can* be is the guard 5.0 = 500% actually is: **a pair whose prior year has been all but
+cancelled.** The worst on record is plant `3P36` / Brock Aggregates / `9141`, whose March 2025
+invoice of $693.98 met an April credit of $693.84 — fourteen cents against 47 tonnes, an ASP
+move of **+492,409%**, and 135 of a 141.7% answer by itself.
+
+**What the guard costs against Qlik's own selection: nothing worth measuring.** Zeroing
+exactly the 10 pairs Qlik zeroes reads **3.0934%** for 2026 Jan–Aug; the 500% guard reads
+**3.0933%**. It drops no pair Qlik keeps on either export. Do not spend another session
+tuning the threshold — the gap that remains is the weight basis, below, and the threshold has
+nothing to do with it.
+
+**What is left, and why it cannot be closed here.** With the denominator exact to the penny and
+the row selection worth 0.0001pp, the remaining error is entirely that **Qlik weights the
+numerator by net-of-levy revenue while dividing by gross** — `Weight` runs ~0.905× ex-Works
+with a per-row ratio, so no constant recovers it:
+
+| 2026 Jan–Aug | Qlik | app | residual |
 |---|---|---|---|
-| All markets | 3.333% | 3.660% | +0.33pp |
-| GTA | 2.629% | 2.907% | +0.28pp |
-| SW Ontario | 4.274% | 4.865% | +0.59pp |
-| Manitoba | 3.174% | 3.191% | **+0.02pp** |
-| Saskatchewan | 5.799% | 5.832% | **+0.03pp** |
+| All markets | 2.868% | 3.093% | +0.23pp |
+| GTA | 2.48% | 2.74% | +0.26pp |
+| SW Ontario | 3.05% | 3.33% | +0.28pp |
+| Manitoba | 2.84% | 2.85% | **+0.01pp** |
+| Saskatchewan | 5.91% | 5.95% | **+0.04pp** |
+| North | 6.22% | 6.22% | **0.00pp** |
 
-Manitoba and Saskatchewan land inside 0.03pp because they carry few rebated rows. Closing GTA
-and SW needs `_rebate` as its own column in the Price & Volume export; until then this is the
-ceiling, and it is a weighting difference rather than a wrong method.
+Manitoba, Saskatchewan and North land inside 0.04pp because their levy is small or nil.
+Closing GTA and SW needs the levy — or the net revenue it is deducted from — as its own column
+in the Price & Volume export. Until then this is the ceiling, and it is a weighting difference
+rather than a wrong method.
+
+**And none of it is real if the threshold does not travel.** See §7's next note.
+
+### The tunable that shipped inside a cached payload
+
+`cpiOutlier` was added, was correct, and changed nothing for a day. The Overview went on
+publishing **+141.7%** for 2026 Jan–Aug against Qlik's 2.86%, and **+243.0%** for GTA against
+2.48% — the Brock Aggregates pair above, unexcluded, carrying 135 of those points.
+
+The arithmetic was never wrong. **The number never arrived.** §1's `COVERAGE` block is read on
+the server, but the browser does the pooling, so the thresholds *travel* — inside the cube
+manifest and inside the cross-filter dataset. Every cache key in that chain was built from the
+**data's** generation and the cube's **shape**, and neither moves when a threshold is edited:
+
+| layer | what it held | how long |
+|---|---|---|
+| `CacheService` (`ovcBuild_`) | the manifest built before the edit | 6 h |
+| IndexedDB (`AmrCube`) | that manifest, replayed on every warm start | until the generation moved |
+| `cov.cpiOutlier \|\| 0` | read the missing key as *no threshold at all* | — |
+
+Two changes, and they are two halves of one rule:
+
+1. **`ovcCovTok_` hashes the whole `COVERAGE` block into `ovcGen_`**, and `getCrossData`'s key
+   carries it too. Editing a floor is now the same kind of event as a shape change — one
+   invalidation, nothing to remember separately. `getCrossData`'s key is scoped rather than
+   folded into `gk_`: nothing else under `gk_` carries a coverage threshold.
+2. **A payload that cannot say what the exclusion is reports NO CPI**, in `pool()` and in
+   `poolPairs()` alike — `null`, not `0`. The column is dropped exactly as it is on a line with
+   no Sold To. An absent column is a question the page declines to answer; a wrong one is not.
+   A deliberate `0` still arrives as the number `0` and disables the guard.
+
+`revalidate()` also writes the confirmed manifest back to IndexedDB. It was only ever stored by
+`adoptGen()`, which runs on a **cold** start, so a warm device painted from the manifest it
+first saw for as long as the generation held, however many times the server rebuilt it.
+
+**The general rule: a tunable that ships inside a cached payload belongs in that payload's
+cache key.** `tests/cpiindex.js` gates both halves.
 
 The arithmetic is written once per runtime — `piIndex_` (`script.gs` §6), `pool()` in
 `AmrCube`, and `poolPairs()` in the Overview's local cross-filter path — and CPI is reported
@@ -1208,6 +1269,8 @@ or was forgotten.**
 | 2026-08-20 | **PPI and CPI share one chart, and the green is gone.** Colour is the SERIES, not the sign: one index drawn green-for-up borrowed a semantic the rest of the page spends on growth, and green is not in the palette at all. PPI takes navy and CPI the light blue, exactly as this year / last year do on every other paired chart in the panel. **Past twelve months \u2014 or in the oldest year the history holds \u2014 every same-period-last-year series is dropped**, the index chart with them, and the note says which of the two reasons applies. `pyAbsent()` is the new half: the 2023 chip selected a window where vs-last-year was blank everywhere at once, which reads as a broken page rather than as an absent prior year. The chip stays \u2014 the cube answers volume and revenue there perfectly well; it is the columns that go | \u2705 |
 | 2026-08-20 | **CPI, calibrated against Qlik's own exports rather than reasoned at.** Five Cust Price Detail exports (2026 Jan\u2013Jul: all markets and each of GTA, SW, Manitoba, Saskatchewan) carry Qlik's per-pair Weight and Factor, and they settle two things the expressions alone did not. **The denominator is TotalWeight, not \u03a3Weight** \u2014 $136,727,744 against $123,520,166 on the all-markets export, a tenth apart, and summing covered CY revenue reproduces it to the dollar on all five. An outlier therefore keeps its weight and loses only its factor. **The threshold is 500%, not the \u00b150% the footnote states**: Qlik keeps pairs to |ASP%| 330% and zeroes from 647%, so anything in that gap reproduces its selection exactly (0.000pp on all five) while a 50% cap costs 1.26pp on SW alone. What remains \u2014 +0.02pp Manitoba, +0.03pp Saskatchewan, +0.28pp GTA, +0.33pp all markets, +0.59pp SW \u2014 is entirely `Weight` being a rebate-adjusted revenue the export nets away, ~0.82\u00d7 ex-Works on 2,788 of 3,117 kept rows with a per-row ratio, so no constant recovers it. The priced-revenue rule from earlier today is backed out: it was the right instinct about credits and the wrong mechanism, and PPI is bit-for-bit what it has always published | \u2705 |
 | 2026-08-20 | **"This month" is the newest month again, and the server is asked for it.** The anchor had been moved to the reporting month to stop the page reporting two months at once; that fixed the disagreement by moving the wrong half. `getOverview` takes a `month` now (in its cache key) and the Overview passes its anchor, so the server-fed and cube-fed halves answer for the same month while "This month" keeps meaning the latest month there is data for. The EBITDA workbook is the one thing that genuinely belongs to the closed month, and it is handled where it is read \u2014 `kpiMonth()` is the anchor minus one, and the cards name it | \u2705 |
+| 2026-08-21 | **The CPI exclusion was right and never arrived — a tunable that ships inside a cached payload.** The Overview published **+141.7%** for 2026 Jan–Aug against Qlik's 2.86%, and **+243.0%** for GTA against 2.48%, with `cpiOutlier: 5.0` sitting correctly in §1 the whole time. Replicating both August exports out of the raw sheet reproduces every published figure to the decimal **at threshold = 0** — MTD 2.79/2.31/3.52/1.61/6.36, YTD 141.72/242.97/14.36/2.85/5.95/6.22 — which names the fault exactly: §1 is read on the server, the **browser** does the pooling, so the number travels in the cube manifest and the cross-filter dataset, and every cache key in that chain is built from the DATA's generation. `cov.cpiOutlier || 0` then read the missing key as *no threshold at all*, and the browser's IndexedDB copy of that manifest is only wiped when the generation moves — so a warm device painted the pre-edit manifest indefinitely. **`ovcCovTok_` hashes the whole `COVERAGE` block into `ovcGen_`** (and into `getCrossData`'s key), so a floor edit is an invalidation; **a payload that cannot say what the exclusion is now reports NO CPI**, `null` not `0`, dropping the column exactly as a line with no Sold To does; and `revalidate()` writes the confirmed manifest back, which `adoptGen()` only ever did on a cold start. `tests/cpiindex.js` gates both halves off the real Brock Aggregates pair, mutation-tested both ways | ✅ |
+| 2026-08-21 | **The 500% threshold is a guard, not Qlik's rule — and the last session's evidence for it was an accident of the window.** Qlik zeroes **10 of 3,407** covered pairs in 2026 Jan–Aug; five move by less than 100% and two by less than 5% (**+4.55%**, **+0.26%**), while it *keeps* pairs at −115.9%, +225.4% and, on the Aug MTD export, **+472.8%**. No |ASP%| threshold selects that set; the "330–647% gap" only looked like one because Jan–Jul held no counter-example. **What actually selects it: `Weight` is CY revenue net of the per-tonne aggregate levy, and Qlik's coverage runs on the net figure.** `(CY revenue − Weight) ÷ CY volume` lands on **$2.248/t Ontario, $0.60/t Manitoba, $0.90/t Saskatchewan, nil on recycled** across 3,397 pairs and both exports — 9 of the 10 zeroed pairs have a net-of-levy ASP at or below ten cents in one year. That column does not exist here, so the guard stays, and it costs **0.0001pp** against Qlik's own selection (3.0933% vs 3.0934%) and drops no pair Qlik keeps. **The denominator was never the problem**: Σ covered CY revenue reproduces `TotalWeight` to the penny on both exports ($155,497,057.14 and $13,041,331.22). The residual after the fix is **+0.23pp** all-markets — Qlik weighting the numerator net and dividing by gross, ~0.905× with a per-row ratio. Manitoba +0.01pp, Saskatchewan +0.04pp, North 0.00pp, because their levy is small or nil. Do not spend another session tuning the threshold | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |
