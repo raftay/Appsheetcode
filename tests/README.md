@@ -192,6 +192,56 @@ instead of `body[data-page="x"]` narrows the rule without adding weight, so the 
 exactly what the unscoped legacy rule had. That is what "scoping a style block" was assumed to
 mean all along.
 
+## `cssdropped.js` — a rule the port left behind
+
+The third member of the family `pageparity.js` and `cssparity.js` belong to, and it is here
+because the gap **between** those two is where a real bug lived for the whole of the merge.
+
+- `pageparity` proves the merged page emits the same HTML.
+- `cssparity` proves the cascade over that HTML computes the same values.
+- Neither can see CSS that is **simply gone**, if the markup it styled is not in the fixture.
+
+```bash
+node tests/cssdropped.js
+REF=<commit> node tests/cssdropped.js
+```
+
+Ready-Mix's "this table is affected" strip is what that looks like. Chunk 6 ported
+`Page_Rmx.html` and dropped seven rules — `.impact`, `.impact-i`, `.impact-t`, `.impact-go` —
+and the page went on emitting the markup for every one. **Three things had to be true at once
+for nobody to notice, and they were:** `setStrip()` builds the strip in JS, so no markup gate
+ever meets the class; no fixture in `tests/` answers `RMX_getUnmapped` with a row, so the strip
+renders in no harness run at all; and `cssparity` derives its property list *from* the §A4
+block, so the properties of a missing block are not on the list. What shipped was the raw
+markup — the `!` badge run into the sentence as **"!339 products"**, and a browser-grey "Fix
+mapping" button sitting inside the text. `#mapHost td.mkt` went the same way in the same chunk.
+
+The claim is one sentence: **for every class the deleted files styled, if `app.html` still
+emits that class and has no rule that could match it, the port dropped the rule.** It reads the
+20 deleted `.html` out of git through `apphtml.js`, the same way `cssparity` reads its second
+side — 717 classes across the 14 of them that carried a `<style>`. A failure prints the missing
+rule, so the fix is a copy rather than an archaeology session.
+
+Three things about it are deliberate:
+
+- **It is not "every class has a rule".** `app.html` has two dozen classes that never had one —
+  slide markup carrying its own inline styles, and names that exist for a `querySelector`. A
+  check needing an allow-list that long would be answering with its allow-list rather than with
+  the file. Anchoring on what the old files **actually styled** needs no exceptions at all, and
+  it is green with none.
+- **It does not check the other direction.** A rule in `app.html` whose class nobody emits looks
+  like dead CSS, and that is exactly what README §9 says a grep may not be used to prove.
+  Reporting it would make this harness a reason to delete live rules.
+- **The selector scan may not anchor on the preceding `}`.** Written that way it consumes the
+  brace that ends each rule, so the next match has to find the *next* one and every second rule
+  in the file is skipped. That reported 59 dropped classes on the first run, all but three of
+  them rules that are right there in §A3.
+
+**When it retires:** with `pageparity` and `cssparity`, and for their reason. The moment a page
+is deliberately restyled rather than ported, "the old file styled it" stops being an argument
+that the new one must. Delete it then — do not weaken it, and do not start an allow-list to
+keep it passing.
+
 ## `pageswitch.js` — switching pages leaves nothing behind
 
 Chunk 14 made the nav mount a page instead of reloading. A reload used to *be* the teardown,
