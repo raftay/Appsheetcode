@@ -1149,6 +1149,22 @@ body[data-page="overview"] .ov-line-head .rule{flex:1; height:1px; background:va
      see volRev(). Two equal cards, and the same prefix as the rule above on
      purpose: a :where() version scores below it and would never apply. */
   body[data-page="overview"] .kpi-row.two{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  /* SIX cards once CPI is reported. The strip is one row or it is nothing: a
+     sixth card that wraps onto its own line reads as a different panel, which is
+     exactly how the CPI card first shipped. So the two index cards share the
+     width of the one they replace, the % boxes narrow, and every type size in
+     the row steps down — the cards are em-based below, so one font-size on the
+     row does most of the work. */
+  body[data-page="overview"] .kpi-row.six{
+    grid-template-columns:minmax(0,1.15fr) 92px minmax(0,1.15fr) 92px minmax(0,.8fr) minmax(0,.8fr); gap:9px}
+  body[data-page="overview"] .kpi-row.six .kpi{padding:10px 11px; min-width:0}
+  body[data-page="overview"] .kpi-row.six .kpi .k{font-size:8.5px; letter-spacing:.1em; margin-bottom:5px}
+  body[data-page="overview"] .kpi-row.six .kpi .big{font-size:18px}
+  body[data-page="overview"] .kpi-row.six .kpi .big .u{font-size:10px}
+  body[data-page="overview"] .kpi-row.six .kpi .ly{font-size:9.5px; margin-top:5px}
+  body[data-page="overview"] .kpi-row.six .kpi-d{padding:8px 6px}
+  body[data-page="overview"] .kpi-row.six .kpi-d .dl{font-size:8px; letter-spacing:.06em}
+  body[data-page="overview"] .kpi-row.six .kpi-d .dv{font-size:15px}
   @media (max-width:980px){          /* --bp-mid; was 860px */
     body[data-page="overview"] .kpi-row{display:flex; flex-wrap:wrap}
     body[data-page="overview"] .kpi-unit{display:flex; gap:8px; align-items:stretch; flex:1 1 240px; min-width:0}
@@ -3956,14 +3972,19 @@ window.AmrCube = (function(){
     var groupBy = o.groupBy || null;
     var cov = o.coverage || man.coverage || { minVol:0, minRev:0 };
 
-    /* group key -> { sums, pairs{plant|item: [cyV,pyV,cyR,pyR]}, cpairs{…} }
+    /* group key -> { sums, pairs{plant|item:[cyV,pyV,cyR,pyR]}, cpairs{…6…} }
        TWO pair indexes, because the two price indices are the same arithmetic at
        two different grains (see script.gs piIndex_):
          pairs   plant | item             -> PPI
          cpairs  plant | sold-to | item   -> CPI
        Qlik's Cust Price Detail keys its "Customer" column on SOLD TO, not
        Customer Parent, so that is what the third part is. `cpairs` is only built
-       on the Aggregates line, which is the only one carrying soldTo. */
+       on the Aggregates line, which is the only one carrying soldTo.
+
+       Both indexes carry the same four slots and the same arithmetic; CPI
+       differs only in its key and in the outlier threshold it passes to pool().
+       See script.gs piIndex_ for what the threshold is and how it was read off
+       Qlik's own exports. */
     var G = {}, order = [];
     var soldToCol = (isAgg && man.dims.indexOf('soldTo') !== -1) ? 'soldTo' : null;
     function bucket(key){
@@ -4051,22 +4072,42 @@ window.AmrCube = (function(){
        arithmetic to script.gs piIndex_ - coverage, weight = CY revenue, factor =
        weight x the pair's own ASP move, index = Sum f / Sum w - which is what
        keeps the browser's answer and the server's the same number. */
-    function pool(pairs){
+    /* NULL, NOT AN EMPTY GATE, WHEN THE MANIFEST DOES NOT CARRY THE BLOCK.
+       Reading a missing key with `|| 0` took it for "no gate at all", and a
+       manifest is cached on the device: the Overview published +141.7% for 2026
+       Jan-Aug against Qlik's 2.86% for as long as that copy stood, because one
+       credit-cancelled pair moved +492,409% and nothing took it out.
+       ovcCovTok_ (script.gs §1/§8) now makes a COVERAGE edit move the
+       generation, which wipes that copy — this is the other half: until the
+       fresh manifest lands, CPI is NOT REPORTED. The column is dropped exactly
+       as it is on a line with no sold-to. An absent column is a question the
+       page declines to answer; a wrong one is not. */
+    var cpiCov = (cov && cov.cpi) ? cov.cpi : null;
+    /* ONE pooling pass, run at two grains. `extra` is §1's cpi block for CPI and
+       null for PPI, where every test collapses to the "> 0" it has always run.
+       A pair that fails the gate leaves BOTH sums — a gate deletes, where the
+       outlier cap this replaces left the weight and dropped only the factor. */
+    function pool(pairs, extra){
       var w = 0, f = 0;
+      var xv = extra ? (extra.minVol || 0) : 0,
+          xr = extra ? (extra.minRev || 0) : 0,
+          xa = extra ? (extra.minAsp || 0) : 0;
       for (var pk in pairs){
         var o2 = pairs[pk];
         if (!(o2[0] > 0 && o2[1] > 0 && o2[2] > 0 && o2[3] > 0)) continue;   // the app's own coverage
-        if (!(o2[0] > mv && o2[1] > mv && o2[2] > mr && o2[3] > mr)) continue; // Qlik's floors
+        if (!(o2[0] > mv && o2[1] > mv && o2[2] > mr && o2[3] > mr)) continue; // the line's floors
+        if (!(o2[0] > xv && o2[1] > xv && o2[2] > xr && o2[3] > xr)) continue; // CPI's own
         var pyAsp = o2[3] / o2[1], cyAsp = o2[2] / o2[0];
-        f += o2[2] * ((cyAsp - pyAsp) / pyAsp);
+        if (xa > 0 && !(cyAsp > xa && pyAsp > xa)) continue;   // a price, not a rebate
         w += o2[2];
+        f += o2[2] * ((cyAsp - pyAsp) / pyAsp);
       }
       return { w: w, f: f };
     }
     var rows = order.map(function(k){
       var g = G[k];
-      var pi = pool(g.pairs);
-      var ci = soldToCol ? pool(g.cpairs) : null;
+      var pi = pool(g.pairs, null);
+      var ci = (soldToCol && cpiCov) ? pool(g.cpairs, cpiCov) : null;
       delete g.pairs; delete g.cpairs;                 // don't hand the caller the scratch indexes
       g.cyAsp = g.cyVol ? g.cyRev / g.cyVol : 0;
       g.pyAsp = g.pyVol ? g.pyRev / g.pyVol : 0;
@@ -4204,6 +4245,13 @@ window.AmrCube = (function(){
       if (!man || !man.ok) return true;                 // keep the warm copy
       if (man.gen === gen){
         install(man);
+        /* AND WRITE IT BACK. The device's copy was only ever stored by
+           adoptGen(), which runs on a COLD start — so a warm device kept
+           painting from the manifest it first saw, for as long as the
+           generation held, however many times the server rebuilt it. The blocks
+           are keyed by generation and unaffected; this is one small record and
+           it is the one carrying the coverage thresholds. */
+        idbPut('meta', 'man', man);
         return replayThenFetch();                       // fill any block still missing
       }
       emit('stale', man.gen);
@@ -15521,7 +15569,7 @@ AMR.page('overview', {
     function isPrevPick(){ return STATE.pick==='PMTD' || STATE.pick==='PYTD'; }
     var CH = { bd:[], dim:[], exp:[], bridge:[], cust:[], fsc:[], fscc:[], seg:[], pcat:[], ext:[],
                rdim:[], rasp:[], rtrend:[], atrend:[], rfuel:[] };   // live Chart instances, per section
-    var CACHE  = {};                       // period -> overview payload
+    var CACHE  = {};                       // period|month -> overview payload
     var CUST_CACHE = {};                   // period|scope|split -> MERGED customers payload
     var RAW_CUST = {};                     // JSON(params) -> raw getCustomerReport payload
     var FSC_DATA = null;                   // getFscData payload (one call, both periods inside)
@@ -15610,6 +15658,45 @@ AMR.page('overview', {
     /* A percentage on an axis, not in a cell: no sign, and never the fifteen
        decimals a computed bound arrives with. */
     function fAxisPct(v){ return (Math.round((Number(v)||0)*10)/10)+'%'; }
+
+    /* ---- AXIS TICKS: ROUND NUMBERS, EVERY AXIS ------------------------------
+       Chart.js walks a scale by repeated addition, and 14.8 + 0.2 is
+       15.000000000000002 in binary — so an axis that should read $15.00 printed
+       sixteen digits of it. headroom() already hands the chart round BOUNDS;
+       this rounds what the chart makes out of them, which is the other half and
+       the half that shows.
+
+       THE PRECISION COMES FROM THE TICK SPACING, not from a fixed number of
+       decimals: a 0.2 step wants one, a 250,000 step wants none, and one helper
+       then serves dollars, tonnes and percentages alike. Chart.js hands the
+       whole tick array to the callback as its third argument, which is where
+       the spacing is read from; with a single tick there is no spacing to read
+       and the value is left alone.
+
+       Magnitude suffixes are deliberately NOT unified — volume axes read in
+       thousands (3500k) and money axes in millions, and both are what their
+       readers expect. Only the noise is removed. */
+    function axFix(v, ticks){
+      v=Number(v)||0;
+      if(!ticks || ticks.length<2) return v;
+      var a=Number(ticks[0].value), b=Number(ticks[1].value);
+      if(!isFinite(a) || !isFinite(b)) return v;
+      var step=Math.abs(b-a);
+      if(!(step>0)) return v;
+      var dp=Math.max(0, Math.min(8, -Math.floor(Math.log(step)/Math.LN10)+1));
+      return Number(v.toFixed(dp));
+    }
+    function axMoney(v, i, ticks){
+      var n=axFix(v, ticks), a=Math.abs(n), sgn=(n<0?'-$':'$');
+      if(a>=1e6) return sgn+(Math.round(a/1e5)/10)+'M';
+      if(a>=1e4) return sgn+(Math.round(a/1e2)/10)+'k';
+      return sgn+n;
+    }
+    function axMoneyPlain(v, i, ticks){ var n=axFix(v, ticks); return (n<0?'-$':'$')+Math.abs(n); }
+    function axThousands(v, i, ticks){
+      var n=axFix(v, ticks);
+      return Math.abs(n)>=1000 ? (Math.round(n/100)/10)+'k' : String(n);
+    }
 
     /* ---- REVENUE, off whatever shape the row arrived in ---------------------
        Revenue reaches this page under three names and no payload is missing it:
@@ -16046,13 +16133,22 @@ AMR.page('overview', {
         }
       }
       /* ONE pooling pass, run at each grain - the same arithmetic as script.gs
-         piIndex_ and as the cube's pool(), which is what makes the three agree. */
-      function poolPairs(bag){
+         piIndex_ and as the cube's pool(), which is what makes the three agree.
+         A pair that fails the gate leaves BOTH sums, so the weight is Qlik's
+         TotalWeight over exactly the pairs that earned it.
+         null, not an empty gate, when the payload predates the block: a dataset
+         that cannot say what the gate is reports NO CPI rather than an ungated
+         one. Same rule and the same reason as the cube's pool(). */
+      var CPICOV=(D && D.cpiCoverage) ? D.cpiCoverage : null;
+      function poolPairs(bag, extra){
         var w=0,f=0;
+        var xv=extra?(extra.minVol||0):0, xr=extra?(extra.minRev||0):0, xa=extra?(extra.minAsp||0):0;
         for(var k in bag){ var c=bag[k];
-          if(c.pv>0&&c.cv>0&&c.pr>0&&c.cr>0){
+          if(c.pv>xv&&c.cv>xv&&c.pr>xr&&c.cr>xr){
             var pa=c.pr/c.pv, ca=c.cr/c.cv;
-            f+=c.cr*((ca-pa)/pa); w+=c.cr;
+            if(xa>0 && !(ca>xa && pa>xa)) continue;
+            w+=c.cr;
+            f+=c.cr*((ca-pa)/pa);
           }
         }
         return { w:w, f:f };
@@ -16060,8 +16156,8 @@ AMR.page('overview', {
       function finAcc(o,label){
         var cyAsp=o.cyVol?o.cyRev/o.cyVol:0, pyAsp=o.pyVol?o.pyRev/o.pyVol:0;
         var live=(o.cyRev>0&&o.pyRev>0);
-        var pi=poolPairs(o.pm);                   // PPI: plant x material
-        var ci=D._pc?poolPairs(o.pc):null;        // CPI: plant x sold-to x material
+        var pi=poolPairs(o.pm, null);                 // PPI: plant x material
+        var ci=(D._pc && CPICOV)?poolPairs(o.pc, CPICOV):null;  // CPI: plant x sold-to x material
         return { label:label, cyVol:o.cyVol, pyVol:o.pyVol,
           volPct:o.pyVol?(o.cyVol-o.pyVol)/o.pyVol:0,
           cyAsp:cyAsp, pyAsp:pyAsp, aspPct:pyAsp?(cyAsp-pyAsp)/pyAsp:0,
@@ -16452,7 +16548,7 @@ AMR.page('overview', {
     }
     function renderKpiRow(hostId, t, unit, aspFmt){
       var host=$(hostId);
-      host.classList.remove('two');
+      host.classList.remove('two'); host.classList.remove('six');
       if(!t || !t.present){
         host.innerHTML='<div class="kpi na">No data for this selection.</div>';
         return;
@@ -16473,7 +16569,9 @@ AMR.page('overview', {
       }
       function idxCls(v){ return sign(v)==='up'?'pos':(sign(v)==='down'?'neg':''); }
       /* CPI rides beside PPI when the source can answer it - same rule as the
-         table column (hasCpi): present or absent, never a dash. */
+         table column (hasCpi): present or absent, never a dash. Six cards need
+         the tighter grid, or the sixth wraps onto a line of its own. */
+      if(t.cpi!=null) host.classList.add('six');
       host.innerHTML =
           '<div class="kpi-unit">'+kpiMain('Volume', fInt(t.cyVol)+uSpan, 'Last year',
               fInt(t.pyVol)+' '+unit, false)
@@ -17322,7 +17420,7 @@ AMR.page('overview', {
        is now what the Period buttons anchor on (anchorMonth) - so naming it here
        makes the two agree out loud instead of by coincidence. */
     function kpiPeriodLabel(){
-      var a=(WIN.months.length>1) ? anchorMonth() : null;
+      var a=(WIN.months.length>1) ? kpiMonth() : null;
       var half=periodLabel();
       return a ? (ymLong(a)+' \u00b7 '+half) : half;
     }
@@ -18511,7 +18609,7 @@ AMR.page('overview', {
             tooltip:{ callbacks:{ label:function(x){
               return x.dataset.label+': $'+Number(x.raw).toFixed(2)+'/m\u00b3'; } } } },
           scales:{ y:{ beginAtZero:true,
-            ticks:{ callback:function(v){ return '$'+Number(v).toFixed(0); } } } } }
+            ticks:{ callback:axMoneyPlain } } } }
       }));
     }
 
@@ -18568,7 +18666,7 @@ AMR.page('overview', {
                       headroom above the largest bar; beginAtZero keeps the bars honest. */
                    y:{ beginAtZero:true, grace:'14%',
                        grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                         callback:function(v){ return '$'+v; }} } } },
+                         callback:axMoneyPlain}} } },
         plugins:[ChartDataLabels] }));
     }
 
@@ -18729,45 +18827,37 @@ AMR.page('overview', {
        Only the first two exist on the server. The Prev-month pair is computed in
        the browser from the month cube, which is why they stay disabled until it
        holds the month they need.                                            */
-    /* THE PERIOD ANCHOR IS THE REPORTING MONTH, NOT THE NEWEST BLOCK.
-       This page draws two ways at once and they have to agree about which month
-       "this month" is. The server reports land on the REPORTING MONTH - last
-       calendar month (README §7), because the running month is part-billed and
-       reading it as MTD prints a collapse that is really just the calendar. The
-       month cube holds the running month too, so anchoring on the newest block
-       it carries picked a DIFFERENT month.
+    /* THE PERIOD ANCHOR IS THE NEWEST MONTH THE CUBE HOLDS.
+       "This month" means the latest month there is data for, and "Prev month"
+       the one before it. That is the plain reading, and it is the one the
+       slider shows.
 
-       What that cost was not a rounding difference. On an August visit the KPI
-       strip (server, July) read 2,266,577 t while the market table directly
-       under it (cube, August) read 1,067,541 t for the same selection, with
-       every market showing -50% or worse - the part-month against a full one.
-       And "Prev month (MTD)" is one back from the anchor, so with the anchor on
-       August it landed on July: the same month "This month" was already
-       showing on the server side. The two Period buttons drew the same view.
+       IT WAS BRIEFLY THE REPORTING MONTH INSTEAD - last calendar month - to
+       stop the page reporting two different months at once: the server reports
+       land on the reporting month, so a KPI strip built from them sat above a
+       cube-fed table on the newest month, and on an August visit those read
+       2,266,577 t and 1,067,541 t for the same selection. That fixed the
+       disagreement by moving the wrong half. The page now moves the OTHER half:
+       getOverview takes a month, the Overview passes this anchor, and both
+       halves answer for the newest month.
 
-       So the anchor is the month the SERVER says it answered for, which arrives
-       on the payload (getOverview.reportMonth, read off the data by
-       pvReportMonth_ - not off the clock, §7). The clock rule is the fallback
-       for a payload that predates the field, and the newest block the fallback
-       to that. The part-billed month is not lost: it is one drag of the slider
-       away, as a custom window, which is what it actually is. */
+       What genuinely belongs to the closed month is the EBITDA workbook, and
+       that is handled where it is read (kpiMonth) rather than by moving every
+       period on the page back to meet it. */
     function anchorMonth(){
       var ms=WIN.months; if(ms.length<2) return null;
-      var newest=ms[ms.length-1], year=Math.floor(newest/100);
-      /* 1. the server's own answer, mapped onto the newest year the cube holds */
-      var rm=(STATE.data && STATE.data.reportMonth) || 0;
-      if(rm>=1 && rm<=12){
-        var want=year*100+rm;
-        /* the report month can sit a year back when the newest block is January */
-        if(ms.indexOf(want)!==-1) return want;
-        if(rm>(newest%100) && ms.indexOf((year-1)*100+rm)!==-1) return (year-1)*100+rm;
-      }
-      /* 2. last calendar month, the same rule the server applies */
-      var now=new Date(), pm=now.getMonth();      // 0-based month = last month, 1-12
-      var closed = pm ? (now.getFullYear()*100+pm) : ((now.getFullYear()-1)*100+12);
-      if(ms.indexOf(closed)!==-1) return closed;
-      /* 3. nothing closed is in yet - the newest month the cube holds */
-      return newest;
+      return ms[ms.length-1];
+    }
+    /* The month the SAP / USGAAP workbook is for. It is a closed-month
+       statement and it arrives during the month after the one it covers, so it
+       is always the month BEFORE the newest one the fact tables carry - which
+       is what the KPI cards have to be labelled and read for, while every other
+       panel on the page stays on "this month". */
+    function kpiMonth(){
+      var ms=WIN.months, a=anchorMonth();
+      if(a==null) return null;
+      var p=ymAdd(a,-1);
+      return (ms.length && p>=ms[0]) ? p : a;
     }
     function prevMonthOf(){
       var ms=WIN.months; if(ms.length<2) return null;
@@ -19113,7 +19203,38 @@ AMR.page('overview', {
        dimension tables). The month/quarter trend is NOT stale: every point there
        is one bucket against the same bucket a year earlier, which stays true at
        any window length. */
-    function pyStale(){ return winMode() && winSpan().length > 12; }
+    /* THE OLDEST YEAR THE CUBE HOLDS HAS NOTHING TO COMPARE AGAINST.
+       Every prior-year figure on this page is that month minus twelve, and for
+       the FIRST year in the history those months are simply not there. Selecting
+       it - the 2023 chip, on today's data - leaves vs-last-year blank everywhere
+       at once: PY volume zero, ASP % and both indices zero, the second donut
+       empty, the growth bridges undrawable. That reads as "the page is broken",
+       not as "there is no prior year".
+
+       The chip is NOT removed: the cube can answer volume and revenue for that
+       year perfectly well, and hiding the control would take a usable window
+       away to avoid explaining an empty column. Instead the window is treated as
+       exactly what it is - a window with no prior year - which is the same shape
+       the page already has for a window longer than twelve months. One rule, two
+       reasons to reach it.
+
+       Tested against the CUBE, not the slider: WIN.months is the union of both
+       lines and the floor, so "the oldest year" is not something the handles can
+       be read for. */
+    function pyAbsent(){
+      if(!winMode()) return false;
+      var C0=cube(); if(!C0) return false;
+      var sp=winSpan(); if(!sp.length) return false;
+      var any=false, saw=false;
+      ['agg','rmx'].forEach(function(l){
+        var m=C0.manifest(l); if(!m || !m.ym || !m.ym.length) return;
+        saw=true;
+        var have={}; m.ym.forEach(function(x){ have[x]=1; });
+        for(var i=0;i<sp.length;i++){ if(have[ymAdd(sp[i],-12)]){ any=true; return; } }
+      });
+      return saw && !any;
+    }
+    function pyStale(){ return winMode() && (winSpan().length > 12 || pyAbsent()); }
 
     /* THE SAME TEST, AND THE OTHER HALF OF THE ANSWER. pyStale() above says why
        the prior-year side goes. This says what is left when it does.
@@ -19693,7 +19814,8 @@ AMR.page('overview', {
                    pyFsc:Number(g.pyFsc)||0, pyFv:Number(g.pyFv)||0,
                    pyVol:(pyIn && pyVol)?pyVol:null,
                    pyAsp:(pyIn && pyVol)?(Number(g.pyAsp)||0):null,
-                   ppi:  (pyIn && pyVol)?pct(Number(g.ppi)||0):null };
+                   ppi:  (pyIn && pyVol)?pct(Number(g.ppi)||0):null,
+                   cpi:  (pyIn && pyVol && g.cpi!=null)?pct(Number(g.cpi)||0):null };
         });
       } else {
         var rows=C0.query({ line:line, cyMonths:cy, pyMonths:py, groupBy:'ym', filters:R.filters }) || [];
@@ -19706,10 +19828,23 @@ AMR.page('overview', {
                    pyFsc:Number(g.pyFsc)||0, pyFv:Number(g.pyFv)||0,
                    pyVol:(pyIn && pyVol)?pyVol:null,
                    pyAsp:(pyIn && pyVol)?(Number(g.pyAsp)||0):null,
-                   ppi:  (pyIn && pyVol)?pct(Number(g.ppi)||0):null };
+                   ppi:  (pyIn && pyVol)?pct(Number(g.ppi)||0):null,
+                   cpi:  (pyIn && pyVol && g.cpi!=null)?pct(Number(g.cpi)||0):null };
         });
       }
       var dense=M.length>13;
+      /* PAST TWELVE MONTHS THE LAST-YEAR SERIES GO.
+         Every one of them compares a bucket with the same bucket a year earlier,
+         which stays arithmetically true at any window length - but once the
+         window is longer than a year the comparison months are INSIDE the window
+         too, and the chart is drawing the same months twice under two names.
+         That is confusing rather than wrong, and confusing is enough: the
+         "same month last year" bars and lines are dropped, and the index chart -
+         which is nothing BUT a prior-year comparison - goes with them. The
+         this-year series stay and fill the space. Same threshold as pyStale(). */
+      var longWin = pyStale();
+      var cpiVals = M.map(function(m){ return m.cpi; });
+      var hasCpiTrend = !longWin && cpiVals.some(function(v){ return v!=null; });
 
       /* Fuel recovery, both ways up, on ONE chart: the RATE against the left axis
          and the DOLLARS against the right. Read alone the rate hides how much was
@@ -19755,6 +19890,13 @@ AMR.page('overview', {
           +'and this window sits outside the current data year.');
         if(d && d.notes && d.notes.mixFiltered) notes.push('A Strength or Product Class filter is on, so extras and VAP cannot follow it: the build-up is base only.');
       }
+      if(longWin) notes.push(pyAbsent()
+        ? ('This window is the oldest year the month history holds, so there is no prior year to '
+           +'compare against \u2014 every <b>same-'+GW+'-last-year</b> series has been dropped, along with '
+           +'the price-index chart.')
+        : ('This window is longer than twelve months, so every <b>same-'+GW+'-last-year</b> series has '
+           +'been dropped, along with the price-index chart \u2014 the '+GW+'s they compare against are '
+           +'inside the window itself.'));
       if(R.dropped.length) notes.push('Ignored in this chart: <b>'
         +R.dropped.map(function(k){ return esc(CUBE_FIELD_LABEL[k]||k); }).join(', ')
         +'</b> \u2014 no matching values in the month history.');
@@ -19767,8 +19909,9 @@ AMR.page('overview', {
         +'<div class="ov-cbox tall"><canvas id="tr_asp_'+line+'"></canvas></div></div>'
         +(buYm.length?('<div class="ov-block"><p class="lab">ASP build-up by month \u00b7 base, extras and VAP \u00b7 $/'+unit+'</p>'
           +'<div class="ov-cbox tall"><canvas id="tr_bu_'+line+'"></canvas></div></div>'):'')
-        +'<div class="ov-block"><p class="lab">PPI by '+GW+' \u00b7 vs the same '+GW+' last year</p>'
-        +'<div class="ov-cbox tall"><canvas id="tr_ppi_'+line+'"></canvas></div></div>'
+        +(longWin?'':('<div class="ov-block"><p class="lab">'+(hasCpiTrend?'PPI &amp; CPI':'PPI')+' by '+GW
+          +' \u00b7 vs the same '+GW+' last year</p>'
+          +'<div class="ov-cbox tall"><canvas id="tr_ppi_'+line+'"></canvas></div></div>'))
         +(hasFsc?('<div class="ov-block"><p class="lab">Fuel recovery by '+GW+' \u00b7 $/'+unit+' (bars: total $, right axis)</p>'
           +'<div class="ov-cbox tall"><canvas id="tr_fsc_'+line+'"></canvas></div></div>'):'')
         +'<p class="ov-note">'+notes.join('<br>')+'</p>';
@@ -19780,22 +19923,23 @@ AMR.page('overview', {
         labels:{font:{size:11,family:'Inter'},color:C.ink,boxWidth:12,boxHeight:12,usePointStyle:true,pointStyle:'rectRounded'} };
 
       /* volume */
-      var volAll=M.map(function(m){ return m.cyVol; }).concat(M.map(function(m){ return m.pyVol; }));
+      var volAll=M.map(function(m){ return m.cyVol; }).concat(longWin?[]:M.map(function(m){ return m.pyVol; }));
       var volHead=headroom(volAll);
       CH[sec].push(new Chart($('tr_vol_'+line),{ type:'bar',
         /* last year first so it sits on the LEFT of each pair and this year on
            the right \u2014 the eye reads the pair as older then newer */
-        data:{ labels:labels, datasets:[
-          { label:'Same '+GW+' last year', data:M.map(function(m){ return m.pyVol; }), backgroundColor:C.b30, borderRadius:4, maxBarThickness:dense?16:26 },
-          { label:'This year', data:M.map(function(m){ return m.cyVol; }), backgroundColor:C.b70, borderRadius:4, maxBarThickness:dense?16:26 }
-        ]},
+        data:{ labels:labels, datasets:(longWin?[]:[
+          { label:'Same '+GW+' last year', data:M.map(function(m){ return m.pyVol; }), backgroundColor:C.b30, borderRadius:4, maxBarThickness:dense?16:26 }
+        ]).concat([
+          { label:(longWin?'Volume':'This year'), data:M.map(function(m){ return m.cyVol; }), backgroundColor:C.b70, borderRadius:4, maxBarThickness:dense?16:26 }
+        ])},
         options:{ responsive:true, maintainAspectRatio:false,
           plugins:{ legend:LEG, datalabels:{display:false},
             tooltip:{ callbacks:{ label:function(c){
               return c.raw==null ? c.dataset.label+': no data' : c.dataset.label+': '+fInt(c.raw)+' '+unit; } } } },
           scales:{ x:{ grid:{display:false}, ticks:xTicks },
                    y:{ beginAtZero:true, max:volHead.max, grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                         callback:function(v){ return v>=1000?(Math.round(v/100)/10)+'k':v; }} } } } }));
+                         callback:axThousands}} } } }));
 
       /* ASP — line, both lines, identical on the two tabs. On Ready-Mix this is
          ALL-IN wherever the build-up exists (base + extras + VAP) and base
@@ -19814,19 +19958,20 @@ AMR.page('overview', {
       });
       CH[sec].push(new Chart($('tr_asp_'+line),{ type:'line',
         /* same order as the bars above, which also draws this year on top */
-        data:{ labels:labels, datasets:[
+        data:{ labels:labels, datasets:(longWin?[]:[
           { label:'Same '+GW+' last year', data:aspPY,
-            borderColor:C.b30, backgroundColor:C.b30, borderWidth:2, pointRadius:dense?2:3, fill:false, spanGaps:false, borderDash:[5,4], tension:.25 },
-          { label:'This year', data:aspCY,
+            borderColor:C.b30, backgroundColor:C.b30, borderWidth:2, pointRadius:dense?2:3, fill:false, spanGaps:false, borderDash:[5,4], tension:.25 }
+        ]).concat([
+          { label:(longWin?'ASP':'This year'), data:aspCY,
             borderColor:C.navy, backgroundColor:C.navy, borderWidth:2.4, pointRadius:dense?2:3, fill:false, spanGaps:false, tension:.25 }
-        ]},
+        ])},
         options:{ responsive:true, maintainAspectRatio:false,
           plugins:{ legend:LEG, datalabels:{display:false},
             tooltip:{ callbacks:{ label:function(c){
               return c.raw==null ? c.dataset.label+': no data' : c.dataset.label+': '+fAsp(c.raw); } } } },
           scales:{ x:{ grid:{display:false}, ticks:xTicks },
                    y:{ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                         callback:function(v){ return '$'+v; }} } } } }));
+                         callback:axMoneyPlain}} } } }));
 
       /* ASP build-up (Ready-Mix only, and only where the cross-report reaches).
          Stacked bars for this year, a plain dashed line for last year's all-in.
@@ -19862,30 +20007,44 @@ AMR.page('overview', {
                                 autoSkip:false, maxRotation:buDense?60:0, minRotation:buDense?60:0} },
                      y:{ stacked:true, beginAtZero:true, grid:{color:C.line},
                          ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                                callback:function(v){ return '$'+v; }} } } } }));
+                                callback:axMoneyPlain}} } } }));
       }
 
-      /* PPI */
-      var ppiVals=M.map(function(m){ return m.ppi; });
-      var sc=outlierScale(ppiVals.filter(function(v){ return v!=null; }));
-      var ppiHead=sc?{}:headroom(ppiVals);
-      CH[sec].push(new Chart($('tr_ppi_'+line),{ type:'bar',
-        data:{ labels:labels, datasets:[
-          { label:'PPI', data:ppiVals,
-            backgroundColor:ppiVals.map(function(v){ return (v==null||v>=0)?C.pos:C.neg; }),
-            borderRadius:4, maxBarThickness:dense?18:30 }
-        ]},
-        options:{ responsive:true, maintainAspectRatio:false,
-          layout:{ padding:{ top:14 } },
-          plugins:{ legend:{display:false},
-            datalabels:vBarLabels(ppiVals, sc, function(v){ return (v>0?'+':'')+v.toFixed(1)+'%'; }, dense),
-            tooltip:{ callbacks:{ label:function(c){
-              return c.raw==null ? 'No last-year comparison' : 'PPI: '+(c.raw>0?'+':'')+c.raw.toFixed(2)+'%'; } } } },
-          scales:{ x:{ grid:{display:false}, ticks:xTicks },
-                   y:Object.assign({ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                         callback:fAxisPct} },
-                         sc?{min:sc.min,max:sc.max}:{min:ppiHead.min,max:ppiHead.max}) } },
-        plugins:[ChartDataLabels] }));
+      /* PPI, and CPI beside it where the line carries sold-to.
+         COLOUR IS THE SERIES, NOT THE SIGN. One index drawn green-for-up and
+         red-for-down borrowed a semantic the rest of this page spends on
+         growth, and green is not in the palette at all - every other paired
+         chart in this panel is navy against light blue. Two indices settle it:
+         with two series the colour has to say WHICH index, so PPI takes navy
+         and CPI the light blue, exactly as "this year"/"last year" do above,
+         and the sign is read off the axis where it belongs. */
+      if(!longWin){
+        var ppiVals=M.map(function(m){ return m.ppi; });
+        var idxAll=ppiVals.concat(hasCpiTrend?cpiVals:[]);
+        var sc=outlierScale(idxAll.filter(function(v){ return v!=null; }));
+        var ppiHead=sc?{}:headroom(idxAll);
+        var idxSets=[{ label:'PPI', data:ppiVals, backgroundColor:C.navy,
+                       borderRadius:4, maxBarThickness:dense?(hasCpiTrend?10:18):(hasCpiTrend?16:30) }];
+        if(hasCpiTrend) idxSets.push({ label:'CPI', data:cpiVals, backgroundColor:C.b30,
+                       borderRadius:4, maxBarThickness:dense?10:16 });
+        CH[sec].push(new Chart($('tr_ppi_'+line),{ type:'bar',
+          data:{ labels:labels, datasets:idxSets },
+          options:{ responsive:true, maintainAspectRatio:false,
+            layout:{ padding:{ top:14 } },
+            /* one series keeps its value labels; two would overprint each other,
+               so the pair is read off the axis and the tooltip instead */
+            plugins:{ legend:(hasCpiTrend?LEG:{display:false}),
+              datalabels:(hasCpiTrend?{display:false}
+                          :vBarLabels(ppiVals, sc, function(v){ return (v>0?'+':'')+v.toFixed(1)+'%'; }, dense)),
+              tooltip:{ callbacks:{ label:function(c){
+                return c.raw==null ? c.dataset.label+': no last-year comparison'
+                                   : c.dataset.label+': '+(c.raw>0?'+':'')+c.raw.toFixed(2)+'%'; } } } },
+            scales:{ x:{ grid:{display:false}, ticks:xTicks },
+                     y:Object.assign({ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
+                           callback:fAxisPct} },
+                           sc?{min:sc.min,max:sc.max}:{min:ppiHead.min,max:ppiHead.max}) } },
+          plugins:[ChartDataLabels] }));
+      }
 
       /* Fuel recovery \u2014 dollars as bars on the RIGHT axis, rate as lines on the
          left. Last year is drawn first in each pair, matching the volume chart, so
@@ -19916,12 +20075,12 @@ AMR.page('overview', {
                         puts the number the reader is following */
                      y:{ position:'left', beginAtZero:true, grid:{color:C.line},
                          ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                                callback:function(v){ return '$'+v; }} },
+                                callback:axMoneyPlain} },
                      /* dollars on the right, its own gridlines off so the two
                         scales do not draw two sets of lines over each other */
                      y1:{ position:'right', beginAtZero:true, grid:{drawOnChartArea:false},
                           ticks:{font:{size:10,family:'Inter'},color:C.muted,
-                                callback:function(v){ return v>=1000 ? '$'+(Math.round(v/100)/10)+'k' : '$'+v; }} } } } }));
+                                callback:axMoney}} } } }));
       }
     }
 
@@ -20169,15 +20328,30 @@ AMR.page('overview', {
     }
 
     /* ---- load a period from the server ---- */
+    /* THE SERVER IS ASKED FOR THE MONTH THE SLIDER IS ANCHORED ON.
+       Left to itself getOverview answers for the REPORTING month (last calendar
+       month), while the cube anchors on the newest block - and the page then
+       reported two months at once, a server KPI strip above a cube table. The
+       month is part of the cache key on both sides, so the two periods stay
+       independently cached. 0 until the cube has landed, which is the server's
+       own default and the right answer while there is nothing better. */
+    function loadMonth(){
+      var a=(WIN.months.length>1) ? anchorMonth() : null;
+      return a ? (a%100) : 0;
+    }
+    function loadKey(){ return STATE.period+'|m'+loadMonth(); }
+    var LOADED_KEY='';
     function load(){
-      if(!CACHE[STATE.period] && window.AmrCache){          // per-device copy, wiped when a base table updates
-        var dev=AmrCache.get('ov:'+STATE.period);
-        if(dev) CACHE[STATE.period]=dev;
+      var key=loadKey();
+      LOADED_KEY=key;
+      if(!CACHE[key] && window.AmrCache){          // per-device copy, wiped when a base table updates
+        var dev=AmrCache.get('ov:'+key);
+        if(dev) CACHE[key]=dev;
       }
-      if(CACHE[STATE.period]){
+      if(CACHE[key]){
         hideLoader();                       // the pill is running from boot(); this path is done
-        STATE.data=CACHE[STATE.period];
-        syncWindow();                       // anchorMonth() reads the payload's reportMonth
+        STATE.data=CACHE[key];
+        syncWindow();
         renderChips(); renderActiveTab(); return;
       }
       if(!IS_LIVE){
@@ -20190,10 +20364,8 @@ AMR.page('overview', {
         .withSuccessHandler(function(d){
           hideLoader();
           if(!d || !d.ok){ banner('Could not load the overview data.'); return; }
-          if(window.AmrCache && d.generation!=null){ AmrCache.check(d.generation); AmrCache.set('ov:'+STATE.period, d); }
-          CACHE[STATE.period]=d; STATE.data=d;
-          /* the month the server answered for is the window's anchor, so the
-             handles move onto it as soon as the first payload lands */
+          if(window.AmrCache && d.generation!=null){ AmrCache.check(d.generation); AmrCache.set('ov:'+key, d); }
+          CACHE[key]=d; STATE.data=d;
           syncWindow();
           renderChips(); renderActiveTab();
           prefetchPeriod();          // so the OTHER button is instant when pressed
@@ -20202,7 +20374,7 @@ AMR.page('overview', {
           hideLoader();
           banner('Could not load the overview: '+((err&&err.message)||err));
         })
-        .getOverview({ period: STATE.period });
+        .getOverview({ period: STATE.period, month: loadMonth() });
     }
 
     /* The only reason pressing the other Period button ever waited is that its
@@ -20213,21 +20385,22 @@ AMR.page('overview', {
     function prefetchPeriod(){
       if(!IS_LIVE) return;
       var other = (STATE.period==='MTD') ? 'YTD' : 'MTD';
-      if(CACHE[other] || PREFETCHING[other]) return;
-      PREFETCHING[other]=1;
+      var mo=loadMonth(), key=other+'|m'+mo;
+      if(CACHE[key] || PREFETCHING[key]) return;
+      PREFETCHING[key]=1;
       if(window.AmrCache){
-        var dev=AmrCache.get('ov:'+other);
-        if(dev){ CACHE[other]=dev; return; }
+        var dev=AmrCache.get('ov:'+key);
+        if(dev){ CACHE[key]=dev; PREFETCHING[key]=0; return; }
       }
       google.script.run
         .withSuccessHandler(function(d){
-          PREFETCHING[other]=0;
+          PREFETCHING[key]=0;
           if(!d || !d.ok) return;                  // opportunistic: never surfaces
-          CACHE[other]=d;
-          if(window.AmrCache && d.generation!=null) AmrCache.set('ov:'+other, d);
+          CACHE[key]=d;
+          if(window.AmrCache && d.generation!=null) AmrCache.set('ov:'+key, d);
         })
-        .withFailureHandler(function(){ PREFETCHING[other]=0; })   // the button still works without it
-        .getOverview({ period: other });
+        .withFailureHandler(function(){ PREFETCHING[key]=0; })   // the button still works without it
+        .getOverview({ period: other, month: mo });
     }
 
     /* ---- Ready-Mix panel controls ---- */
@@ -20996,7 +21169,7 @@ AMR.page('overview', {
           plugins:{ legend:{display:!solo, position:'bottom', labels:{font:{size:11,family:'Inter'},color:C.ink,boxWidth:12,boxHeight:12,usePointStyle:true,pointStyle:'rectRounded'}},
             datalabels:{display:false},
             tooltip:{ callbacks:{ label:function(c){ return c.dataset.label+': '+fInt(c.raw)+' t'; } } } },
-          scales:{ x:{ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted, callback:function(v){ return v>=1000?(v/1000)+'k':v; }} },
+          scales:{ x:{ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted, callback:axThousands} },
                    y:{ grid:{display:false}, ticks:{font:{size:10.5,family:'Inter'},color:C.ink} } } }) }));
     }
 
@@ -21265,6 +21438,12 @@ AMR.page('overview', {
            current year has finished streaming */
         syncWindow(); renderPill(); dqBadge();
         if(ev==='ready') maybeBuildHistory();
+        /* The first load() runs before the cube exists, so it asks for month 0 -
+           the server's own default, which is the REPORTING month. Once the cube
+           lands the anchor is known and it may be a different month; re-fetch so
+           the server-fed half of the page reports the same month as the cube-fed
+           half. Cache-first on both sides, so this is usually free. */
+        if(LOADED_KEY && LOADED_KEY!==loadKey()){ load(); return; }
         if(winMode()) renderActiveTab(); else renderTrendSoon();
       });
       try{

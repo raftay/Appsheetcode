@@ -165,6 +165,11 @@
  *     §7   RXF_TABLE_CAP / RXF_DRILL_CAP / RXF_EXCL_CAP  the Ready-Mix equivalents
  *     §7   SG_OLD2NEW_LIST, SG_TECTS   the product suggester's vocabulary
  *     §8   OVCUBE_SHAPE_VER_       the month cube's shape version
+ *     §8   ovcCovTok_              hashes §1's COVERAGE into the cube's
+ *                                  generation, because the browser pools with
+ *                                  those thresholds and they travel in a
+ *                                  CACHED manifest. Not a tunable — the thing
+ *                                  that makes editing one take effect
  *     §10  TP_RECIP_KEY            names the PROPERTY the TP01 recipient map is
  *                                  stored in — the map itself is not in this file
  *
@@ -531,18 +536,88 @@ var APP_CONFIG = {
      * Verified on 2025 vs 2024: all-markets moves 5.19% -> 2.05% and North
      * 57.68% -> 3.74%, dropping 75 of 3,863 pairs worth 0.063% of weight.
      *
-     * AGG is left at 0/0 \u2014 the same floors change NOTHING there (its bad
-     * rows carry $404 and $53,542 of prior-year revenue, well clear of any
-     * $110 floor), so guessing a number would only invent a divergence.
-     * Fill these in once the Aggregates Qlik expression is to hand.
+     * AGG's volume/revenue floors are left at 0/0 \u2014 the same floors change
+     * NOTHING there (its bad rows carry $404 and $53,542 of prior-year
+     * revenue, well clear of any $110 floor), so guessing a number would
+     * only invent a divergence.
      *
      * NOTE: Qlik's Weight also carries Wildmatch(mix_prod_hier_1,'A*') and
      * a set of material exclusions that the export does not expose. See
      * the header comment in Ov_Backend.gs.
+     *
+     *
+     * ------------------------------------------------------------------
+     * cpi \u2014 THE CPI COVERAGE GATE, AND ONLY CPI'S.
+     * ------------------------------------------------------------------
+     * A PAIR HAS TO SHOW A REAL PRICE IN BOTH YEARS. That is the whole
+     * rule. It is a GATE, not an outlier filter: a pair that fails leaves
+     * the WEIGHT as well as the FACTOR, which is what Qlik does and what
+     * the +/-50% and 500% caps both tried and failed to approximate.
+     *
+     * WHY IT HAS TO BE STRONGER THAN "> 0". Qlik gates on revenue NET OF
+     * REBATES; this export carries only gross ex-Works. On 2026 Jan-Aug
+     * that difference is 10 pairs, and two of them wreck the page alone:
+     *
+     *   3P36 / Brock Aggregates / 9141 - a March 2025 invoice of $693.98
+     *   met an April credit of $693.84, leaving FOURTEEN CENTS against 47
+     *   tonnes. Prior-year ASP $0.003/t, "price move" +492,409%, and 135
+     *   of a 141.7% answer by itself.
+     *
+     *   3Q00 / JNF Ready Mix / 9055 - 378 t at $2.343/t last year against
+     *   24,593 t at $22.75/t this year. NOTHING ABOUT IT IS SMALL: it
+     *   carries $559,436 of weight and +870.9%, which is +3.13pp of the
+     *   all-markets index on its own. It is why SW Ontario still read
+     *   14.36% with only the volume and revenue floors applied.
+     *
+     * THE THREE FLOORS, AND WHAT EACH CATCHES.
+     *
+     *   minVol / minRev   more than a tonne and more than a dollar in
+     *                     BOTH years. This is what takes Brock out:
+     *                     fourteen cents is not a year of trading.
+     *
+     *   minAsp            and both years must average more than $3.00 a
+     *                     tonne. THIS IS THE ONE THAT MATTERS. It is the
+     *                     visible shadow of Qlik's net-revenue gate:
+     *                     Ontario's rebate runs $2.248/t (Manitoba $0.60,
+     *                     Saskatchewan $0.90, nil on recycled), so a pair
+     *                     whose year averaged $2.34/t was billing the
+     *                     rebate and not a price. Qlik nets that to zero
+     *                     and drops the pair. We cannot see the rebate,
+     *                     but we can see that no real product sells for
+     *                     $2.34 a tonne.
+     *
+     * CALIBRATED, NOT GUESSED, against Qlik's Cust Price Detail for Aug
+     * MTD and 2026 Jan-Aug, all markets:
+     *
+     *                vol/rev > 0    > 1 only   + $3.00 ASP     Qlik
+     *     Jan-Aug       141.719%      6.248%       3.106%     2.864%
+     *     Aug MTD         2.789%      2.789%       2.724%     2.646%
+     *
+     * The ASP floor costs three pairs Qlik keeps, worth $1,894 out of
+     * $155.5M of weight. Anything from $2.50 to about $3.90 gives the
+     * same answer to the third decimal; $4.00 starts eating real product
+     * (bank sand runs $3.97/t). $3.00 is the middle of that window.
+     *
+     * WHAT IS LEFT IS NOT THIS. The residual against Qlik - +0.24pp all
+     * markets, +0.01pp Manitoba, 0.00pp North - is the WEIGHT BASIS, not
+     * the gate: Qlik weights the numerator by revenue net of rebates and
+     * divides by a gross TotalWeight. Closing it needs _rebate as its own
+     * column in the export. DO NOT TUNE THESE FLOORS AT IT. README \u00a77.
+     *
+     * NOT APPLIED TO PPI, which passes no block at all and is bit-for-bit
+     * the index it has always published.
+     *
+     * AND IT IS ONLY REAL IF IT TRAVELS. The browser does the pooling, so
+     * this block ships inside cached payloads; ovcCovTok_ (\u00a78) is what
+     * makes editing it an invalidation, and a payload that arrives without
+     * it reports NO CPI rather than an ungated one. Read that comment
+     * before changing anything here.
      * ---------------------------------------------------------------- */
     COVERAGE: {
       agg: { minVol: 0, minRev: 0    },    // \u2190 awaiting the Aggregates Qlik expression
-      rmx: { minVol: 1, minRev: 110  }     // Qlik: vol > 1, revenue > 110
+      rmx: { minVol: 1, minRev: 110  },    // Qlik: vol > 1, revenue > 110
+      /* CPI only. A pair with no real price in both years is not a pair. */
+      cpi: { minVol: 1, minRev: 1, minAsp: 3 }
     }
   }
 };
@@ -4352,7 +4427,37 @@ var CUST_SECONDARY = { CUST_SEGMENT: 'Cust Segment [Rock]', PRODUCT_APP: 'Produc
  * ====================================================================== */
 var PI_SEP_ = '|\u2016|';
 
-function piIndex_(rows, ix, keyOf) {
+/* ---- THE DENOMINATOR IS NOT THE SUM OF THE WEIGHTS ------------------------
+ * Read off Qlik's own Cust Price Detail exports (2026 Jan-Jul, all markets and
+ * each of the four): CPI is [CPI Factor] / [TotalWeight], and TotalWeight is NOT
+ * the sum of the Weight column. On the all-markets export they are $136,727,744
+ * against $123,520,166 - a tenth apart, and the difference is the whole reason
+ * the page read 3.6% where Qlik reads 3.33%.
+ *
+ *   TotalWeight = CY revenue of EVERY covered pair
+ *   Factor      = CY revenue x ASP%, over covered pairs that are not outliers
+ *
+ * So a pair excluded as an outlier still counts in the denominator. It is
+ * dropped from the numerator, not from the population - which is what makes the
+ * exclusion a dilution rather than a deletion, and it is exactly what the two
+ * columns in Qlik's export show. Verified: Sum(covered CY revenue) reproduces
+ * TotalWeight to five significant figures on all five exports.
+ *
+ * PPI passes no outlier threshold, so for PPI every covered pair is in both
+ * sums and this is arithmetically identical to what it has always computed.
+ * ------------------------------------------------------------------------- */
+function piCpiCov_() {
+  var C = (typeof APP_CONFIG !== 'undefined' && APP_CONFIG.CUBE && APP_CONFIG.CUBE.COVERAGE)
+        ? APP_CONFIG.CUBE.COVERAGE : {};
+  return C.cpi || null;
+}
+
+/* ONE POOLING PASS, and `cov` is the whole difference between the two indices
+   besides the key. PPI passes null and every test below collapses to the "> 0"
+   it has always run; CPI passes \u00a71's cpi block and a pair that fails leaves BOTH
+   sums. That last part is the correction: a gate DELETES a pair, where the
+   outlier cap it replaces left the weight behind and only dropped the factor. */
+function piIndex_(rows, ix, keyOf, cov) {
   var g = {};
   rows.forEach(function (r) {
     var k = keyOf(r);
@@ -4360,17 +4465,20 @@ function piIndex_(rows, ix, keyOf) {
     o.pyVol += toNum_(r[ix.pyVol]); o.cyVol += toNum_(r[ix.cyVol]);
     o.pyRev += toNum_(r[ix.pyRev]); o.cyRev += toNum_(r[ix.cyRev]);
   });
+  var mv = cov ? (cov.minVol || 0) : 0,
+      mr = cov ? (cov.minRev || 0) : 0,
+      ma = cov ? (cov.minAsp || 0) : 0;
   var weight = 0, factor = 0;
   Object.keys(g).forEach(function (k) {
     var o = g[k];
-    /* Qlik's Weight: CY revenue when BOTH years carry volume and revenue,
-       otherwise zero. A pair that exists in only one year has no price MOVE to
-       measure, so it earns neither weight nor factor. */
-    if (o.pyVol > 0 && o.cyVol > 0 && o.pyRev > 0 && o.cyRev > 0) {
-      var pyAsp = o.pyRev / o.pyVol, cyAsp = o.cyRev / o.cyVol;
-      factor += o.cyRev * ((cyAsp - pyAsp) / pyAsp);   // PI / CPI Factor = Weight * ASP%
-      weight += o.cyRev;                               // Weight = CY REV if covered
-    }
+    /* Coverage: both years carry volume AND revenue, above the floors. A pair
+       that exists in only one year has no price MOVE to measure. */
+    if (!(o.pyVol > mv && o.cyVol > mv && o.pyRev > mr && o.cyRev > mr)) return;
+    var pyAsp = o.pyRev / o.pyVol, cyAsp = o.cyRev / o.cyVol;
+    /* ...and a price in both years, not a rebate (see \u00a71 cpi.minAsp) */
+    if (ma > 0 && !(cyAsp > ma && pyAsp > ma)) return;
+    weight += o.cyRev;                                 // TotalWeight: every covered pair
+    factor += o.cyRev * ((cyAsp - pyAsp) / pyAsp);     // Factor = Weight * ASP%
   });
   return { weight: weight, factor: factor, index: weight ? factor / weight : 0 };
 }
@@ -4393,12 +4501,15 @@ function piKeyCpi_(ix) {
 }
 
 function custPpi_(rows, ix) {
-  var p = piIndex_(rows, ix, piKeyPpi_(ix));
+  var p = piIndex_(rows, ix, piKeyPpi_(ix), null);     // no floors: PPI is unchanged
   return { weight: p.weight, factor: p.factor, ppi: p.index };
 }
+/* null when the config carries no cpi block, for the same reason piKeyCpi_
+   returns null without Sold To: report NO CPI rather than an ungated one. */
 function custCpi_(rows, ix) {
   var k = piKeyCpi_(ix); if (!k) return null;
-  var c = piIndex_(rows, ix, k);
+  var cov = piCpiCov_(); if (!cov) return null;
+  var c = piIndex_(rows, ix, k, cov);
   return { weight: c.weight, factor: c.factor, cpi: c.index };
 }
 
@@ -4878,7 +4989,13 @@ var XF_DATA_CAP = 8 * 1024 * 1024;   // ~8MB JSON
 function getCrossData(opts) {
   opts = opts || {};
   var period = (opts.period === 'YTD') ? 'YTD' : 'MTD';
-  var ck = gk_('xfdata:' + period);
+  /* The payload CARRIES the cpi coverage block (below), so the token belongs in the
+     key that stores it — same rule and the same reason as ovcGen_ (§8). Without
+     it a threshold edit is invisible here for the cache's six hours. Scoped to
+     this one key rather than folded into gk_: nothing else under gk_ carries a
+     coverage threshold, and widening it would throw away every PV cache for a
+     change that touches one payload. */
+  var ck = gk_('xfdata:' + period + '|c' + ovcCovTok_());
   var hit = cacheGet_(ck); if (hit) return hit;
 
   var data = buildPivot_(period, true, null), H = data.header;
@@ -4937,7 +5054,12 @@ function getCrossData(opts) {
   });
 
   var payload = { ok: true, period: period, n: cols.MARKET.length,
-                  dicts: dicts, cols: cols, nums: nums, generation: generation_() };
+                  dicts: dicts, cols: cols, nums: nums,
+                  /* \u00a71's CPI coverage block, so the local path gates CPI on exactly
+                     the rule the server does. null travels as null: a payload
+                     that cannot say what the gate is reports NO CPI. */
+                  cpiCoverage: ((ovcCfg_().COVERAGE || {}).cpi) || null,
+                  generation: generation_() };
   var size = 0;
   try { size = JSON.stringify(payload).length; } catch (e) { size = XF_DATA_CAP + 1; }
   if (size > XF_DATA_CAP) {
@@ -9909,6 +10031,14 @@ function getRmxFuelDataFromUpload(p){
 function getOverview(opts){
   opts = opts || {};
   var period = (opts.period === 'YTD') ? 'YTD' : 'MTD';
+  /* WHICH MONTH TO ANSWER FOR. 0 = let the data decide, which is the REPORTING
+     month (last calendar month). The Overview passes the newest month the month
+     cube holds instead, because that is what its slider calls "This month" and
+     the two halves of that page have to be reporting the same month - the
+     alternative is a KPI strip on July above a table on August, which is what
+     it did. See app.html anchorMonth(). */
+  var monthSel = Number(opts.month) || 0;
+  if (monthSel < 1 || monthSel > 12) monthSel = 0;
 
   /* Server-side memo, keyed by ALL THREE source generations: pressing
      "Update from source" on the Price & Volume, RMX or Product Segment page
@@ -9917,7 +10047,7 @@ function getOverview(opts){
      from Code.gs. */
   var pvG = APP_getGen_('pricevolume'), rmxG = APP_getGen_('rmx'), sbG = APP_getGen_('segment');
   var gen = pvG + '-' + rmxG + '-' + sbG;
-  var ck  = 'ov|g' + gen + '|' + period;
+  var ck  = 'ov|g' + gen + '|' + period + '|m' + monthSel;
   var hit = APP_cacheGet_(ck);
   if (hit) return hit;
 
@@ -9956,6 +10086,7 @@ function getOverview(opts){
   try {
     var rep = PV.getReport({
       period: period,
+      month: monthSel,
       dimensions: ['MARKET'],
       filterField: 'MARKET',
       filterValue: '__ALL__'
@@ -11147,8 +11278,48 @@ function ovcHistTok_(){
   try { return PropertiesService.getScriptProperties().getProperty(OVCUBE_TOK_PROP_) || '0'; }
   catch (e) { return '0'; }
 }
+/* ---- A TUNABLE THAT SHIPS INSIDE A CACHED PAYLOAD NEEDS TO BE IN ITS KEY ----
+ * §1's COVERAGE block is not read where it is used. The browser does the
+ * pooling, so the thresholds TRAVEL — in the cube manifest (below) and in the
+ * cross-filter dataset (getCrossData, §6) — and every cache key in that chain
+ * was built from the DATA's generation and the cube's SHAPE. Neither moves when
+ * a threshold is edited.
+ *
+ * So adding a CPI threshold changed nothing anyone could see. The server-side
+ * manifest cache answered from the copy it built before the edit; the browser's
+ * IndexedDB copy of that manifest is only ever wiped when the generation moves,
+ * so it warm-painted from the pre-edit manifest indefinitely; and reading the
+ * missing key with `|| 0` took it for "no gate at all". The Overview published
+ * +141.7% for 2026 Jan-Aug against Qlik's 2.86% — one pair, plant 3P36 / Brock
+ * Aggregates / 9141, whose prior year was a $0.14 residue after a credit,
+ * carrying an ASP move of +492,409% and 135pp of the answer by itself. The
+ * exclusion that exists to catch exactly that row was on the server the whole
+ * time and never reached the code that pools.
+ *
+ * The token below is what makes a COVERAGE edit an invalidation. It hashes the
+ * whole block, so a floor changing is the same kind of event as a shape change
+ * and needs no second thing to remember. Pair it with the fail-closed read in
+ * app.html's pool(): a payload that carries no threshold reports NO CPI rather
+ * than an unexcluded one, so the gap between an edit and a warm device catching
+ * up is an absent column instead of a wrong number.
+ * ------------------------------------------------------------------------- */
+function ovcCovTok_(){
+  var C = ovcCfg_().COVERAGE || {}, parts = [];
+  Object.keys(C).sort().forEach(function(k){
+    var v = C[k];
+    if (v && typeof v === 'object'){
+      var inner = [];
+      Object.keys(v).sort().forEach(function(k2){ inner.push(k2 + ':' + v[k2]); });
+      parts.push(k + '{' + inner.join(',') + '}');
+    } else parts.push(k + ':' + v);
+  });
+  var s = parts.join(';'), h = 5381;
+  for (var i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
 function ovcGen_(){
-  return APP_getGen_('pricevolume') + '-' + APP_getGen_('rmx') + '-h' + ovcHistTok_() + '-s' + OVCUBE_SHAPE_VER_;
+  return APP_getGen_('pricevolume') + '-' + APP_getGen_('rmx') + '-h' + ovcHistTok_()
+       + '-s' + OVCUBE_SHAPE_VER_ + '-c' + ovcCovTok_();
 }
 
 
@@ -11223,7 +11394,13 @@ function ovcBuild_(line){
     chunks: plan.map(function(c){ return { i:c.i, from:c.from, to:c.to, rows:c.rows }; }),
     dict: cube.dict, plantMap: cube.plantMap,
     mixMap: cube.mixMap || null, revType: cube.revType || null,
-    coverage: (ovcCfg_().COVERAGE || {})[line] || { minVol:0, minRev:0 },
+    /* the line's floors, plus \u00a71's CPI coverage block, so the browser gates CPI
+       on exactly the rule the server does */
+    coverage: (function(){
+      var C = ovcCfg_().COVERAGE || {};
+      var c = C[line] || { minVol:0, minRev:0 };
+      return { minVol: c.minVol||0, minRev: c.minRev||0, cpi: C.cpi || null };
+    })(),
     skipped: cube.skipped || 0,
     history: !!hist,
     /* which closed-year books exist, which are linked, which are built - the

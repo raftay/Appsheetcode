@@ -587,14 +587,142 @@ a product in only one of the two years fails the coverage test and drops out of 
 staying in PPI. So the two carry different total weights and are two measures, not two
 views of one.
 
-Neither survives a window longer than twelve months: every month would be compared against
-a month already inside it (`pyStale`).
+**Why a hand-built PPI and CPI come out identical.** They will, every time, if the ASP% is
+fixed *per row* and then revenue-weighted: `Σ(ASP%ᵢ × CYrevᵢ) ÷ Σ(CYrevᵢ)` does not care how
+the rows are grouped, so adding Customer to the key changes nothing. The grain only bites
+when volume and revenue are **summed into the bucket first and the ratio taken after** —
+the same "sum into its bucket before taking any ratio" rule the Bill Month note above states.
+Group first, divide second, and the two indices separate on their own.
+
+**CPI divides by TotalWeight, which is NOT the sum of the weights it used.** Read straight
+off Qlik's own Cust Price Detail exports (2026 Jan–Jul: all markets and each of GTA, SW,
+Manitoba, Saskatchewan), `CPI = [CPI Factor] ÷ [TotalWeight]`, and on the all-markets export
+those two columns total **$136,727,744** against **$123,520,166** — a tenth apart. So:
+
+```
+TotalWeight = CY revenue of EVERY covered pair          ← the denominator
+Factor      = CY revenue × ASP%, over covered pairs
+              that are not outliers                     ← the numerator
+```
+
+A pair excluded as an outlier **keeps its weight and loses its factor**. The exclusion is a
+dilution, not a deletion. Summing covered CY revenue reproduces `TotalWeight` to the dollar on
+all five Jan–Jul exports, and **to the penny** on both August ones — `$155,497,057.14` for
+Jan–Aug and `$13,041,331.22` for Aug MTD, from the app's own raw rows at the app's own grain.
+The denominator is not the part that is wrong. PPI passes no threshold, so both its sums run
+over the same pairs and it is arithmetically what it has always computed — unchanged.
+
+**The gate is stronger than "> 0", and that is the whole rule.** A pair earns weight only
+if it shows a **real price in both years**. Qlik gates on revenue *net of rebates*; this export
+carries only gross ex-Works, and on 2026 Jan–Aug that difference is 10 pairs. Two of them wreck
+the page on their own:
+
+| pair | last year | this year | ASP move | carries |
+|---|---|---|---|---|
+| `3P36` / Brock Aggregates / `9141` | 47.04 t for **$0.14** | 2,918.59 t for $42,780.71 | +492,409% | 135pp |
+| `3Q00` / JNF Ready Mix / `9055` | 378 t at **$2.343/t** | 24,593 t at $22.75/t | +870.9% | +3.13pp |
+
+Brock is a March 2025 invoice of $693.98 met by an April credit of $693.84 — fourteen cents
+against 47 tonnes. JNF is the one that matters for the design: **nothing about it is small.**
+$559,436 of weight, five figures of tonnes, every volume and revenue figure comfortably above
+any floor you would think to set. Only its *price* gives it away, and $2.343/t is Ontario's
+rebate rate, not a price.
+
+So `COVERAGE.cpi` carries three floors, and each catches a different thing:
+
+| floor | value | what it takes out |
+|---|---|---|
+| `minVol` | 1 t | a pair that barely traded in either year |
+| `minRev` | $1 | **Brock** — fourteen cents is not a year of trading |
+| `minAsp` | $3.00/t | **JNF** — the visible shadow of Qlik's net-revenue gate |
+
+`minAsp` is the one doing the work. Ontario's rebate runs $2.248/t (Manitoba $0.60,
+Saskatchewan $0.90, nil on recycled), so a pair whose year averaged $2.34/t was billing the
+rebate and not a price. Qlik nets that to zero and drops the pair; we cannot see the rebate,
+but we can see that no real product sells for $2.34 a tonne.
+
+**It is a GATE, not an outlier cap, and the difference is the denominator.** A pair that fails
+leaves the **weight as well as the factor** — a deletion, which is what Qlik does. The ±50% and
+500% caps that preceded it were dilutions: they dropped the factor and left the weight behind,
+which is why neither ever reproduced Qlik's selection.
+
+Calibrated against Qlik's Cust Price Detail for both August windows, all markets:
+
+| | `vol/rev > 0` | `> 1` only | `+ $3.00 ASP` | Qlik |
+|---|---|---|---|---|
+| **Jan–Aug 2026** | 141.719% | 6.248% | **3.106%** | 2.864% |
+| **Aug 2026 MTD** | 2.789% | 2.789% | **2.724%** | 2.646% |
+
+The `> 1` column is the trap: it takes Brock and looks like a fix, while SW Ontario still reads
+**14.36%** because JNF sails through it. The price floor costs three pairs Qlik keeps, worth
+$1,894 out of $155.5M of weight. Anything from $2.50 to about $3.90 gives the same answer to
+the third decimal; $4.00 starts eating real product — bank sand runs $3.97/t. $3.00 is the
+middle of that window. **Do not tune these floors at the residual below**; it is a different
+thing entirely.
+
+**What is left, and why it cannot be closed here.** With the denominator exact to the penny and
+the gate reproducing Qlik's selection, the remaining error is that **Qlik weights the numerator
+by net-of-rebate revenue while dividing by a gross `TotalWeight`** — its `Weight` runs ~0.905×
+ex-Works with a per-row ratio, so no constant recovers it:
+
+| 2026 Jan–Aug | Qlik | app | residual |
+|---|---|---|---|
+| All markets | 2.864% | 3.106% | +0.24pp |
+| GTA | 2.48% | 2.74% | +0.26pp |
+| SW Ontario | 3.05% | 3.37% | +0.32pp |
+| Manitoba | 2.84% | 2.85% | **+0.01pp** |
+| Saskatchewan | 5.91% | 5.95% | **+0.04pp** |
+| North | 6.22% | 6.22% | **0.00pp** |
+
+Manitoba, Saskatchewan and North land inside 0.04pp because their rebate is small or nil.
+Closing GTA and SW needs `_rebate` as its own column in the Price & Volume export. Until then
+this is the ceiling, and it is a weighting difference rather than a wrong method.
+
+**And none of it is real if the gate does not travel.** See §7's next note.
+
+### The tunable that shipped inside a cached payload
+
+A CPI threshold was added, was correct, and changed nothing for a day. The Overview went on
+publishing **+141.7%** for 2026 Jan–Aug against Qlik's 2.86%, and **+243.0%** for GTA against
+2.48% — the Brock Aggregates pair above, unexcluded, carrying 135 of those points.
+
+The arithmetic was never wrong. **The number never arrived.** §1's `COVERAGE` block is read on
+the server, but the browser does the pooling, so the thresholds *travel* — inside the cube
+manifest and inside the cross-filter dataset. Every cache key in that chain was built from the
+**data's** generation and the cube's **shape**, and neither moves when a threshold is edited:
+
+| layer | what it held | how long |
+|---|---|---|
+| `CacheService` (`ovcBuild_`) | the manifest built before the edit | 6 h |
+| IndexedDB (`AmrCube`) | that manifest, replayed on every warm start | until the generation moved |
+| reading the missing key with `\|\| 0` | took it for *no gate at all* | — |
+
+Two changes, and they are two halves of one rule:
+
+1. **`ovcCovTok_` hashes the whole `COVERAGE` block into `ovcGen_`**, and `getCrossData`'s key
+   carries it too. Editing a floor is now the same kind of event as a shape change — one
+   invalidation, nothing to remember separately. `getCrossData`'s key is scoped rather than
+   folded into `gk_`: nothing else under `gk_` carries a coverage threshold.
+2. **A payload that cannot say what the gate is reports NO CPI**, in `pool()` and in
+   `poolPairs()` alike — `null`, not an empty gate. The column is dropped exactly as it is on a
+   line with no Sold To. An absent column is a question the page declines to answer; a wrong one
+   is not. A block present but all-zero is a *deliberate* empty gate and still reports.
+
+`revalidate()` also writes the confirmed manifest back to IndexedDB. It was only ever stored by
+`adoptGen()`, which runs on a **cold** start, so a warm device painted from the manifest it
+first saw for as long as the generation held, however many times the server rebuilt it.
+
+**The general rule: a tunable that ships inside a cached payload belongs in that payload's
+cache key.** `tests/cpiindex.js` gates both halves.
 
 The arithmetic is written once per runtime — `piIndex_` (`script.gs` §6), `pool()` in
 `AmrCube`, and `poolPairs()` in the Overview's local cross-filter path — and CPI is reported
 only where Sold To exists. `metrics_()` is the deliberate exception: it sums the pivot's own
 precomputed weight columns at a **finer** key, those are the numbers Price & Volume has
 always published, and it is left alone rather than unified. See the banner over `piIndex_`.
+Unifying it is a one-line change and it is **not** blocked on effort — it is blocked on the
+fact that it moves every PPI on that page in the same commit, which is the opposite of
+"PPI is correct". Do it as its own change, against a reconciliation, or not at all.
 
 ### RMX PPI
 
@@ -708,17 +836,19 @@ there with the input that moved.
   and max it is handed, so a headroom of `9.1318562625202050` was the axis label. `headroom()`
   snaps both ends outward to a round step first — 9.13 becomes 10, −3.45 becomes −4 — and
   `fAxisPct()` rounds the label, because 3 × 0.2 is `0.6000000000000001` in binary.
-- **The month window anchors on the REPORTING MONTH, not the newest block the cube holds.**
-  The page draws two ways at once and they have to agree about which month "this month" is.
-  The server reports land on last calendar month (§7 above); the cube also holds the running
-  month, which is part-billed. Anchoring on the newest block picked that one, so on an August
-  visit the KPI strip (server, July) read 2,266,577 t while the market table directly under it
-  (cube, August) read 1,067,541 t for the same selection, every market at −50% or worse — the
-  part-month against a full one. And "Prev month (MTD)" is one back from the anchor, so it
-  landed on July: **the two Period buttons drew the same view.** `getOverview` now echoes
-  `reportMonth` off the data (`pvReportMonth_`, never the clock) and `anchorMonth()` uses it;
-  the clock rule is the fallback and the newest block the fallback to that. The part-billed
-  month is still one drag of the slider away, as the custom window it actually is.
+- **The month window anchors on the NEWEST month, and the server is asked for it.** "This
+  month" means the latest month there is data for and "Prev month" the one before it. The
+  server reports would otherwise land on the reporting month (last calendar month), so the
+  page reported two months at once — on an August visit a server KPI strip read 2,266,577 t
+  above a cube-fed table reading 1,067,541 t for the same selection, every market at −50% or
+  worse. `getOverview` takes a `month` (in its cache key), the Overview passes
+  `anchorMonth()`, and both halves answer for the same month. The first fetch runs before the
+  cube exists and so asks for month 0 — the server's own default; when the cube lands and the
+  anchor is known, a cache-first re-fetch brings the two into line.
+- **The EBITDA workbook is a CLOSED-month statement, so its cards read `kpiMonth()`** — the
+  month *before* the anchor — and say which month that is. It arrives during the month after
+  the one it covers, so it can never answer for "this month"; moving the whole page back to
+  meet it was the wrong half to move.
 - **Period has four settings and only two exist on the server.** `MTD` and `YTD` are what the
   backends answer for. `PMTD` / `PYTD` are the same two shapes one month back, computed in the
   browser from the month cube. `STATE.pick` is the button; `STATE.period` stays the *server*
@@ -1151,6 +1281,14 @@ or was forgotten.**
 | 2026-08-20 | **The Overview's two halves disagreed about which month "this month" is, and the fix is one anchor.** The server reports land on the reporting month — last calendar month — while the month cube also holds the running, part-billed month and the window anchored on *that*. So on an August visit the KPI strip read July's 2,266,577 t while the market table under it read August's 1,067,541 t for the same selection, every market at −50% or worse; and **"Prev month (MTD)", one back from the anchor, landed on the server's July, so the two Period buttons drew the same view.** `getOverview` echoes `reportMonth` off the data (`pvReportMonth_`, never the clock) and `anchorMonth()` uses it, clock rule as fallback; the part-billed month is still a drag away as the custom window it is. The KPI cards now name their month, so the workbook's MTD and YTD halves can no longer read as "unchanged" beside a Period that did move | ✅ |
 | 2026-08-20 | **The opening screen stopped waiting for the whole history.** `AmrBoot`'s `month history` step was released only once every calendar-year block had streamed *and* every linked closed-year book had been read end to end — minutes of a modal over a page whose own pill says "Nothing else on the page is waiting on this". `histBootReady()` releases it when the cube can answer the month the page opens on; the rest arrives behind the pill | ✅ |
 | 2026-08-20 | **CPI joins PPI: one formula, two keys.** They are the same weighted index — coverage-gated pairs, weight = CY revenue, factor = weight × the pair's own ASP move, Σfactor ÷ Σweight — differing only in what a *pair* is: PPI keys on plant × product, CPI on plant × **sold-to** × product (Qlik's Cust Price Detail calls that column "Customer", and it is Sold To). Written once per runtime: `piIndex_` on the server, `pool()` in `AmrCube`, `poolPairs()` in the Overview's local cross-filter path; `SOLD_TO` rides the cross dataset so both cross paths agree. **The column is drawn only where its source can answer it** — never as dashes, never filled with PPI, which would read as the two indices agreeing. `metrics_()` is left alone deliberately: it sums the pivot's precomputed weights at a finer key and those are the figures Price & Volume publishes | ✅ |
+| 2026-08-20 | **CPI published +206.7%, and the cause was a credit row.** A reversal is its own raw row \u2014 revenue, no volume \u2014 so netted into a pair it moves the dollars without moving the tonnes: it does not reduce a price, it destroys one. Plant `3P36` / Brock Aggregates / `9141` billed 47.04 t for $693.98 in March 2025 and took a $693.84 credit in April, leaving **fourteen cents against 47 tonnes** and a price "move" of **+492,409%** that carried 95.6% of \u03a3factor by itself. CPI's ASP now comes off **priced** revenue \u2014 revenue on rows that carried volume \u2014 which is how this data can express Qlik's own prior-year test (`_rev_base + _Enviro_Fees + _Govt_Fees + _disc_comp`, no `_credit_debit`, no `_rebate`). PPI is deliberately NOT given the rule: at plant \u00d7 material grain the credit is diluted, and its published figures reconcile as they stand. Written once per runtime and applied in all three. **The residual is stated, not tuned away**: 3.06% / 2.76% against Qlik's 2.95% / 2.67%, with an exhaustive search over grain \u00d7 revenue basis \u00d7 weight \u00d7 threshold finding nothing within 0.03pp of both, and the same harness reproducing every market's volume and revenue to the dollar | \u2705 |
+| 2026-08-20 | **Every numeric axis rounds now.** Chart.js walks a scale by repeated addition and 14.8 + 0.2 is 15.000000000000002, so "ASP by month" printed sixteen digits of it; `headroom()` had fixed the bounds last session but not the ticks the chart makes out of them. `axFix()` takes its precision from the tick SPACING, so one helper serves dollars, tonnes and percentages, and every raw `'$'+v` callback is gone. Magnitude suffixes are deliberately not unified \u2014 volume axes read in thousands, money axes in millions, and both are what their readers expect | \u2705 |
+| 2026-08-20 | **PPI and CPI share one chart, and the green is gone.** Colour is the SERIES, not the sign: one index drawn green-for-up borrowed a semantic the rest of the page spends on growth, and green is not in the palette at all. PPI takes navy and CPI the light blue, exactly as this year / last year do on every other paired chart in the panel. **Past twelve months \u2014 or in the oldest year the history holds \u2014 every same-period-last-year series is dropped**, the index chart with them, and the note says which of the two reasons applies. `pyAbsent()` is the new half: the 2023 chip selected a window where vs-last-year was blank everywhere at once, which reads as a broken page rather than as an absent prior year. The chip stays \u2014 the cube answers volume and revenue there perfectly well; it is the columns that go | \u2705 |
+| 2026-08-20 | **CPI, calibrated against Qlik's own exports rather than reasoned at.** Five Cust Price Detail exports (2026 Jan\u2013Jul: all markets and each of GTA, SW, Manitoba, Saskatchewan) carry Qlik's per-pair Weight and Factor, and they settle two things the expressions alone did not. **The denominator is TotalWeight, not \u03a3Weight** \u2014 $136,727,744 against $123,520,166 on the all-markets export, a tenth apart, and summing covered CY revenue reproduces it to the dollar on all five. An outlier therefore keeps its weight and loses only its factor. **The threshold is 500%, not the \u00b150% the footnote states**: Qlik keeps pairs to |ASP%| 330% and zeroes from 647%, so anything in that gap reproduces its selection exactly (0.000pp on all five) while a 50% cap costs 1.26pp on SW alone. What remains \u2014 +0.02pp Manitoba, +0.03pp Saskatchewan, +0.28pp GTA, +0.33pp all markets, +0.59pp SW \u2014 is entirely `Weight` being a rebate-adjusted revenue the export nets away, ~0.82\u00d7 ex-Works on 2,788 of 3,117 kept rows with a per-row ratio, so no constant recovers it. The priced-revenue rule from earlier today is backed out: it was the right instinct about credits and the wrong mechanism, and PPI is bit-for-bit what it has always published | \u2705 |
+| 2026-08-20 | **"This month" is the newest month again, and the server is asked for it.** The anchor had been moved to the reporting month to stop the page reporting two months at once; that fixed the disagreement by moving the wrong half. `getOverview` takes a `month` now (in its cache key) and the Overview passes its anchor, so the server-fed and cube-fed halves answer for the same month while "This month" keeps meaning the latest month there is data for. The EBITDA workbook is the one thing that genuinely belongs to the closed month, and it is handled where it is read \u2014 `kpiMonth()` is the anchor minus one, and the cards name it | \u2705 |
+| 2026-08-21 | **The CPI exclusion was right and never arrived — a tunable that ships inside a cached payload.** The Overview published **+141.7%** for 2026 Jan–Aug against Qlik's 2.86%, and **+243.0%** for GTA against 2.48%, with `cpiOutlier: 5.0` sitting correctly in §1 the whole time. Replicating both August exports out of the raw sheet reproduces every published figure to the decimal **at threshold = 0** — MTD 2.79/2.31/3.52/1.61/6.36, YTD 141.72/242.97/14.36/2.85/5.95/6.22 — which names the fault exactly: §1 is read on the server, the **browser** does the pooling, so the number travels in the cube manifest and the cross-filter dataset, and every cache key in that chain is built from the DATA's generation. `cov.cpiOutlier || 0` then read the missing key as *no threshold at all*, and the browser's IndexedDB copy of that manifest is only wiped when the generation moves — so a warm device painted the pre-edit manifest indefinitely. **`ovcCovTok_` hashes the whole `COVERAGE` block into `ovcGen_`** (and into `getCrossData`'s key), so a floor edit is an invalidation; **a payload that cannot say what the exclusion is now reports NO CPI**, `null` not `0`, dropping the column exactly as a line with no Sold To does; and `revalidate()` writes the confirmed manifest back, which `adoptGen()` only ever did on a cold start. `tests/cpiindex.js` gates both halves off the real Brock Aggregates pair, mutation-tested both ways | ✅ |
+| 2026-08-21 | **A stronger GATE for CPI, and the outlier cap retires.** A cap was always the wrong shape: it dropped a pair's factor and left its weight in the denominator — a dilution, where Qlik DELETES. `COVERAGE.cpi` is three floors now (`minVol` 1 t, `minRev` $1, `minAsp` $3.00/t) and a pair that fails leaves both sums. **The volume and revenue floors alone are a trap**: they take the Brock pair and look like a fix while SW Ontario still reads **14.36%**, because `3Q00` / JNF Ready Mix / `9055` sails through them — 378 t at $2.343/t last year against 24,593 t at $22.75/t this, +870.9%, carrying $559,436 of weight and +3.13pp of the index on its own. Nothing about it is small; only its PRICE gives it away, and $2.343/t is Ontario's rebate rate. So `minAsp` is the floor that matters, and it is the visible shadow of Qlik's net-revenue gate (rebate $2.248/t Ontario, $0.60 Manitoba, $0.90 Saskatchewan, nil on recycled). Calibrated on both August exports: Jan–Aug **141.719% → 6.248% (> 1 only) → 3.106%** against Qlik's 2.864%; Aug MTD **2.789% → 2.724%** against 2.646%. Costs three pairs Qlik keeps, worth $1,894 of $155.5M. Any floor from $2.50 to ~$3.90 gives the same answer; $4.00 starts eating bank sand at $3.97/t. `tests/cpiindex.js` carries BOTH bad pairs deliberately — one that the revenue floor catches and one that only the price floor does, so a half-fix cannot pass | ✅ |
+| 2026-08-21 | **The 500% threshold is a guard, not Qlik's rule — and the last session's evidence for it was an accident of the window.** Qlik zeroes **10 of 3,407** covered pairs in 2026 Jan–Aug; five move by less than 100% and two by less than 5% (**+4.55%**, **+0.26%**), while it *keeps* pairs at −115.9%, +225.4% and, on the Aug MTD export, **+472.8%**. No |ASP%| threshold selects that set; the "330–647% gap" only looked like one because Jan–Jul held no counter-example. **What actually selects it: `Weight` is CY revenue net of the per-tonne aggregate levy, and Qlik's coverage runs on the net figure.** `(CY revenue − Weight) ÷ CY volume` lands on **$2.248/t Ontario, $0.60/t Manitoba, $0.90/t Saskatchewan, nil on recycled** across 3,397 pairs and both exports — 9 of the 10 zeroed pairs have a net-of-levy ASP at or below ten cents in one year. That column does not exist here, so the guard stays, and it costs **0.0001pp** against Qlik's own selection (3.0933% vs 3.0934%) and drops no pair Qlik keeps. **The denominator was never the problem**: Σ covered CY revenue reproduces `TotalWeight` to the penny on both exports ($155,497,057.14 and $13,041,331.22). The residual after the fix is **+0.23pp** all-markets — Qlik weighting the numerator net and dividing by gross, ~0.905× with a per-row ratio. Manitoba +0.01pp, Saskatchewan +0.04pp, North 0.00pp, because their levy is small or nil. Do not spend another session tuning the threshold | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |
