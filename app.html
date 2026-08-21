@@ -1037,6 +1037,19 @@ body[data-page="pricevolume"] .shell{grid-template-columns:264px 1fr; max-width:
   flex-direction:column; gap:14px}
 :where(body[data-page="rmx"]) .wrap > main{flex:1; min-width:0; display:flex;
   flex-direction:column; gap:16px}
+/* AND THAT LAYOUT HAS TO CARVE THE GUIDE'S COLUMN OUT TOO. Past --bp-wide the
+   QlikView guide is pinned open and its FAB is hidden (§A3), because at that
+   width there is room for both — and the rule that MAKES the room only names
+   `.shell`. Every other guide page has one; Ready-Mix lays itself out with
+   `.wrap`, so it kept the full viewport and the guide was pinned open on top of
+   it: the last 250px of every table, the ✓ MATCHED pills on the mapping check
+   and the per-card help buttons all sat underneath a panel with no way to shut
+   it. The FAB that would have closed it is display:none at exactly this width.
+   `.wrap` is full-bleed rather than centred, so the margin alone is the whole
+   fix — there is no max-width here to override. */
+@media (min-width:1720px){         /* --bp-wide, and §A3's .qlikGuide block */
+  :where(body[data-page="rmx"]) .wrap{margin-right:288px}
+}
 
 /* the period / N-A / theme controls are §A3's .seg.full, but pressed is navy here */
 :where(body[data-page="rmx"]) .seg button[aria-pressed="true"]{background:var(--blue-100)}
@@ -2748,12 +2761,16 @@ window.AMR = (function(){
 
   function teardown(){
     MOUNTED = false;
-    /* MODULES THAT OUTLIVE THE MOUNT BUT HOLD THIS PAGE'S STATE. Neither is
-       reachable through the hooks above — one polls with a setTimeout chain and
-       the other keeps a node §D is told to preserve — so each exposes one
-       method and teardown calls it. */
+    /* MODULES THAT OUTLIVE THE MOUNT BUT HOLD THIS PAGE'S STATE. None is
+       reachable through the hooks above — one polls with a setTimeout chain, one
+       keeps a node §D is told to preserve, and one holds a callback list of its
+       own — so each exposes one method and teardown calls it. */
     try { if (window.AmrFresh && AmrFresh.stop) AmrFresh.stop(); } catch (e) {}
     try { if (window.AmrProgress && AmrProgress.reset) AmrProgress.reset(); } catch (e) {}
+    /* AmrCube's listeners are neither DOM listeners nor timers, so installCapture
+       never saw them: rmx -> pricevolume -> rmx left two copies of Price &
+       Volume's repaint running against a page that is gone. */
+    try { if (window.AmrCube && AmrCube.detach) AmrCube.detach(); } catch (e) {}
     LISTENERS.forEach(function(l){
       try { l[0].removeEventListener(l[1], l[2], l[3]); } catch (e) {}
     });
@@ -3158,6 +3175,14 @@ window.AmrTick = (function(){
  * ================================================================== */
 window.AmrCache = (function(){
   function page(){ return window.APP_PAGE || 'page'; }
+  /* WHICH PAGE'S STORE IS OPEN, not just whether one is. `ready` was a single
+     boolean for the whole module, and §D mounts ten pages into ONE document —
+     so a version confirmed on AGG Fuel Recovery left it true when Product
+     Segment mounted next, and Segment's entries were readable and writable
+     before anything had looked at Segment's version. Every key here is already
+     per page; the flag that guards them has to be too. */
+  var READY_FOR = null;
+  function open_(){ return !!READY_FOR && READY_FOR === page(); }
   function pfx(){ return 'amrCache:' + page() + ':'; }
   function genKey(){ return 'amrCacheGen:' + page(); }
   function wipe(){
@@ -3173,34 +3198,70 @@ window.AmrCache = (function(){
   var api = {
     ready: false,   // saved tables are only served after the version is confirmed
     /* Compare the server's data version with the one stored on this
-       device; wipe this page's saved tables if it changed. */
+       device; wipe this page's saved tables if it changed.
+       Returns TRUE when the stored tables SURVIVED — which is the question a
+       caller that has already painted from them needs answered. */
     check: function(gen){
       gen = String(gen == null ? '' : gen);
+      var kept = true;
       try{
-        if (localStorage.getItem(genKey()) !== gen){ wipe(); localStorage.setItem(genKey(), gen); }
+        if (localStorage.getItem(genKey()) !== gen){
+          kept = false; wipe(); localStorage.setItem(genKey(), gen);
+        }
       }catch(e){}
+      READY_FOR = gen ? page() : null;
       api.ready = !!gen;
+      return kept;
+    },
+    /* PAINT NOW, CONFIRM BEHIND IT.
+       -------------------------------------------------------------------
+       get() is gated on `ready`, and `ready` only goes true once the SERVER
+       has answered — so however much this device already holds, the first
+       paint waited a full round trip for it, on every single open. Apps
+       Script runs one user's calls end to end, so that is the better part of
+       a second of blank page in front of an answer that is already here. That
+       is what "it loads again every time" was.
+
+       warm() opens the store on the generation THIS DEVICE last confirmed, so
+       a repeat visit paints immediately. It is only ever correct with a
+       check() behind it: boot() still asks the server, and a version that has
+       moved wipes the store and the caller re-reads. Nothing here decides the
+       numbers are current — it decides they are worth showing for the second
+       it takes to find out, which is the same trade AmrCube's warm start makes
+       against IndexedDB.
+
+       Returns the generation it opened on, or null when this device has
+       nothing to show and the caller should just wait for the server. */
+    warm: function(){
+      var g = null;
+      try{ g = localStorage.getItem(genKey()); }catch(e){}
+      if (!g) return null;
+      READY_FOR = page();
+      api.ready = true;
+      return g;
     },
     /* One tiny server call on page open, then hand control back.
-       If it fails, the page simply loads normally (no device cache). */
+       If it fails, the page simply loads normally (no device cache).
+       done(kept) — kept is false when the version had moved and the store was
+       wiped, which is a caller that painted warm being told to read again. */
     boot: function(done){
-      if (!(typeof google !== 'undefined' && google.script && google.script.run)){ done && done(); return; }
+      if (!(typeof google !== 'undefined' && google.script && google.script.run)){ done && done(false); return; }
       google.script.run
         .withSuccessHandler(function(r){
-          api.check(r && r.generation);
+          var kept = api.check(r && r.generation);
           /* boot already asked for the version, so watching it is free */
           try { if (window.AmrFresh) AmrFresh.start(r && r.generation); } catch (e){}
-          done && done();
+          done && done(kept);
         })
-        .withFailureHandler(function(){ done && done(); })
+        .withFailureHandler(function(){ done && done(false); })
         .getDataVersion(page());
     },
     get: function(key){
-      if (!api.ready) return null;
+      if (!open_()) return null;
       try{ var raw = localStorage.getItem(pfx() + key); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
     },
     set: function(key, data){
-      if (!api.ready) return;
+      if (!open_()) return;
       try{
         var s = JSON.stringify(data);
         if (s.length > 1500000) return;            // stay well inside the ~5MB quota
@@ -3753,15 +3814,32 @@ window.AmrCube = (function(){
     agg: { man:null, chunks:{}, cols:null, n:0, ready:false },
     rmx: { man:null, chunks:{}, cols:null, n:0, ready:false }
   };
-  var gen = null, db = null, listeners = [], booting = false;
+  var gen = null, db = null, listeners = [], booting = false, refetching = false;
   /* Which lines this page actually cares about, and which one to fetch first.
      Overview wants both; Price & Volume only agg; Ready-Mix only rmx. */
   var LINES = STORES.slice(), PRIORITY = null, warm = false;
+  /* THE LAST WORD THIS CUBE SAID, KEPT SO IT CAN SAY IT AGAIN.
+     This module is a §E singleton and §D mounts ten pages into ONE document, so
+     the cube outlives every page that uses it. A page that opens second — or the
+     same page opened twice — registers its listener against a cube that has
+     already finished, and an event stream with no replay says nothing to it
+     ever again. Both cube pages hang a boot step on that event, so what the user
+     saw was a modal loading screen over a page that had all its data, until they
+     reloaded the tab. See on() and init(). */
+  var SETTLED = null;
 
   function emit(ev, payload){
+    /* Only the two TERMINAL events are worth repeating. 'progress' and 'warm'
+       describe a moment; 'ready' and 'error' describe a state, and a state is
+       what a listener arriving late needs to be told. */
+    if (ev === 'ready' || ev === 'error') SETTLED = { ev: ev, payload: payload };
     for (var i = 0; i < listeners.length; i++){
       try { listeners[i](ev, payload); } catch (e) {}
     }
+  }
+  function off(fn){
+    var i = listeners.indexOf(fn);
+    if (i !== -1) listeners.splice(i, 1);
   }
 
   /* ---------------------------------------------------------- IndexedDB -- */
@@ -4199,8 +4277,47 @@ window.AmrCube = (function(){
     return any;
   }
 
+  /* Every line this page configured, and whether the cube holds a manifest for
+     it. A page that WIDENS the set is asking for something the first boot never
+     fetched — Price & Volume configures agg alone, and the Overview, opened
+     after it, wants rmx as well. */
+  function unfetched(){
+    for (var i = 0; i < LINES.length; i++) if (!S[LINES[i]].man) return true;
+    return false;
+  }
+
+  /* A configured line has no manifest. The blocks already in hand are keyed by
+     generation and are not disturbed; this fills in what is missing and emits
+     the terminal event again at the end of it. */
+  function refetch(){
+    if (refetching) return Promise.resolve(false);
+    refetching = true;
+    SETTLED = null;                    // nothing to replay until this settles
+    return coldStart().then(function(v){ refetching = false; return v; },
+      function(e){
+        refetching = false;
+        emit('error', e && e.message ? e.message : String(e));
+        return false;
+      });
+  }
+
   function init(){
-    if (booting || !LIVE) return Promise.resolve(false);
+    if (!LIVE) return Promise.resolve(false);
+    /* A SECOND init() IS A PAGE SWITCH, NOT A DUPLICATE BOOT — and returning at
+       once, silently, is what left the AGG page under a loading screen that only
+       a browser refresh cleared. `booting` is still true from the first visit, so
+       the second visit's AmrCube.on() listener was registered against a cube that
+       would never speak again; Price & Volume hangs AmrBoot's 'month history'
+       step and AmrProgress's 'cube' job on that event, and both are modal.
+
+       So a re-entry ANSWERS. There is nothing to refetch when the cube already
+       holds every line this page configured — on() replays the settled event to
+       the listener that just arrived — and a line the first boot never fetched
+       is fetched now. */
+    if (booting){
+      if (unfetched()) return refetch();
+      return Promise.resolve(false);
+    }
     booting = true;
     return idbOpen().then(function(d){
       db = d;
@@ -4333,7 +4450,7 @@ window.AmrCube = (function(){
      manifest, chunk and IndexedDB copy in hand is stale. Drop the lot and boot
      again from scratch. init()'s own gen check wipes the store. */
   function reload(){
-    booting = false; gen = null; warm = false;
+    booting = false; gen = null; warm = false; SETTLED = null;
     STORES.forEach(function(l){ S[l] = { man:null, chunks:{}, cols:null, n:0, ready:false }; });
     /* Straight to the server: the point of a reload is that the device copy is
        known to be wrong, so the warm path would only paint stale numbers. */
@@ -4351,7 +4468,27 @@ window.AmrCube = (function(){
     prioritise: prioritise,
     lines: function(){ return LINES.slice(); },
     warm: function(){ return warm; },
-    on: function(fn){ listeners.push(fn); },
+    /* REGISTER, AND BE TOLD WHERE THE CUBE ALREADY IS. A listener that arrives
+       after the cube settled is replayed the terminal event once, on the next
+       turn of the loop so the caller's own configure().init() has run first —
+       which is the order every page writes it in. Returns an unsubscribe. */
+    on: function(fn){
+      if (typeof fn !== 'function') return function(){};
+      listeners.push(fn);
+      setTimeout(function(){
+        if (SETTLED && listeners.indexOf(fn) !== -1){
+          try { fn(SETTLED.ev, SETTLED.payload); } catch (e) {}
+        }
+      }, 0);
+      return function(){ off(fn); };
+    },
+    off: off,
+    /* EVERY LISTENER, GONE — §D's teardown calls this on a page switch. They
+       belong to the page that registered them: left in place they run the old
+       page's repaint against the new page's DOM, and they accumulate one set per
+       visit for the lifetime of the tab. The cube's own data is untouched; the
+       next page registers its own. */
+    detach: function(){ listeners = []; },
     query: query,
     months: months,
     has: has,
@@ -8909,6 +9046,10 @@ AMR.page('fuelsurcharge', {
   function viewFullScreen(){ AmrSlide.viewSlide(buildContent(), slideOpts()); }
 
   /* ======================= data loading ======================= */
+  /* Returns TRUE when it painted from THIS DEVICE and asked the server nothing.
+     The opening sequence at the foot of this page is the only caller that reads
+     it: a warm paint has to be re-read if the version behind it has moved, and a
+     cold one is already reading. */
   function loadData(){
     var st  = document.getElementById('loadStat');
     var btn = document.getElementById('reloadBtn');
@@ -8916,7 +9057,7 @@ AMR.page('fuelsurcharge', {
     if(!AMR.live){
       showProblem('This page can’t reach the server. Please open it from the app link '
         +'(the address ending in /exec?page=fuelsurcharge) and refresh.');
-      return;
+      return false;
     }
 
     /* Any explicit (re)load re-derives the presets from the new data, so the title
@@ -8996,7 +9137,7 @@ AMR.page('fuelsurcharge', {
       if(hit && hit.markets){
         AMR.log('info', 'FSC.getFscData', 'reading', { month: STATE.month, cache: 'hit' });
         applyData(hit, 'hit');
-        return;
+        return true;
       }
     }
     AMR.log('info', 'FSC.getFscData', 'reading',
@@ -9016,6 +9157,7 @@ AMR.page('fuelsurcharge', {
           + 'To point at a different sheet, use ⚙ Data sheet at the top.');
       })
       .getFscData({ month: STATE.month });
+    return false;
   }
 
   /* Fill the Report-month picker from the months the sheet actually holds.
@@ -9310,13 +9452,43 @@ AMR.page('fuelsurcharge', {
       +'The data will still try to load — refresh the page if anything looks off.');
   }
 
-  /* One tiny server call before the first read: which data version is this page
-     on? AmrCache wipes this device's saved payloads if it has moved, and
-     AmrFresh starts watching it for free — which is new on these two pages, so
-     an update landing while the page is open now greys it out here as well.
-     If the call fails, loadData() still runs and the page simply has no cache.
-     Price & Volume does exactly this. */
-  if(window.AmrCache) AmrCache.boot(loadData); else loadData();
+  /* THE FIRST PAINT DOES NOT WAIT ON THE SERVER.
+     ---------------------------------------------------------------------
+     This was `AmrCache.boot(loadData)`: one round trip for the data version,
+     and only then a read that was almost always a cache hit. The hit is
+     instant; the wait in front of it is not. Apps Script runs one user's calls
+     end to end, so every open of an unchanged page sat on a loading screen for
+     as long as the server took to answer a question whose answer had not
+     changed — which is what "it loads again every time you open it" was.
+
+     So the device paints first and the version is confirmed behind it. That is
+     AmrCube's warm start and the same paint-then-revalidate this page's own
+     THE DEVICE CACHE note already describes. What keeps it honest:
+
+       · warm() only opens a store this device itself wrote and stamped, and it
+         answers null on a device that has never held this page — so a first
+         visit is byte-for-byte what it always was.
+       · boot() still asks the server, every time, and still starts AmrFresh
+         from the reply. A version that has moved wipes the store, and that is
+         what `kept === false` means.
+       · ONLY A WARM PAINT IS RE-READ. A cold open has already gone to the
+         sheet by the time boot() answers, and reading twice for one open is
+         the bug this is meant to remove, not a safety margin.
+       · Nothing paints warm in an upload session. That data is not the
+         sheet's, is never stored, and upOff() is the boundary. */
+  if(window.AmrCache){
+    if(!STATE.upload) AmrCache.warm();
+    /* THE VERSION CALL IS ISSUED FIRST AND ANSWERED FIRST, and that ordering is
+       load-bearing rather than tidy. Apps Script runs one user's calls end to
+       end, so whichever is sent first replies first — and set() will not write a
+       payload before the generation it belongs under is known, or check() would
+       wipe it a moment later as an orphan. Sending the read first is how a cold
+       open ended up storing nothing at all. Only the PAINT has moved off the
+       round trip; the write still waits for the version, exactly as it did. */
+    var painted = false;
+    AmrCache.boot(function(kept){ if(painted && !kept) loadData(); });
+    painted = loadData();
+  } else loadData();
   }
 });
 </script>
@@ -9812,6 +9984,10 @@ AMR.page('rmxfuel', {
   function viewFullScreen(){ AmrSlide.viewSlide(buildContent(), slideOpts()); }
 
   /* ======================= data loading ======================= */
+  /* Returns TRUE when it painted from THIS DEVICE and asked the server nothing.
+     The opening sequence at the foot of this page is the only caller that reads
+     it: a warm paint has to be re-read if the version behind it has moved, and a
+     cold one is already reading. */
   function loadData(){
     var st  = document.getElementById('loadStat');
     var btn = document.getElementById('reloadBtn');
@@ -9819,7 +9995,7 @@ AMR.page('rmxfuel', {
     if(!AMR.live){
       showProblem('This page can’t reach the server. Please open it from the app link '
         +'(the address ending in /exec?page=rmxfuel) and refresh.');
-      return;
+      return false;
     }
 
     /* Any explicit (re)load re-derives the presets from the new data, so the title
@@ -9899,7 +10075,7 @@ AMR.page('rmxfuel', {
       if(hit && hit.markets){
         AMR.log('info', 'RFSC.getRmxFuelData', 'reading', { month: STATE.month, cache: 'hit' });
         applyData(hit, 'hit');
-        return;
+        return true;
       }
     }
     AMR.log('info', 'RFSC.getRmxFuelData', 'reading',
@@ -9919,6 +10095,7 @@ AMR.page('rmxfuel', {
           + 'To point at a different sheet, use ⚙ Data sheet at the top.');
       })
       .getRmxFuelData({ month: STATE.month });
+    return false;
   }
 
   /* Fill the Report-month picker from the months the sheet actually holds.
@@ -10215,13 +10392,43 @@ AMR.page('rmxfuel', {
       +'The data will still try to load — refresh the page if anything looks off.');
   }
 
-  /* One tiny server call before the first read: which data version is this page
-     on? AmrCache wipes this device's saved payloads if it has moved, and
-     AmrFresh starts watching it for free — which is new on these two pages, so
-     an update landing while the page is open now greys it out here as well.
-     If the call fails, loadData() still runs and the page simply has no cache.
-     Price & Volume does exactly this. */
-  if(window.AmrCache) AmrCache.boot(loadData); else loadData();
+  /* THE FIRST PAINT DOES NOT WAIT ON THE SERVER.
+     ---------------------------------------------------------------------
+     This was `AmrCache.boot(loadData)`: one round trip for the data version,
+     and only then a read that was almost always a cache hit. The hit is
+     instant; the wait in front of it is not. Apps Script runs one user's calls
+     end to end, so every open of an unchanged page sat on a loading screen for
+     as long as the server took to answer a question whose answer had not
+     changed — which is what "it loads again every time you open it" was.
+
+     So the device paints first and the version is confirmed behind it. That is
+     AmrCube's warm start and the same paint-then-revalidate this page's own
+     THE DEVICE CACHE note already describes. What keeps it honest:
+
+       · warm() only opens a store this device itself wrote and stamped, and it
+         answers null on a device that has never held this page — so a first
+         visit is byte-for-byte what it always was.
+       · boot() still asks the server, every time, and still starts AmrFresh
+         from the reply. A version that has moved wipes the store, and that is
+         what `kept === false` means.
+       · ONLY A WARM PAINT IS RE-READ. A cold open has already gone to the
+         sheet by the time boot() answers, and reading twice for one open is
+         the bug this is meant to remove, not a safety margin.
+       · Nothing paints warm in an upload session. That data is not the
+         sheet's, is never stored, and upOff() is the boundary. */
+  if(window.AmrCache){
+    if(!STATE.upload) AmrCache.warm();
+    /* THE VERSION CALL IS ISSUED FIRST AND ANSWERED FIRST, and that ordering is
+       load-bearing rather than tidy. Apps Script runs one user's calls end to
+       end, so whichever is sent first replies first — and set() will not write a
+       payload before the generation it belongs under is known, or check() would
+       wipe it a moment later as an orphan. Sending the read first is how a cold
+       open ended up storing nothing at all. Only the PAINT has moved off the
+       round trip; the write still waits for the version, exactly as it did. */
+    var painted = false;
+    AmrCache.boot(function(kept){ if(painted && !kept) loadData(); });
+    painted = loadData();
+  } else loadData();
   }
 });
 </script>
@@ -12432,13 +12639,15 @@ MB Submarket, plus Region&rarr;Country.<br>
             <button data-n="merged" aria-pressed="false" title="N/A (products not found in PRODUCT MASTER) is folded into Others before the PPI math runs">Combined</button>
             <button data-n="separate" aria-pressed="true" title="Others and N/A stay separate, exactly like the source sheet">Separate</button>
           </div>
-          <div class="field"><label class="lbl">Export theme</label>
+        </div>
+        <!-- Export theme is its OWN field. It was a child of the one above, which
+             is why it alone had no gap over its label: .field's margin collapsed
+             inside its parent instead of separating two siblings. -->
+        <div class="field"><label class="lbl">Export theme</label>
           <div class="seg full" id="expTheme">
             <button data-t="white" aria-pressed="true">White</button>
             <button data-t="yellow" aria-pressed="false">Yellow</button>
           </div>
-        </div>
-
         </div>
         <p class="hint">BASE = concrete only. ALL-IN adds Extras + VAP revenue. <b>Select the checkboxes on the cards to choose which tables to include in the PNG export.</b></p>
       </div>
@@ -14711,12 +14920,75 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
     if(window.AmrProgress) AmrProgress.clear(LOAD_JOB);
   }
 
-  /* The first pull. One call: this market's tables, the market list, the month
-     options, and every other market warmed server-side ready to be asked for. */
+  /* OPEN FROM THE DEVICE, THEN CONFIRM.
+     -------------------------------------------------------------------------
+     This page stores every payload it is handed, and then never read one on
+     open: AmrCache.get() is gated on `ready`, and `ready` only went true inside
+     the reply to the call it was supposed to save. The store was write-only for
+     the whole life of the page, so every open paid RMX_prepare - the most
+     expensive call in the suite - to be handed back, almost always, exactly
+     what was already on the device. That is what "it loads again every time you
+     open it" was, and nothing in the log looked wrong because the call really
+     was doing its job.
+
+     So the device paints first and the token is confirmed behind it, which is
+     the warm start AmrCube has always done against IndexedDB. What confirms it
+     is RMX_getStamp: the same two fields - generation and build - that every
+     heavy payload carries, on their own, with no sheet read behind them. It has
+     to be those two and not getDataVersion('rmx'), which answers a differently
+     shaped pair; README §6 has the account of what two disagreeing copies of one
+     cache token cost.
+
+     If the token moved, everything on this device is stale and the full pull
+     runs - the store has already been wiped by check(), and STATE.month goes
+     back to 0 so the backend resolves the reporting month again rather than
+     being pinned to the one the stale payload named.
+
+     If the CHECK ITSELF fails we keep what is on screen and say nothing. The
+     alternative is throwing away a page that is already usable because one small
+     call did not come back, and the next open asks again. Note what this page
+     does NOT have: AmrFresh is never started here, because it would watch
+     getDataVersion('segment') - the Slide Builder tabs this page stopped reading
+     - so there is no background poll to fall back on. The button is. */
   function bootLoad(){
     var st=document.getElementById('loadStat');
     if(!IS_LIVE){ setStat(st,false,'This page only reads data inside the live Apps Script web app.'); return; }
 
+    if(!STATE.upload && window.AmrCache && AmrCache.warm()){
+      /* WHICH MONTH THE LAST VISIT SETTLED ON. The picker is on 0 until the
+         first reply pins it, but every payload was filed under the month the
+         BACKEND resolved to — so looking under m0 is looking under a name
+         nothing was ever stored as, and this whole path would miss forever
+         while the store sat there full. */
+      var mo = STATE.month || ((AmrCache.get('open') || {}).month) || 0;
+      var wk = ckeyFor_(STATE.market, STATE.period, mo);
+      var dev = AmrCache.get('slide:'+wk);
+      if(dev){
+        CACHE[wk] = dev;
+        applyData(dev, 'Loaded');
+        google.script.run
+          .withSuccessHandler(function(res){
+            /* check() answers whether the store SURVIVED. It did: what is on
+               screen is current and this open cost one small call. */
+            if(res && res.generation != null && window.AmrCache
+               && AmrCache.check(cacheToken_(res))) return;
+            CACHE = {}; STATE.month = 0;
+            prepareAll_();
+          })
+          /* SILENT ON PURPOSE, and the reason is above: a failed check leaves a
+             usable page alone rather than replacing it with an error. */
+          .withFailureHandler(function(){})
+          .RMX_getStamp();
+        return;
+      }
+    }
+    prepareAll_();
+  }
+
+  /* The full pull. One call: this market's tables, the market list, the month
+     options, and every other market warmed server-side ready to be asked for. */
+  function prepareAll_(){
+    var st=document.getElementById('loadStat');
     showLoading('Reading the Ready-Mix workbook and preparing every market');
     if(st){ st.className='dzstat'; st.textContent=LOAD_TEXT; }
 
@@ -14747,6 +15019,11 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
              in one market at a time exactly as a single fetch would write them. */
           if(!STATE.upload && window.AmrCache) AmrCache.set('slide:'+ck, pl[k]);
         });
+        /* ...and the month they were all filed under, so the next open can find
+           them before it knows what the backend would resolve to. Two integers;
+           it is the index for everything above. */
+        if(!STATE.upload && window.AmrCache)
+          AmrCache.set('open', { month: (res && res.month) || STATE.month || 0 });
 
         if(!res || !res.payload){
           /* prepare answered but carried no payload for this market: fall through

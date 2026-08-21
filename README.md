@@ -268,6 +268,21 @@ knowing before touching a page:
   to one a second when the tab is hidden and one a *minute* after five minutes of it, which
   is exactly how deck rendering is normally used.
 
+**A §E module is a singleton and every page shares it.** That is what §E is *for*, and it is
+also the shape of a bug the page switcher made possible and a reload used to hide. Three of
+them hold state that outlives a mount and each answers for it in §D's `teardown()`:
+`AmrFresh.stop()`, `AmrProgress.reset()` and `AmrCube.detach()`. The one that cost a page:
+
+> **`AmrCube.init()` used to return silently on a second call.** The guard was right for a
+> single page load and wrong the moment ten pages live in one document — coming back to the
+> AGG page registered an `AmrCube.on()` listener against a cube that had already finished and
+> would never emit again, so `AmrBoot`'s `month history` step was never answered and the modal
+> loading screen stayed up until the tab was reloaded. A second `init()` is a **page switch**,
+> not a duplicate boot: `on()` replays the settled event to a listener that arrives late, and a
+> line the first boot never fetched (Price & Volume configures `agg` alone; the Overview opened
+> after it wants `rmx` too) is fetched now. `on()` also hands back an unsubscribe, because a
+> dead page's repaint left wired to the cube is the other half of the same root.
+
 §E used to be byte-for-byte the files it was ported from, and `tests/modparity.js` proved it.
 That gate has retired — see §10 — so a §E module is now proved by the harnesses that run it,
 not by a comparison with a deleted file.
@@ -472,6 +487,48 @@ it:
 - **Ship every market to the browser, not one per click.** Warming the server cache is half
   the job; the page still pays a round trip per market otherwise. Aggregates never did that —
   its opening call carries every market, which is why it always felt instant.
+
+### Paint from the device, then confirm — and what that is not
+
+`AmrCache.get()` is gated on `ready`, and `ready` only goes true once the **server** has
+confirmed the generation. That is the right gate and it was in the wrong place: it meant the
+first paint waited a full round trip on **every** open, however much the device already held,
+and Apps Script runs one user's calls end to end so that is the better part of a second of
+blank page in front of an answer that was already here. Three pages read as "it loads again
+every time you open it" for that reason and one of them was worse — Product Segment could
+never read its own store on open at all, because the only thing that set `ready` was the reply
+to the call the store existed to avoid. Its store was **write-only for the life of the page**,
+and nothing looked wrong in any log, because `RMX_prepare` really was doing its job.
+
+`AmrCache.warm()` opens the store on the generation **this device itself last confirmed**, so
+the page paints at once and the version is checked behind it — the warm start `AmrCube` has
+always done against IndexedDB. It is only ever correct with a `check()` behind it, and three
+things are load-bearing:
+
+- **`boot()` still asks, every time**, and still starts `AmrFresh` from the reply. `check()`
+  now returns whether the store **survived**; `boot(done)` passes that to `done(kept)`. A
+  caller that painted warm and is told `kept === false` must read again.
+- **Only a warm paint is re-read.** A cold open has already gone to the source by the time the
+  version comes back, and reading twice for one open is the bug this removes, not a safety
+  margin.
+- **The version call is issued FIRST and answered first.** `set()` will not write a payload
+  before the generation it belongs under is known, or `check()` wipes it a moment later as an
+  orphan — sending the read first is how a cold open ended up storing nothing at all. Only the
+  *paint* came off the round trip; the write still waits for the version.
+
+**`RMX_getStamp()` is what confirms the Ready-Mix pages** — `{generation, build}`, the same two
+fields under the same names that `prepareAll`'s `stamp()` puts on every heavy payload, with no
+sheet read and no bundle behind them. It has to be those two: `getDataVersion('rmx')` answers
+`APP_sourceStamp_` + `APP_CODE_BUILD`, which is a **differently shaped pair**, and two copies of
+one cache token is the mistake at the top of this section.
+
+`ready` is also **per page** now. It was one boolean for the whole module while §D mounts ten
+pages into one document, so a version confirmed on AGG Fuel Recovery left the store of whatever
+mounted next readable before anything had checked *its* version.
+
+`tests/reopen.js` gates all of it, and it gates the thing a call count cannot see: the stub
+holds every reply for a fixed latency and counts what is outstanding per call name, so
+"a table is on screen while the version call has not come back" is an assertion.
 
 ### What the fuel pages' device cache must never do
 
@@ -965,6 +1022,16 @@ there with the input that moved.
 - **Every size in a KPI card is `em`, so the row's font-size IS the card's size.** A strip
   dropped into a bare flex row with no font-size inherits the 16px body font and clips its own
   text rather than spilling.
+- **Past `--bp-wide` the QlikView guide is pinned open, and a page has to carve its column
+  out.** §A3 shows `.qlikGuide` and hides its FAB above 1720px, because at that width there is
+  room for both — and the rule that makes the room names `.shell`. Ready-Mix lays itself out
+  with `.wrap` (see §A4's note on why), so it kept the full viewport and the guide was pinned
+  open **on top of it**: the last 250px of every table, the ✓ matched pills on the mapping
+  check and the per-card help buttons all under a panel with no way to shut it, because the
+  FAB that closes it is `display:none` at exactly that width. Every other guide page has a
+  `.shell` or is centred narrow enough to clear it; the landing page's full-bleed hero is the
+  one deliberate overlap. **Adding a page whose root is not `.shell`, or mounting the guide on
+  one, means adding it to that media query.**
 
 ---
 
@@ -1289,6 +1356,7 @@ or was forgotten.**
 | 2026-08-21 | **The CPI exclusion was right and never arrived — a tunable that ships inside a cached payload.** The Overview published **+141.7%** for 2026 Jan–Aug against Qlik's 2.86%, and **+243.0%** for GTA against 2.48%, with `cpiOutlier: 5.0` sitting correctly in §1 the whole time. Replicating both August exports out of the raw sheet reproduces every published figure to the decimal **at threshold = 0** — MTD 2.79/2.31/3.52/1.61/6.36, YTD 141.72/242.97/14.36/2.85/5.95/6.22 — which names the fault exactly: §1 is read on the server, the **browser** does the pooling, so the number travels in the cube manifest and the cross-filter dataset, and every cache key in that chain is built from the DATA's generation. `cov.cpiOutlier || 0` then read the missing key as *no threshold at all*, and the browser's IndexedDB copy of that manifest is only wiped when the generation moves — so a warm device painted the pre-edit manifest indefinitely. **`ovcCovTok_` hashes the whole `COVERAGE` block into `ovcGen_`** (and into `getCrossData`'s key), so a floor edit is an invalidation; **a payload that cannot say what the exclusion is now reports NO CPI**, `null` not `0`, dropping the column exactly as a line with no Sold To does; and `revalidate()` writes the confirmed manifest back, which `adoptGen()` only ever did on a cold start. `tests/cpiindex.js` gates both halves off the real Brock Aggregates pair, mutation-tested both ways | ✅ |
 | 2026-08-21 | **A stronger GATE for CPI, and the outlier cap retires.** A cap was always the wrong shape: it dropped a pair's factor and left its weight in the denominator — a dilution, where Qlik DELETES. `COVERAGE.cpi` is three floors now (`minVol` 1 t, `minRev` $1, `minAsp` $3.00/t) and a pair that fails leaves both sums. **The volume and revenue floors alone are a trap**: they take the Brock pair and look like a fix while SW Ontario still reads **14.36%**, because `3Q00` / JNF Ready Mix / `9055` sails through them — 378 t at $2.343/t last year against 24,593 t at $22.75/t this, +870.9%, carrying $559,436 of weight and +3.13pp of the index on its own. Nothing about it is small; only its PRICE gives it away, and $2.343/t is Ontario's rebate rate. So `minAsp` is the floor that matters, and it is the visible shadow of Qlik's net-revenue gate (rebate $2.248/t Ontario, $0.60 Manitoba, $0.90 Saskatchewan, nil on recycled). Calibrated on both August exports: Jan–Aug **141.719% → 6.248% (> 1 only) → 3.106%** against Qlik's 2.864%; Aug MTD **2.789% → 2.724%** against 2.646%. Costs three pairs Qlik keeps, worth $1,894 of $155.5M. Any floor from $2.50 to ~$3.90 gives the same answer; $4.00 starts eating bank sand at $3.97/t. `tests/cpiindex.js` carries BOTH bad pairs deliberately — one that the revenue floor catches and one that only the price floor does, so a half-fix cannot pass | ✅ |
 | 2026-08-21 | **The 500% threshold is a guard, not Qlik's rule — and the last session's evidence for it was an accident of the window.** Qlik zeroes **10 of 3,407** covered pairs in 2026 Jan–Aug; five move by less than 100% and two by less than 5% (**+4.55%**, **+0.26%**), while it *keeps* pairs at −115.9%, +225.4% and, on the Aug MTD export, **+472.8%**. No |ASP%| threshold selects that set; the "330–647% gap" only looked like one because Jan–Jul held no counter-example. **What actually selects it: `Weight` is CY revenue net of the per-tonne aggregate levy, and Qlik's coverage runs on the net figure.** `(CY revenue − Weight) ÷ CY volume` lands on **$2.248/t Ontario, $0.60/t Manitoba, $0.90/t Saskatchewan, nil on recycled** across 3,397 pairs and both exports — 9 of the 10 zeroed pairs have a net-of-levy ASP at or below ten cents in one year. That column does not exist here, so the guard stays, and it costs **0.0001pp** against Qlik's own selection (3.0933% vs 3.0934%) and drops no pair Qlik keeps. **The denominator was never the problem**: Σ covered CY revenue reproduces `TotalWeight` to the penny on both exports ($155,497,057.14 and $13,041,331.22). The residual after the fix is **+0.23pp** all-markets — Qlik weighting the numerator net and dividing by gross, ~0.905× with a per-row ratio. Manitoba +0.01pp, Saskatchewan +0.04pp, North 0.00pp, because their levy is small or nil. Do not spend another session tuning the threshold | ✅ |
+| 2026-08-21 | **Four field reports, and three of them were one bug wearing different clothes: a module that outlives the page that used it.** (1) **The AGG page loaded for ever until you refreshed.** `AmrCube` is a §E singleton and §D mounts ten pages into one document, so the second visit's `AmrCube.on()` listener met a cube whose `init()` had already run — it returned `Promise.resolve(false)` and emitted nothing, `AmrBoot`'s `month history` step was never answered, and `AmrProgress` is modal. A second `init()` is a **page switch**: `on()` replays the settled event to a late listener and returns an unsubscribe, `teardown()` calls `AmrCube.detach()`, and a line the first boot never fetched (PV configures `agg` alone; the Overview then wants `rmx`) is fetched now. `pageswitch.js` could not have caught it — its fixture answers `CUBE_getManifest` with `ok:false` and the **error** path does emit. (2) **Product Segment never once read its own device store.** `AmrCache.get()` is gated on `ready`, and the only thing that set `ready` was the reply to `RMX_prepare` — the call the store existed to avoid — so the store was **write-only for the life of the page** and every open paid the most expensive call in the suite to be handed back what was already there. `AmrCache.warm()` opens on the generation the device itself confirmed and `RMX_getStamp()` checks it behind the paint: `{generation, build}`, the same two fields under the same names as `prepareAll`'s `stamp()`, no sheet read. Not `getDataVersion('rmx')` — different pair, different shape, and §6 has the account of what two copies of one token cost. A warm open now costs one small call, and market and period switches cost **none**. (3) **Both fuel pages paint before the version call answers** rather than after it — same `warm()`, with `check()` returning whether the store survived and only a warm paint re-read. The version call is still issued FIRST, because `set()` will not write under a generation it does not know yet and sending the read first stored nothing at all. Measured at 800ms of stubbed latency: 1868ms → 905ms cold, **942ms → 31ms warm**. `ready` is per page now; it was one boolean across ten pages. (4) **The Ready-Mix UI at ≥1720px**: §A3 pins the QlikView guide open and hides the FAB that closes it, and the rule that carves the 288px names `.shell` — Ready-Mix lays out with `.wrap`, so the guide sat on top of the last 250px of every table, the ✓ matched pills and every per-card help button. One media query; also un-nested the Export theme `.field` that was a child of the N/A one. **`reopen.js` is the new gate and it asserts the thing a call count cannot see**: replies are held for a fixed latency and outstanding calls counted by name, so “a table is on screen while the version call has not come back” is an assertion. `APP_CODE_BUILD` bumped — the client now paints device entries before validating them, and one cold load per device buys the guarantee that every warm paint after this deploy came from a store this code wrote | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |

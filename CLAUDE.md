@@ -68,5 +68,5 @@ anything.
 
 Anything touching `SlidesApp`, `DriveApp`, `CacheService` or a spreadsheet needs the live
 deployment. What *can* be checked is the client-side compute and render layer — that is what
-the 24 harnesses in `tests/` are for. Run the relevant ones before and after touching a page;
+the 25 harnesses in `tests/` are for. Run the relevant ones before and after touching a page;
 `tests/README.md` says what each one claims.

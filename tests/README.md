@@ -309,6 +309,47 @@ contents named. A mutation that does not change behaviour tells you nothing abou
 node tests/fuelcache.js
 ```
 
+## `reopen.js` — the SECOND time a page is opened
+
+`fuelcache.js` and `segboot.js` were both green while three pages were, in the field, "loading
+again every time you open them". Neither was wrong; both were asking the right question of the
+wrong moment.
+
+- `fuelcache` proves a repeat visit does not **re-read the sheet**. It does not. It waited a
+  full round trip for permission to paint what it already had.
+- `segboot` proves the Ready-Mix pages open with **one pull** rather than twelve. They do — and
+  the one was `RMX_prepare`, the most expensive call in the suite, on every open, to be handed
+  back what was already on the device. `segboot` also boots the **legacy** files, so it could
+  not have seen a change to `app.html` either way.
+
+So this measures the second open of `app.html`'s own pages, and it asserts the thing a call
+count cannot see:
+
+| check | what it would catch |
+|---|---|
+| `cold` | a first visit makes exactly one heavy call **and renders** — an empty page and a loaded one must not read the same |
+| `reopen` | no heavy call at all, **and** something is on screen while the cheap revalidation is still outstanding, **and** that revalidation was actually made |
+| `version-moved` | a moved token re-reads, and the open after it is warm again — a store that recomputes for ever while every log line looks healthy is the failure this repo has shipped before |
+| `cube-first` / `cube-reopen` | the AGG page's opening screen comes down the first time, still comes down after leaving and returning twice, and `AmrCube.on()` returns the unsubscribe teardown needs |
+
+**The reading that matters is a pair taken at the same instant.** The stub holds every reply for
+`LATENCY` ms and counts what is **outstanding per call name**, so "there is a table on screen
+while `getDataVersion` has not come back yet" is assertable. Either half alone passes on the old
+behaviour — the page did eventually paint, and it did eventually stop calling — so both are
+required together.
+
+Two fixture details are deliberate and each took a wrong answer to find. The Product Segment
+payloads are filed under **month 7, not the 0 the picker opens on**, because that is what the
+backend resolves to and a warm read looking under `m0` would miss for ever while the store sat
+there full. And `CUBE_getManifest` answers `ok:true`, because `pageswitch.js`'s `ok:false`
+fixture is precisely why it could not catch the cube re-entry bug: the **error** path emits, so
+the boot step gets answered and the screen comes down for the wrong reason.
+
+```bash
+npm install playwright
+node tests/reopen.js
+```
+
 ## `slidecss.js` — §B is only what a capture cannot inherit
 
 `Deck_Styles.html` was 86 rules because the Deck Builder loaded the slide modules **without**

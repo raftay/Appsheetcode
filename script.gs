@@ -1790,7 +1790,7 @@ function APP_forgetStamp_(page){
    The stamp above tracks the DATA. A code fix leaves the data untouched, so
    without this every device would keep serving figures the OLD code computed
    and the fix would look like it did nothing. */
-var APP_CODE_BUILD = '2026-08-17c';
+var APP_CODE_BUILD = '2026-08-21a';
 
 function APP_getGen_(page) {
   return (APP_sourceStamp_(page) || '0') + '.' + APP_CODE_BUILD;
@@ -8355,9 +8355,36 @@ function getCrossReport(opts){
 }
 
 
+  /* THE TWO FIELDS A DEVICE CACHE KEYS ON, AND NOTHING ELSE.
+     -------------------------------------------------------------------------
+     Every heavy Ready-Mix payload carries `generation` and `build`, and the
+     pages hash the pair into the token AmrCache stamps its store with. Asking
+     "is what this device holds still current?" therefore meant fetching a whole
+     payload to read two strings off the front of it - so the Product Segment
+     page called RMX_prepare on every open, and the answer was almost always
+     "yes, exactly what you already have".
+
+     This is those two strings on their own. It opens NO spreadsheet and NO
+     bundle: generation_() is the source workbook's Drive MODIFIED TIME, memoised
+     in this execution and in CacheService above it, and BUILD is a literal. It
+     costs the round trip and, at worst, the same Drive metadata read every page
+     already makes through getDataVersion.
+
+     IT MUST KEEP RETURNING THE SAME TWO FIELDS, UNDER THE SAME NAMES, AS
+     stamp() above. README §6 is explicit that two copies of a cache token is
+     how you ship a check that disagrees with the thing it is checking: the
+     device would be wiped on every other load and every request would recompute
+     while every log line looked healthy. getDataVersion('rmx') is NOT a
+     substitute - it answers APP_sourceStamp_ + APP_CODE_BUILD, which is a
+     different pair with a different shape. */
+  function getStamp(){
+    return { ok:true, generation: generation_(), build: BUILD };
+  }
+
   // Surface what the front end / Code.gs need.
   return {
     getMarkets:     getMarkets,
+    getStamp:       getStamp,     // the device-cache token, without the payload
     prepareAll:     prepareAll,   // the one pull - see the block comment above
     getKeys:        getKeys,
     getExtras:      getExtras,
@@ -8401,6 +8428,9 @@ var RMX_NS = RMX;
  * through the ambient `RMX`.
  * ======================================================================== */
 function RMX_getMarkets(opts)     { return RMX_NS.getMarkets(opts); }
+/* Is what this device already holds still current? See getStamp above: the two
+   token fields, no sheet read, no bundle. */
+function RMX_getStamp()           { return RMX_NS.getStamp(); }
 function RMX_prepare(opts) {
   var t0 = Date.now();
   APP_log('info', 'RMX.prepareAll', 'reading',

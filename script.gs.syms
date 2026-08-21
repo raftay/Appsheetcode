@@ -49,6 +49,7 @@ function RMX_getExtras
 function RMX_getKeys
 function RMX_getMarkets
 function RMX_getSlideTables
+function RMX_getStamp
 function RMX_getUnmapped
 function RMX_prepare
 function RMX_syncData
@@ -230,6 +231,7 @@ function getSlideData
 function getSlideData
 function getSlideTables
 function getSpreadsheetIdForPage_
+function getStamp
 function getSuggestions
 function getUnmapped
 function getUnmapped
