@@ -612,60 +612,77 @@ Jan–Aug and `$13,041,331.22` for Aug MTD, from the app's own raw rows at the a
 The denominator is not the part that is wrong. PPI passes no threshold, so both its sums run
 over the same pairs and it is arithmetically what it has always computed — unchanged.
 
-**`cpiOutlier` is a guard. It is NOT Qlik's rule, and the difference is written down here
-because it was got wrong once.** An earlier reading of the Jan–Jul exports said Qlik zeroes a
-pair when |ASP%| passes a threshold between 330% and 647%, and set `cpiOutlier` to 5.0 (500%)
-in the middle of that gap. The August exports match Qlik's per-pair `Weight` column row for
-row and say otherwise:
+**The gate is stronger than "> 0", and that is the whole rule.** A pair earns weight only
+if it shows a **real price in both years**. Qlik gates on revenue *net of rebates*; this export
+carries only gross ex-Works, and on 2026 Jan–Aug that difference is 10 pairs. Two of them wreck
+the page on their own:
 
-- Of **3,407** covered pairs in 2026 Jan–Aug, Qlik zeroes **10**. Five move by less than 100%,
-  and two by less than 5% — **+4.55%** and **+0.26%**. Meanwhile it *keeps* pairs at −115.9%,
-  +225.4% and, on the Aug MTD export, **+472.8%**. No |ASP%| threshold selects that set. The
-  330–647% gap only looked like one because the Jan–Jul window held no counter-example.
-- **What actually selects it: Qlik's `Weight` is CY revenue net of the per-tonne aggregate
-  levy, and its coverage runs on that net figure.** The levy reads straight off
-  `(CY revenue − Weight) ÷ CY volume`, which lands on **$2.248/t in Ontario, $0.60/t in
-  Manitoba, $0.90/t in Saskatchewan and nil on recycled material** across 3,397 pairs and both
-  exports. A pair that billed nothing but the levy in one of the two years has no price to
-  compare, so it earns no weight — 9 of the 10 have a net-of-levy ASP at or below ten cents in
-  one year. The tenth carries $2,179 and is not explained.
+| pair | last year | this year | ASP move | carries |
+|---|---|---|---|---|
+| `3P36` / Brock Aggregates / `9141` | 47.04 t for **$0.14** | 2,918.59 t for $42,780.71 | +492,409% | 135pp |
+| `3Q00` / JNF Ready Mix / `9055` | 378 t at **$2.343/t** | 24,593 t at $22.75/t | +870.9% | +3.13pp |
 
-The levy is not a column this export has, so that rule cannot be written into the app. What
-*can* be is the guard 5.0 = 500% actually is: **a pair whose prior year has been all but
-cancelled.** The worst on record is plant `3P36` / Brock Aggregates / `9141`, whose March 2025
-invoice of $693.98 met an April credit of $693.84 — fourteen cents against 47 tonnes, an ASP
-move of **+492,409%**, and 135 of a 141.7% answer by itself.
+Brock is a March 2025 invoice of $693.98 met by an April credit of $693.84 — fourteen cents
+against 47 tonnes. JNF is the one that matters for the design: **nothing about it is small.**
+$559,436 of weight, five figures of tonnes, every volume and revenue figure comfortably above
+any floor you would think to set. Only its *price* gives it away, and $2.343/t is Ontario's
+rebate rate, not a price.
 
-**What the guard costs against Qlik's own selection: nothing worth measuring.** Zeroing
-exactly the 10 pairs Qlik zeroes reads **3.0934%** for 2026 Jan–Aug; the 500% guard reads
-**3.0933%**. It drops no pair Qlik keeps on either export. Do not spend another session
-tuning the threshold — the gap that remains is the weight basis, below, and the threshold has
-nothing to do with it.
+So `COVERAGE.cpi` carries three floors, and each catches a different thing:
+
+| floor | value | what it takes out |
+|---|---|---|
+| `minVol` | 1 t | a pair that barely traded in either year |
+| `minRev` | $1 | **Brock** — fourteen cents is not a year of trading |
+| `minAsp` | $3.00/t | **JNF** — the visible shadow of Qlik's net-revenue gate |
+
+`minAsp` is the one doing the work. Ontario's rebate runs $2.248/t (Manitoba $0.60,
+Saskatchewan $0.90, nil on recycled), so a pair whose year averaged $2.34/t was billing the
+rebate and not a price. Qlik nets that to zero and drops the pair; we cannot see the rebate,
+but we can see that no real product sells for $2.34 a tonne.
+
+**It is a GATE, not an outlier cap, and the difference is the denominator.** A pair that fails
+leaves the **weight as well as the factor** — a deletion, which is what Qlik does. The ±50% and
+500% caps that preceded it were dilutions: they dropped the factor and left the weight behind,
+which is why neither ever reproduced Qlik's selection.
+
+Calibrated against Qlik's Cust Price Detail for both August windows, all markets:
+
+| | `vol/rev > 0` | `> 1` only | `+ $3.00 ASP` | Qlik |
+|---|---|---|---|---|
+| **Jan–Aug 2026** | 141.719% | 6.248% | **3.106%** | 2.864% |
+| **Aug 2026 MTD** | 2.789% | 2.789% | **2.724%** | 2.646% |
+
+The `> 1` column is the trap: it takes Brock and looks like a fix, while SW Ontario still reads
+**14.36%** because JNF sails through it. The price floor costs three pairs Qlik keeps, worth
+$1,894 out of $155.5M of weight. Anything from $2.50 to about $3.90 gives the same answer to
+the third decimal; $4.00 starts eating real product — bank sand runs $3.97/t. $3.00 is the
+middle of that window. **Do not tune these floors at the residual below**; it is a different
+thing entirely.
 
 **What is left, and why it cannot be closed here.** With the denominator exact to the penny and
-the row selection worth 0.0001pp, the remaining error is entirely that **Qlik weights the
-numerator by net-of-levy revenue while dividing by gross** — `Weight` runs ~0.905× ex-Works
-with a per-row ratio, so no constant recovers it:
+the gate reproducing Qlik's selection, the remaining error is that **Qlik weights the numerator
+by net-of-rebate revenue while dividing by a gross `TotalWeight`** — its `Weight` runs ~0.905×
+ex-Works with a per-row ratio, so no constant recovers it:
 
 | 2026 Jan–Aug | Qlik | app | residual |
 |---|---|---|---|
-| All markets | 2.868% | 3.093% | +0.23pp |
+| All markets | 2.864% | 3.106% | +0.24pp |
 | GTA | 2.48% | 2.74% | +0.26pp |
-| SW Ontario | 3.05% | 3.33% | +0.28pp |
+| SW Ontario | 3.05% | 3.37% | +0.32pp |
 | Manitoba | 2.84% | 2.85% | **+0.01pp** |
 | Saskatchewan | 5.91% | 5.95% | **+0.04pp** |
 | North | 6.22% | 6.22% | **0.00pp** |
 
-Manitoba, Saskatchewan and North land inside 0.04pp because their levy is small or nil.
-Closing GTA and SW needs the levy — or the net revenue it is deducted from — as its own column
-in the Price & Volume export. Until then this is the ceiling, and it is a weighting difference
-rather than a wrong method.
+Manitoba, Saskatchewan and North land inside 0.04pp because their rebate is small or nil.
+Closing GTA and SW needs `_rebate` as its own column in the Price & Volume export. Until then
+this is the ceiling, and it is a weighting difference rather than a wrong method.
 
-**And none of it is real if the threshold does not travel.** See §7's next note.
+**And none of it is real if the gate does not travel.** See §7's next note.
 
 ### The tunable that shipped inside a cached payload
 
-`cpiOutlier` was added, was correct, and changed nothing for a day. The Overview went on
+A CPI threshold was added, was correct, and changed nothing for a day. The Overview went on
 publishing **+141.7%** for 2026 Jan–Aug against Qlik's 2.86%, and **+243.0%** for GTA against
 2.48% — the Brock Aggregates pair above, unexcluded, carrying 135 of those points.
 
@@ -678,7 +695,7 @@ manifest and inside the cross-filter dataset. Every cache key in that chain was 
 |---|---|---|
 | `CacheService` (`ovcBuild_`) | the manifest built before the edit | 6 h |
 | IndexedDB (`AmrCube`) | that manifest, replayed on every warm start | until the generation moved |
-| `cov.cpiOutlier \|\| 0` | read the missing key as *no threshold at all* | — |
+| reading the missing key with `\|\| 0` | took it for *no gate at all* | — |
 
 Two changes, and they are two halves of one rule:
 
@@ -686,10 +703,10 @@ Two changes, and they are two halves of one rule:
    carries it too. Editing a floor is now the same kind of event as a shape change — one
    invalidation, nothing to remember separately. `getCrossData`'s key is scoped rather than
    folded into `gk_`: nothing else under `gk_` carries a coverage threshold.
-2. **A payload that cannot say what the exclusion is reports NO CPI**, in `pool()` and in
-   `poolPairs()` alike — `null`, not `0`. The column is dropped exactly as it is on a line with
-   no Sold To. An absent column is a question the page declines to answer; a wrong one is not.
-   A deliberate `0` still arrives as the number `0` and disables the guard.
+2. **A payload that cannot say what the gate is reports NO CPI**, in `pool()` and in
+   `poolPairs()` alike — `null`, not an empty gate. The column is dropped exactly as it is on a
+   line with no Sold To. An absent column is a question the page declines to answer; a wrong one
+   is not. A block present but all-zero is a *deliberate* empty gate and still reports.
 
 `revalidate()` also writes the confirmed manifest back to IndexedDB. It was only ever stored by
 `adoptGen()`, which runs on a **cold** start, so a warm device painted from the manifest it
@@ -1270,6 +1287,7 @@ or was forgotten.**
 | 2026-08-20 | **CPI, calibrated against Qlik's own exports rather than reasoned at.** Five Cust Price Detail exports (2026 Jan\u2013Jul: all markets and each of GTA, SW, Manitoba, Saskatchewan) carry Qlik's per-pair Weight and Factor, and they settle two things the expressions alone did not. **The denominator is TotalWeight, not \u03a3Weight** \u2014 $136,727,744 against $123,520,166 on the all-markets export, a tenth apart, and summing covered CY revenue reproduces it to the dollar on all five. An outlier therefore keeps its weight and loses only its factor. **The threshold is 500%, not the \u00b150% the footnote states**: Qlik keeps pairs to |ASP%| 330% and zeroes from 647%, so anything in that gap reproduces its selection exactly (0.000pp on all five) while a 50% cap costs 1.26pp on SW alone. What remains \u2014 +0.02pp Manitoba, +0.03pp Saskatchewan, +0.28pp GTA, +0.33pp all markets, +0.59pp SW \u2014 is entirely `Weight` being a rebate-adjusted revenue the export nets away, ~0.82\u00d7 ex-Works on 2,788 of 3,117 kept rows with a per-row ratio, so no constant recovers it. The priced-revenue rule from earlier today is backed out: it was the right instinct about credits and the wrong mechanism, and PPI is bit-for-bit what it has always published | \u2705 |
 | 2026-08-20 | **"This month" is the newest month again, and the server is asked for it.** The anchor had been moved to the reporting month to stop the page reporting two months at once; that fixed the disagreement by moving the wrong half. `getOverview` takes a `month` now (in its cache key) and the Overview passes its anchor, so the server-fed and cube-fed halves answer for the same month while "This month" keeps meaning the latest month there is data for. The EBITDA workbook is the one thing that genuinely belongs to the closed month, and it is handled where it is read \u2014 `kpiMonth()` is the anchor minus one, and the cards name it | \u2705 |
 | 2026-08-21 | **The CPI exclusion was right and never arrived — a tunable that ships inside a cached payload.** The Overview published **+141.7%** for 2026 Jan–Aug against Qlik's 2.86%, and **+243.0%** for GTA against 2.48%, with `cpiOutlier: 5.0` sitting correctly in §1 the whole time. Replicating both August exports out of the raw sheet reproduces every published figure to the decimal **at threshold = 0** — MTD 2.79/2.31/3.52/1.61/6.36, YTD 141.72/242.97/14.36/2.85/5.95/6.22 — which names the fault exactly: §1 is read on the server, the **browser** does the pooling, so the number travels in the cube manifest and the cross-filter dataset, and every cache key in that chain is built from the DATA's generation. `cov.cpiOutlier || 0` then read the missing key as *no threshold at all*, and the browser's IndexedDB copy of that manifest is only wiped when the generation moves — so a warm device painted the pre-edit manifest indefinitely. **`ovcCovTok_` hashes the whole `COVERAGE` block into `ovcGen_`** (and into `getCrossData`'s key), so a floor edit is an invalidation; **a payload that cannot say what the exclusion is now reports NO CPI**, `null` not `0`, dropping the column exactly as a line with no Sold To does; and `revalidate()` writes the confirmed manifest back, which `adoptGen()` only ever did on a cold start. `tests/cpiindex.js` gates both halves off the real Brock Aggregates pair, mutation-tested both ways | ✅ |
+| 2026-08-21 | **A stronger GATE for CPI, and the outlier cap retires.** A cap was always the wrong shape: it dropped a pair's factor and left its weight in the denominator — a dilution, where Qlik DELETES. `COVERAGE.cpi` is three floors now (`minVol` 1 t, `minRev` $1, `minAsp` $3.00/t) and a pair that fails leaves both sums. **The volume and revenue floors alone are a trap**: they take the Brock pair and look like a fix while SW Ontario still reads **14.36%**, because `3Q00` / JNF Ready Mix / `9055` sails through them — 378 t at $2.343/t last year against 24,593 t at $22.75/t this, +870.9%, carrying $559,436 of weight and +3.13pp of the index on its own. Nothing about it is small; only its PRICE gives it away, and $2.343/t is Ontario's rebate rate. So `minAsp` is the floor that matters, and it is the visible shadow of Qlik's net-revenue gate (rebate $2.248/t Ontario, $0.60 Manitoba, $0.90 Saskatchewan, nil on recycled). Calibrated on both August exports: Jan–Aug **141.719% → 6.248% (> 1 only) → 3.106%** against Qlik's 2.864%; Aug MTD **2.789% → 2.724%** against 2.646%. Costs three pairs Qlik keeps, worth $1,894 of $155.5M. Any floor from $2.50 to ~$3.90 gives the same answer; $4.00 starts eating bank sand at $3.97/t. `tests/cpiindex.js` carries BOTH bad pairs deliberately — one that the revenue floor catches and one that only the price floor does, so a half-fix cannot pass | ✅ |
 | 2026-08-21 | **The 500% threshold is a guard, not Qlik's rule — and the last session's evidence for it was an accident of the window.** Qlik zeroes **10 of 3,407** covered pairs in 2026 Jan–Aug; five move by less than 100% and two by less than 5% (**+4.55%**, **+0.26%**), while it *keeps* pairs at −115.9%, +225.4% and, on the Aug MTD export, **+472.8%**. No |ASP%| threshold selects that set; the "330–647% gap" only looked like one because Jan–Jul held no counter-example. **What actually selects it: `Weight` is CY revenue net of the per-tonne aggregate levy, and Qlik's coverage runs on the net figure.** `(CY revenue − Weight) ÷ CY volume` lands on **$2.248/t Ontario, $0.60/t Manitoba, $0.90/t Saskatchewan, nil on recycled** across 3,397 pairs and both exports — 9 of the 10 zeroed pairs have a net-of-levy ASP at or below ten cents in one year. That column does not exist here, so the guard stays, and it costs **0.0001pp** against Qlik's own selection (3.0933% vs 3.0934%) and drops no pair Qlik keeps. **The denominator was never the problem**: Σ covered CY revenue reproduces `TotalWeight` to the penny on both exports ($155,497,057.14 and $13,041,331.22). The residual after the fix is **+0.23pp** all-markets — Qlik weighting the numerator net and dividing by gross, ~0.905× with a per-row ratio. Manitoba +0.01pp, Saskatchewan +0.04pp, North 0.00pp, because their levy is small or nil. Do not spend another session tuning the threshold | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |

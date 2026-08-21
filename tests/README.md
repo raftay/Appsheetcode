@@ -951,14 +951,14 @@ restoring TP01's `indexOf('2026 Volume')`, and letting one `2026` back into a ta
 it is a property the suite has to keep, and the only harness in the folder that will still be
 saying something true in 2031.
 
-## `cpiindex.js` — the CPI exclusion, and the reason it did nothing
+## `cpiindex.js` — the CPI coverage gate, and the reason it did nothing
 
-`cpiOutlier` was added, was correct, and changed nothing anyone could see. The Overview went on
+A CPI gate was added, was correct, and changed nothing anyone could see. The Overview went on
 publishing **+141.7%** for 2026 Jan–Aug against Qlik's 2.86%, and **+243.0%** for GTA against
-2.48%. Nothing about the arithmetic was wrong. **The threshold never arrived** — it travels
-inside the cube manifest and the cross-filter dataset, every cache key in that chain was built
-from the *data's* generation, and `cov.cpiOutlier || 0` reads a missing key as *no threshold at
-all*. See README §7.
+2.48%. Nothing about the arithmetic was wrong. **The gate never arrived** — it travels inside
+the cube manifest and the cross-filter dataset, every cache key in that chain was built from
+the *data's* generation, and reading the missing key with `|| 0` took it for *no gate at all*.
+See README §7.
 
 ```bash
 node tests/cpiindex.js            # no dependencies
@@ -966,22 +966,29 @@ node tests/cpiindex.js            # no dependencies
 
 | check | what would have happened without it |
 |---|---|
-| `ovcCovTok_` is in `ovcGen_`, moves on any `COVERAGE` edit — a threshold, a floor, a **deleted** key — and comes back when the edit is undone | the exact failure above. A token that did not move leaves every cache serving the pre-edit copy; one that moved on its own would wipe and re-fetch the whole cube on every boot |
-| `getCrossData`'s key carries the same token | the local cross-filter path indexes CPI off a payload cached before the edit, for the cache's six hours, while the cube path has already caught up — two panels on one screen disagreeing |
-| `piIndex_` at both grains, with and without the threshold | the weight is **every covered pair** and only the factor loses the outlier. A version that dropped it from both would silently move the denominator too |
-| `AmrCube.query` == `piIndex_` on one fixture | the server and the browser are two copies of one method, and the browser's is what the Overview publishes |
-| a manifest with **no** `coverage` block reports `cpi: null` | the one that would have caught it. That manifest is what a warm device held; unexcluded, it reads 3,323% on the fixture and +141.7% on the real window |
-| a deliberate `cpiOutlier: 0` still disables the guard | fail-closed must distinguish *absent* from *off*, or `0` becomes unsettable |
-| PPI is untouched at its own grain | the two sold-tos pool into ONE pair there, so there is nothing extreme left to catch — the actual reason PPI never needed the rule and must not be given it |
+| `ovcCovTok_` is in `ovcGen_`, moves on any `COVERAGE` edit — a nested floor, a **deleted** block — and comes back when the edit is undone | the exact failure above. A token that did not move leaves every cache serving the pre-edit copy; one that moved on its own would wipe and re-fetch the whole cube on every boot |
+| `getCrossData`'s key carries the same token | the local cross-filter path gates CPI off a payload cached before the edit, for the cache's six hours, while the cube path has already caught up — two panels on one screen disagreeing |
+| **volume and revenue floors alone leave the rebate-priced pair, and that is asserted to still be an order of magnitude wrong** | the half-fix. It takes Brock, the headline drops from 141.7% to 6.2%, and it looks fixed until you read SW Ontario at 14.36% |
+| a gated pair leaves the **weight** as well as the factor | the cap's bug, restored. A gate that only drops the factor is a dilution, and no threshold in it ever reproduces Qlik's selection |
+| the floors are read from `APP_CONFIG`, not copied | a harness holding its own `3` passes after someone edits §1 to something else |
+| `piIndex_` and `AmrCube.query` agree on one fixture | the server and the browser are two copies of one method, and the browser's is what the Overview publishes |
+| a manifest with **no** `cpi` block reports `cpi: null` | that manifest is what a warm device held; ungated it reads 34,605% on the fixture and +141.7% on the real window |
+| a block present but **all zero** still reports a number | fail-closed must distinguish *absent* from *deliberately off*, or a zero could never be set on purpose |
+| both browser paths carry the price floor, by source text | `poolPairs` is page code, not a module, so the cube test cannot reach it. A fix landing on one path only would ship |
+| PPI is untouched at its own grain | the three sold-tos pool into ONE pair there, so nothing extreme is left to catch — the actual reason PPI never needed the rule and must not be given it |
 | source text: `revalidate()` writes the confirmed manifest back | it was only ever stored by `adoptGen()`, which runs on a **cold** start, so a warm device painted from the manifest it first saw for as long as the generation held |
 
-**The fixture is the real pair.** `3P36` / Brock Aggregates / `9141` — 47.04 t for $0.14 last
-year against 2,918.59 t for $42,780.71 this year, +492,409% — beside one ordinary pair at the
-same plant and material. That pairing is the point: at the CPI grain they are two pairs and the
-exclusion has something to catch; at the PPI grain they are one.
+**The fixture is two real pairs, and it needs both.** `3P36` / Brock Aggregates / `9141` —
+47.04 t for $0.14 last year against 2,918.59 t for $42,780.71, +492,409% — is caught by the
+revenue floor. `3Q00` / JNF Ready Mix / `9055` — 378 t at $2.343/t against 24,593 t at
+$22.75/t, +870.9%, carrying $559k — clears every volume and revenue floor and is caught by the
+**price** floor alone. A harness carrying Brock by itself would pass a fix that leaves SW
+Ontario reading 14.36%. They sit beside one ordinary pair at the same plant and material, so
+the CPI grain sees three pairs and the PPI grain sees one.
 
-Mutation-tested both ways, each caught by name: restoring `cov.cpiOutlier || 0` in `pool()`
-fails four checks, and taking the token back out of `ovcGen_` fails five.
+Mutation-tested three ways, each caught by name: dropping the price floor from the server fails
+6 checks, dropping it from the cube fails 6, and moving `weight +=` back above the gate — the
+cap's behaviour — fails 5.
 
 **This one does not retire.** It is not a comparison against a previous version of anything —
 the general rule it holds is that a tunable shipping inside a cached payload belongs in that
