@@ -5164,6 +5164,11 @@ var AmrPvSlide = (function(){
   }
 
   function kpiCardsHtml(){
+    /* A SLIDE CAN BE BUILT WITHOUT THE STRIP. buildPvSlideContent returns the
+       tables alone when this is '', and both fitters look the row up rather
+       than assuming it, so switching it off costs nothing downstream. The deck
+       says so through its ctx; the report page never sets it. */
+    if(CTX.kpi && CTX.kpi.off) return '';
     if(kpiMissingBook()) return '';
     var x=kpiExtract(); if(!x) return '';
     var d=CTX.data, qv=qvTotal(d);
@@ -5921,6 +5926,69 @@ var AmrPvSlide = (function(){
                              : ['SUBMARKET1', 'PLANT_TYPE', 'PROD_CLASS'];
   }
 
+  /* ---- WHICH TABLES THIS SLIDE SHOWS ------------------------------------
+     The Arrange stage resolves a scope down to an ordered list of dimension
+     keys and puts it on the spec. Absent, dimsFor() above is the answer and
+     the slide is what it has always been.
+
+     THIS IS THE THIRD COPY OF THE DIMENSION LIST and it is deliberate. The
+     server has CONFIG.DIMENSIONS (§1 of the PV backend) and the Price &
+     Volume page has DIMS for its own chips; neither is reachable from here -
+     the first is on the other side of a call this stage must not make, the
+     second is a page-scoped var in §P and this is §E. What matters is that
+     the KEYS agree, and a key that does not exist comes back as a table the
+     server simply did not build, which the page banners at Plan. */
+  var PV_TABLES = [
+    { key:'REGION',       label:'Region' },
+    { key:'MARKET',       label:'Market' },
+    { key:'SUBMARKET1',   label:'Submarket' },
+    { key:'PLANT_TYPE',   label:'Plant Type' },
+    { key:'MATERIAL_FAM', label:'Material Family' },
+    { key:'PROD_CLASS',   label:'Product Class' },
+    { key:'PLANT',        label:'Plant' },
+    { key:'MATERIAL',     label:'Material' },
+    { key:'CUST_SEGMENT', label:'Customer Segment' }
+  ];
+
+  function dimsOf(spec){
+    var t = spec && spec.tables;
+    return (t && t.length) ? t.slice() : dimsFor(spec && spec.market);
+  }
+
+  /* GETREPORT IGNORES THE ORDER IT IS ASKED FOR. It walks CONFIG.DIMENSIONS
+     and pushes a table for every key that is in the request, then appends the
+     customer-segment pivot last - so the array comes back in the SERVER's
+     order however the request was written. The order is honoured here.
+
+     INTO A SHALLOW COPY, never in place. One payload is shared by the MTD row,
+     its YTD twin and the unrefined report a Land / Docks row resolves against;
+     reordering the array those all point at would reorder slides nobody
+     touched. An order that already matches returns the payload untouched, so
+     the normal case allocates nothing. */
+  function orderedReport(spec, d){
+    if(!d || !d.tables || !d.tables.length) return d;
+    var want = dimsOf(spec), src = d.tables, out = [], taken = [], i, j;
+    for(i = 0; i < want.length; i++){
+      for(j = 0; j < src.length; j++){
+        if(taken[j] || !src[j] || src[j].key !== want[i]) continue;
+        out.push(src[j]); taken[j] = 1; break;
+      }
+    }
+    /* a table the server built that the order does not name keeps its place
+       behind the rest rather than disappearing - the same rule the deck's own
+       order follows for a slide it does not name */
+    for(j = 0; j < src.length; j++) if(!taken[j]) out.push(src[j]);
+
+    var same = true;
+    for(i = 0; i < out.length; i++) if(out[i] !== src[i]){ same = false; break; }
+    if(same) return d;
+
+    var copy = {};
+    for(var k in d) if(d.hasOwnProperty(k)) copy[k] = d[k];
+    copy.tables = out;
+    return copy;
+  }
+
   /* ---- LAND / DOCKS ------------------------------------------------------
      Southwest Land and Southwest Docks are NOT markets. They are the two
      values of the MB SUBMARKET column inside the Southwest market, which the
@@ -5938,8 +6006,14 @@ var AmrPvSlide = (function(){
   function resolveRefine(spec){
     var want = String(spec.refine || '').trim();
     if(!want) return Promise.resolve('__ALL__');
-    /* the market's own report, unrefined - it carries the option list */
-    return loadReport({ market: spec.market, period: spec.period }).then(function(d){
+    /* THE ROW'S OWN SPEC, not a fresh { market, period }. The cache key is the
+       same either way - refineValue is passed separately, and it is '__ALL__'
+       here in both cases - but the DIMENSIONS asked for are the spec's, and a
+       bare object has none. So the fresh object used to fetch the market's
+       default tables while the row wanted its own, and the refined fetch a
+       moment later then missed its own cache entry and asked the server twice
+       for the same market. */
+    return loadReport(spec).then(function(d){
       var opts = (d && d.refineOptions) || [];
       for(var i = 0; i < opts.length; i++){
         if(refineLabelOf(opts[i]).toLowerCase() === want.toLowerCase()) return opts[i];
@@ -5972,9 +6046,16 @@ var AmrPvSlide = (function(){
     var m = Number(spec && spec.month) || 0;
     return (m >= 1 && m <= 12) ? m : 0;          // 0 = let the backend decide
   }
+  /* AND THE DIMENSION SET IS PART OF THE KEY. Two rows off one market and one
+     period are the same report only while they ask for the same tables; once
+     a scope can give one of them a selection of its own they are two
+     different answers and must not share a cache entry. In the normal case
+     every row of a market resolves to the same list, so the key is the same
+     for all of them and the fourteen market slides still cost one call each. */
   function reportKey(spec, refineValue){
     return filterValueOf(spec.market) + '|' + (spec.period || 'MTD')
-         + '|' + (refineValue || '__ALL__') + '|m' + monthOf(spec);
+         + '|' + (refineValue || '__ALL__') + '|m' + monthOf(spec)
+         + '|d' + dimsOf(spec).join('+');
   }
 
   function loadReport(spec, refineValue){
@@ -5983,7 +6064,7 @@ var AmrPvSlide = (function(){
     if(RPT[key]) return Promise.resolve(RPT[key]);
     return srv('getReport', [{
       period: spec.period || 'MTD',
-      dimensions: dimsFor(spec.market),
+      dimensions: dimsOf(spec),
       filterField: 'MARKET',
       filterValue: filterValueOf(spec.market),
       refineValue: rv,
@@ -6021,11 +6102,35 @@ var AmrPvSlide = (function(){
     }]).then(function(d){ CUST[key] = d; return d; });
   }
 
-  /* The ctx a slide is rendered with. spec.kpiSheet is the per-row override
-     the Deck Builder's Region dropdown sets; absent, the remembered per-device
-     choice wins, then the first sheet. */
+  /* WHICH REGION SHEET THIS SLIDE'S KPI CARDS READ, in precedence order.
+     The SHARED choice is on top: it is a property of the monthly pack, saved
+     with the arrangement, and a colleague building from that arrangement has
+     to get the same numbers. Under it the per-device memory, which is what
+     the Price & Volume page writes and what everybody had before the scope
+     existed; under that the first sheet on the row's own workbook.
+
+     kpiFor already puts its `override` argument first, so the whole of the
+     change is which value is handed to it - spec.kpiSheet, which the page
+     fills from the resolved scope and no longer deletes off every row. */
+  function kpiSheetOf(spec){
+    var k = spec && spec.kpi;
+    if(k && k.sheet) return k.sheet;
+    return spec && spec.kpiSheet;
+  }
+  function kpiOffFor(spec){
+    var k = spec && spec.kpi;
+    return !!(k && k.on === false);
+  }
+
+  /* The ctx a slide is rendered with. */
   function ctxFor(spec, d){
     var fv = filterValueOf(spec.market);
+    var kpi = AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET', fv, kpiSheetOf(spec),
+                                bookOf(spec), spec.refine);
+    /* off is carried IN the kpi object rather than beside it, so the module
+       reads one thing and the page's own ctx - which never sets it - is
+       untouched. */
+    kpi.off = kpiOffFor(spec);
     return {
       slide: AmrPvSlide.SLIDE,
       data: d || null,
@@ -6034,7 +6139,7 @@ var AmrPvSlide = (function(){
       filterField: 'MARKET', filterValue: fv,
       custSecondary: 'CUST_SEGMENT', custSort: 'cyVol', custDir: 'top',
       custTopN: '10', custSearch: '', collapsed: {},
-      kpi: AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET', fv, spec.kpiSheet, bookOf(spec), spec.refine)
+      kpi: kpi
     };
   }
 
@@ -6056,6 +6161,7 @@ var AmrPvSlide = (function(){
       /* prepare() always runs first, so the resolved refine is in hand. */
       var d = RPT[reportKey(spec, REFINED[refineCacheKey(spec)])];
       if(!d) throw new Error('Price & Volume data is not loaded yet.');
+      d = orderedReport(spec, d);
       var el = AmrPvSlide.contentOffscreen(d, ctxFor(spec, d));
       if(!el) throw new Error('Could not build the Price & Volume block.');
       return el;
@@ -6063,8 +6169,25 @@ var AmrPvSlide = (function(){
     /* the page's fitSlide, on the page's frame, with this row's ctx */
     fit: function(box, spec){
       var d = RPT[reportKey(spec, REFINED[refineCacheKey(spec)])] || null;
-      return AmrPvSlide.fitSlide(box, ctxFor(spec, d));
+      return AmrPvSlide.fitSlide(box, ctxFor(spec, orderedReport(spec, d)));
     },
+    /* WHAT THE ARRANGE STAGE MAY OFFER FOR THIS SOURCE. Static, because Plan
+       must stay instant - nothing here asks the server anything. `fallback` is
+       what the deck builds today, so the panel can show the real answer for a
+       scope nobody has touched instead of an empty list.
+
+       min:1 IS THE QLIKVIEW CARD. It reads a grand total off a table, and
+       every table carries the same one - so any table will do and none will
+       not. An empty selection publishes a picture that says "Load market data
+       to fill this card", which is a wrong answer that fails silently. */
+    tables: {
+      catalogue: PV_TABLES,
+      fallback: function(spec){ return dimsFor(spec && spec.market); },
+      min: 1
+    },
+    /* the strip can be switched off per scope; the region below is the other
+       half of the same panel */
+    kpiToggle: true,
     /* The Deck Builder shows a Region dropdown on rows whose source declares
        one. Everything it needs is here, so the page stays generic — including
        WHICH workbook this row reads, so the page never has to know that
@@ -6073,7 +6196,7 @@ var AmrPvSlide = (function(){
       sheets: function(spec){ return AmrPvSlide.kpiSheets(KPIVALS.vals, bookOf(spec)); },
       current: function(spec){
         return AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET',
-          filterValueOf(spec.market), spec.kpiSheet, bookOf(spec), spec.refine).sheet;
+          filterValueOf(spec.market), kpiSheetOf(spec), bookOf(spec), spec.refine).sheet;
       },
       /* keyed by market AND refine, so this dropdown is this row's - and its
          MTD / YTD twin's, which reads the same sheet - and nobody else's */
@@ -7466,6 +7589,9 @@ var AmrSegSlide = (function(){
       period:    c.period || 'MTD',
       /* {} = "no explicit choice", so every table falls back to its default */
       exportSel: c.exportSel || {},
+      /* the deck's ordered selection. Absent on the page, whose tick boxes
+         answer "which" and leave the order to TABLES. */
+      tableOrder: c.tableOrder || null,
       kpi:       c.kpi || { vals:null, sheet:'', index:{}, sheets:[], map:{} }
     };
   }
@@ -7748,6 +7874,11 @@ var AmrSegSlide = (function(){
   }
 
   function segKpiCardsHtml(){
+    /* Same switch as the AGG side: '' and buildSlideContent leaves the row
+       out entirely. There is no REGION to choose here - AmrKpi.rmx finds the
+       market's own block in "RMX Summary" by name - so on / off is the whole
+       of what a Ready-Mix slide can say about its strip. */
+    if(CTX.kpi && CTX.kpi.off) return '';
     var x=segKpiExtract(); if(!x) return '';
     var h='';
     if(x.units) h+=segKpiCard('Units Sold (Km\u00B3)',   'SAP / USGAAP', x.units, SEGKPI_FMT.units, '');
@@ -7757,8 +7888,28 @@ var AmrSegSlide = (function(){
     return h;
   }
 
+  /* WHICH CARDS, AND IN WHAT ORDER.
+     The page's tick boxes answer only "which" - the order is this array's and
+     always has been. The deck's scope answers both at once, because there the
+     selection IS an ordered list, so "which" and "in what order" cannot
+     disagree with each other. ctx.tableOrder is how it says so; absent, this
+     is exactly the filter it replaced. */
+  function pickedTables(){
+    var on = TABLES.filter(function(T){ return isOn(T.key); });
+    var want = CTX.tableOrder;
+    if(!(want && want.length)) return on;
+    var out = [], seen = {};
+    want.forEach(function(k){
+      on.forEach(function(T){ if(T.key === k && !seen[k]){ seen[k] = 1; out.push(T); } });
+    });
+    /* anything ticked but not named keeps its own order, behind the rest -
+       an order that predates a card must not silently drop it */
+    on.forEach(function(T){ if(!seen[T.key]) out.push(T); });
+    return out;
+  }
+
   function buildSlideContent(){
-    var picked = TABLES.filter(function(T){ return isOn(T.key); });
+    var picked = pickedTables();
     if(!picked.length) return null;
 
     var frag=document.createDocumentFragment();
@@ -8102,18 +8253,41 @@ var AmrSegSlide = (function(){
      ignores every field of it, so the dropdown changed nothing at all — it just
      sat on ten RMX rows in the Deck Builder offering "AGG GTA", which is not
      even the same product line. All it needed was to not be there. */
+  /* THE THREE CARDS A PRODUCT SEGMENT SLIDE CAN SHOW.
+     DO NOT reach for the Product Segment PAGE's own TABLES list instead. There
+     are two `seg:*` descriptors in app.html on purpose - this module's, which
+     the deck uses, and the page's, which drives its tick boxes - and their
+     defaults already differ. Only §E's is what a deck slide is built from. */
+  var SEG_TABLES = [
+    { key:'seg:segment', label:'Segment' },
+    { key:'seg:byType',  label:'By extra type' },
+    { key:'seg:detail',  label:'Extras & VAP detail' }
+  ];
+  /* Segment + By extra type is the pair the Segment page ticks for its own
+     export. `detail` stays off: it is the EXTRAS LOOKUP working view, too wide
+     to read at slide size. */
+  var SEG_FALLBACK = ['seg:segment', 'seg:byType'];
+
+  function tablesOf(spec){
+    var t = spec && spec.tables;
+    return (t && t.length) ? t.slice() : SEG_FALLBACK.slice();
+  }
+
   function ctxFor(spec){
+    var want = tablesOf(spec), sel = {};
+    /* FULLY RESOLVED, never half-filled. An absent key means "the module's
+       default", and byType and detail default OFF (EXPORT_DEFAULT_OFF) - which
+       is how the deck slide was once the Segment table alone. Every key is
+       stated, on or off. */
+    SEG_TABLES.forEach(function(T){ sel[T.key] = want.indexOf(T.key) !== -1; });
     return {
       data: CACHE[key(spec)] || null,
       market: spec.market || '',
       period: spec.period || 'MTD',
-      /* NOT {} - that means "each table's default", and byType/detail default
-         OFF (EXPORT_DEFAULT_OFF), so the slide was the Segment table alone.
-         The deck wants Segment + By extra type, which is the pair the Segment
-         page ticks for its own export. `detail` stays off: it is the EXTRAS
-         LOOKUP working view, too wide to read at slide size. */
-      exportSel: { 'seg:segment': true, 'seg:byType': true, 'seg:detail': false },
-      kpi: { vals: KPIVALS.vals }
+      exportSel: sel,
+      /* the order is the selection's, and the module takes it from here */
+      tableOrder: want,
+      kpi: { vals: KPIVALS.vals, off: !!(spec && spec.kpi && spec.kpi.on === false) }
     };
   }
 
@@ -8129,7 +8303,17 @@ var AmrSegSlide = (function(){
       return el;
     },
     fit: function(box, spec){ return AmrSegSlide.fitSlide(box, ctxFor(spec)); },
-    /* NO kpiPicker - see ctxFor above. An RMX market resolves its own KPI block
+    /* Three cards to pick from, and no minimum: the Product Segment slide
+       carries no QlikView grand-total card, so an empty selection is a slide
+       with no tables rather than one with a broken one - buildSlideContent
+       returns null and the row fails out loud. */
+    tables: { catalogue: SEG_TABLES, fallback: function(){ return SEG_FALLBACK.slice(); } },
+    /* ON / OFF, AND NOTHING ELSE. There is no region to choose: the cards come
+       from AmrKpi.rmx(vals, market, period), which finds the market's own
+       block in the workbook's "RMX Summary" tab BY NAME and reads no region
+       sheet, no index, no picker. */
+    kpiToggle: true,
+    /* NO kpiPicker - see above. An RMX market resolves its own KPI block
        by name; there is no region sheet to pick, so a dropdown here could only
        ever be decoration that shows an AGG region on a Ready-Mix slide. */
     /* ↻ Update from source: forget the tables and the KPI slice. */
@@ -8670,6 +8854,28 @@ var AmrRmxSlide = (function(){
   }
   function key(spec){ return (spec.market||'') + '|' + (spec.period||'MTD') + '|m' + monthOf(spec); }
 
+  /* WHICH BREAKDOWNS THIS SLIDE SHOWS.
+     CONFIG.BREAKDOWNS on the server is the list; these are its five keys and
+     the labels the page prints for them. The KEY set is what has to agree -
+     labelForDim() reads the labels off the payload, not from here.
+
+     The cache is NOT keyed on this, unlike the AGG side's. RMX_getKeys returns
+     the key rows for the whole market and buildTables makes every table out of
+     them in the browser, so one fetch answers every selection off that market
+     and period - which is why the order comes free here and had to be
+     reimposed there. */
+  var RMX_TABLES = [
+    { key:'SUBMARKET', label:'Submarket' },
+    { key:'SEGMENT',   label:'Major Project Segment' },
+    { key:'STRENGTH',  label:'Strength Class' },
+    { key:'CLASS',     label:'Product Class' },
+    { key:'PLANT',     label:'Top 10 Plants' }
+  ];
+  function dimsOf(spec){
+    var t = spec && spec.tables;
+    return (t && t.length) ? t.slice() : AmrRmxSlide.DEFAULT_DIMS.slice();
+  }
+
   /* This page does NOT get finished tables from the server. RMX_getKeys sends
      key rows and the browser builds every table from them - which is why the
      compute layer had to come across with the renderers. month 0 = the
@@ -8703,7 +8909,11 @@ var AmrRmxSlide = (function(){
       var ctx = { month:monthOf(spec), latestMonth:res.latestMonth || 0,
                   extraCards:[], exportSel:{}, mapCounts:null,
                   naMode:'separate', breakdowns:res.breakdowns || [] };
-      var d = AmrRmxSlide.buildTables(res, AmrRmxSlide.DEFAULT_DIMS, ctx);
+      /* buildTables maps over `dims` IN ORDER, so the selection's order is
+         honoured with nothing to reimpose - the opposite of the AGG side,
+         where getReport walks its own list and the adapter has to reorder
+         what comes back. */
+      var d = AmrRmxSlide.buildTables(res, dimsOf(spec), ctx);
       var el = AmrRmxSlide.contentOffscreen(d, null, ctx);
       if(!el) throw new Error('Could not build the Ready-Mix block - no tables came back.');
       return el;
@@ -8714,6 +8924,14 @@ var AmrRmxSlide = (function(){
         month:monthOf(spec), latestMonth:(res && res.latestMonth) || 0,
         extraCards:[], exportSel:{}, mapCounts:null,
         naMode:'separate', breakdowns:(res && res.breakdowns) || [] });
+    },
+    /* Five breakdowns to pick from. No minimum and no KPI: a Ready-Mix P&V
+       slide carries no strip at all - AmrRmxSlide builds tables and nothing
+       else - so the panel offers tables here and says there is no strip to
+       configure rather than showing a switch that does nothing. */
+    tables: {
+      catalogue: RMX_TABLES,
+      fallback: function(){ return AmrRmxSlide.DEFAULT_DIMS.slice(); }
     },
     /* ↻ Update from source: forget the key rows, so the next Render fetches
        them again rather than rebuilding the tables from the old ones. */

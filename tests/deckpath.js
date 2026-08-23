@@ -43,11 +43,32 @@ const MODEL = {
 };
 
 const PVREPORT = { period:'MTD', filterValue:'GTA', latestMonth:7,
-  tables:[ { dimension:'Market', volMix:-0.002, rows:[
+  tables:[ { dimension:'Market', key:'MARKET', volMix:-0.002, rows:[
     {label:'GTA',cyVol:1282643,pyVol:1390172,volPct:-0.077,cyAsp:15.10,pyAsp:14.47,aspPct:0.044,ppi:0.026}],
     total:{cyVol:2266382,pyVol:2444425,volPct:-0.073,cyAsp:17.11,pyAsp:16.64,aspPct:0.028,ppi:0.03} } ],
   revenueBridge:{pyRev:40668495,volImpact:-2962143,priceImpact:1061457,cyRev:38767809},
   priceBridge:{ppi:0.03,totalAsp:0.028,items:[{label:'Region/Market mix',value:-0.003}]} };
+
+/* GETREPORT DOES NOT RETURN THE TABLES IN THE ORDER IT WAS ASKED FOR, and the
+   stub has to reproduce that or the check below passes on the server's
+   accident rather than on the adapter's work. The real one walks
+   CONFIG.DIMENSIONS and pushes a table for every key that appears in the
+   request — so the array comes back in the SERVER's order however the request
+   was written — and appends the customer-segment pivot last, because that one
+   is built off a different pivot. */
+const PV_SERVER_ORDER = [
+  ['REGION','Region'], ['MARKET','Market'], ['SUBMARKET1','Submarket'],
+  ['PLANT_TYPE','Plant Type'], ['MATERIAL_FAM','Material Family'],
+  ['PROD_CLASS','Product Class'], ['PLANT','Plant'], ['MATERIAL','Material'],
+  ['CUST_SEGMENT','Customer Segment'],
+];
+function pvReport(opts){
+  const want = (opts && opts.dimensions) || ['SUBMARKET1','PLANT_TYPE','PROD_CLASS'];
+  const base = PVREPORT.tables[0];
+  const tables = PV_SERVER_ORDER.filter(([k]) => want.indexOf(k) !== -1)
+    .map(([k, label]) => Object.assign({}, base, { key:k, dimension:label }));
+  return Object.assign({}, PVREPORT, { tables, dimensionsAsked: want.slice() });
+}
 const CUSTREP = { rows:[{label:'Amrize RMX',secondary:'INTERNAL RMX',cyVol:28680,pyVol:29575,
   volPct:-0.03,cyAsp:25.6,pyAsp:24.04,aspPct:0.065,cyFsc:12333,ppi:0.088,deltaApplied:0.43}],
   total:{cyVol:99001,pyVol:141871,volPct:-0.302,cyAsp:24.74,pyAsp:23.39,aspPct:0.058,cyFsc:28426,ppi:0.06,deltaApplied:0.45} };
@@ -85,13 +106,15 @@ win.google = {
       let ok = null;
       api.withSuccessHandler = f => (ok = f, api);
       api.withFailureHandler = () => api;
+      /* a function payload is called with the request, so a stub can answer
+         the question that was actually asked */
       const reply = (name, payload) => (...a) => {
         calls.push([name, a]);
-        setTimeout(() => ok(payload), 0);
+        setTimeout(() => ok(typeof payload === 'function' ? payload(...a) : payload), 0);
       };
       api.getFscData = reply('getFscData', MODEL);
       api.getRmxFuelData = reply('getRmxFuelData', MODEL);
-      api.getReport = reply('getReport', PVREPORT);
+      api.getReport = reply('getReport', pvReport);
       api.getCustomerReport = reply('getCustomerReport', CUSTREP);
       api.RMX_getSlideTables = reply('RMX_getSlideTables', SEGREP);
       api.RMX_getKeys = reply('RMX_getKeys', RMXKEYS);
@@ -134,10 +157,18 @@ win.AmrKpi = {
   plant: (vals, entry, period) => entry
     ? { aspCy:16.23, aspPy:15.57, salesCy:31790, salesPy:32500, volCy:1960, volPy:2090 }
     : null,
-  /* the RMX side of the same workbook, for the Product Segment KPI row */
+  /* THE RMX SIDE OF THE SAME WORKBOOK, for the Product Segment KPI row — and
+     in the shape the module actually reads. It used to answer with the AGG
+     card's fields (aspCy / salesCy / volCy), which AmrSegSlide has no use
+     for, so segKpiCardsHtml built nothing and the strip has never once
+     rendered under this harness. Nothing noticed because nothing asserted on
+     it. The real rmxValues() returns one entry per named row of the "RMX
+     Summary" block, each { cy, py, cyU, pyU, dn, dp }. */
   rmx: (vals, market, period) => vals
-    ? { aspCy:277.71, aspPy:273.37, salesCy:4908, salesPy:4086, volCy:17673, volPy:14948,
-        cm2Cy:121.09, cm2Py:133.2 }
+    ? { units: { cy:17673, py:14948, cyU:0, pyU:0, dn:2725,  dp:0.182 },
+        rev:   { cy:4908,  py:4086,  cyU:0, pyU:0, dn:822,   dp:0.201 },
+        conc:  { cy:4210,  py:3560,  cyU:0, pyU:0, dn:650,   dp:0.183 },
+        raw:   { cy:1980,  py:1704,  cyU:0, pyU:0, dn:276,   dp:0.162 } }
     : null,
 };
 /* jsdom's own localStorage throws on an opaque origin, and a plain assignment
@@ -387,6 +418,170 @@ let bad = 0;
       ctx(Object.assign({}, PVREPORT, { tables: [] })));
     ok('no tables at all is still reported as no data',
        qvCard(none).includes(WAIT));
+  }
+
+  /* ------------------------------------------------------------------
+   * WHICH TABLES A SLIDE SHOWS, AND IN WHAT ORDER.
+   * ------------------------------------------------------------------
+   * The Arrange stage resolves a scope down to ONE ordered array of keys and
+   * puts it on the spec. One array, so "which tables" and "in what order"
+   * cannot disagree — and every source has to honour both halves of it.
+   *
+   * Each source declares what it can offer as a static `tables` descriptor
+   * beside its kpiPicker: a catalogue, the fallback the deck builds today,
+   * and a minimum where an empty selection would break something. Static,
+   * because Plan has to stay instant and nothing here may ask the server.
+   * ---------------------------------------------------------------- */
+  console.log('\nevery source says what it can be asked for:');
+  {
+    const desc = id => R.get(id).tables;
+    ok('pv offers the nine PV dimensions',
+       desc('pv').catalogue.length === 9 &&
+       desc('pv').catalogue.every(t => t.key && t.label));
+    ok('...with the fallback the deck builds today',
+       desc('pv').fallback({ market:'GTA' }).join(',') === 'SUBMARKET1,PLANT_TYPE,PROD_CLASS' &&
+       desc('pv').fallback({ market:'Central Canada' }).join(',') === 'MARKET,PLANT_TYPE,PROD_CLASS',
+       'the rollup slide is cut by MARKET, a market slide by SUBMARKET1');
+    ok('...and a minimum of one, because the QlikView card reads a total',
+       desc('pv').min === 1);
+    ok('rmx offers the five breakdowns',
+       desc('rmx').catalogue.map(t => t.key).join(',') === 'SUBMARKET,SEGMENT,STRENGTH,CLASS,PLANT');
+    ok('...falling back to the three the page exports',
+       desc('rmx').fallback().join(',') === 'SUBMARKET,STRENGTH,PLANT');
+    ok('seg offers the three seg: cards',
+       desc('seg').catalogue.map(t => t.key).join(',') === 'seg:segment,seg:byType,seg:detail');
+    ok('...falling back to Segment + By extra type, not the module default',
+       desc('seg').fallback().join(',') === 'seg:segment,seg:byType');
+    ok('a source with nothing to pick declares nothing',
+       !R.get('cust').tables && !R.get('fsc').tables && !R.get('rfsc').tables,
+       'the panel says so rather than showing an empty control');
+
+    /* AND WHO HAS A KPI STRIP AT ALL. pv has one and a region to choose;
+       seg has one and no region — AmrKpi.rmx finds the market's block by
+       name; rmx, cust and the two fuel sources have no strip. */
+    ok('pv declares both halves of its KPI panel',
+       R.get('pv').kpiToggle === true && !!R.get('pv').kpiPicker);
+    ok('seg declares on/off and no region',
+       R.get('seg').kpiToggle === true && !R.get('seg').kpiPicker);
+    ok('rmx declares neither — its slide carries no strip',
+       !R.get('rmx').kpiToggle && !R.get('rmx').kpiPicker);
+  }
+
+  console.log('\nthe order asked for is the order that comes back:');
+  {
+    /* THE CHECK THAT PROVES THE REORDER RATHER THAN THE SERVER'S ACCIDENT.
+       PROD_CLASS before MARKET before SUBMARKET1 is deliberately the reverse
+       of CONFIG.DIMENSIONS order, which is the order getReport pushes them
+       in whatever the request says. If the adapter did not reorder, the
+       headings would come back Market, Submarket, Product Class. */
+    const want = ['PROD_CLASS', 'MARKET', 'SUBMARKET1'];
+    const raw = pvReport({ dimensions: want }).tables.map(t => t.dimension);
+    ok('the server hands them back in ITS order, not the asked-for one',
+       raw.join(' | ') === 'Market | Submarket | Product Class',
+       'the fixture is not reproducing the defect: ' + raw.join(' | '));
+
+    const el = await R.build({ id:'pv_order', source:'pv', market:'GTA', period:'MTD',
+                               layout:'L_COMMENT_IMAGE', tables: want });
+    const heads = [...el.querySelectorAll('.tbl-card h3')].map(h => h.textContent.trim());
+    ok('...and the slide shows them in the order the scope asked for',
+       heads.join(' | ') === 'Product Class | Market | Submarket',
+       heads.join(' | '));
+
+    /* the payload is SHARED — the MTD row, its YTD twin and the unrefined
+       report a Land/Docks row resolves against all point at it — so the
+       reorder has to be into a copy. Building the same row again must not
+       find a payload somebody else already shuffled. */
+    const again = await R.build({ id:'pv_order2', source:'pv', market:'GTA', period:'MTD',
+                                  layout:'L_COMMENT_IMAGE', tables: ['MARKET', 'PROD_CLASS'] });
+    const heads2 = [...again.querySelectorAll('.tbl-card h3')].map(h => h.textContent.trim());
+    ok('...and a second row off the same market gets its own order',
+       heads2.join(' | ') === 'Market | Product Class', heads2.join(' | '));
+
+    const plain = await R.build({ id:'pv_plain', source:'pv', market:'GTA', period:'MTD',
+                                  layout:'L_COMMENT_IMAGE' });
+    const heads3 = [...plain.querySelectorAll('.tbl-card h3')].map(h => h.textContent.trim());
+    ok('a row with no selection is exactly what it was before any of this',
+       heads3.join(' | ') === 'Submarket | Plant Type | Product Class', heads3.join(' | '));
+
+    /* RMX gets the order free — buildTables maps over `dims` in order. */
+    const rmxEl = await R.build({ id:'rmx_order', source:'rmx', market:'SASKATCHEWAN',
+                                  period:'MTD', layout:'L_FULL_IMAGE',
+                                  tables: ['CLASS', 'SUBMARKET'] });
+    const rmxHeads = [...rmxEl.querySelectorAll('.rmx-eb-title')].map(h => h.textContent.trim());
+    ok('a non-default rmx breakdown is built, in its own order (' +
+       rmxHeads.join(' | ') + ')',
+       rmxHeads.join(' | ') === 'By CLASS | By SUBMARKET',
+       rmxHeads.join(' | ') || 'no table headings found');
+    const rmxPlain = await R.build({ id:'rmx_plain', source:'rmx', market:'SASKATCHEWAN',
+                                     period:'MTD', layout:'L_FULL_IMAGE' });
+    const plainHeads = [...rmxPlain.querySelectorAll('.rmx-eb-title')]
+      .map(h => h.textContent.trim()).join(' | ');
+    ok('...while a row with no selection is still the three the page exports ('
+       + plainHeads + ')',
+       plainHeads === 'By SUBMARKET | By STRENGTH | PLANT',
+       'PLANT is the pre-rolled Top 10 list and titles its own card, which is '
+       + 'why it is not "By ..." like the key-grain three');
+
+    /* SEG takes ctx.tableOrder. Its cards are captioned "<name> · <period>". */
+    const segEl = await R.build({ id:'seg_order', source:'seg', market:'SASKATCHEWAN',
+                                  period:'MTD', layout:'L_COMMENT_IMAGE_NO_KPI',
+                                  tables: ['seg:byType', 'seg:segment'] });
+    const segCaps = [...segEl.querySelectorAll('.ccap')].map(c => c.textContent.trim());
+    ok('seg builds the cards the selection names, in its order (' +
+       segCaps.join(' | ') + ')',
+       segCaps.length === 2 && /extra type/i.test(segCaps[0]) && /Segment/i.test(segCaps[1]),
+       segCaps.join(' | '));
+
+    const segOne = await R.build({ id:'seg_one', source:'seg', market:'SASKATCHEWAN',
+                                   period:'MTD', layout:'L_COMMENT_IMAGE_NO_KPI',
+                                   tables: ['seg:segment'] });
+    ok('...and one card on its own really is one card',
+       segOne.querySelectorAll('.ccap').length === 1);
+  }
+
+  /* ------------------------------------------------------------------
+   * THE KPI STRIP, AND WHOSE ANSWER WINS.
+   * ------------------------------------------------------------------
+   * The Region was per-DEVICE while everything else in Arrange is shared, so
+   * a colleague building from your saved arrangement could get different KPI
+   * numbers and nothing said so. The shared choice goes on top; under it the
+   * device memory, which is what the Price & Volume page writes; under that
+   * the first sheet on the row's own workbook.
+   * ---------------------------------------------------------------- */
+  console.log('\nthe KPI strip: on, off, and whose region wins:');
+  {
+    const strip = el => el.querySelectorAll('.pv-exp-kpis').length;
+    const on = await R.build({ id:'pv_kpi_on', source:'pv', market:'GTA', period:'MTD',
+                               layout:'L_COMMENT_IMAGE' });
+    ok('a PV slide carries the strip by default', strip(on) === 1);
+    const off = await R.build({ id:'pv_kpi_off', source:'pv', market:'GTA', period:'MTD',
+                                layout:'L_COMMENT_IMAGE', kpi: { on:false } });
+    ok('...and a scope can switch it off', strip(off) === 0);
+    ok('...leaving the tables exactly as they were',
+       off.querySelectorAll('.tbl-card').length === on.querySelectorAll('.tbl-card').length);
+
+    const segStrip = el => el.querySelectorAll('.seg-kpi-row').length;
+    const segOn = await R.build({ id:'seg_kpi_on', source:'seg', market:'SASKATCHEWAN',
+                                  period:'MTD', layout:'L_COMMENT_IMAGE' });
+    ok('a Product Segment slide carries its own strip', segStrip(segOn) === 1);
+    const segOff = await R.build({ id:'seg_kpi_off', source:'seg', market:'SASKATCHEWAN',
+                                   period:'MTD', layout:'L_COMMENT_IMAGE', kpi: { on:false } });
+    ok('...and the same switch turns it off', segStrip(segOff) === 0);
+
+    /* PRECEDENCE. Set the DEVICE memory to one sheet and the SHARED scope to
+       the other, then ask what the row will read. */
+    const P2 = R.get('pv').kpiPicker;
+    const sheets2 = P2.sheets({ market:'GTA' });
+    P2.choose({ market:'GTA' }, sheets2[0]);
+    ok('with nothing shared, the device memory answers',
+       P2.current({ market:'GTA' }) === sheets2[0]);
+    ok('a shared region beats the device memory',
+       P2.current({ market:'GTA', kpi:{ sheet: sheets2[1] } }) === sheets2[1],
+       'read ' + P2.current({ market:'GTA', kpi:{ sheet: sheets2[1] } }));
+    ok('...and the device memory is not written over by it',
+       P2.current({ market:'GTA' }) === sheets2[0]);
+    ok('a shared entry with on/off but NO region still follows the device',
+       P2.current({ market:'GTA', kpi:{ on:true } }) === sheets2[0]);
   }
 
   console.log(bad ? `\n${bad} FAILURE(S).` : '\nDECK PATH OK.');
