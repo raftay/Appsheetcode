@@ -146,9 +146,12 @@
  *                                                    its PV / RMX spellings
  *     APP_EXTRA_SOURCES                              extra sheets a page's ⚙ offers
  *     DECK_CONFIG                                    the deck template and folder,
- *                                                    and the capture resolution
+ *                                                    the capture resolution, and the
+ *                                                    three Script Properties the page
+ *                                                    saves an arrangement into
  *     DECK_RECIPE                                    WHICH slides the monthly deck
- *                                                    holds, and in what order
+ *                                                    holds, and in what order — the
+ *                                                    DEFAULT, editable from the page
  *
  *   THE LAST TWO ARE THE DECK'S CONFIG OBJECTS. They sit here rather than
  *   behind the engine that reads them, ten thousand lines down. §9 still holds
@@ -1075,12 +1078,30 @@ var DECK_CONFIG = {
                still moves every row nobody has overridden, which is why the
                store holds the differences and not a copy of this column.
      title     the real, editable Slides heading — not baked into the picture.
-     optional  true = shown unticked in the Plan stage.
+     optional  true = shown unticked in the Plan stage. Editable too — see below.
 
-   ADDING, DROPPING OR REORDERING A SLIDE IS AN EDIT TO THIS ARRAY AND NOTHING
-   ELSE. The page reads it, shows it as a checklist, and builds it top to bottom;
-   DECK_getRecipe (§9) rejects a duplicate id or a row with no layout before the
-   build starts rather than at slide 30 of 43. */
+   THIS ARRAY IS THE DEFAULT NOW, NOT THE ONLY ANSWER. Adding, dropping,
+   reordering, retitling or re-pointing a slide is something anybody can do
+   from the Deck Builder's ARRANGE stage, and what they do is saved SHARED, in
+   the two Script Properties named above — PROP_PLAN and PROP_TABLES. Editing
+   this array is still the right way to change what the pack IS; the stage is
+   for what this month's pack does.
+
+   AND THE TWO STAY MEANINGFUL TOGETHER, which is the whole reason the stores
+   hold differences rather than copies:
+
+     · NOTHING STORED IS BYTE-IDENTICAL TO THIS ARRAY. An untouched row has no
+       key anywhere, and an arrangement that happens to equal the recipe is
+       DELETED rather than kept — otherwise the first press of any button in
+       Arrange would freeze all 43 rows, and the next person to edit here would
+       change nothing and have no way to see why.
+     · A ROW ADDED HERE AFTER AN ORDER WAS SAVED IS INSERTED BESIDE ITS
+       PREDECESSOR IN THIS ARRAY. Not appended, not dropped. So adding a slide
+       between two others here puts it between those two others in the deck,
+       whatever anybody has arranged.
+
+   DECK_getRecipe (§9) applies all of it, and still rejects a duplicate id or a
+   row with no layout before the build starts rather than at slide 30 of 43. */
 
 var DECK_RECIPE = [
 
@@ -13064,10 +13085,17 @@ function DECK_resetTables(scopeKey) { return DECK.resetTables(scopeKey); }
 /*****************************************************************************
  * Deck_Recipe.gs - WHICH slides the monthly deck contains, and in what order.
  * ---------------------------------------------------------------------------
- * THIS FILE IS CONFIG, NOT CODE. Adding, removing or reordering a slide is an
- * edit to the array below - nothing else in the suite needs to change. The
- * Deck Builder page reads it, shows it as a checklist, and builds it top to
- * bottom.
+ * THIS FILE IS CONFIG, NOT CODE - and it is the DEFAULT rather than the last
+ * word. Adding, removing or reordering a slide here is still an edit to the
+ * array and nothing else; it is no longer the only way to do any of them. The
+ * Deck Builder's ARRANGE stage does all four from the page, and saves what it
+ * does SHARED, in two Script Properties beside the layout map.
+ *
+ * Which leaves this array meaning what it always meant, on two rules those
+ * stores keep: nothing stored is byte-identical to what is written here, and a
+ * row added here after somebody saved an arrangement is inserted beside its
+ * neighbour in this array rather than appended or dropped. Change what the
+ * pack IS here; change what this month's pack does there.
  *
  * It was transcribed from the July 2026 pack ("AGG - CENTRAL CANADA - MTDYTD
  * Prep.pdf", 43 slides at 720 x 405 pt), so the default output matches the

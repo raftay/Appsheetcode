@@ -129,8 +129,20 @@ function pvReport(o) {
   };
 }
 
+/* What Publish sent, so the arrangement can be followed all the way to the
+   deck. The three writers are real globals but every one of them opens Slides,
+   which is the one thing off-platform cannot do — so they are taken back here
+   and record their arguments instead. */
+const PUBLISHED = { slides: [], finish: null };
+
 /* Everything the page asks for that is NOT the deck's own server half. */
 const OTHER = {
+  DECK_create: () => ({ deckId: 'D1', name: 'Deck',
+                        url: 'https://docs.google.com/presentation/d/D1/edit' }),
+  DECK_addSlide: (id, spec) => { PUBLISHED.slides.push(spec.recipeId); return { recipeId: spec.recipeId }; },
+  DECK_finish: (id, order) => { PUBLISHED.finish = order || null;
+    return { deckId: id, url: 'https://docs.google.com/presentation/d/D1/edit',
+             slides: PUBLISHED.slides.length, templateSlidesParked: 2 }; },
   getReport: pvReport,
   getCustomerReport: () => ({ rows: [], total: null }),
   RMX_getKeys: () => ({ market: 'X', period: 'MTD', latestMonth: 7,
@@ -832,6 +844,29 @@ async function act(fn) { fn(); await settle(120); }
       st().join(',') === 'ready,ready,ready,ready', st().join(','));
     check('...rather than leaving one pending for somebody to notice',
       shot().every(Boolean), JSON.stringify(shot()));
+
+    /* ---- AND THE ARRANGEMENT REACHES THE DECK -------------------------
+       An order that Publish does not send is an order that stops at the page.
+       finish() is the only step that can honour one, because it is the only
+       one that runs after the last slide has landed. */
+    await act(() => click(rows()[0].querySelector('[data-db-arr="down"]')));
+    const want = titles().slice();
+    click($('dbBtnPublish'));
+    await settle(2000);
+    check('Publish sends the deck order to finish()',
+      !!PUBLISHED.finish && PUBLISHED.finish.length === 4,
+      JSON.stringify(PUBLISHED.finish));
+    const byId = {};
+    server.DECK_RECIPE.forEach(r => { byId[r.title] = r.id; });
+    check('...matching the list on screen, top to bottom',
+      PUBLISHED.finish.join(',') === want.map(t => byId[t]).join(','),
+      'sent ' + JSON.stringify(PUBLISHED.finish) +
+      ', on screen ' + JSON.stringify(want.map(t => byId[t])));
+    /* and it is the ARRANGED order rather than the recipe's, or the check
+       above would pass on a deck nobody had rearranged */
+    check('...which is not the recipe order it started in',
+      PUBLISHED.finish.join(',') !== server.DECK_RECIPE.map(r => r.id).join(','),
+      JSON.stringify(PUBLISHED.finish));
 
     server.DECK_RECIPE.length = 0;
     full.forEach(r => server.DECK_RECIPE.push(r));

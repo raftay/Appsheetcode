@@ -1574,7 +1574,7 @@ body[data-page="overview"] .xf-dd .clr1{margin-top:6px; border:0; background:tra
    70 rules, all .db-*, and not one of them collides with §A1-§A3 — so nothing
    was promoted and nothing was dropped. That is the same test answering
    "this is a page, not a component": no other page has a slide-plan table, a
-   three-stage bar or a geometry-driven preview mock.
+   four-stage bar or a geometry-driven preview mock.
 
    The 1080px media query maps onto --bp-mid. The 1180px one does NOT and is
    kept as this page's own step, for a stated reason: the slide
@@ -22590,8 +22590,12 @@ AMR.page('overview', {
        open it: the header carried Home and Check template only.
      · 70 style rules became §A4, scoped to body[data-page="deckbuilder"]
 
-   NOT changed: the three-stage flow, the source check inside Render, and the
-   per-row Region picker are the page's own and are ported line for line.   */
+   NOT changed by the port: the stage flow, the source check inside Render, and
+   the per-row Region picker are the page's own and were ported line for line.
+   The ARRANGE stage was added afterwards, as its own piece of work, and it is
+   a fourth stage and a panel of its own rather than anything inside #dbList —
+   those rows are what pageparity.js diffs byte for byte against the page this
+   was ported from.   */
 AMR.page('deckbuilder', {
   title: 'Amrize · Deck Builder',
   /* Chart.js because the content modules draw the slides' charts, html2canvas
@@ -22603,10 +22607,13 @@ AMR.page('deckbuilder', {
     'The <b>title</b> and the <b>comment box</b> land as editable Slides text — only the '+
     'table or chart goes in as a picture. That is the difference from the PNG export on '+
     'each report page, which flattens the whole slide into one image.</p>'+
-    '<h3>Three stages</h3><p><b>Plan</b> lists the slides from the recipe — untick anything '+
-    'this month skips. <b>Render</b> re-reads the source sheets, then photographs each content '+
-    'block in your browser, one at a time; you can watch the previews fill in. <b>Publish</b> '+
-    'sends them to Slides, one slide per call.</p>'+
+    '<h3>Four stages</h3><p><b>Plan</b> lists the slides. <b>Arrange</b> is where the pack '+
+    'is decided — order, what each slide shows, what is in it this month. <b>Render</b> '+
+    're-reads the source sheets, then photographs each content block in your browser, one at '+
+    'a time; you can watch the previews fill in. <b>Publish</b> sends them to Slides, one '+
+    'slide per call.</p>'+
+    '<p>Arrange is worth opening even on a month where nothing needs changing — it is the '+
+    'only place that shows what somebody set months ago.</p>'+
     '<h3>If a slide fails</h3><p>It goes red with the reason. Press <b>Render</b> again — only '+
     'the unfinished rows are retried, nothing already done is rebuilt.</p>'+
     '<h3>Getting new figures</h3><p>There is nothing to press and nothing to remember — '+
@@ -22630,6 +22637,10 @@ AMR.page('deckbuilder', {
     'queue and rebuilt before the run ends — you do not have to press Render again. The choice is '+
     'remembered per market, in the same place the Price &amp; Volume page reads it, so it also '+
     'corrects every other slide for that market.</p>'+
+    '<p><b>It is remembered on this device only</b>, which is why Arrange can set one for '+
+    'everybody instead. When it has, this dropdown greys out and says so — a colleague '+
+    'building from a saved arrangement has to get the same numbers as you, and a control '+
+    'that visibly moves and changes nothing is worse than one that will not move.</p>'+
     '<h3>Rendering with the tab in the background</h3><p>Fine, and normal — nobody watches forty '+
     'slides go by. The render keeps going when this tab is not the one you are looking at. It may '+
     'run slower there, because browsers deliberately slow hidden tabs down; it will not stop.</p>'+
@@ -22637,9 +22648,43 @@ AMR.page('deckbuilder', {
     '<b>&#8635; Reload template</b>. The previews and the generated slides both follow — the '+
     '{{IMAGE}} box is a guide, not a frame, so the picture is always fitted inside it and can '+
     'never cover the title or the comments.</p>'+
-    '<h3>Changing which slides are in the deck</h3><p>The list comes from '+
-    '<b>Deck_Recipe.gs</b>. Adding, removing or reordering a slide is an edit to that one '+
-    'array.</p>',
+    '<h3>Changing which slides are in the deck</h3>'+
+    '<p>Press <b>Arrange</b>. Move a slide with the arrows, untick one this month skips, '+
+    'retype a title, change which page a slide comes from, or delete it outright. '+
+    '<b>+ Add slide</b> is the same editor with an empty row.</p>'+
+    '<p><b>Every one of those is saved for everybody</b> — it is the deck&rsquo;s setting, '+
+    'not this browser&rsquo;s — and it stays until somebody changes it again. Nothing is '+
+    'lost: a deleted slide goes to <b>Deleted slides</b> at the bottom of the panel with a '+
+    '<b>Restore</b> beside it, and <b>Reset arrangement</b> puts the whole deck back to what '+
+    'the code says.</p>'+
+    '<p><b>Unticking and deleting are different questions.</b> Unticked means &ldquo;not in '+
+    'this month&rsquo;s pack&rdquo; — the slide stays in the list, greyed, one click from '+
+    'coming back. Deleted means &ldquo;not part of the pack any more&rdquo;.</p>'+
+    '<p>The list still comes from <b>Deck_Recipe.gs</b> and that is still the right place to '+
+    'change what the pack <i>is</i>. The two do not fight: a deck nobody has arranged is '+
+    'exactly what that file says, and a slide added to it later lands beside its neighbour '+
+    'here rather than at the back.</p>'+
+    '<h3>Which tables a slide shows</h3>'+
+    '<p>Also in Arrange, on the right. Pick a slide, then pick <b>how far the change should '+
+    'reach</b> — <i>All Price &amp; Volume slides</i>, <i>Southwest only</i>, <i>Southwest '+
+    '&middot; Docks only</i>, <i>This slide only</i>. Most months you want the widest one: '+
+    'fourteen market slides showing the same three tables is the normal shape, and setting '+
+    'them one at a time is fourteen chances to miss one. The panel says how many slides each '+
+    'choice would reach, and marks the one that is answering for the slide you are looking '+
+    'at.</p>'+
+    '<p>A slide takes <b>the most specific answer there is</b>. So a setting on the Southwest '+
+    'beats the one on Price &amp; Volume, and a setting on this slide beats both. MTD and YTD '+
+    'always move together unless you use <i>This slide only</i> — that pair reading the same '+
+    'tables is what anybody means by &ldquo;change the Southwest&rdquo;.</p>'+
+    '<p>The tick list is <b>ordered</b>: the order you put them in is the order they appear on '+
+    'the slide, and the arrows move them. Past four tables they are squeezed hard to fit the '+
+    'image box — the panel says so; look at the preview before you publish.</p>'+
+    '<p><b>Land and Docks are the one split below market level.</b> They are two values of the '+
+    'Southwest&rsquo;s own submarket column, not markets, so only Southwest slides have that '+
+    'middle choice. Everywhere else the finest cut is MTD against YTD.</p>'+
+    '<p>Changing any of this <b>drops the pictures it actually changed and no others</b>, and '+
+    'rebuilds them in the run that is going if one is. A slide the change did not reach keeps '+
+    'the picture it has.</p>',
 
   boot: function(root){
 
@@ -22656,13 +22701,16 @@ AMR.page('deckbuilder', {
     });
 
   /* ===========================================================================
-   * Deck Builder — PLAN, then RENDER, then PUBLISH.
+   * Deck Builder — PLAN, ARRANGE, RENDER, then PUBLISH.
    * ---------------------------------------------------------------------------
-   * Three stages, never one shot. 43 slides of client-side rendering plus 43
+   * Four stages, never one shot. 43 slides of client-side rendering plus 43
    * Slides API round trips does not fit in one execution, and a failure at slide
    * 40 must not cost the first 39. So:
    *
-   *   PLAN     read the recipe. No data, instant. Untick what this month skips.
+   *   PLAN     read the recipe. No data, instant.
+   *   ARRANGE  order, membership, and what each slide shows. No data either and
+   *            no Slides call - three Script Property reads, which is what keeps
+   *            it as quick as Plan. Everything it saves is SHARED.
    *   RENDER   check the source sheets first (see dbSourceCheck), then one slide
    *            at a time, in the browser: ask the source page for its content
    *            block, photograph it, keep the PNG. All the compute is here. One
@@ -23180,7 +23228,19 @@ AMR.page('deckbuilder', {
       function next(){
         if(i >= todo.length){
           prog('Finishing…');
-          return srv('DECK_finish', [DECKR.deckId]).then(function(out){
+          /* THE ORDER THE DECK IS MEANT TO BE IN, not the order the slides
+             happened to be built in. addSlide always appends and this loop
+             skips a row already `done`, so a slide that failed and was retried
+             on a second press lands behind everything built on the first —
+             and {{PAGE}} would then number that order confidently. finish()
+             moves the built slides into place before it numbers them.
+
+             EVERY ROW IN THE PACK, not just `todo`: a slide published on an
+             earlier press is still part of the arrangement, and an id with no
+             slide behind it is simply skipped. */
+          var order = ROWS.filter(function(r){ return r.on; })
+                          .map(function(r){ return r.spec.id; });
+          return srv('DECK_finish', [DECKR.deckId, order]).then(function(out){
             prog(out.slides + ' slides published');
             banner('ok', 'Deck ready — <a href="'+esc(out.url)+'" target="_blank">open it in Google Slides</a> '+
               '('+out.slides+' slides). Titles and comment boxes are real, editable text.');
