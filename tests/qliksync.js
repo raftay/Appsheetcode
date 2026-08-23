@@ -2,12 +2,30 @@
  *
  * Two things this file has to keep getting right.
  *
- *   BATCHING   The band of array formulas is cleared and restored a RUN at a
- *              time, not a CELL at a time. Every one of those was a round trip
- *              to Sheets, and the count is what used to push a sync past the
- *              Apps Script runtime limit and get the trigger killed mid-write.
- *              Batching them must change no formula: every anchor still comes
- *              back re-pointed at the new height, its own and across tabs.
+ *   BATCHING   The band of array formulas is restored a RUN at a time, not a
+ *              CELL at a time. Every one of those was a round trip to Sheets,
+ *              and the count is what used to push a sync past the Apps Script
+ *              runtime limit and get the trigger killed mid-write. Batching
+ *              them must change no formula: every anchor still comes back
+ *              re-pointed at the new height, its own and across tabs.
+ *
+ *   OWNERSHIP  The sync owns the columns it pairs, from the first data row
+ *              down, and NOTHING ELSE on the tab. Two ways it used to take
+ *              more than that, and both are gated here:
+ *
+ *              It cleared the whole formula band before writing and put it
+ *              back only after the LAST tab of the workbook, so a run that
+ *              died in between deleted every anchor with nothing left to
+ *              restore — and nothing for the next run to find either. Now only
+ *              a formula sitting in a column the export feeds is cleared, and
+ *              the harness makes a write throw to prove the rest survive it.
+ *
+ *              ROWS ARE THE OTHER WAY ROUND and stay that way: the data ends
+ *              exactly where the export ends, surplus rows deleted. Every
+ *              formula on these tabs is a single-cell ARRAY formula on the
+ *              first data row — nothing is filled down — so a surplus row
+ *              holds no formula of anybody's, and leaving them would have
+ *              January reading a December-sized sheet for eleven months.
  *
  *   THE CHECK  Nothing in the UI starts a sync. One time-driven trigger
  *              compares each export FILE's modified time against the one it
@@ -50,6 +68,7 @@ const RealDate = Date;
 let CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);   /* virtual, ms */
 let TICK = 0;                                     /* ms added per write call */
 let OPS = [];                                     /* every write, in order */
+let BOOM = null;                                  /* (sheet, a1) => throw here */
 
 function colA1(c) {                               /* 1-based → A, B, … */
   let s = '';
@@ -86,6 +105,10 @@ function makeSheet(name, rows) {
         getFormulas: () => Array.from({ length: nr }, (_, i) =>
                              Array.from({ length: nc }, (_, j) => at(i, j).f)),
         setValues(g) {
+          /* The runtime limit, in a form a harness can reach: BOOM makes one
+             write blow up where a killed execution would simply stop. What has
+             to be true either way is that the anchors are still on the sheet. */
+          if (BOOM && BOOM(name, a1)) { log('setValues'); throw new Error('write failed'); }
           log('setValues'); CLOCK += TICK;
           span((i, j) => { at(i, j).v = g[i][j]; at(i, j).f = ''; });
           return rng;
@@ -157,14 +180,22 @@ const RAW_FORMULAS = {
 };
 
 function rawSheet() {
+  /* COLUMN M IS SOMEBODY ELSE'S. The export does not feed it and the sync has
+     never heard of it: a note on the first data row and content under it. The
+     sync must read straight past the whole column — never clear it, never
+     write into it — while still doing what it likes with the ROWS, which
+     belong to the export. */
   const hdr = ['LOOKUP KEY', 'Year', 'Month', 'Plant Type', 'Material Family',
-               'Fuel Surchage', 'Volume', 'CY Fuel', 'PY Fuel', 'Net', 'Adj', 'Flag'];
-  const banner  = ['Bill Year', 2025, 2025, '', '', '', '', '', '', '', '', ''];
+               'Fuel Surchage', 'Volume', 'CY Fuel', 'PY Fuel', 'Net', 'Adj', 'Flag',
+               'Notes'];
+  const banner  = ['Bill Year', 2025, 2025, '', '', '', '', '', '', '', '', '', ''];
   const anchors = hdr.map((_, i) => (RAW_FORMULAS[i + 1] ? { f: RAW_FORMULAS[i + 1] } : ''));
-  const stale   = () => ['', 'OLD', 'OLD', 'OLD', 'OLD', 'OLD', 'OLD', '', '', '', '', ''];
-  /* ten rows in the sheet, five in the export: it has to shrink */
-  return makeSheet(RAW_TAB, [banner, hdr, anchors, stale(), stale(), stale(),
-                             stale(), stale(), stale(), stale()]);
+  anchors[12] = 'keep-3';                     /* a plain value, not a formula */
+  const stale = n => ['', 'OLD', 'OLD', 'OLD', 'OLD', 'OLD', 'OLD', '', '', '', '', '',
+                      { f: '=B' + n + '&"-note"' }];
+  /* ten rows in the sheet, five in the export: it used to shrink */
+  return makeSheet(RAW_TAB, [banner, hdr, anchors, stale(4), stale(5), stale(6),
+                             stale(7), stale(8), stale(9), stale(10)]);
 }
 function otherSheet() {
   const hdr = ['LOOKUP KEY', 'Year', 'Month', 'Other Revenue'];
@@ -198,7 +229,7 @@ const NAMES = { [AGG_ID]: 'Agg Margin Monitor Export.xls',
 let MTIME = {};                                   /* per export file */
 
 function load({ tick = 0, lockFree = true } = {}) {
-  PROPS = {}; OPS = []; TICK = tick; SYNC_ALL_CALLS = 0;
+  PROPS = {}; OPS = []; TICK = tick; SYNC_ALL_CALLS = 0; BOOM = null;
   MTIME = { [AGG_ID]: 1000, [RMX_ID]: 2000, [SEG_ID]: 3000 };
   CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);
 
@@ -268,7 +299,14 @@ function load({ tick = 0, lockFree = true } = {}) {
 
 const writes = sheet => OPS.filter(o => o.sheet === sheet &&
   ['clearContent', 'setValues', 'setFormula', 'setFormulas', 'clearContents'].indexOf(o.op) !== -1);
-const formulaRow = (sh, row) => sh._grid()[row - 1].map(c => c.f);
+/* Tolerant of a row that is not there: a regression that SHRINKS the sheet has
+   to read as a failed check, not as a stack trace that hides the ones after
+   it — which is exactly how the row-deletion mutation first presented. */
+const formulaRow = (sh, row) => (sh._grid()[row - 1] || []).map(c => c.f);
+const valuesIn = (sh, r, c, nr, nc) =>
+  (sh.getMaxRows() >= r + nr - 1)
+    ? sh.getRange(r, c, nr, nc).getValues()
+    : 'the sheet is only ' + sh.getMaxRows() + ' rows tall';
 
 /* ======================================================================
  * 1. The run does what it always did
@@ -284,11 +322,67 @@ console.log('a clean run over both Price & Volume tabs:');
   check('the raw tab took all five export rows', res.done.filter(d => d.tab === RAW_TAB)[0].rows, 5);
 
   const raw = BOOKS._sheets.raw, other = BOOKS._sheets.other;
+  /* The export is five rows and the sheet is ten: the surplus goes. Leaving it
+     would have January reading a December-sized sheet for eleven months, and
+     no reader can tell an empty row from one the export stopped sending. */
   check('the sheet ends exactly where the export does', raw.getMaxRows(), 7);
   check('...and so does the other-revenue tab', other.getMaxRows(), 4);
   check('the export data landed', raw.getRange(3, 6, 1, 2).getValues(), [[10, 100]]);
   check('the last export row landed', raw.getRange(7, 6, 1, 2).getValues(), [[50, 500]]);
   check('no stale row survived underneath', raw.getRange(7, 2, 1, 1).getValues(), [[2026]]);
+}
+
+/* ======================================================================
+ * 1b. A column the export does not feed is not the sync's to touch
+ * ----------------------------------------------------------------------
+ * THE RULE HAS TWO HALVES AND THEY POINT OPPOSITE WAYS. Rows below the data
+ * belong to the export and go when it shrinks — checked above. COLUMNS do not:
+ * the sync writes the ones it paired and reads past everything else, whatever
+ * is in it and whether or not this file has heard of it.
+ * ==================================================================== */
+console.log('\na column nobody told the sync about is read past, not written:');
+{
+  const ctx = load();
+  ctx.qlikSyncNow('pricevolume');
+  const raw = BOOKS._sheets.raw;
+
+  check('the note on the first data row is still there',
+    valuesIn(raw, 3, 13, 1, 1), [['keep-3']]);
+  check('and its content across the data is untouched',
+    raw._grid().slice(3).map(r => r[12].f),
+    ['=B4&"-note"', '=B5&"-note"', '=B6&"-note"', '=B7&"-note"']);
+  check('nothing was written into it either',
+    OPS.filter(o => o.sheet === RAW_TAB && /M/.test(o.a1) && o.op !== 'clearContents').length, 0);
+}
+
+/* ======================================================================
+ * 1c. The run says WHEN it wrote, and off which export
+ * ----------------------------------------------------------------------
+ * The header's stamp cannot read this off Drive. A row typed into a lookup tab
+ * moves the workbook's modified time exactly as a sync does, so the only thing
+ * that can say "QlikView updated this sheet" is the run that did it.
+ * ==================================================================== */
+console.log('\nthe run records when this page was last written from QlikView:');
+{
+  const ctx = load();
+  ctx.qlikSyncNow('pricevolume');
+  const log = JSON.parse(PROPS.QLIK_LAST_SYNC || '{}');
+
+  check('it recorded the page it wrote', Object.keys(log), ['pricevolume']);
+  check('with both tabs', log.pricevolume.tabs, 2);
+  check('and none of them broken', log.pricevolume.failed, 0);
+  check('the export it read is dated', log.pricevolume.exportAt, MTIME[AGG_ID]);
+  check('and named', log.pricevolume.exportName, NAMES[AGG_ID]);
+  checkThat('the time it WROTE is its own, not the export\'s date',
+    log.pricevolume.at !== log.pricevolume.exportAt,
+    'the two clocks have been collapsed into one');
+
+  /* A run for one page must not wipe another page's stamp — the same trap
+     qlikSyncNow already guards for the file stamps, one property over. */
+  ctx.qlikSyncNow('rmx');
+  const after = JSON.parse(PROPS.QLIK_LAST_SYNC || '{}');
+  check('and a run for another page leaves it alone',
+    after.pricevolume && after.pricevolume.tabs, 2);
 }
 
 /* ======================================================================
@@ -330,16 +424,47 @@ console.log('\nthe formula band is handled a run at a time, not a cell at a time
     restores.filter(o => o.cells === 5).length, 1);
   check('nothing goes back one cell at a time', perCell.length, 0);
 
-  /* The clear happens before the write, over the same runs. Six formula cells,
-     all on row 3; the banner rows above hold none. (The block clear that
-     precedes the data write spans rows 3-7 and is not one of these.) */
+  /* AND THEY ARE NEVER TAKEN OUT TO MAKE ROOM. The write lands on the mapped
+     columns from row 3 down; every anchor is in a column the export does not
+     feed, so there is nothing to clear ahead of it. Clearing them used to leave
+     the band absent for the whole workbook's pass, which is why the next test
+     kills a write and expects to find them still there. (The block clear that
+     precedes the data write spans B3:G10 and is not one of these.) */
   const bandClears = OPS.filter(o =>
-    o.sheet === RAW_TAB && o.op === 'clearContent' && /^[A-L]3(:[A-L]3)?$/.test(o.a1));
-  check('and they are cleared in two calls, not six', bandClears.length, 2);
+    o.sheet === RAW_TAB && o.op === 'clearContent' && /^[A-M]3(:[A-M]3)?$/.test(o.a1));
+  check('the anchors are not cleared to make room for the write', bandClears.length, 0);
 
   checkThat('the whole tab costs well under a call per cell',
     writes(RAW_TAB).length <= 8, `${writes(RAW_TAB).length} write calls: ` +
     JSON.stringify(writes(RAW_TAB).map(o => o.op + ' ' + o.a1)));
+}
+
+/* ======================================================================
+ * 3b. A run that dies in the middle still leaves the formulas behind
+ * ----------------------------------------------------------------------
+ * The reported fault, and the reason the two changes above are one change.
+ * Apps Script kills an execution at the runtime limit with no `finally` and no
+ * catch — three tens-of-thousands-of-rows Ready-Mix tabs reach that far sooner
+ * than two Aggregates ones, which is why one workbook lost its formulas and the
+ * other never did on identical code. A throw is the closest a harness gets, and
+ * it also covers the case a kill does not: the run continues, records the tab
+ * as failed, and must still put the band back.
+ * ==================================================================== */
+console.log('\na write that blows up does not take the array formulas with it:');
+{
+  const ctx = load();
+  BOOM = (sheet) => sheet === RAW_TAB;
+  const res = ctx.qlikSyncNow('pricevolume');
+  BOOM = null;
+
+  check('the tab is reported as failed', res.failed.length >= 1, true);
+  const got = formulaRow(BOOKS._sheets.raw, 3);
+  check('the lookup-key anchor is still on the sheet',
+    got[0], '=ARRAYFORMULA(IF(B3:B7="","",B3:B7&"-"&C3:C7))');
+  check('...and so is the rest of the band',
+    got.filter(f => f).length, 6);
+  check('the other tab still wrote', BOOKS._sheets.other.getRange(2, 4, 1, 1).getValues(),
+    [[7]]);
 }
 
 /* ======================================================================
@@ -364,7 +489,7 @@ console.log('\nthe check syncs the export that moved, and only that one:');
   const third = ctx.qlikSyncCheck();
   check('the re-exported one is picked up', third.changed, ['Aggregates']);
   check('the other two are left alone', third.unchanged.sort(),
-    ['Ready-Mix', 'Slide Builder']);
+    ['Product Segment', 'Ready-Mix']);
 }
 
 console.log('\nmarking the current exports stops a needless first sync:');
@@ -401,7 +526,7 @@ console.log('\nqlikStamps says what the next check will do:');
   const rows = ctx.qlikStamps();
   check('one row per export', rows.length, 3);
   check('the moved one is flagged',
-    rows.filter(r => r.willSync).map(r => r.source), ['Slide Builder']);
+    rows.filter(r => r.willSync).map(r => r.source), ['Product Segment']);
   check('and it names the page it feeds',
     rows.filter(r => r.willSync)[0].feeds, 'segment');
 }

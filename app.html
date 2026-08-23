@@ -46,9 +46,9 @@
                                 that read them.
    §D   RUNTIME ............... AMR core: logging, lib loader, nav, modals,
                                 the QlikView guide, the page registry.
-   §E   SHARED MODULES ........ AmrProgress, AmrBoot, AmrFresh, AmrSlide,
-                                AmrFuelExec. Each one arrives with the first
-                                page that exercises it, never before.
+   §E   SHARED MODULES ........ AmrProgress, AmrBoot, AmrFresh, AmrStamp,
+                                AmrSlide, AmrFuelExec. Each one arrives with the
+                                first page that exercises it, never before.
    §P   PAGES ................. one <template> + one registration per page.
 
  HOW A PAGE WORKS HERE
@@ -281,6 +281,54 @@ header .spacer{flex:1}
   width:14px; height:14px; border-radius:50%; animation:amr-spin .7s linear infinite}
 .ghost.busy::after{border:2px solid rgba(255,255,255,.45); border-top-color:#fff}
 .dl.busy::after{border:2px solid var(--blue-20); border-top-color:var(--blue-70)}
+
+/* ---- the data-age stamp, its own control beside ↻ Update from source ---- */
+/* NEXT TO THE BUTTON, NEVER INSIDE IT, and the reason is the note above: the
+   bar is one row only while every label is a fixed nowrap string, and a date is
+   the one label on the bar that changes length. Folding "· 22 Aug 06:15" into
+   "↻ Update from source" would put a growing string inside the widest control
+   there is. It is also two different questions — that button asks whether
+   anything NEWER exists, this one says how old what you are looking at IS — and
+   they answer at different moments.
+   NO WARNING COLOUR. Stale data has one signal in this suite and it is
+   AmrFresh's full-screen grey-out; a second, quieter one on the bar would need
+   a colour the palette does not have and would mean something subtly different
+   from the loud one. The label says the age in words instead. */
+.amr-stamp{display:inline-flex; align-items:center; gap:5px; padding:8px 10px;
+  font-variant-numeric:tabular-nums; opacity:.9}
+.amr-stamp:hover{opacity:1}
+.amr-stamp .amr-stamp-i{font-size:12px; line-height:1}
+/* IT GIVES UP THE DATE BEFORE THE BAR GIVES UP A ROW. Every control here costs
+   width and the bar has almost none to spare — Price & Volume had SEVEN pixels
+   of it at 1720 before this button existed. So the stamp carries two labels and
+   shows the one that fits: the date and time while there is room, the age on
+   its own once there is not, and the tooltip and the panel always carry the
+   full pair either way.
+
+   MEASURED, because the last row a bar can afford is the one it is on. Widths
+   at which each header goes from one row (62px) to two (103px), before this
+   control and after it:
+
+     Price & Volume  1600  →  1600      Ready-Mix       1440  →  1440
+     Deck Builder    never →  never     Product Segment 1440  →  1500
+     Overview        1100  →  1280      RMX Fuel        1366  →  1440
+                                        AGG Fuel        1280  →  1366
+
+   Four pages lose one breakpoint step and three lose nothing. A second row is
+   what flex-wrap is here for — it is the 256px bar and the 572px overflow above
+   that were the failure, and neither is reachable from here. The two lines
+   below are what bought the other three pages back: full-size and framed above
+   --bp-wide, four characters and no frame under it. */
+.amr-stamp .amr-stamp-s{display:none}
+@media (max-width:1720px){          /* --bp-wide */
+  /* And it gives up its own frame before it gives up the row: below --bp-wide
+     the stamp is a reading, not a button, until you point at it. */
+  .amr-stamp{padding:8px 2px; gap:4px; border-color:transparent;
+    color:rgba(255,255,255,.74)}
+  .amr-stamp:hover{border-color:rgba(255,255,255,.28); color:#fff}
+  .amr-stamp .amr-stamp-t{display:none}
+  .amr-stamp .amr-stamp-s{display:inline}
+}
 
 /* ---- page layout ---- */
 .shell{display:grid; grid-template-columns:288px 1fr; gap:24px; padding:24px; max-width:1480px; margin:0 auto}
@@ -1973,6 +2021,17 @@ body[data-page="inventoryreport"] .ir-empty p{font:500 13px Inter; color:var(--m
   </div>
 </div>
 
+<!-- The two clocks behind the header's stamp button. Its own shell rather than
+     a reuse of the hint modal, because it is opened from the permanent chrome
+     and the hint modal's body is rewritten by whichever table was clicked. -->
+<div class="amr-modal" id="amrStampModal">
+  <div class="amr-card">
+    <div class="amr-head"><h2>Where these figures came from</h2>
+      <button class="amr-x" data-close="amrStampModal">&times;</button></div>
+    <div class="amr-body" id="amrStampBody"></div>
+  </div>
+</div>
+
 <!-- No close control on purpose: the figures underneath are stale, so the only
      thing to do is reload. -->
 <div class="amr-stale" id="amrStale" role="alertdialog" aria-labelledby="amrStaleTitle">
@@ -2088,13 +2147,13 @@ window.AMR_TUNABLES = {
     rmx:           { left:15,  right:15,  top:15, bottom:15, maxLR:600,  maxTB:300 },
     fuelsurcharge: { left:140, right:140, top:40, bottom:40, maxLR:650,  maxTB:320 },
     rmxfuel:       { left:140, right:140, top:40, bottom:40, maxLR:650,  maxTB:320 },
-    /* The Slide Builder's top band is the one that is NOT constant — it depends
+    /* The Product Segment's top band is the one that is NOT constant — it depends
        on how many KPI cards are showing. `top` is supplied by the page from
        segmentTopBand below, so it is deliberately absent here. */
     segment:       { left:345, right:55,             bottom:15, maxLR:650,  maxTB:320 }
   },
 
-  /* The Slide Builder's top band. With KPI cards the top of the slide is
+  /* The Product Segment's top band. With KPI cards the top of the slide is
      already occupied, so the band stays small; without them it opens up to
      leave room for the comment, and how much room depends on how many tables
      are ticked (1, 2 or 3). Same rule as above — a slider the user has moved is
@@ -2102,7 +2161,7 @@ window.AMR_TUNABLES = {
   segmentTopBand: { withKpi:20, withoutKpi:{ 1:165, 2:110, 3:60 } },
 
   /* One page's bands, as an options object for AmrSlide.mountControls, with
-     whatever the page adds — its onChange, and the Slide Builder's dynamic
+     whatever the page adds — its onChange, and the Product Segment's dynamic
      top — layered on top. A COPY every time: mountControls keeps the object it
      is handed and the sliders write back into it, so handing out the table
      itself would let one page's dragging change another page's defaults. */
@@ -2903,10 +2962,15 @@ window.AMR = (function(){
     if (spec.title) document.title = spec.title;
     if (spec.help)  window.HELP_HTML = spec.help;
 
-    /* Only the switcher is per-mount: it is injected into the page's OWN
-       header, which #appRoot just threw away. The other three wire the
-       permanent shell and are installed once, in start() — see wireShell(). */
+    /* Only the switcher and the data-age stamp are per-mount: both are injected
+       into the page's OWN header, which #appRoot just threw away. The other
+       three wire the permanent shell and are installed once, in start() — see
+       wireShell(). AmrStamp is §E and guarded like every other §E call from
+       here, because §D is evaluated before it. */
     mountPageSwitcher();
+    try { if (window.AmrStamp && AmrStamp.mount) AmrStamp.mount(); }
+    catch (e) { log('warn', 'AMR.start', 'the data-age stamp did not mount',
+                    { page: id, error: String(e) }); }
     log('info', 'AMR.start', 'mounted', { page: id, ms: Date.now() - t0 });
 
     var gen = GENERATION;
@@ -3095,18 +3159,24 @@ window.AMR = (function(){
 /* ============================================================================
    §E  SHARED MODULES
    ----------------------------------------------------------------------------
-   AmrCache, AmrProgress, AmrBoot, AmrFresh, AmrTick, AmrCube, AmrKpi,
-   AmrSlide, AmrDeckSource, AmrFuelExec, AmrPvSlide, AmrSegSlide, AmrRmxSlide.
-   Thirteen — AmrKpiStore was the fourteenth and did not come across.
+   AmrCache, AmrProgress, AmrBoot, AmrFresh, AmrStamp, AmrTick, AmrCube,
+   AmrKpi, AmrSlide, AmrDeckSource, AmrFuelExec, AmrPvSlide, AmrSegSlide,
+   AmrRmxSlide. Fourteen — AmrKpiStore was a fifteenth and did not come across.
 
    EACH ONE HAS A PAGE THAT PROVES IT, and that is how they should be changed:
-   AmrProgress / AmrBoot / AmrFresh / AmrSlide / AmrFuelExec against AGG Fuel
-   Recovery, the first page that reads report data and the first that builds a
-   slide; AmrCache / AmrKpi / AmrCube / AmrPvSlide against Price & Volume, the
-   first caller of all four; AmrSegSlide against Product Segment; AmrTick,
-   AmrDeckSource and AmrRmxSlide against the Deck Builder, the only page that
-   calls any of them. Changing a module with no page open to show it is how a
-   silent break gets committed.
+   AmrProgress / AmrBoot / AmrFresh / AmrStamp / AmrSlide / AmrFuelExec against
+   AGG Fuel Recovery, the first page that reads report data and the first that
+   builds a slide; AmrCache / AmrKpi / AmrCube / AmrPvSlide against Price &
+   Volume, the first caller of all four; AmrSegSlide against Product Segment;
+   AmrTick, AmrDeckSource and AmrRmxSlide against the Deck Builder, the only
+   page that calls any of them. Changing a module with no page open to show it
+   is how a silent break gets committed.
+
+   AmrStamp IS THE ONE THAT MOUNTS ITSELF. Every other module here is called by
+   a page; AmrStamp is called by §D's mount() and puts its own control into
+   whatever header it finds, next to that page's ↻ Update from source. It is in
+   §E rather than §D because it is a data-freshness module and belongs beside
+   AmrFresh, which answers the other half of the same question.
 
    ORDER MATTERS FOR ONE OF THEM. AmrPvSlide, AmrFuelExec, AmrSegSlide and
    AmrRmxSlide each end with an AmrDeckSource.register() guarded by
@@ -6453,6 +6523,10 @@ window.AmrFresh = (function(){
             return;
           }
           if (r && r.generation) mine = r.generation;
+          /* The sheet has moved, so the header's stamp is now naming the
+             version that has just been replaced. One line here rather than in
+             each of the six pages that own a ↻ button. */
+          try { if (window.AmrStamp && AmrStamp.refresh) AmrStamp.refresh(); } catch (e){}
           cb(true);
         })
         .withFailureHandler(function(){ cb(true); })   /* cannot tell: just rebuild */
@@ -6485,6 +6559,215 @@ window.AmrFresh = (function(){
       mine = null;
       shown = false;
     }
+  };
+})();
+</script>
+
+<script>
+/* ---- §E AmrStamp — "how old is what I am looking at" ---------------------
+   The sibling of AmrFresh above, and deliberately not part of it: AmrFresh
+   answers "has the data MOVED since I loaded", polls for it, and greys the page
+   out when it has. This answers "how old is the data I am holding", asks once
+   per mount, and is never modal.                                            */
+/* =========================================================================
+ * AmrStamp — the header's data-age stamp, beside ↻ Update from source.
+ * -------------------------------------------------------------------------
+ * TWO CLOCKS, AND THEY ARE NOT THE SAME CLOCK.
+ *
+ *   the Google Sheet   when the workbook this page reads last CHANGED. That is
+ *                      the modified time the data version is built from, so it
+ *                      is also the moment this page's figures last became new.
+ *                      Moved by whoever moved it — a sync, or somebody typing a
+ *                      row into a lookup tab.
+ *   QlikView           when the sync last WROTE that workbook, and the date on
+ *                      the export it read. The server records this itself,
+ *                      because Drive cannot tell a sync from a hand edit and a
+ *                      header that called the two the same thing would be
+ *                      lying about where the numbers came from.
+ *
+ * Usually seconds apart. When they are not — a hand edit today over a sync from
+ * Tuesday, or an export QlikView dropped on Monday synced this morning — the
+ * difference is the whole reason both are shown.
+ *
+ * IT INJECTS ITSELF, exactly as §D's page switcher does, and for the same
+ * reason: it belongs to every page's header and no page owns it. Adding the
+ * markup to each <template> would be six copies to keep in step, and the
+ * seventh page to grow a ↻ button would silently not have one.
+ * ======================================================================= */
+window.AmrStamp = (function(){
+  var MONTH = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var data = null, tick = null, forPage = '';
+
+  function page(){ return window.APP_PAGE || ''; }
+  function esc(x){
+    return String(x == null ? '' : x).replace(/[&<>]/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;' }[c];
+    });
+  }
+
+  /* "22 Aug 2026, 06:15". Written out rather than toLocaleString because the
+     suite is read on both sides of the Atlantic and 06/07 is a different day
+     depending on who is looking at it. */
+  function stamp(ms){
+    if (!ms) return '';
+    var d = new Date(ms), p2 = function(n){ return (n < 10 ? '0' : '') + n; };
+    return d.getDate() + ' ' + MONTH[d.getMonth()] + ' ' + d.getFullYear() +
+           ', ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  }
+  /* The form the button wears where there is room. No year: the bar is one row
+     only while every label on it is short (see .amr-stamp in §A3). */
+  function stampShort(ms){
+    if (!ms) return '';
+    var d = new Date(ms), p2 = function(n){ return (n < 10 ? '0' : '') + n; };
+    return d.getDate() + ' ' + MONTH[d.getMonth()] + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+  }
+  function ago(ms, now){
+    if (!ms) return '';
+    var s = Math.max(0, Math.round(((now || Date.now()) - ms) / 1000));
+    if (s < 90)    return 'just now';
+    var m = Math.round(s / 60);      if (m < 90)  return m + ' minutes ago';
+    var h = Math.round(m / 60);      if (h < 36)  return h + ' hours ago';
+    return Math.round(h / 24) + ' days ago';
+  }
+  /* And the form it wears where there is not: the same fact, four characters
+     wide. §A3 chooses between them; both are always written. */
+  function agoShort(ms){
+    if (!ms) return '?';
+    var m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+    if (m < 60) return m + 'm';
+    var h = Math.round(m / 60); if (h < 36) return h + 'h';
+    return Math.round(h / 24) + 'd';
+  }
+
+  /* The workbook this page's own figures come out of, and the one the button
+     dates itself off. First in the list, and the only one there for every page
+     that has a ↻ button except the Executive Overview — it owns no sheet and
+     reads three, so the panel lists all three and the button names the first.
+     The pages that read four (the Deck Builder) have no ↻ button and so no
+     stamp at all. */
+  function primary(){
+    return (data && data.sources && data.sources.length) ? data.sources[0] : null;
+  }
+
+  function paint(){
+    var btn = document.getElementById('amrStampBtn');
+    if (!btn) return;
+    var t = btn.querySelector('.amr-stamp-t');
+    var sh = btn.querySelector('.amr-stamp-s');
+    var p = primary();
+    if (!p || !p.sheetAt){
+      /* A page with no workbook behind it, or a Drive lookup that failed. The
+         button says so rather than showing a blank where a date goes. */
+      if (t)  t.textContent  = 'age unknown';
+      if (sh) sh.textContent = '?';
+      btn.title = 'This page could not be asked when its data was last updated.';
+      return;
+    }
+    if (t)  t.textContent  = stampShort(p.sheetAt);
+    if (sh) sh.textContent = agoShort(p.sheetAt);
+    btn.title = 'Last updated from the Google Sheet: ' + stamp(p.sheetAt) +
+                ' (' + ago(p.sheetAt) + ')' +
+                (p.qlikAt ? '\nThe sheet was last updated from QlikView: ' + stamp(p.qlikAt) +
+                            ' (' + ago(p.qlikAt) + ')'
+                          : '\nThis sheet is not one QlikView syncs.') +
+                '\nClick for the detail.';
+  }
+
+  function row(head, when, extra){
+    return '<div class="amr-cur"><b>' + esc(head) + '</b><br>' +
+           (when ? esc(when) : '<span style="color:var(--muted)">not known</span>') +
+           (extra ? '<br><span style="color:var(--muted)">' + esc(extra) + '</span>' : '') +
+           '</div>';
+  }
+
+  function open(){
+    var body = document.getElementById('amrStampBody');
+    if (!body) return;
+    var srcs = (data && data.sources) || [];
+    if (!srcs.length){
+      body.innerHTML = '<p>This page could not be asked when its data was last updated. ' +
+                       'It works offline and in the editor preview; the stamp only answers in ' +
+                       'the live Apps Script web app.</p>';
+    } else {
+      body.innerHTML = srcs.map(function(s){
+        var qlik = s.qlikAt
+          ? stamp(s.qlikAt) + ' \u00b7 ' + ago(s.qlikAt)
+          : '';
+        var from = s.qlikAt
+          ? (s.tabs ? s.tabs + (s.tabs === 1 ? ' tab' : ' tabs') + ' written' : '') +
+            (s.exportName ? (s.tabs ? ', from ' : 'From ') + s.exportName : '') +
+            (s.exportAt ? ' \u2014 the export QlikView dropped at ' + stamp(s.exportAt) : '') +
+            (s.qlikFailed ? ' \u00b7 ' + s.qlikFailed + ' tab(s) did not write' : '')
+          : 'This workbook is not one QlikView syncs \u2014 it is maintained by hand.';
+        return (srcs.length > 1 ? '<h3>' + esc(s.label) + '</h3>' : '') +
+               row('Last updated from the Google Sheet',
+                   s.sheetAt ? stamp(s.sheetAt) + ' \u00b7 ' + ago(s.sheetAt) : '',
+                   'The figures on this page are that version of the sheet.') +
+               row('The Google Sheet was last updated from QlikView', qlik, from);
+      }).join('') +
+      '<p style="color:var(--muted);margin-bottom:0">The two are usually seconds apart. ' +
+      'They come apart when somebody edits the workbook by hand \u2014 a row typed into a ' +
+      'lookup tab moves the first and not the second \u2014 or when a sync runs off an export ' +
+      'QlikView dropped some time earlier. ' +
+      'Press \u21bb Update from source to pick up anything newer.</p>';
+    }
+    document.getElementById('amrStampModal').classList.add('amr-open');
+  }
+
+  function fetch(){
+    if (!(typeof google !== 'undefined' && google.script && google.script.run)) return;
+    var mine = page();
+    google.script.run
+      .withSuccessHandler(function(r){
+        /* THE GUARD THIS FILE HAS PAID FOR TWICE. An answer that lands after
+           the switcher has moved on belongs to a page that is gone; §D drops
+           most of those itself, and this one costs a comparison. */
+        if (mine !== page()) return;
+        data = r || null;
+        paint();
+      })
+      .withFailureHandler(function(){ paint(); })
+      .getSourceTimes(mine);
+  }
+
+  return {
+    /* Called by §D's mount(), right after the page switcher, so the control is
+       in the header before boot() has fetched a single figure. */
+    mount: function(){
+      var bar = document.querySelector('header.bar');
+      if (!bar) return;
+      /* NEXT TO ↻ UPDATE FROM SOURCE, and only where there is one. A page that
+         does not pull from a source has nothing for this to date. */
+      var sync = document.getElementById('syncBtn');
+      if (!sync || !bar.contains(sync)) return;
+
+      data = null; forPage = page();
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ghost amr-stamp';
+      btn.id = 'amrStampBtn';
+      btn.setAttribute('aria-label', 'When this data was last updated');
+      btn.title = 'Checking when this data was last updated\u2026';
+      btn.innerHTML = '<span class="amr-stamp-i" aria-hidden="true">\u25F4</span>' +
+                      '<span class="amr-stamp-t">checking\u2026</span>' +
+                      '<span class="amr-stamp-s">\u2026</span>';
+      btn.addEventListener('click', open);
+      if (sync.nextSibling) bar.insertBefore(btn, sync.nextSibling);
+      else bar.appendChild(btn);
+
+      fetch();
+      /* "2 hours ago" goes stale by sitting there. §D's installCapture records
+         every setInterval opened while a page is mounted and teardown clears
+         them, so this does not have to be unwound by hand — but a mount that
+         somehow skipped a teardown must not leave two of them painting. */
+      if (tick) { try { clearInterval(tick); } catch (e) {} }
+      tick = setInterval(paint, 60000);
+    },
+
+    /* Re-ask. Called by ↻ Update from source once it has decided something
+       moved, so the stamp is not left naming the version that was just
+       replaced. */
+    refresh: function(){ if (page() === forPage) fetch(); }
   };
 })();
 </script>
@@ -8270,7 +8553,7 @@ var AmrRmxSlide = (function(){
   }
 
   function rmxFitTables(box){
-    // 1) per-table width fit — GROW the font to fill the box (like the Slide Builder),
+    // 1) per-table width fit — GROW the font to fill the box (like Product Segment),
     //    only shrinking if even the smallest step still overflows.
     [].forEach.call(box.querySelectorAll('.rmx-export-block table'), function(t){
       var avail = t.parentElement ? t.parentElement.clientWidth : 0; if(!avail) return;
@@ -14087,7 +14370,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
         and pin the row to that height so AmrSlide's own centring/scaling is a no-op
         (this is what stops the top rows from being cut off when many tables are on). */
   function rmxFitTables(box){
-    // 1) per-table width fit — GROW the font to fill the box (like the Slide Builder),
+    // 1) per-table width fit — GROW the font to fill the box (like Product Segment),
     //    only shrinking if even the smallest step still overflows.
     [].forEach.call(box.querySelectorAll('.rmx-export-block table'), function(t){
       var avail = t.parentElement ? t.parentElement.clientWidth : 0; if(!avail) return;
@@ -14925,7 +15208,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
    *
    * THE DEVICE CACHE IS GATED ON THE READY-MIX VERSION, not this page's own.
    * AmrCache.boot() would ask for the 'segment' data version — the version of the
-   * Slide Builder tabs this page no longer reads. The Ready-Mix generation and
+   * Product Segment tabs this page no longer reads. The Ready-Mix generation and
    * build stamp come back with every payload instead, exactly as the RMX page
    * does it, so a re-sync or a backend change clears this device on its next
    * visit and a stale slide can't survive one.
@@ -15002,7 +15285,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
      alternative is throwing away a page that is already usable because one small
      call did not come back, and the next open asks again. Note what this page
      does NOT have: AmrFresh is never started here, because it would watch
-     getDataVersion('segment') - the Slide Builder tabs this page stopped reading
+     getDataVersion('segment') - the Product Segment tabs this page stopped reading
      - so there is no background poll to fall back on. The button is. */
   function bootLoad(){
     var st=document.getElementById('loadStat');

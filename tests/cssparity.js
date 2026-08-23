@@ -189,6 +189,7 @@ function stubScript() {
     getLogo:            function(){ return ''; },
     getGuideImages:     function(ids){ return (ids||[]).map(function(){ return ''; }); },
     getDataVersion:     function(){ return { generation:'test-gen-1' }; },
+    getSourceTimes:     function(){ return { ok:true, sources:[] }; },
     getSettingsFor:     function(){ return []; },
     getAllSettings:     function(){ return []; },
     getKpiValues:       function(){ return null; }

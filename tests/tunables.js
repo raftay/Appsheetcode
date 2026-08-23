@@ -87,7 +87,7 @@ const EXPECT_WS = {
   rmx:           { left:15,  right:15,  top:15, bottom:15, maxLR:600,  maxTB:300 },
   fuelsurcharge: { left:140, right:140, top:40, bottom:40, maxLR:650,  maxTB:320 },
   rmxfuel:       { left:140, right:140, top:40, bottom:40, maxLR:650,  maxTB:320 },
-  /* no `top`: the Slide Builder's top band is the one that moves with the KPI
+  /* no `top`: the Product Segment's top band is the one that moves with the KPI
      cards, so the page supplies it from segmentTopBand. */
   segment:       { left:345, right:55,             bottom:15, maxLR:650,  maxTB:320 },
 };
@@ -128,7 +128,7 @@ let T = null;
   for (const line of WAS.slide)
     check('REF still holds the frame line it was lifted from  ' + JSON.stringify(line.trim().slice(0, 44)),
       OLD.split(line).length === 2);
-  check('REF still holds the Slide Builder top-band line',
+  check('REF still holds the Product Segment top-band line',
     OLD.split(WAS.segmentTopBand).length === 2);
   for (const [page, entry] of Object.entries(WAS.pages)) {
     if (!entry) continue;
@@ -153,7 +153,7 @@ let T = null;
     check('§C whitespace table == the five pages\' own defaults',
       same(T.whitespace, EXPECT_WS),
       JSON.stringify(T.whitespace) + '\n        wanted ' + JSON.stringify(EXPECT_WS));
-    check('§C segmentTopBand == the Slide Builder\'s WS_TOP',
+    check('§C segmentTopBand == the Product Segment\'s WS_TOP',
       same(T.segmentTopBand, EXPECT_TOP_BAND),
       JSON.stringify(T.segmentTopBand));
   }

@@ -285,6 +285,7 @@ function serverStubs(model) {
     getLogo:         () => '',
     getGuideImages:  ids => (ids || []).map(() => ''),
     getDataVersion:  () => ({ generation: 'test-gen-1' }),
+    getSourceTimes:  () => ({ ok: true, sources: [] }),
     getSettingsFor:  () => [],
     getAllSettings:  () => [],
   };
