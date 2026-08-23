@@ -490,6 +490,460 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
       o5.rows.length === out.rows.length && o5.rows.every(r => r.layout === r.recipeLayout));
   }
 
+  /* ==== THE ARRANGEMENT ===================================================
+   * DECK_PLAN carries the order, the membership and the per-row edits;
+   * DECK_TABLE_MAP carries what each scope shows. Both are shared Script
+   * Properties on the PROP_LAYOUTS pattern, and both have to satisfy the two
+   * rules that keep DECK_RECIPE meaningful:
+   *
+   *   1. NOTHING STORED = byte-identical to the recipe.
+   *   2. A recipe row added AFTER an order was saved is inserted beside its
+   *      recipe predecessor — not appended, not dropped.
+   *
+   * The second is the one that decides whether the recipe stays editable in
+   * code. Without it, adding a slide to the array either does nothing
+   * visible or lands it at the back of the pack, and the person who edited
+   * the array has no way to tell which.
+   * ======================================================================= */
+  const PLAN_PROP = ctx.DECK_CONFIG.PROP_PLAN;
+  const TBL_PROP  = ctx.DECK_CONFIG.PROP_TABLES;
+  const setPlan  = o => { PROPS[PLAN_PROP] = JSON.stringify(o); };
+  const setTbl   = o => { PROPS[TBL_PROP]  = JSON.stringify({ v: 1, scopes: o }); };
+  const idsOf    = o => o.rows.map(r => r.id);
+  const RECIPE_IDS = out.rows.map(r => r.id);
+
+  {
+    /* Rule 1, stated as strongly as it can be: with nothing stored the answer
+       is the recipe, in the recipe's order, with every row's tick, tables and
+       KPI exactly where they were before either store existed. */
+    PROPS = {};
+    const o = ctx.DECK_getRecipe();
+    check('plan · with nothing stored the deck is the recipe, in order',
+      idsOf(o).join(',') === ctx.DECK_RECIPE.map(r => r.id).join(','));
+    check('plan · ...and no row is arranged, edited, added or dropped',
+      o.planned === false && o.deleted.length === 0 &&
+      o.rows.every(r => !r.added && !r.rowEdited));
+    check('plan · ...and every row is ticked exactly as `optional` says',
+      o.rows.every(r => r.on === !r.optional));
+    check('table map · ...and no row has tables or a KPI of its own',
+      o.scopeCount === 0 &&
+      o.rows.every(r => r.tables === null && r.kpi === null &&
+                        r.tablesScope === '' && r.kpiScope === ''),
+      o.rows.filter(r => r.tables || r.kpi).map(r => r.id).join(', '));
+    check('plan · ...and there are no problems to report',
+      o.problems.length === 0, o.problems.join('; '));
+  }
+
+  {
+    /* THE ORDER. Reverse the whole deck; every row must come back in that
+       order and nothing else about any of them may move. */
+    setPlan({ v: 1, order: RECIPE_IDS.slice().reverse() });
+    const o = ctx.DECK_getRecipe();
+    check('plan · a saved order is the order the deck comes back in',
+      idsOf(o).join(',') === RECIPE_IDS.slice().reverse().join(','),
+      idsOf(o).slice(0, 4).join(','));
+    check('plan · ...with every row still there, exactly once',
+      o.rows.length === RECIPE_IDS.length &&
+      new Set(idsOf(o)).size === RECIPE_IDS.length);
+    check('plan · ...and reordering changes nothing else about a row',
+      o.rows.every(r => r.layout === r.recipeLayout && !r.rowEdited && !r.added));
+    check('plan · ...and the page is told an arrangement exists',
+      o.planned === true);
+  }
+
+  {
+    /* RULE 2. Save an order, then add a row to DECK_RECIPE beside pv_sw_mtd
+       the way somebody editing §1 would. It must land beside pv_sw_mtd in the
+       arranged deck — not at the back, and not nowhere. */
+    setPlan({ v: 1, order: RECIPE_IDS.slice().reverse() });
+    const at = ctx.DECK_RECIPE.findIndex(r => r.id === 'pv_sw_mtd');
+    const fresh = { id: 'pv_brandnew_mtd', source: 'pv', market: 'North',
+                    period: 'MTD', layout: 'L_COMMENT_IMAGE', group: 'AGG',
+                    title: 'AGG - NORTH - MTD' };
+    ctx.DECK_RECIPE.splice(at + 1, 0, fresh);
+    const o = ctx.DECK_getRecipe();
+    const ids = idsOf(o);
+    check('plan · a recipe row added after an order was saved is not dropped',
+      ids.indexOf('pv_brandnew_mtd') !== -1);
+    check('plan · ...and is inserted BESIDE its recipe predecessor',
+      ids[ids.indexOf('pv_sw_mtd') + 1] === 'pv_brandnew_mtd',
+      'it landed at ' + ids.indexOf('pv_brandnew_mtd') + ' of ' + ids.length +
+      ', pv_sw_mtd is at ' + ids.indexOf('pv_sw_mtd'));
+    check('plan · ...not appended to the back of the pack',
+      ids[ids.length - 1] !== 'pv_brandnew_mtd');
+    check('plan · ...and nothing is reported about it',
+      o.problems.length === 0, o.problems.join('; '));
+    ctx.DECK_RECIPE.splice(at + 1, 1);
+  }
+
+  {
+    /* A row that precedes every anchor goes to the FRONT, not the back —
+       otherwise a slide added at the top of the recipe would arrive last. */
+    setPlan({ v: 1, order: ['pv_sw_mtd', 'pv_sw_ytd'] });
+    const o = ctx.DECK_getRecipe();
+    check('plan · a partial order keeps everything else around it',
+      o.rows.length === RECIPE_IDS.length);
+    check('plan · ...with the rows before the first anchor still in front',
+      idsOf(o)[0] === 'fsc_mtd', idsOf(o).slice(0, 3).join(','));
+  }
+
+  {
+    /* OFF AND DROP ARE DIFFERENT QUESTIONS. `off` leaves the slide in the
+       list, unticked; `drop` takes it out of the pack, and Arrange lists it
+       under Deleted slides so it can come back. */
+    setPlan({ v: 1, off: ['fsc_mtd'], on: ['pv_swland_mtd'], drop: ['cust_no'] });
+    const o = ctx.DECK_getRecipe();
+    const byId2 = {}; o.rows.forEach(r => { byId2[r.id] = r; });
+    check('plan · an unticked slide is still in the list, unticked',
+      !!byId2.fsc_mtd && byId2.fsc_mtd.on === false);
+    check('plan · an optional slide ticked here comes back ticked',
+      byId2.pv_swland_mtd.on === true && byId2.pv_swland_mtd.optional === false);
+    check('plan · a DROPPED slide is not in the list at all',
+      byId2.cust_no === undefined && o.rows.length === RECIPE_IDS.length - 1);
+    check('plan · ...and is listed under Deleted slides, so it can come back',
+      o.deleted.length === 1 && o.deleted[0].id === 'cust_no' &&
+      o.deleted[0].inRecipe === true && !!o.deleted[0].title,
+      JSON.stringify(o.deleted));
+    check('plan · ...and a deletion is NOT reported as a problem',
+      o.problems.length === 0, o.problems.join('; '));
+  }
+
+  {
+    /* THE TWO STALE CASES HAVE TO BE TOLD APART, or every deletion produces a
+       banner nobody can clear. An id in the order that is genuinely gone is
+       reported; the same id in `drop` is a deliberate deletion and is not. */
+    setPlan({ v: 1, order: RECIPE_IDS.concat(['a_row_that_was_deleted']) });
+    const o = ctx.DECK_getRecipe();
+    check('plan · an order naming a slide that does not exist is reported',
+      o.problems.some(p => /a_row_that_was_deleted/.test(p)), o.problems.join('; '));
+
+    setPlan({ v: 1, order: RECIPE_IDS, drop: ['cust_no'] });
+    const o2 = ctx.DECK_getRecipe();
+    check('plan · ...but a DROPPED id in the order is not — the deletion is deliberate',
+      o2.problems.length === 0, o2.problems.join('; '));
+
+    /* the same distinction for the layout store: a dropped row's saved layout
+       is not an orphan, it is waiting for a Restore */
+    PROPS[LAYOUT_PROP] = JSON.stringify({ cust_no: 'L_FULL_IMAGE' });
+    const o3 = ctx.DECK_getRecipe();
+    check('plan · ...and neither is the saved LAYOUT of a dropped row',
+      !o3.problems.some(p => /cust_no/.test(p)), o3.problems.join('; '));
+    delete PROPS[LAYOUT_PROP];
+
+    /* THE CASE THE GUARD ACTUALLY EXISTS FOR. A row that was dropped from the
+       page and has SINCE been deleted from DECK_RECIPE is in neither the deck
+       nor the recipe — so every "does this id still exist?" answers no, and
+       without the drop list it produces three banners at once that nobody can
+       clear from anywhere. It is not a problem; it is a finished deletion. */
+    const gone = ctx.DECK_RECIPE.pop();
+    setPlan({ v: 1, order: RECIPE_IDS, drop: [gone.id],
+              rows: { [gone.id]: { title: 'edited before it was deleted' } } });
+    PROPS[LAYOUT_PROP] = JSON.stringify({ [gone.id]: 'L_COMMENT_IMAGE' });
+    const o4 = ctx.DECK_getRecipe();
+    check('plan · a dropped row that has since left the recipe banners nothing',
+      !o4.problems.some(p => new RegExp(gone.id).test(p)),
+      o4.problems.join('; '));
+    check('plan · ...and is still listed under Deleted slides, marked as gone',
+      o4.deleted.length === 1 && o4.deleted[0].id === gone.id &&
+      o4.deleted[0].inRecipe === false,
+      JSON.stringify(o4.deleted));
+    delete PROPS[LAYOUT_PROP];
+    ctx.DECK_RECIPE.push(gone);
+  }
+
+  {
+    /* PER-ROW EDITS. Source, market, period, refine, title and group are all
+       editable, and '' is a real value — that is how changing a source clears
+       a period the new adapter has no use for. */
+    setPlan({ v: 1, rows: { pv_sw_mtd: { title: 'AGG - SW - MTD' },
+                            seg_no_ytd: { source: 'rmx', market: 'North', period: '' } } });
+    const o = ctx.DECK_getRecipe();
+    const byId2 = {}; o.rows.forEach(r => { byId2[r.id] = r; });
+    check('plan · a retitled row carries the new title',
+      byId2.pv_sw_mtd.title === 'AGG - SW - MTD' && byId2.pv_sw_mtd.rowEdited === true);
+    check('plan · ...and what the recipe says travels beside it',
+      byId2.pv_sw_mtd.recipeRow.title === 'AGG - Southwest - MTD',
+      JSON.stringify(byId2.pv_sw_mtd.recipeRow));
+    check('plan · a row whose SOURCE was changed comes back under the new one',
+      byId2.seg_no_ytd.source === 'rmx' && byId2.seg_no_ytd.market === 'North');
+    check('plan · ...and an edit of "" really clears the field',
+      byId2.seg_no_ytd.period === '', JSON.stringify(byId2.seg_no_ytd.period));
+    check('plan · an untouched row is untouched',
+      byId2.pv_sw_ytd.rowEdited === false &&
+      byId2.pv_sw_ytd.title === 'AGG - Southwest - YTD');
+  }
+
+  {
+    /* AN ADDED ROW is a slide like any other: it takes a place in the order,
+       it is ticked, and it resolves up its own source's ladder. */
+    setPlan({ v: 1,
+      add: [{ id: 'pv_no_mtd', source: 'pv', market: 'North', period: 'MTD',
+              layout: 'L_COMMENT_IMAGE', group: 'AGG', title: 'AGG - NORTH - MTD' }],
+      order: ['pv_no_mtd'].concat(RECIPE_IDS) });
+    const o = ctx.DECK_getRecipe();
+    check('plan · an added slide is in the deck, where the order puts it',
+      idsOf(o)[0] === 'pv_no_mtd' && o.rows.length === RECIPE_IDS.length + 1);
+    check('plan · ...marked as added, and ticked',
+      o.rows[0].added === true && o.rows[0].on === true);
+    check('plan · ...with no recipe row behind it to fall back to',
+      o.rows[0].recipeRow === null);
+    check('plan · ...and no problems',
+      o.problems.length === 0, o.problems.join('; '));
+  }
+
+  {
+    /* An unparseable store must not lock anybody out of Plan: there is a
+       perfectly good default sitting in DECK_RECIPE. Same rule as the layout
+       map, and it has to hold for BOTH new stores. */
+    PROPS = {};
+    PROPS[PLAN_PROP] = 'not json {{{';
+    PROPS[TBL_PROP] = '[1,2,3]';
+    const o = ctx.DECK_getRecipe();
+    check('plan · an unparseable arrangement falls back to the recipe',
+      idsOf(o).join(',') === ctx.DECK_RECIPE.map(r => r.id).join(','));
+    check('table map · ...and an unparseable table map leaves every row on its default',
+      o.rows.every(r => r.tables === null && r.kpi === null));
+  }
+
+  /* ==== THE SCOPE LADDER ===================================================
+   * "Change every market at once, or just this one" with no flag: a row walks
+   * four keys and takes the first answer. `period` is in none of them above
+   * the first, which is what makes a change to a market reach its MTD and its
+   * YTD slide together — and rung 1 is there for the month they should differ.
+   *
+   * Land and Docks are the rung most markets do not have. They are two values
+   * of Southwest's MB SUBMARKET column, not markets, so all three Southwest
+   * rows carry market:'Southwest' — and a ladder that could not separate them
+   * would make "Southwest" and "Southwest Docks" one setting.
+   * ======================================================================= */
+  {
+    PROPS = {};
+    setTbl({
+      'pv':                 { tables: ['SUBMARKET1', 'PLANT_TYPE', 'PROD_CLASS'], kpi: { on: true } },
+      'pv|Southwest':       { tables: ['SUBMARKET1', 'PROD_CLASS'] },
+      'pv|Southwest|Docks': { kpi: { on: true, sheet: 'AGG SW' } },
+      'row:pv_sw_ytd':      { tables: ['MARKET'] },
+      'rmx':                { tables: ['SUBMARKET', 'STRENGTH'] },
+    });
+    const o = ctx.DECK_getRecipe();
+    const b = {}; o.rows.forEach(r => { b[r.id] = r; });
+
+    check('ladder · a source-wide selection reaches every slide that page makes',
+      b.pv_cc_mtd.tables.join(',') === 'SUBMARKET1,PLANT_TYPE,PROD_CLASS' &&
+      b.pv_cc_mtd.tablesScope === 'pv',
+      b.pv_cc_mtd.tablesScope + ' -> ' + JSON.stringify(b.pv_cc_mtd.tables));
+    check('ladder · ...and stops at the page that made it',
+      b.rmx_sk_mtd.tables.join(',') === 'SUBMARKET,STRENGTH' &&
+      b.seg_sk_mtd.tables === null);
+    check('ladder · a market beats its source',
+      b.pv_sw_mtd.tables.join(',') === 'SUBMARKET1,PROD_CLASS' &&
+      b.pv_sw_mtd.tablesScope === 'pv|Southwest');
+    check('ladder · ...and reaches BOTH its periods, because period is in no key',
+      b.pv_sw_ytd.tablesScope !== 'pv' && b.pv_swland_ytd.tablesScope === 'pv|Southwest' &&
+      b.pv_swland_mtd.tablesScope === 'pv|Southwest');
+    check('ladder · one slide beats its market — the only way MTD and YTD differ',
+      b.pv_sw_ytd.tables.join(',') === 'MARKET' &&
+      b.pv_sw_ytd.tablesScope === 'row:pv_sw_ytd' &&
+      b.pv_sw_mtd.tables.join(',') === 'SUBMARKET1,PROD_CLASS');
+    check('ladder · a market with no rung of its own falls through to the source',
+      b.pv_mb_mtd.tablesScope === 'pv' && b.pv_gta_ytd.tablesScope === 'pv');
+
+    /* Land and Docks, proved separate. */
+    check('ladder · Docks has a rung Southwest and Land do not',
+      b.pv_swdocks_mtd.kpiScope === 'pv|Southwest|Docks' &&
+      b.pv_swdocks_mtd.kpi.sheet === 'AGG SW',
+      b.pv_swdocks_mtd.kpiScope);
+    check('ladder · ...and Land does not read it',
+      b.pv_swland_mtd.kpiScope === 'pv' && b.pv_swland_mtd.kpi.sheet === '');
+    check('ladder · ...nor does plain Southwest',
+      b.pv_sw_mtd.kpiScope === 'pv');
+    check('ladder · ...while Docks still takes its TABLES from the market',
+      b.pv_swdocks_mtd.tablesScope === 'pv|Southwest',
+      'tables and KPI resolve independently, or a KPI-only rung would strand '
+      + 'the tables at the source');
+    check('ladder · the ladder each row walked comes back with it',
+      b.pv_swdocks_mtd.scopeLadder.join(' > ')
+        === 'row:pv_swdocks_mtd > pv|Southwest|Docks > pv|Southwest > pv',
+      b.pv_swdocks_mtd.scopeLadder.join(' > '));
+    check('ladder · ...and a row with no market has only two rungs',
+      b.fsc_mtd.scopeLadder.join(' > ') === 'row:fsc_mtd > fsc',
+      b.fsc_mtd.scopeLadder.join(' > '));
+  }
+
+  {
+    /* A ROW WHOSE SOURCE WAS CHANGED ABANDONS ITS OLD row: SCOPE.
+       Its table keys are the previous adapter's catalogue and mean nothing to
+       the new one — 'seg:segment' is not something Ready-Mix can draw. Every
+       other rung carries the source in its key and self-invalidates; a row:
+       key does not, so setTables stamps the source on it. */
+    PROPS = {};
+    setTbl({
+      'row:seg_mb_ytd': { tables: ['seg:segment'], 'for': 'seg' },
+      'rmx':            { tables: ['SUBMARKET', 'PLANT'] },
+    });
+    const before = ctx.DECK_getRecipe().rows.find(r => r.id === 'seg_mb_ytd');
+    check('ladder · a row: scope answers while the source is the one it is for',
+      before.tables.join(',') === 'seg:segment' &&
+      before.tablesScope === 'row:seg_mb_ytd');
+
+    setPlan({ v: 1, rows: { seg_mb_ytd: { source: 'rmx', market: 'MANITOBA' } } });
+    const after = ctx.DECK_getRecipe().rows.find(r => r.id === 'seg_mb_ytd');
+    check('ladder · ...and is abandoned the moment the source changes',
+      after.tablesScope !== 'row:seg_mb_ytd',
+      'it still resolved at ' + after.tablesScope);
+    check('ladder · ...resolving up the NEW source\'s ladder instead',
+      after.tables.join(',') === 'SUBMARKET,PLANT' && after.tablesScope === 'rmx',
+      after.tablesScope + ' -> ' + JSON.stringify(after.tables));
+  }
+
+  /* ==== WRITING ============================================================
+   * The page writes through DECK_setPlan / DECK_setTables. Neither opens the
+   * template, so neither can check a layout name or a table key — the page
+   * banners an unknown key at Plan, where the catalogue lives. What they DO
+   * check is shape, count and size, and the size guard has to refuse rather
+   * than truncate: a rejected write leaves the last good arrangement in place
+   * and a truncated one does not.
+   * ======================================================================= */
+  {
+    PROPS = {};
+    ctx.DECK_setPlan({ order: ['fsc_ytd', 'fsc_mtd'], off: ['cust_no'] });
+    check('setPlan · writes one property, and getRecipe reads it back',
+      typeof PROPS[PLAN_PROP] === 'string' &&
+      ctx.DECK_getRecipe().rows[0].id === 'fsc_ytd');
+    ctx.DECK_resetPlan();
+    check('setPlan · reset DELETES the property rather than storing "{}"',
+      !(PLAN_PROP in PROPS));
+    check('setPlan · ...and the deck is the recipe again',
+      ctx.DECK_getRecipe().rows.map(r => r.id).join(',')
+        === ctx.DECK_RECIPE.map(r => r.id).join(','));
+
+    /* an empty arrangement is the same as none: rule 1 has to survive a save */
+    ctx.DECK_setPlan({ order: [], off: [], on: [], drop: [], rows: {}, add: [] });
+    check('setPlan · saving an empty arrangement stores nothing at all',
+      !(PLAN_PROP in PROPS));
+  }
+
+  {
+    const fails = (label, fn, re) => {
+      let msg = '';
+      try { fn(); } catch (e) { msg = e.message; }
+      check(label, re.test(msg), msg || 'it was accepted');
+    };
+    PROPS = {};
+    fails('setPlan · an added slide with no id is refused',
+      () => ctx.DECK_setPlan({ add: [{ source: 'pv', layout: 'L_FULL_IMAGE' }] }), /no id/);
+    fails('setPlan · an added slide reusing a recipe id is refused',
+      () => ctx.DECK_setPlan({ add: [{ id: 'fsc_mtd', source: 'pv', layout: 'L_FULL_IMAGE' }] }),
+      /already a slide in the recipe/);
+    fails('setPlan · an id the speaker-note pattern cannot read back is refused',
+      () => ctx.DECK_setPlan({ add: [{ id: 'has a space', source: 'pv', layout: 'L_FULL_IMAGE' }] }),
+      /not a usable slide id/);
+    fails('setPlan · an added slide with no source is refused',
+      () => ctx.DECK_setPlan({ add: [{ id: 'x1', layout: 'L_FULL_IMAGE' }] }), /no source/);
+    fails('setPlan · an added slide with no layout is refused',
+      () => ctx.DECK_setPlan({ add: [{ id: 'x1', source: 'pv' }] }), /no layout/);
+    check('setPlan · ...and a refused save changed nothing',
+      !(PLAN_PROP in PROPS));
+
+    /* THE SIZE GUARD. `add` is the only unbounded part of either store. */
+    const fat = [];
+    for (let i = 0; i < 400; i++) {
+      fat.push({ id: 'gen_' + i, source: 'pv', market: 'Central Canada', period: 'MTD',
+                 layout: 'L_COMMENT_IMAGE', group: 'AGG',
+                 title: 'A generated slide with a title long enough to matter ' + i });
+    }
+    fails('setPlan · an arrangement too big for a property is refused, not truncated',
+      () => ctx.DECK_setPlan({ add: fat }), /too big to save/);
+    check('setPlan · ...and nothing was written',
+      !(PLAN_PROP in PROPS));
+
+    /* AND THE GUARD MUST NOT BE SOMETHING A HUMAN CAN HIT. The figures in
+       DECK_CONFIG.PROP_MAX_BYTES' header are measured here: the pathological
+       case — all 43 rows reordered AND rewritten, market and period included —
+       is what has to fit, because anything a person actually does is smaller. */
+    const everyRow = {};
+    RECIPE_IDS.forEach(id => { everyRow[id] = { title: 'A rewritten slide title for ' + id,
+                                                market: 'Central Canada', period: 'MTD' }; });
+    ctx.DECK_setPlan({ order: RECIPE_IDS.slice().reverse(), off: RECIPE_IDS.slice(0, 8),
+                       rows: everyRow });
+    check('setPlan · the whole recipe reordered AND rewritten still fits ('
+      + PROPS[PLAN_PROP].length + ' of ' + ctx.DECK_CONFIG.PROP_MAX_BYTES + ')',
+      PROPS[PLAN_PROP].length < ctx.DECK_CONFIG.PROP_MAX_BYTES,
+      PROPS[PLAN_PROP].length + ' characters');
+
+    /* the plain case — just an order — is the one that has to be cheap */
+    PROPS = {};
+    ctx.DECK_setPlan({ order: RECIPE_IDS.slice().reverse() });
+    check('setPlan · ...and a reordered deck on its own costs almost nothing ('
+      + PROPS[PLAN_PROP].length + ')',
+      PROPS[PLAN_PROP].length < 1024, PROPS[PLAN_PROP].length + ' characters');
+
+    /* how much room is left for added slides, stated rather than assumed */
+    PROPS = {};
+    let room = 0;
+    try {
+      for (room = 0; room < 300; room++) {
+        ctx.DECK_setPlan({ order: RECIPE_IDS, add: new Array(room).fill(0).map((_, i) =>
+          ({ id: 'add_' + i, source: 'pv', market: 'Central Canada', period: 'MTD',
+             layout: 'L_COMMENT_IMAGE', group: 'AGG', title: 'AGG - CENTRAL CANADA - MTD ' + i })) });
+      }
+    } catch (e) { /* the guard fired, which is the point */ }
+    check('setPlan · ...leaving room for ' + room + ' added slides on top of all 43',
+      room > 40 && room < 300, room + ' added slides');
+    PROPS = {};
+  }
+
+  {
+    PROPS = {};
+    ctx.DECK_setTables('pv', { tables: ['SUBMARKET1', 'PROD_CLASS'] });
+    ctx.DECK_setTables('pv|Southwest', { kpi: { on: false } });
+    let o = ctx.DECK_getRecipe();
+    let b = {}; o.rows.forEach(r => { b[r.id] = r; });
+    check('setTables · a scope written here is what the rows resolve to',
+      b.pv_cc_mtd.tables.join(',') === 'SUBMARKET1,PROD_CLASS');
+    check('setTables · ...and a KPI-only scope leaves the tables where they were',
+      b.pv_sw_mtd.kpi.on === false && b.pv_sw_mtd.kpiScope === 'pv|Southwest' &&
+      b.pv_sw_mtd.tablesScope === 'pv');
+
+    /* THE ORDER IS THE SELECTION. There is one array, so "which tables" and
+       "in what order" cannot disagree with each other. */
+    ctx.DECK_setTables('pv', { tables: ['PROD_CLASS', 'SUBMARKET1'] });
+    o = ctx.DECK_getRecipe(); b = {}; o.rows.forEach(r => { b[r.id] = r; });
+    check('setTables · the array\'s order is carried through, not sorted',
+      b.pv_cc_mtd.tables.join(',') === 'PROD_CLASS,SUBMARKET1');
+
+    /* A row: scope is stamped with the source it belongs to, so a later
+       source change can abandon it without the page having to remember. */
+    ctx.DECK_setTables('row:pv_sw_mtd', { tables: ['MARKET'], source: 'pv' });
+    check('setTables · a row: scope records which source it is for',
+      JSON.parse(PROPS[TBL_PROP]).scopes['row:pv_sw_mtd']['for'] === 'pv',
+      PROPS[TBL_PROP]);
+
+    ctx.DECK_resetTables('row:pv_sw_mtd');
+    check('setTables · one scope can be cleared on its own',
+      !JSON.parse(PROPS[TBL_PROP]).scopes['row:pv_sw_mtd'] &&
+      !!JSON.parse(PROPS[TBL_PROP]).scopes['pv']);
+    ctx.DECK_resetTables();
+    check('setTables · ...and reset with no scope deletes the property',
+      !(TBL_PROP in PROPS));
+
+    const fails2 = (label, fn, re) => {
+      let msg = '';
+      try { fn(); } catch (e) { msg = e.message; }
+      check(label, re.test(msg), msg || 'it was accepted');
+    };
+    fails2('setTables · a selection that is not a list is refused',
+      () => ctx.DECK_setTables('pv', { tables: 'SUBMARKET1' }), /has to be a list/);
+    fails2('setTables · an absurd number of tables is refused',
+      () => ctx.DECK_setTables('pv', { tables: new Array(40).fill(0).map((_, i) => 'D' + i) }),
+      /is the limit/);
+    fails2('setTables · an empty selection is refused where the source needs one',
+      () => ctx.DECK_setTables('pv', { tables: [], min: 1 }),
+      /at least 1 table/);
+    check('setTables · ...and none of those wrote anything',
+      !(TBL_PROP in PROPS));
+  }
+
   PROPS = {};
 }
 

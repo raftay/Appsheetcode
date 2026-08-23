@@ -920,6 +920,81 @@ var DECK_CONFIG = {
      region sheet. DECK_setLayout writes it; DECK_resetLayouts empties it. */
   PROP_LAYOUTS: 'DECK_LAYOUT_MAP',
 
+  /* THE ARRANGEMENT: slide ORDER, which slides are in the pack, and the
+     per-row edits made from the Arrange stage. Same store, same rules and the
+     same reason as PROP_LAYOUTS above - shared, differences only, an untouched
+     row absent rather than copied.
+
+       { v:1,
+         order: [ids],            the deck order
+         off:   [ids],            in the list, starts unticked
+         on:    [ids],            optional in the recipe, ticked here
+         drop:  [ids],            deleted from the pack outright
+         rows:  { id: {source,market,refine,period,title,group} },
+         add:   [ {id,source,market,refine,period,layout,group,title} ] }
+
+     OFF AND DROP ARE NOT THE SAME QUESTION. `off` is "not in this month's
+     pack" - the slide stays in Arrange, greyed, one click from coming back.
+     `drop` is "not part of the pack any more", and Arrange keeps a Deleted
+     slides list so a deletion is recoverable from the page rather than only
+     from a Script Property edit.
+
+     DECK_setPlan writes it; DECK_resetPlan empties it. */
+  PROP_PLAN: 'DECK_PLAN',
+
+  /* WHICH TABLES A SLIDE SHOWS, AND WHETHER IT CARRIES A KPI STRIP, per
+     SCOPE rather than per row - because the same change is nearly always
+     wanted on every market at once.
+
+       { v:1, scopes: { '<key>': { tables:[keys], kpi:{on,sheet} } } }
+
+     A row walks four keys and takes the first answer, tables and KPI
+     resolved independently:
+
+       row:<id>                 one slide. The only way to make MTD and YTD
+                                differ, and the only rung most markets have
+                                below their own.
+       <source>|<mkt>|<refine>  the Land / Docks split. SOUTHWEST ONLY - no
+                                other market has a refine, so for them this
+                                rung simply does not exist.
+       <source>|<mkt>           one market, both periods.
+       <source>                 every slide that page produces.
+
+     `period` appears in no key above the first, which is what makes "change
+     this market" reach its MTD and YTD slides together.
+
+     `tables` IS ONE ORDERED ARRAY: the order is the selection, so "which" and
+     "in what order" cannot disagree, and a key that is not in it is off.
+
+     DECK_setTables writes it; DECK_resetTables empties it. */
+  PROP_TABLES: 'DECK_TABLE_MAP',
+
+  /* HOW BIG EITHER OF THOSE TWO IS ALLOWED TO GET.
+     `add` is the only unbounded part of the arrangement, so both writers
+     measure the serialised string and refuse with a sentence rather than
+     truncating - a half-written order is worse than a rejected one.
+
+     THE NUMBER IS GOOGLE'S PUBLISHED PER-VALUE FIGURE, NOT THE OBSERVED ONE.
+     The Quotas for Google Services page lists 9 KB per property value and
+     500 KB per store. The runtime does not appear to enforce the first: it
+     has been measured accepting values far above 9 KB and only refusing near
+     the store-wide ceiling, with "You have exceeded the property storage
+     quota." Which of the two to write against is not a close call - the
+     documented figure is the contract and the observed one is an accident of
+     today's implementation - and the difference is not worth having anyway.
+     Measured, on the 43-row recipe:
+
+         the whole deck reordered                            608
+         ...plus five unticked and two deleted               684
+         ...plus six rows retitled                           995
+         a reordered deck with ten slides added            2,227
+         every one of the 43 rewritten, market and all     5,183
+         refused at                                    43 + ~52 added slides
+
+     So the guard sits beyond a 95-slide pack and no arrangement anybody
+     builds by hand comes near it. */
+  PROP_MAX_BYTES: 9216,
+
   /* Tokens. Kept in one place so the page and the server cannot drift. */
   TOKENS: {
     title: '{{TITLE}}',
@@ -11973,6 +12048,362 @@ var DECK = (function () {
     return { map: {} };
   }
 
+
+  /* ======================================================================
+   * THE ARRANGEMENT - order, membership, and the per-row edits
+   * ----------------------------------------------------------------------
+   * Modelled on layoutMap_ above, deliberately: same store, same shared
+   * scope, same only-the-differences rule, same fall-back-and-say-so on a
+   * property that will not parse. Two rules keep DECK_RECIPE meaningful:
+   *
+   *   1. NOTHING STORED means byte-identical to the recipe. An untouched row
+   *      has no key anywhere - not in `order`, not in `rows`, nowhere.
+   *   2. A RECIPE ROW ADDED AFTER AN ORDER WAS SAVED IS INSERTED BESIDE ITS
+   *      RECIPE PREDECESSOR. Not appended, not dropped. Otherwise adding a
+   *      slide in code would either do nothing visible or land it at the
+   *      back of the pack, and neither is what the person editing the array
+   *      asked for.
+   *
+   * NOTHING HERE VALIDATES A TABLE KEY OR A LAYOUT NAME, for the reason
+   * layoutMap_ gives: DECK_getRecipe is Plan's only request and must stay
+   * instant. setLayout checks a layout because it already has a reason to
+   * open the template; nothing gives the arrangement that reason, and
+   * mirroring the six adapters' dimension catalogues onto the server would
+   * be a fourth copy of a list that already exists three times. Shape,
+   * count and size are checked here; an unknown key is bannered by the page
+   * at Plan, where the catalogue actually lives.
+   * ==================================================================== */
+
+  /* One property, parsed, or {} - never a throw. A bad write must not lock
+     anybody out of Plan; the recipe underneath it is a perfectly good
+     default. Same reasoning, same shape, as layoutMap_. */
+  function readStore_(prop, what) {
+    var raw = '';
+    try { raw = PropertiesService.getScriptProperties().getProperty(prop) || ''; }
+    catch (e) { return {}; }
+    if (!raw) return {};
+    var o;
+    try { o = JSON.parse(raw); } catch (e) {
+      Logger.log('DECK %s is not valid JSON - ignoring it. Value: %s', what, raw);
+      return {};
+    }
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+    return o;
+  }
+
+  /* An empty store is a DELETED property, not the string "{}", so "has
+     anybody arranged anything?" stays one question with one answer.
+
+     THE SIZE IS MEASURED BEFORE THE WRITE, not caught after it. `add` is the
+     only unbounded part of either store, and a property that is refused
+     leaves the last good arrangement in place - a truncated one would not. */
+  function writeStore_(prop, obj, empty, what) {
+    var props = PropertiesService.getScriptProperties();
+    if (empty) { props.deleteProperty(prop); return obj; }
+    var json = JSON.stringify(obj);
+    if (json.length > DECK_CONFIG.PROP_MAX_BYTES) {
+      fail_('This ' + what + ' is too big to save (' + json.length +
+        ' characters; the limit is ' + DECK_CONFIG.PROP_MAX_BYTES + '). ' +
+        'Nothing was changed. Delete some added slides, or shorten their titles.');
+    }
+    props.setProperty(prop, json);
+    return obj;
+  }
+
+  /* Array.isArray, NOT `x instanceof Array`, everywhere in these two stores.
+     Both take their input from google.script.run, which is a deserialisation
+     boundary: the older idiom asks whether the value was built by THIS realm's
+     Array, and an array that crossed a boundary was not. The layout map above
+     keeps `instanceof` because it only ever reads its own JSON.parse output. */
+  function strList_(v) {
+    var out = [], seen = {};
+    if (!Array.isArray(v)) return out;
+    for (var i = 0; i < v.length; i++) {
+      var s = String(v[i] == null ? '' : v[i]).trim();
+      if (s && !seen[s]) { seen[s] = 1; out.push(s); }
+    }
+    return out;
+  }
+
+  /* The fields a row's own entry may change. `layout` is NOT one of them: it
+     has had its own store since before this existed, and two places holding
+     one answer is the drift README §9 is about. */
+  var PLAN_FIELDS = ['source', 'market', 'refine', 'period', 'title', 'group'];
+
+  function planRow_(o) {
+    var out = null;
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    for (var i = 0; i < PLAN_FIELDS.length; i++) {
+      var k = PLAN_FIELDS[i];
+      if (!o.hasOwnProperty(k)) continue;
+      var v = String(o[k] == null ? '' : o[k]).trim();
+      /* '' is a REAL value here - it is how a source change clears a period
+         or a refine - so an empty string is kept and only an absent key
+         means "unchanged". */
+      (out = out || {})[k] = v;
+    }
+    return out;
+  }
+
+  function planStore_() {
+    var o = readStore_(DECK_CONFIG.PROP_PLAN, 'plan');
+    var plan = { v: 1, order: strList_(o.order), off: strList_(o.off),
+                 on: strList_(o.on), drop: strList_(o.drop), rows: {}, add: [] };
+
+    var rows = o.rows;
+    if (rows && typeof rows === 'object' && !(Array.isArray(rows))) {
+      for (var k in rows) {
+        if (!rows.hasOwnProperty(k)) continue;
+        var r = planRow_(rows[k]);
+        if (r) plan.rows[String(k)] = r;
+      }
+    }
+
+    var add = Array.isArray(o.add) ? o.add : [];
+    var seen = {};
+    for (var i = 0; i < add.length; i++) {
+      var a = add[i];
+      if (!a || typeof a !== 'object' || Array.isArray(a)) continue;
+      var id = String(a.id == null ? '' : a.id).trim();
+      if (!id || seen[id]) continue;
+      seen[id] = 1;
+      plan.add.push({
+        id: id,
+        source: String(a.source || '').trim(),
+        market: String(a.market || '').trim(),
+        refine: String(a.refine || '').trim(),
+        period: String(a.period || '').trim(),
+        layout: String(a.layout || '').trim(),
+        group:  String(a.group  || '').trim() || 'Other',
+        title:  String(a.title  || '').trim()
+      });
+    }
+    return plan;
+  }
+
+  function planIsEmpty_(p) {
+    return !p.order.length && !p.off.length && !p.on.length && !p.drop.length
+        && !Object.keys(p.rows).length && !p.add.length;
+  }
+
+  function writePlan_(plan) {
+    return writeStore_(DECK_CONFIG.PROP_PLAN, plan, planIsEmpty_(plan), 'arrangement');
+  }
+
+  /* Replace the whole arrangement. It is ONE object rather than a field at a
+     time because every part of it is coupled: deleting a row has to come out
+     of `order` and out of `add` in the same write, and two calls that can
+     half-succeed would leave an order naming a slide that no longer exists.
+     The page sends what it has on screen; this normalises and checks it. */
+  function setPlan_(next) {
+    next = next || {};
+    var plan = { v: 1,
+                 order: strList_(next.order), off: strList_(next.off),
+                 on: strList_(next.on), drop: strList_(next.drop),
+                 rows: {}, add: [] };
+
+    var rows = next.rows;
+    if (rows && typeof rows === 'object' && !(Array.isArray(rows))) {
+      for (var k in rows) {
+        if (!rows.hasOwnProperty(k)) continue;
+        var r = planRow_(rows[k]);
+        if (r) plan.rows[String(k)] = r;
+      }
+    }
+    var add = Array.isArray(next.add) ? next.add : [];
+    var seen = {};
+    for (var i = 0; i < add.length; i++) {
+      var a = add[i] || {};
+      var id = String(a.id == null ? '' : a.id).trim();
+      if (!id) fail_('An added slide has no id. Every slide needs one - it is what a retry targets.');
+      if (!/^[A-Za-z0-9_\-]+$/.test(id)) {
+        fail_('"' + id + '" is not a usable slide id. Letters, digits, - and _ only: ' +
+          'the id is written into the slide’s speaker notes and read back with a pattern.');
+      }
+      if (seen[id]) fail_('Two added slides share the id "' + id + '". Ids must be unique.');
+      seen[id] = 1;
+      for (var j = 0; j < DECK_RECIPE.length; j++) {
+        if (DECK_RECIPE[j].id === id) {
+          fail_('"' + id + '" is already a slide in the recipe. An added slide needs an id of its own.');
+        }
+      }
+      if (!String(a.source || '').trim()) fail_('The added slide "' + id + '" has no source.');
+      if (!String(a.layout || '').trim()) fail_('The added slide "' + id + '" has no layout.');
+      plan.add.push({
+        id: id,
+        source: String(a.source || '').trim(),
+        market: String(a.market || '').trim(),
+        refine: String(a.refine || '').trim(),
+        period: String(a.period || '').trim(),
+        layout: String(a.layout || '').trim(),
+        group:  String(a.group  || '').trim() || 'Other',
+        title:  String(a.title  || '').trim() || id
+      });
+    }
+
+    writePlan_(plan);
+    Logger.log('DECK plan saved: %s ordered, %s off, %s on, %s dropped, %s edited, %s added',
+      plan.order.length, plan.off.length, plan.on.length, plan.drop.length,
+      Object.keys(plan.rows).length, plan.add.length);
+    return { plan: plan };
+  }
+
+  /* Back to DECK_RECIPE, exactly as it is written. */
+  function resetPlan_() {
+    writeStore_(DECK_CONFIG.PROP_PLAN, {}, true, 'arrangement');
+    Logger.log('DECK plan cleared - the deck is the recipe again.');
+    return { plan: { v: 1, order: [], off: [], on: [], drop: [], rows: {}, add: [] } };
+  }
+
+
+  /* ======================================================================
+   * THE TABLE MAP - what each SCOPE shows
+   * ==================================================================== */
+
+  function kpiEntry_(o) {
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    var out = {};
+    if (o.hasOwnProperty('on')) out.on = !!o.on;
+    if (o.hasOwnProperty('sheet')) out.sheet = String(o.sheet == null ? '' : o.sheet).trim();
+    return Object.keys(out).length ? out : null;
+  }
+
+  function tableMap_() {
+    var o = readStore_(DECK_CONFIG.PROP_TABLES, 'table map');
+    var out = { v: 1, scopes: {} };
+    var sc = o.scopes;
+    if (!sc || typeof sc !== 'object' || Array.isArray(sc)) return out;
+    for (var k in sc) {
+      if (!sc.hasOwnProperty(k)) continue;
+      var e = sc[k];
+      if (!e || typeof e !== 'object' || Array.isArray(e)) continue;
+      var kept = {};
+      if (Array.isArray(e.tables)) kept.tables = strList_(e.tables);
+      var kpi = kpiEntry_(e.kpi);
+      if (kpi) kept.kpi = kpi;
+      /* WHICH SOURCE A row: SCOPE BELONGS TO. Every other rung carries its
+         source in the key, so it self-invalidates when a row's source is
+         changed; a row: key does not, and its table keys belong to the OLD
+         adapter's catalogue and mean nothing to the new one. setTables
+         stamps this; a store edited by hand may not have it, and then the
+         entry is taken at face value. */
+      if (e['for']) kept['for'] = String(e['for']).trim();
+      if (Object.keys(kept).length) out.scopes[String(k)] = kept;
+    }
+    return out;
+  }
+
+  function writeTableMap_(map) {
+    var empty = !Object.keys(map.scopes || {}).length;
+    return writeStore_(DECK_CONFIG.PROP_TABLES, map, empty, 'table selection');
+  }
+
+  /* The most tables any adapter offers is nine. The cap is not a taste
+     judgement about a readable slide - the page warns past four for that -
+     it is a floor under the store: a hand-edited scope with two thousand
+     keys in it is the thing that fills the property. */
+  var TABLES_MAX = 16;
+
+  /* Set one scope's tables and / or its KPI. Passing tables:null leaves the
+     tables alone; passing [] is a real, empty selection and is refused for a
+     source that needs at least one - see the QlikView card in Deck_PV. The
+     caller says which source the scope belongs to so a row: key can be
+     stamped; for every other rung it is the key's first segment anyway. */
+  function setTables_(scopeKey, patch) {
+    scopeKey = String(scopeKey || '').trim();
+    patch = patch || {};
+    if (!scopeKey) fail_('setTables needs a scope.');
+
+    var map = tableMap_();
+    var e = map.scopes[scopeKey] || {};
+
+    if (patch.tables !== undefined && patch.tables !== null) {
+      if (!Array.isArray(patch.tables)) fail_('The table selection has to be a list.');
+      var list = strList_(patch.tables);
+      if (list.length > TABLES_MAX) {
+        fail_('That is ' + list.length + ' tables on one slide; ' + TABLES_MAX + ' is the limit.');
+      }
+      if (patch.min && list.length < patch.min) {
+        fail_('This slide needs at least ' + patch.min + ' table' +
+          (patch.min === 1 ? '' : 's') + ' - its KPI strip reads a grand total off one, ' +
+          'and an empty selection publishes a picture that says "Load market data".');
+      }
+      e.tables = list;
+    }
+
+    if (patch.kpi !== undefined) {
+      if (patch.kpi === null) delete e.kpi;
+      else {
+        var kpi = kpiEntry_(patch.kpi);
+        if (!kpi) fail_('The KPI setting has to say on / off, a region sheet, or both.');
+        e.kpi = kpi;
+      }
+    }
+
+    if (scopeKey.indexOf('row:') === 0) {
+      var src = String(patch.source || '').trim();
+      if (src) e['for'] = src; else delete e['for'];
+    } else {
+      delete e['for'];
+    }
+
+    if (!Object.keys(e).length) delete map.scopes[scopeKey];
+    else map.scopes[scopeKey] = e;
+
+    writeTableMap_(map);
+    Logger.log('DECK tables: %s -> %s', scopeKey, JSON.stringify(e));
+    return { scope: scopeKey, entry: map.scopes[scopeKey] || null, map: map };
+  }
+
+  /* Clear one scope, or every scope when no key is given. */
+  function resetTables_(scopeKey) {
+    scopeKey = String(scopeKey || '').trim();
+    if (!scopeKey) {
+      writeStore_(DECK_CONFIG.PROP_TABLES, { v: 1, scopes: {} }, true, 'table selection');
+      Logger.log('DECK table map cleared - every slide is back on its source’s own tables.');
+      return { map: { v: 1, scopes: {} } };
+    }
+    var map = tableMap_();
+    delete map.scopes[scopeKey];
+    writeTableMap_(map);
+    Logger.log('DECK tables: %s cleared.', scopeKey);
+    return { scope: scopeKey, entry: null, map: map };
+  }
+
+  /* THE LADDER, most specific first. A row walks these and takes the first
+     answer - tables and KPI resolved INDEPENDENTLY, because a market can
+     want one set of tables for both its refines and a different KPI region
+     on one of them.
+
+     The refine rung only exists for a row that HAS a refine, which today
+     means Southwest and nothing else; the market rung only for a row that
+     names a market. So a Fuel Recovery row's whole ladder is 'row:fsc_mtd'
+     then 'fsc', which is exactly right - it has no market to scope by. */
+  function scopeLadder_(row) {
+    var out = ['row:' + row.id], src = row.source || '';
+    if (!src) return out;
+    if (row.market && row.refine) out.push(src + '|' + row.market + '|' + row.refine);
+    if (row.market) out.push(src + '|' + row.market);
+    out.push(src);
+    return out;
+  }
+
+  /* Resolve one field up the ladder. Returns { value, scope } with an empty
+     scope when nothing is stored, which is the adapter's own default and the
+     deck as it builds today. */
+  function resolveScope_(map, ladder, field, source) {
+    for (var i = 0; i < ladder.length; i++) {
+      var e = map.scopes[ladder[i]];
+      if (!e || e[field] === undefined) continue;
+      /* A row: entry stamped for a DIFFERENT source is abandoned rather than
+         applied: its table keys are the old adapter's and mean nothing to
+         the new one. Broader scopes need no check - the source is in the key. */
+      if (e['for'] && source && e['for'] !== source) continue;
+      return { value: e[field], scope: ladder[i] };
+    }
+    return { value: null, scope: '' };
+  }
+
   function fail_(msg) { throw new Error(msg); }
 
   /* Speaker notes of a slide, '' when the slide has none. Guarded because a
@@ -12589,7 +13020,12 @@ var DECK = (function () {
   return {
     readTemplate: readTemplate, validateTemplate: validateTemplate,
     create: create, addSlide: addSlide, finish: finish, status: status,
-    layoutMap: layoutMap_, setLayout: setLayout_, resetLayouts: resetLayouts_
+    layoutMap: layoutMap_, setLayout: setLayout_, resetLayouts: resetLayouts_,
+    /* the arrangement and the table map. DECK_getRecipe reads both; the page
+       writes them one call at a time. */
+    plan: planStore_, setPlan: setPlan_, resetPlan: resetPlan_,
+    tableMap: tableMap_, setTables: setTables_, resetTables: resetTables_,
+    scopeLadder: scopeLadder_, resolveScope: resolveScope_
   };
 })();
 
@@ -12611,6 +13047,14 @@ function DECK_status(deckId) { return DECK.status(deckId); }
    slow one of the three and the only one that can fail. */
 function DECK_setLayout(recipeId, layoutId) { return DECK.setLayout(recipeId, layoutId); }
 function DECK_resetLayouts() { return DECK.resetLayouts(); }
+/* The arrangement, and what each scope shows. Neither opens the template or a
+   spreadsheet, so both are as quick as DECK_getRecipe - which is what lets the
+   Arrange stage save optimistically and correct itself on the answer, the way
+   the layout picker already does. */
+function DECK_setPlan(plan) { return DECK.setPlan(plan); }
+function DECK_resetPlan() { return DECK.resetPlan(); }
+function DECK_setTables(scopeKey, patch) { return DECK.setTables(scopeKey, patch); }
+function DECK_resetTables(scopeKey) { return DECK.resetTables(scopeKey); }
 
 
 /* ---- Deck_Recipe.gs ----------------------------------------------------------
@@ -12677,65 +13121,204 @@ function DECK_resetLayouts() { return DECK.resetLayouts(); }
  * fails at slide 30 of 43. Both are cheap to catch here and baffling to
  * diagnose later.
  *****************************************************************************/
+/* One field of one row: the arrangement's edit if it has one, the recipe's
+   value otherwise. '' IS A REAL EDIT - it is how changing a source clears a
+   period or a refine that the new adapter has no use for - so an absent key
+   is the only thing that means "unchanged". */
+function DECK_planField_(base, edit, name) {
+  return (edit && edit[name] !== undefined) ? edit[name] : String(base[name] || '');
+}
+
 function DECK_getRecipe() {
-  var seen = {}, problems = [], rows = [];
+  var fieldOf_ = DECK_planField_;
+  var problems = [];
 
-  /* Whatever anybody has re-pointed from the Deck Builder page. Only the rows
-     that differ are in here; everything else keeps the layout below. Read ONCE
-     for the whole recipe rather than per row - it is a single property. */
-  var over = DECK.layoutMap();
+  /* THREE STORES, READ ONCE EACH. All of it is one property apiece and none of
+     it opens the template or a spreadsheet, which is what keeps Plan instant -
+     see the note on layoutMap_ in Deck_Backend.gs for why that matters more
+     than validating a name here would. */
+  var over = DECK.layoutMap();          // which layout each row is built from
+  var plan = DECK.plan();               // order, membership, per-row edits
+  var tmap = DECK.tableMap();           // what each scope shows
 
-  for (var i = 0; i < DECK_RECIPE.length; i++) {
-    var r = DECK_RECIPE[i], at = 'row ' + (i + 1);
+  var dropped = {}, i, k;
+  for (i = 0; i < plan.drop.length; i++) dropped[plan.drop[i]] = true;
 
-    if (!r.id) { problems.push(at + ' has no id.'); continue; }
+  /* ---- 1 · THE LIVE ROWS, in NATURAL order -------------------------------
+     Natural order is DECK_RECIPE as written, then the added rows. It is what
+     `order` is applied ON TOP OF, and it is what a row with no place in a
+     saved order falls back to - which is rule 2 in the store's header: a row
+     added to the recipe after somebody saved an arrangement is inserted
+     beside its recipe predecessor rather than appended or dropped. */
+  var natural = [], seen = {}, offSet = {}, onSet = {};
+  for (i = 0; i < plan.off.length; i++) offSet[plan.off[i]] = true;
+  for (i = 0; i < plan.on.length; i++)  onSet[plan.on[i]] = true;
+
+  function take(r, at, added) {
+    if (!r.id) { problems.push(at + ' has no id.'); return; }
     if (seen[r.id]) {
-      problems.push('Duplicate id "' + r.id + '" (' + at + ' and row ' +
+      problems.push('Duplicate id "' + r.id + '" (' + at + ' and ' +
         seen[r.id] + '). Ids must be unique - they are what a retry targets.');
-      continue;
+      return;
     }
-    seen[r.id] = i + 1;
+    seen[r.id] = at;
+    if (dropped[r.id]) return;                 // deleted from the pack outright
+    natural.push({ recipe: r, added: !!added });
+  }
+  for (i = 0; i < DECK_RECIPE.length; i++) take(DECK_RECIPE[i], 'row ' + (i + 1), false);
+  for (i = 0; i < plan.add.length; i++) take(plan.add[i], 'added slide "' + plan.add[i].id + '"', true);
 
-    if (!r.source) problems.push(r.id + ' has no source.');
-    if (!r.layout) problems.push(r.id + ' has no layout.');
-    if (!r.title)  problems.push(r.id + ' has no title.');
-    if (r.period && r.period !== 'MTD' && r.period !== 'YTD') {
-      problems.push(r.id + ' has period "' + r.period + '" - expected MTD or YTD.');
+  /* ---- 2 · THE SAVED ORDER, applied --------------------------------------
+     The ids in `order` that are still live are the anchors. Everything else
+     keeps its natural position RELATIVE to them: a row is emitted straight
+     after the anchor it follows in natural order, and a row that precedes
+     every anchor goes to the front. So adding a slide to DECK_RECIPE between
+     two others puts it between those two others in the arranged deck. */
+  var live = {}, ordered = [];
+  for (i = 0; i < natural.length; i++) live[natural[i].recipe.id] = natural[i];
+  for (i = 0; i < plan.order.length; i++) {
+    if (live[plan.order[i]]) ordered.push(plan.order[i]);
+  }
+
+  var list;
+  if (!ordered.length) {
+    list = natural;                            // nothing saved: the recipe as written
+  } else {
+    var anchor = {}, after = { __head__: [] }, cursor = '__head__';
+    for (i = 0; i < ordered.length; i++) { anchor[ordered[i]] = true; after[ordered[i]] = []; }
+    for (i = 0; i < natural.length; i++) {
+      var id = natural[i].recipe.id;
+      if (anchor[id]) { cursor = id; continue; }
+      after[cursor].push(natural[i]);
+    }
+    list = after.__head__.slice();
+    for (i = 0; i < ordered.length; i++) {
+      list.push(live[ordered[i]]);
+      list = list.concat(after[ordered[i]]);
+    }
+  }
+
+  /* ---- 3 · EACH ROW, with its edits, its tables and its KPI --------------- */
+  var rows = [], warnedScope = {};
+  for (i = 0; i < list.length; i++) {
+    var base = list[i].recipe, edit = plan.rows[base.id] || null;
+    var row = {
+      id: base.id, source: fieldOf_(base, edit, 'source'),
+      market: fieldOf_(base, edit, 'market'),
+      /* a within-market narrowing, e.g. Southwest -> Land. The source decides
+         what it means; nothing here needs to know. */
+      refine: fieldOf_(base, edit, 'refine'), period: fieldOf_(base, edit, 'period'),
+      title: fieldOf_(base, edit, 'title'), group: fieldOf_(base, edit, 'group') || 'Other'
+    };
+
+    if (!row.source) problems.push(row.id + ' has no source.');
+    if (!row.title)  problems.push(row.id + ' has no title.');
+    if (row.period && row.period !== 'MTD' && row.period !== 'YTD') {
+      problems.push(row.id + ' has period "' + row.period + '" - expected MTD or YTD.');
     }
 
     /* An override on a row with no layout of its own is still an override, so
-       the check above stays about the RECIPE and this stays about the store. */
-    var chosen = over[r.id] || r.layout;
+       the check stays about the RECIPE and this stays about the store. */
+    var chosen = over[base.id] || base.layout;
+    if (!base.layout) problems.push(row.id + ' has no layout.');
 
-    rows.push({
-      id: r.id, source: r.source, market: r.market || '',
-      /* a within-market narrowing, e.g. Southwest -> Land. The source decides
-         what it means; nothing here needs to know. */
-      refine: r.refine || '',
-      period: r.period || '', layout: chosen, title: r.title,
-      /* WHAT THE RECIPE SAYS, alongside what is being used. The page offers
-         "back to default" from these two, and showing which rows have been
-         moved is the only way anyone can tell a deliberate override from a
-         layout somebody picked by accident three months ago. */
-      recipeLayout: r.layout,
-      layoutOverridden: !!(over[r.id] && over[r.id] !== r.layout),
-      subtitle: r.subtitle || '', group: r.group || 'Other',
-      optional: !!r.optional
-    });
+    /* THE LADDER. Tables and KPI are resolved INDEPENDENTLY - a market can
+       want one set of tables across both its refines and a different KPI
+       region on one of them - so each carries the rung that answered it. */
+    var ladder = DECK.scopeLadder(row);
+    var t = DECK.resolveScope(tmap, ladder, 'tables', row.source);
+    var kp = DECK.resolveScope(tmap, ladder, 'kpi', row.source);
+
+    row.layout = chosen;
+    /* WHAT THE RECIPE SAYS, alongside what is being used. The page offers
+       "back to default" from these, and showing which rows have been moved is
+       the only way anyone can tell a deliberate change from one somebody made
+       by accident three months ago. */
+    row.recipeLayout = base.layout || '';
+    row.layoutOverridden = !!(over[base.id] && over[base.id] !== base.layout);
+    row.subtitle = base.subtitle || '';
+    /* `optional` is what the RECIPE says; `on` is what this month's pack does,
+       which is the recipe's answer unless somebody has ticked or unticked it
+       here. An added row is on unless it says otherwise. */
+    row.optional = !!base.optional;
+    row.on = onSet[base.id] ? true : (offSet[base.id] ? false : !base.optional);
+    row.added = !!list[i].added;
+    row.rowEdited = !!edit;
+    row.recipeRow = list[i].added ? null : {
+      source: base.source || '', market: base.market || '', refine: base.refine || '',
+      period: base.period || '', title: base.title || '', group: base.group || 'Other'
+    };
+    /* null = nothing stored, which is the adapter's own default and the deck
+       as it builds today. The empty scope beside it says the same thing in the
+       one place the page needs it: the scope selector, where the rung that is
+       actually answering has to be visible before anybody changes five slides
+       thinking they are changing one. */
+    row.tables = Array.isArray(t.value) ? t.value.slice() : null;
+    row.tablesScope = t.scope;
+    row.kpi = kp.value ? { on: (kp.value.on === undefined ? true : !!kp.value.on),
+                           sheet: kp.value.sheet || '' } : null;
+    row.kpiScope = kp.scope;
+    row.scopeLadder = ladder;
+
+    rows.push(row);
   }
 
-  /* An override whose row has since been deleted from DECK_RECIPE would sit in
-     the store forever, doing nothing and explaining nothing. Say so; do not
-     delete it here, because a read is not the place to write. */
-  for (var k in over) {
-    if (over.hasOwnProperty(k) && !seen[k]) {
+  /* ---- 4 · WHAT IS IN THE STORES AND NOT IN THE DECK ---------------------
+     Say so; do not delete it here, because a read is not the place to write.
+     A DROPPED id is the one case that must NOT be reported: a deletion is
+     deliberate, and bannering it would put a warning on the page that nobody
+     can clear - which is worse than the thing it warns about. Deleted slides
+     have their own list in Arrange, with Restore, and that is where a drop is
+     visible and undoable. */
+  for (k in over) {
+    if (over.hasOwnProperty(k) && !seen[k] && !dropped[k]) {
       problems.push('The saved layout for "' + k + '" points at a recipe row ' +
         'that no longer exists. It is being ignored. Use Reset layouts to clear it.');
     }
   }
+  for (i = 0; i < plan.order.length; i++) {
+    k = plan.order[i];
+    if (!seen[k] && !dropped[k]) {
+      problems.push('The saved order names "' + k + '", which is not a slide any ' +
+        'more. It is being ignored - save the arrangement again to drop it.');
+    }
+  }
+  for (k in plan.rows) {
+    if (plan.rows.hasOwnProperty(k) && !seen[k] && !dropped[k]) {
+      problems.push('The saved change to "' + k + '" is for a slide that no longer ' +
+        'exists. It is being ignored - save the arrangement again to drop it.');
+    }
+  }
+
+  /* THE DELETED SLIDES LIST. A drop is invisible and permanent from the page
+     without it, and the only way back would be a Script Property edit. A
+     dropped row that has ALSO left DECK_RECIPE is listed too, marked, so the
+     entry can be cleared from the same place rather than banner-ing forever. */
+  var recipeById = {};
+  for (i = 0; i < DECK_RECIPE.length; i++) recipeById[DECK_RECIPE[i].id] = DECK_RECIPE[i];
+  var deleted = [];
+  for (i = 0; i < plan.drop.length; i++) {
+    var d = recipeById[plan.drop[i]];
+    deleted.push({ id: plan.drop[i], title: d ? (d.title || plan.drop[i]) : '',
+                   group: d ? (d.group || 'Other') : '', inRecipe: !!d });
+  }
 
   return { rows: rows, count: rows.length, problems: problems,
-           overrides: over, overrideCount: Object.keys(over).length };
+           overrides: over, overrideCount: Object.keys(over).length,
+           /* the arrangement as stored, so the page can save back exactly what
+              it was given plus its own edit rather than reconstructing it */
+           plan: plan, tables: tmap,
+           planned: !!(plan.order.length || plan.off.length || plan.on.length ||
+                       plan.drop.length || plan.add.length ||
+                       Object.keys(plan.rows).length),
+           scopeCount: Object.keys(tmap.scopes).length,
+           deleted: deleted,
+           /* the Add-slide picker's market list. One market, both spellings,
+              against one key - which is what a source change re-maps through:
+              the Southwest is 'Southwest' to Price & Volume and 'HNS_SW' to
+              Ready-Mix, and a name that matches no row is what published
+              Southwest Land as a page of zeroes. */
+           markets: OVERVIEW.MARKETS };
 }
 
 
