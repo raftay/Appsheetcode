@@ -493,5 +493,146 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
   PROPS = {};
 }
 
+/* ---- finish() PUBLISHES IN THE ORDER IT WAS GIVEN ------------------------ *
+ * addSlide always appends, and Publish skips a row already marked done, so a
+ * slide that failed at position 30 and was retried on the next press landed
+ * behind every slide built before it — and {{PAGE}} then numbered that order
+ * confidently. It was survivable while DECK_RECIPE was the only order there
+ * is; it stops being survivable the moment the arrangement is something
+ * somebody saved.
+ *
+ * BOTH HALVES MATTER. finish() is on the publish path, which has never run
+ * against the live deployment (README §11), so the no-argument call has to
+ * stay exactly what it was — and the one place that could regress silently is
+ * a reorder that runs when nobody asked for one.
+ *
+ * The Slides stub below is the smallest presentation `finish` actually
+ * touches: getSlides / move / getObjectId / the notes page / replaceAllText.
+ * Everything else in Deck_Backend.gs is left alone, which is what keeps this
+ * harness dependency-free.
+ * -------------------------------------------------------------------------- */
+{
+  /* one slide: speaker notes, an object id, and the {{PAGE}} box */
+  function slideStub(pres, id, notes) {
+    let page = '{{PAGE}}';
+    const sl = {
+      getObjectId: () => id,
+      move(i) {
+        const at = pres._s.indexOf(sl);
+        pres._s.splice(at, 1);
+        pres._s.splice(i, 0, sl);
+        pres._moves++;
+      },
+      getNotesPage: () => ({
+        getSpeakerNotesShape: () => ({
+          getText: () => ({ asString: () => notes, setText(t) { notes = t; } }),
+        }),
+      }),
+      replaceAllText(tok, val) { if (tok === '{{PAGE}}') page = val; },
+      _page: () => page,
+    };
+    return sl;
+  }
+  function presStub(spec) {
+    const pres = { _s: [], _closed: false, _moves: 0 };
+    pres._s = spec.map(([id, notes]) => slideStub(pres, id, notes));
+    pres.getSlides = () => pres._s.slice();
+    pres.saveAndClose = () => { pres._closed = true; };
+    return pres;
+  }
+
+  /* A deck as a retry leaves it: the cover, three layouts still in place, and
+     the built slides with pv_b published LAST because it failed the first
+     time round and was retried on the second press. */
+  const deck = () => presStub([
+    ['c',  'SLIDE: __cover__'],
+    ['l1', 'LAYOUT: L_FULL_IMAGE'],
+    ['l2', 'LAYOUT: L_COMMENT_IMAGE'],
+    ['a',  'SLIDE: pv_a'],
+    ['c1', 'SLIDE: pv_c'],
+    ['d',  'SLIDE: pv_d'],
+    ['b',  'SLIDE: pv_b'],
+  ]);
+  const ids = p => p.getSlides().map(s => s.getObjectId()).join(',');
+
+  let PROPS = {};
+  const propsStub = { getScriptProperties: () => ({
+    getProperty: k => (k in PROPS ? PROPS[k] : null),
+    setProperty: (k, v) => { PROPS[k] = String(v); },
+    deleteProperty: k => { delete PROPS[k]; },
+  }) };
+
+  function run(order) {
+    const pres = deck();
+    const ctx = {
+      PropertiesService: propsStub, Logger: { log() {} },
+      SlidesApp: { openById: () => pres },
+    };
+    require('vm').runInNewContext(read('Config.gs'), ctx, { filename: 'script.gs (Config.gs)' });
+    require('vm').runInNewContext(read('Deck_Backend.gs'), ctx, { filename: 'script.gs (Deck_Backend.gs)' });
+    const out = ctx.DECK_finish('D1', order);
+    return { pres, out };
+  }
+
+  {
+    const { pres, out } = run(['pv_a', 'pv_b', 'pv_c', 'pv_d']);
+    check('finish · a supplied order is what the deck is published in',
+      ids(pres) === 'c,a,b,c1,d,l1,l2', ids(pres));
+    check('finish · the cover stays in front of it',
+      pres.getSlides()[0].getObjectId() === 'c', ids(pres));
+    check('finish · the layout slides are still parked behind everything',
+      ids(pres).endsWith('l1,l2'), ids(pres));
+    check('finish · {{PAGE}} numbers the FINAL order, not the built one',
+      pres.getSlides().filter(s => s._page() !== '{{PAGE}}')
+          .map(s => s.getObjectId() + '=' + s._page()).join(',')
+        === 'c=1,a=2,b=3,c1=4,d=5',
+      pres.getSlides().map(s => s.getObjectId() + '=' + s._page()).join(','));
+    check('finish · ...and only the built slides are numbered',
+      pres.getSlides().filter(s => s._page() === '{{PAGE}}')
+          .map(s => s.getObjectId()).join(',') === 'l1,l2');
+    check('finish · it reports the deck proper, not the parked layouts',
+      out.slides === 5 && out.templateSlidesParked === 2,
+      JSON.stringify({ slides: out.slides, parked: out.templateSlidesParked }));
+  }
+
+  {
+    /* NO ORDER = TODAY'S BEHAVIOUR. Built slides keep the order they landed
+       in — pv_b still at the back — and only the layouts move. */
+    const { pres } = run(undefined);
+    check('finish · with no order, nothing is reordered',
+      ids(pres) === 'c,a,c1,d,b,l1,l2', ids(pres));
+    /* THE ORDER IT PRODUCES IS NOT THE ONLY CLAIM. A reorder pass that runs
+       when nobody asked for one lands on the same arrangement here — the deck
+       is already in build order — so it is invisible in the ids and shows up
+       only as work: five slides shuffled behind the two parked layouts. This
+       is the publish path, and it has to be provably untouched, not
+       coincidentally unchanged. */
+    check('finish · ...and makes no move but the two that park the layouts',
+      pres._moves === 2, pres._moves + ' moves');
+
+    const empty = run([]);
+    check('finish · and an empty order is the same as none',
+      ids(empty.pres) === 'c,a,c1,d,b,l1,l2' && empty.pres._moves === 2,
+      ids(empty.pres) + ' / ' + empty.pres._moves + ' moves');
+  }
+
+  {
+    /* AN ORDER THAT PREDATES A SLIDE MUST NOT THROW IT AWAY. A row added to
+       the recipe after somebody saved an arrangement is not in that list; it
+       keeps its place behind the named rows rather than vanishing or landing
+       at the front. */
+    const { pres } = run(['pv_d', 'pv_a']);
+    check('finish · a built slide the order does not name is kept, at the back',
+      ids(pres) === 'c,d,a,c1,b,l1,l2', ids(pres));
+  }
+
+  {
+    /* An id in the order that was never built is simply not there. */
+    const { pres } = run(['pv_b', 'nothing_built_this', 'pv_a', 'pv_c', 'pv_d']);
+    check('finish · an ordered id with no slide behind it is skipped',
+      ids(pres) === 'c,b,a,c1,d,l1,l2', ids(pres));
+  }
+}
+
 console.log(failed ? '\n' + failed + ' check(s) FAILED' : '\nall checks passed');
 process.exit(failed ? 1 : 0);

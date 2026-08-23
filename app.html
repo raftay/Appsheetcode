@@ -5149,10 +5149,24 @@ var AmrPvSlide = (function(){
       + body + '</div>';
   }
 
+  /* THE QLIKVIEW CARD READS A GRAND TOTAL, NOT THE FIRST TABLE'S.
+     Every table getReport returns carries the SAME grand total - it is the
+     market's, computed once and packed onto each one - so which table answers
+     has never mattered. tables[0] did until the Deck Builder let a slide choose
+     WHICH tables it shows: a selection whose first table has no total left `qv`
+     undefined, and the card baked "Load market data to fill this card" into a
+     published picture with nothing going red. Take the first table that HAS
+     one; an empty selection still has none, and that is the honest answer. */
+  function qvTotal(d){
+    var t = (d && d.tables) || [];
+    for(var i=0;i<t.length;i++){ if(t[i] && t[i].total) return t[i].total; }
+    return null;
+  }
+
   function kpiCardsHtml(){
     if(kpiMissingBook()) return '';
     var x=kpiExtract(); if(!x) return '';
-    var d=CTX.data, qv=(d && d.tables && d.tables[0] && d.tables[0].total) || null;
+    var d=CTX.data, qv=qvTotal(d);
     var ppi=(d && d.priceBridge) ? d.priceBridge.ppi : null;
     var wait='<div style="font:500 1.15em Inter;color:var(--muted);margin-top:1em">Load market data to fill this card.</div>';
     return kpiCard('ASP ($/T)', 'SAP / USGAAP', x.aspCy, x.aspPy, KPI_FMT.asp)

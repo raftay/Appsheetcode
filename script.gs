@@ -12318,6 +12318,63 @@ var DECK = (function () {
 
 
   /* ======================================================================
+   * reorderBuilt_ - the built slides, in the order they were planned in
+   * ----------------------------------------------------------------------
+   * `order` is a list of recipe ids, deck order, as the page has them. Every
+   * slide carrying "SLIDE: <id>" is ranked by its place in that list; anything
+   * built but NOT named keeps its current relative position behind the ranked
+   * ones, which is what stops a slide from an earlier run being thrown away by
+   * an order that predates it.
+   *
+   * THE COVER IS ALWAYS FIRST and is never in `order` - create() tags it
+   * "SLIDE: __cover__" so finish() will not park it, and that same tag is what
+   * pins it here rather than dropping it in with the unnamed rows at the back.
+   *
+   * Moving to an ABSOLUTE index also pushes every layout slide behind the
+   * built ones, which is where the parking loop puts them anyway. A slide
+   * already at its target index is left alone: this runs 43 times on a full
+   * deck and a move is an API operation, so the common case - a deck built
+   * straight through, already in order - costs nothing.
+   * ==================================================================== */
+  function reorderBuilt_(pres, order) {
+    var rank = {};
+    for (var i = 0; i < order.length; i++) {
+      var id = String(order[i] || '');
+      if (id && rank[id] === undefined) rank[id] = i;
+    }
+
+    var slides = pres.getSlides(), want = [], cur = [];
+    for (var j = 0; j < slides.length; j++) {
+      cur.push(slides[j].getObjectId());
+      var rid = recipeIdOf_(slides[j]);
+      if (!rid) continue;                                  // a layout; parked below
+      var r = (rid === '__cover__') ? -1
+            : (rank[rid] === undefined ? order.length : rank[rid]);
+      want.push({ slide: slides[j], id: slides[j].getObjectId(), rank: r, was: j });
+    }
+    /* `was` breaks the tie, so an unranked slide - and two rows that somehow
+       share an id - keep the order the deck already has rather than being
+       shuffled by whatever the sort does with equal keys. */
+    want.sort(function (a, b) { return (a.rank - b.rank) || (a.was - b.was); });
+
+    /* `cur` MODELS the deck's order rather than re-reading it. getSlides()
+       hands back a fresh wrapper per call, so two objects for one slide are
+       never ===; and asking 43 times to answer "is it already there?" costs
+       more than the moves. move(k) is a remove-then-insert, so mirroring that
+       on the array keeps the model exact. */
+    var moved = 0;
+    for (var k = 0; k < want.length; k++) {
+      if (cur[k] === want[k].id) continue;
+      want[k].slide.move(k);
+      cur.splice(cur.indexOf(want[k].id), 1);
+      cur.splice(k, 0, want[k].id);
+      moved++;
+    }
+    return moved;
+  }
+
+
+  /* ======================================================================
    * DECK_finish - park everything that is not a built slide, number the pages
    * ----------------------------------------------------------------------
    * THE TEMPLATE SLIDES ARE MOVED TO THE END, NOT DELETED. They used to be
@@ -12332,12 +12389,35 @@ var DECK = (function () {
    * Parking by the ABSENCE of that tag rather than the presence of "LAYOUT:"
    * also sweeps up any untagged slide left in the template, which would
    * otherwise sit in the middle of the deck.
+   *
+   * AND IT PUTS THE BUILT SLIDES IN ORDER FIRST, when the caller says what the
+   * order is. See reorderBuilt_ above: this is the only place that can, because
+   * it is the only step that runs once the last slide has landed.
    * ==================================================================== */
-  function finish(deckId) {
+  function finish(deckId, order) {
     if (!deckId) fail_('finish called without a deckId.');
     var pres = SlidesApp.openById(deckId);
 
     var slides = pres.getSlides();
+
+    /* PUT THE BUILT SLIDES IN THE ORDER THEY WERE PLANNED IN.
+       addSlide always appends, and Publish skips a row that is already `done`,
+       so a slide that failed at position 30 and was retried on the next press
+       landed at 44 - behind every slide built before it. Nothing downstream
+       noticed, because {{PAGE}} is stamped below against whatever order the
+       deck happens to be in, so it numbered the wrong sequence confidently.
+
+       That was survivable while the recipe was the only order there is: a
+       retry was the only way to produce it, and it was rare. It stops being
+       survivable the moment the order is editable from the page, because then
+       the arrangement somebody saved is the thing the deck is meant to honour.
+
+       AN ABSENT `order` KEEPS TODAY'S BEHAVIOUR EXACTLY. This is the publish
+       path and it has never been run against the live deployment (README §11),
+       so the no-argument call has to stay byte-for-byte what it was. */
+    if (order && order.length) reorderBuilt_(pres, order);
+
+    slides = pres.getSlides();
     var parked = [];
     for (var i = 0; i < slides.length; i++) {
       if (!recipeIdOf_(slides[i])) parked.push(slides[i]);
@@ -12522,7 +12602,10 @@ function DECK_readTemplate(templateId) { return DECK.readTemplate(templateId); }
 function DECK_validateTemplate(templateId) { return DECK.validateTemplate(templateId); }
 function DECK_create(opts) { return DECK.create(opts); }
 function DECK_addSlide(deckId, spec) { return DECK.addSlide(deckId, spec); }
-function DECK_finish(deckId) { return DECK.finish(deckId); }
+/* `order` is the recipe ids in DECK order - the arrangement the page is
+   publishing, not the order the slides happened to be built in. Omit it and
+   finish() behaves exactly as it did before it took one. */
+function DECK_finish(deckId, order) { return DECK.finish(deckId, order); }
 function DECK_status(deckId) { return DECK.status(deckId); }
 /* The layout map. setLayout opens the template to check the name, so it is the
    slow one of the three and the only one that can fail. */

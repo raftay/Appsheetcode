@@ -329,6 +329,66 @@ let bad = 0;
   ok('...which leaves Southwest alone',                P.current(sw)      === sheets[0]);
   ok('...and leaves Land alone',                       P.current(land)    === sheets[1]);
 
+  /* ------------------------------------------------------------------
+   * THE QLIKVIEW ASP CARD MUST SURVIVE A REORDERED TABLE ARRAY.
+   * ------------------------------------------------------------------
+   * Every table getReport returns carries the SAME grand total — the
+   * market's, computed once and packed onto each one — so which table the
+   * card reads has never mattered while the array was the server's own,
+   * always led by a dimension table with a total on it.
+   *
+   * It starts mattering the moment a slide picks WHICH tables it shows and
+   * in what order. `d.tables[0].total` on a selection whose first table has
+   * no total leaves the card reading "Load market data to fill this card" —
+   * baked into a published picture, with every slide building and nothing
+   * going red. That is the same shape as the Southwest-Land page of zeroes:
+   * a wrong answer that fails silently.
+   *
+   * So the card takes the first table that HAS a total. The fixture below
+   * puts a total-less table first ON PURPOSE — a real one, the customer-
+   * segment pivot, which getReport appends without a `total` of its own.
+   * ---------------------------------------------------------------- */
+  console.log('\nthe QlikView ASP card reads a grand total, not the first table:');
+  {
+    const led = PVREPORT.tables[0];
+    const noTotal = { dimension:'Customer Segment', rows:[
+      { label:'INTERNAL RMX', cyVol:28680, pyVol:29575, volPct:-.03,
+        cyAsp:25.6, pyAsp:24.04, aspPct:.065, ppi:.088 } ] };
+    const ctx = data => ({
+      slide: win.AmrPvSlide.SLIDE, data: data, period:'MTD', month:7, latestMonth:7,
+      filterField:'MARKET', filterValue:'GTA', collapsed:{},
+      kpi: win.AmrPvSlide.kpiFor({ ok:true }, 'MARKET', 'GTA', 'GTA', 'main', '')
+    });
+    const WAIT = 'Load market data to fill this card';
+    /* the QlikView card is the SECOND of the two ASP cards */
+    const qvCard = html => (html.split('QlikView')[1] || '');
+
+    const asServed = win.AmrPvSlide.kpiCardsHtml(ctx(PVREPORT));
+    ok('the server\'s own order still fills the card',
+       !qvCard(asServed).includes(WAIT) && asServed.includes('QlikView'));
+
+    const reordered = win.AmrPvSlide.kpiCardsHtml(
+      ctx(Object.assign({}, PVREPORT, { tables: [noTotal, led] })));
+    ok('a total-less table in front of it does not empty the card',
+       !qvCard(reordered).includes(WAIT));
+    ok('...and the figure is the same one, from the table that has it',
+       qvCard(reordered).slice(0, 400) === qvCard(asServed).slice(0, 400));
+
+    const onlyOne = win.AmrPvSlide.kpiCardsHtml(
+      ctx(Object.assign({}, PVREPORT, { tables: [led] })));
+    ok('one table on its own is enough',
+       !qvCard(onlyOne).includes(WAIT));
+
+    /* AND AN EMPTY SELECTION STILL SAYS SO. The card going blank when there
+       is genuinely no total is the honest answer, not a case to paper over —
+       what stops it reaching a slide is the per-source minimum of one table,
+       enforced where the choice is made. */
+    const none = win.AmrPvSlide.kpiCardsHtml(
+      ctx(Object.assign({}, PVREPORT, { tables: [] })));
+    ok('no tables at all is still reported as no data',
+       qvCard(none).includes(WAIT));
+  }
+
   console.log(bad ? `\n${bad} FAILURE(S).` : '\nDECK PATH OK.');
   process.exit(bad ? 1 : 0);
 })();
