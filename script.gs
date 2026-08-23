@@ -132,7 +132,7 @@
  *   IN THIS SECTION
  *     APP_CONFIG.PAGES.<page>.defaultSpreadsheetId   which Sheet a page reads
  *     APP_CONFIG.PAGES.<page>.SHEETS                 its tab names
- *     APP_CONFIG.PAGES.segment.MARKETS               the Slide Builder's markets
+ *     APP_CONFIG.PAGES.segment.MARKETS               the Product Segment's markets
  *     APP_CONFIG.QLIK_SYNC.*                         the three QlikView exports
  *     APP_CONFIG.KPI_FOLDER_ID                       where the EBITDA books live
  *     APP_CONFIG.INVENTORY_MAIL                      the mailbox the Inventory
@@ -222,14 +222,14 @@ var APP_CONFIG = {
   QLIK_SYNC: {
     /* The three QlikView exports, BY FILE ID. Each one feeds exactly one
        page, so a re-export of the Aggregates file no longer costs a Ready-Mix
-       and Slide Builder sync as well.
+       and Product Segment sync as well.
 
        These are the .xls files themselves, not folders and not the workbooks
        they are written into. QlikSync converts each to a temporary Google
        Sheet to read it and throws that away afterwards. */
     AGG_FILE_ID: '19ptynrhtzC-Noi71znNbVIJw8GDmPUxZ',   // → Price & Volume
     RMX_FILE_ID: '1wUb82e1PVxstddK9IE2VxYLSQEicVAGK',   // → Ready-Mix (main, extra, assoc)
-    SEG_FILE_ID: '1d1XzYlENUyE6sxBewCd-Q3GpjTNzgRZH'    // → Slide Builder
+    SEG_FILE_ID: '1d1XzYlENUyE6sxBewCd-Q3GpjTNzgRZH'    // → Product Segment
   },
 
 
@@ -330,10 +330,10 @@ var APP_CONFIG = {
       }
     },
 
-    /* ---------------- Slide Builder ---------------- */
+    /* ---------------- Product Segment ---------------- */
     segment: {
       label: 'Commercial Product Segment',
-      defaultSpreadsheetId: '1ED6caThzPlyP76w6eNIdjbriz7CVRySo2qzRmTGDiDk',   // ← set your Slide Builder sheet here, or via Settings
+      defaultSpreadsheetId: '1ED6caThzPlyP76w6eNIdjbriz7CVRySo2qzRmTGDiDk',   // ← set your Product Segment sheet here, or via Settings
       SHEETS: {
         /* Major Project Segment, already summed to Segment x Market by
            QlikView and already split by period — so there is no Bill Month
@@ -343,7 +343,7 @@ var APP_CONFIG = {
         segMTD: 'Slide Segment MTD',
         segYTD: 'Slide Segment YTD'
       },
-      // Markets the Slide Builder builds (drives the per-market product tabs).
+      // Markets the Product Segment builds (drives the per-market product tabs).
       // These are the markets with a PRODUCT TAB in the sheet. The page also
       // offers "Central Canada", but it needs nothing here: its Segment table
       // reads the Slide Segment tab unfiltered, and its Product table is rolled
@@ -1570,7 +1570,7 @@ function APP_periodFind_(tgt, base, p, srcRank) {
  * This single Apps Script project hosts the web apps under one URL:
  *    ?page=pricevolume   → Price & Volume Analysis
  *    ?page=rmx           → Amrize RMX (Price & Volume)
- *    ?page=segment  → Slide Builder (Google Sheets → slide PNG)
+ *    ?page=segment       → Product Segment (Google Sheets → slide PNG)
  *    ?page=fuelsurcharge → Fuel Recovery executive view (editable slide PNG)
  *    ?page=deckbuilder   → Deck Builder (every page → one Google Slides deck)
  *    (no page / unknown) → Landing page that links to all of them.
@@ -1585,7 +1585,7 @@ function APP_periodFind_(tgt, base, p, srcRank) {
  *   - include()    : lets an HTML file pull in a shared partial
  *   - getLogo()    : the Amrize logo (used by every export)
  *   - syncAll()    : clear every cache after data changes
- *   - Slide Builder backend (SB)
+ *   - Product Segment backend (SB)
  *
  * The Deck Builder is the one page with no data source of its own: it reads
  * the recipe (Deck_Recipe.gs), the Slides template (Deck_Backend.gs) and then
@@ -2006,8 +2006,13 @@ function getSourceTimes(page) {
 
 
 /* ========================================================================
- * SLIDE BUILDER backend
+ * PRODUCT SEGMENT backend
  * ----------------------------------------------------------------------
+ * THE NAMESPACE IS `SB` AND THE PAGE IS PRODUCT SEGMENT. The prefix is left
+ * from when this page was called the Slide Builder, which read as a second
+ * Deck Builder and is why the name went; renaming the namespace would touch
+ * every call site in app.html for nothing. SB is this page and no other.
+ *
  * Mirrors the original Excel-upload layout, but reads from the Google Sheet:
  *
  *   • Major Project Segment  → TWO tabs (MTD + YTD), each holding ALL markets.
@@ -2025,7 +2030,7 @@ function getSourceTimes(page) {
  * ====================================================================== */
 var SB = (function () {
 
-  // All Slide Builder config (tabs, markets, labels, sheet) lives in Config.gs.
+  // All Product Segment config (tabs, markets, labels, sheet) lives in Config.gs.
   // We read it through a helper AT CALL TIME so file load-order never matters.
   function cfg_(){ return APP_CONFIG.PAGES.segment; }
 
@@ -2046,7 +2051,7 @@ var SB = (function () {
     var sh = APP_openSpreadsheet_('segment').getSheetByName(name);
     if (!sh) {
       if (required) {
-        throw new Error('Tab "' + name + '" was not found in the Slide Builder data sheet. ' +
+        throw new Error('Tab "' + name + '" was not found in the Product Segment data sheet. ' +
           'Check the tab name in your Google Sheet (or update APP_CONFIG.PAGES.segment in Config.gs).');
       }
       return null;
@@ -2480,7 +2485,7 @@ function APP_permPad_(s, n) {
  *                       Combined Data CPI Other Revenue
  *     RMX_FILE_ID  →  Ready-Mix workbook   (the Margin Monitor export)
  *                       Main Raw Data · Extra Raw Data · Associate Raw Data
- *     SEG_FILE_ID  →  Slide Builder workbook (the Segment/Product export)
+ *     SEG_FILE_ID  →  Product Segment workbook (the Segment/Product export)
  *                       Slide Segment MTD / YTD
  *                       Slide Product <Market> MTD / YTD
  *
@@ -2497,7 +2502,7 @@ function APP_permPad_(s, n) {
  *              name, write only the columns the export actually feeds, and
  *              leave every other column — including all the formulas — alone.
  *
- *   'replace'  The Slide Builder tabs. No formulas, no extra columns: the tab
+ *   'replace'  The Product Segment tabs. No formulas, no extra columns: the tab
  *              is cleared and rewritten from the export as-is.
  *
  * FORMULAS
@@ -2518,20 +2523,25 @@ function APP_permPad_(s, n) {
  *   nothing for the next run to find either.
  *
  * ROWS
- *   Grow only, in both modes. If the export is taller than the sheet, rows are
- *   inserted; if it is shorter, the sync's OWN columns are cleared to the
- *   bottom of the sheet and the rows stay. Nothing is ever deleted out from
- *   under a formula, and nothing is deleted out from under a column that
- *   belongs to somebody else: a row is the full width of the tab, so deleting
- *   the surplus to match the export takes every other column with it.
+ *   The data ends exactly where the export ends, in both modes. Taller export,
+ *   rows inserted; shorter export, the surplus DELETED rather than left blank —
+ *   otherwise January reads a December-sized sheet for eleven months, and no
+ *   reader can tell an empty row from a row the export stopped sending.
+ *
+ *   That is safe because every formula on these tabs is a single-cell ARRAY
+ *   formula anchored on the first data row. Nothing is filled down, so a
+ *   surplus row holds no formula of anybody's — only spill, which comes back
+ *   when the anchor is re-pointed at the new height.
  *
  * WHAT THE SYNC OWNS
- *   In 'columns' mode: the paired columns, from the first data row down. That
- *   is all. Every other column on the tab — a lookup, a helper, a filled-down
- *   formula, a block parked to the right — is read past and left exactly as it
- *   was, on every tab, whether or not this file knows it is there. Assume one
- *   is there. In 'replace' mode the tab is the export and the whole of it is
- *   rewritten, which is why nothing but a QlikView tab is in that mode.
+ *   ROWS BELOW THE DATA ARE THE EXPORT'S. COLUMNS ARE NOT.
+ *
+ *   In 'columns' mode the sync owns the columns it PAIRS, and that is all.
+ *   Every other column on the tab — a lookup, a working column, an anchor for
+ *   something this file has never heard of — is read past and left exactly as
+ *   it was, on every tab. Assume one is there. In 'replace' mode the tab is the
+ *   export and the whole of it is rewritten, which is why nothing but a
+ *   QlikView tab is in that mode.
  *
  * SETUP
  *   The three file ids live in Config.gs → APP_CONFIG.QLIK_SYNC.
@@ -2672,7 +2682,7 @@ var QLIKSYNC = (function () {
    *   page    the Config.gs page id whose workbook owns the tab
    *   tab     the tab name in that workbook
    *   mode    'columns' (map by header, keep formulas) | 'replace' (wipe)
-   *   srcTab  match the export tab by NAME (the Slide Builder export names
+   *   srcTab  match the export tab by NAME (the Product Segment export names
    *           its tabs); otherwise…
    *   match   …match by the header names the export tab must contain
    *   pick    tie-breaker when two export tabs look identical
@@ -2692,7 +2702,7 @@ var QLIKSYNC = (function () {
 
       /* ---- RMX folder → Ready-Mix ---- */
       /* stampMonth: this is the export that says which month everything is
-         for. The Slide Builder's Segment tabs arrive pre-split into MTD and
+         for. The Product Segment's Segment tabs arrive pre-split into MTD and
          YTD with no Bill Month of their own, so its month picker takes its
          default from here. */
       { folder: 'RMX', page: 'rmx', tab: 'Main Raw Data',
@@ -2711,7 +2721,7 @@ var QLIKSYNC = (function () {
         mode: 'columns', alias: ALIAS_EXTRA,
         match: ['bill_month', 'mat_prod_hier_3', 'mat_descr'], pick: 'assoc' },
 
-      /* ---- RMX folder → Slide Builder ----
+      /* ---- SEG folder → Product Segment ----
          The export already splits MTD and YTD and is already summed to
          Segment x Market, so there is no Bill Month column any more and no
          per-month repetition: 29 rows, not 400. */
@@ -2987,7 +2997,7 @@ var QLIKSYNC = (function () {
   function pickSource_(tabs, spec) {
     var i, cands = [];
 
-    /* Named tab (the Slide Builder export). */
+    /* Named tab (the Product Segment export). */
     if (spec.srcTab) {
       var want = norm_(spec.srcTab);
       for (i = 0; i < tabs.length; i++) if (norm_(tabs[i].name) === want) return tabs[i];
@@ -3122,7 +3132,7 @@ var QLIKSYNC = (function () {
   }
 
   /* The Bill Month cell as { y, m } (m is 0-based) — used to work out which
-     month the exports are for, so the Slide Builder's month picker can default
+     month the exports are for, so the Product Segment's month picker can default
      to it. A value carrying no year is not readable and returns null. */
   function monthYM_(v) {
     var MON = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
@@ -3318,22 +3328,24 @@ var QLIKSYNC = (function () {
        staying as the write left it. */
     plan.push({ sh: sh, firstData: firstData, band: band, nCols: nCols });
 
-    /* --- ROWS GROW, NEVER SHRINK ---
-       Every row the sync owns is replaced on every run, so a correction made to
-       a month that has already closed still comes through: the mapped columns
-       are cleared to the BOTTOM of the sheet below, not just to the end of the
-       export, so nothing stale can survive underneath the new data.
+    /* --- THE SHEET ENDS EXACTLY WHERE THE EXPORT DOES ---
+       Every row is replaced on every run, so a correction made to a month that
+       has already closed comes through: there is no history kept here that the
+       export does not still carry. Surplus rows are DELETED rather than left
+       blank, and that is deliberate — leaving them costs a January reading a
+       December-sized sheet for eleven months, and no reader can tell an empty
+       row from a row the export stopped sending.
 
-       What the sheet must not do is delete the surplus rows to get there. A row
-       is the full width of the tab, and the sync owns a handful of its columns:
-       deleting rows 30,001 to 50,040 takes every OTHER column with them — a
-       filled-down helper formula, a working column, anything parked below the
-       data. The export shrinking is not a licence to throw away somebody else's
-       column, and the anchors' blank-row guards already handle a sheet that is
-       taller than the data. */
+       DELETING A ROW IS SAFE HERE, AND DELETING A COLUMN'S CONTENT IS NOT.
+       Every formula on these tabs is a single-cell ARRAY formula anchored on
+       the first data row — nothing is filled down, so a surplus row holds no
+       formula of anybody's, only spill, and the anchor re-points at the new
+       height afterwards. Rows below the data are the export's to give and take.
+       The columns are the other way round: see the note above the band. */
     var target = Math.max(firstData, firstData + n - 1);
     var have   = sh.getMaxRows();
-    if (target > have) sh.insertRowsAfter(have, target - have);
+    if (target > have)      sh.insertRowsAfter(have, target - have);
+    else if (target < have) sh.deleteRows(target + 1, have - target);
     var sheetEnd = sh.getMaxRows();
 
     /* --- clear then write, one block per contiguous run of columns --- */
@@ -3388,7 +3400,7 @@ var QLIKSYNC = (function () {
 
 
   /* =====================================================================
-   * 7. WRITE — 'replace' mode  (Slide Builder tabs)
+   * 7. WRITE — 'replace' mode  (Product Segment tabs)
    * =================================================================== */
 
   function writeReplace_(sh, src, spec) {
@@ -3400,18 +3412,18 @@ var QLIKSYNC = (function () {
       while (grid[r].length < cols) grid[r].push('');
     }
 
-    /* THE ONLY MODE THAT OWNS ITS WHOLE TAB. These are the Slide Builder tabs:
+    /* THE ONLY MODE THAT OWNS ITS WHOLE TAB. These are the Product Segment tabs:
        pre-aggregated by QlikView, no formulas and no columns of anybody else's,
        so the tab IS the export and clearing it is the contract. Do not put a
        working column on one of these — 'columns' mode is what keeps a tab's
        other columns; this mode never has. */
     sh.clearContents();
 
-    /* GROW ONLY, for the same reason as 'columns' mode above: a deleted row
-       takes the full width of the tab with it. The clear has already emptied
-       everything below, so surplus rows are blank rather than stale. */
+    /* Exactly as tall as the export — surplus rows go, so nothing stale is
+       left sitting under the new table. */
     var have = sh.getMaxRows();
-    if (rows > have) sh.insertRowsAfter(have, rows - have);
+    if (rows > have)      sh.insertRowsAfter(have, rows - have);
+    else if (rows < have) sh.deleteRows(rows + 1, have - rows);
     if (cols > sh.getMaxColumns()) sh.insertColumnsAfter(sh.getMaxColumns(), cols - sh.getMaxColumns());
     sh.getRange(1, 1, rows, cols).setValues(grid);
 
@@ -3433,7 +3445,7 @@ var QLIKSYNC = (function () {
     var out = [
       { key: 'AGG', id: q.AGG_FILE_ID, scope: 'pricevolume', label: 'Aggregates' },
       { key: 'RMX', id: q.RMX_FILE_ID, scope: 'rmx',         label: 'Ready-Mix' },
-      { key: 'SEG', id: q.SEG_FILE_ID, scope: 'segment',     label: 'Slide Builder' }
+      { key: 'SEG', id: q.SEG_FILE_ID, scope: 'segment',     label: 'Product Segment' }
     ];
     var missing = out.filter(function (x) { return !x.id; }).map(function (x) { return x.key; });
     if (missing.length) {

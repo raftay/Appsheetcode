@@ -2147,13 +2147,13 @@ window.AMR_TUNABLES = {
     rmx:           { left:15,  right:15,  top:15, bottom:15, maxLR:600,  maxTB:300 },
     fuelsurcharge: { left:140, right:140, top:40, bottom:40, maxLR:650,  maxTB:320 },
     rmxfuel:       { left:140, right:140, top:40, bottom:40, maxLR:650,  maxTB:320 },
-    /* The Slide Builder's top band is the one that is NOT constant — it depends
+    /* The Product Segment's top band is the one that is NOT constant — it depends
        on how many KPI cards are showing. `top` is supplied by the page from
        segmentTopBand below, so it is deliberately absent here. */
     segment:       { left:345, right:55,             bottom:15, maxLR:650,  maxTB:320 }
   },
 
-  /* The Slide Builder's top band. With KPI cards the top of the slide is
+  /* The Product Segment's top band. With KPI cards the top of the slide is
      already occupied, so the band stays small; without them it opens up to
      leave room for the comment, and how much room depends on how many tables
      are ticked (1, 2 or 3). Same rule as above — a slider the user has moved is
@@ -2161,7 +2161,7 @@ window.AMR_TUNABLES = {
   segmentTopBand: { withKpi:20, withoutKpi:{ 1:165, 2:110, 3:60 } },
 
   /* One page's bands, as an options object for AmrSlide.mountControls, with
-     whatever the page adds — its onChange, and the Slide Builder's dynamic
+     whatever the page adds — its onChange, and the Product Segment's dynamic
      top — layered on top. A COPY every time: mountControls keeps the object it
      is handed and the sliders write back into it, so handing out the table
      itself would let one page's dragging change another page's defaults. */
@@ -8553,7 +8553,7 @@ var AmrRmxSlide = (function(){
   }
 
   function rmxFitTables(box){
-    // 1) per-table width fit — GROW the font to fill the box (like the Slide Builder),
+    // 1) per-table width fit — GROW the font to fill the box (like Product Segment),
     //    only shrinking if even the smallest step still overflows.
     [].forEach.call(box.querySelectorAll('.rmx-export-block table'), function(t){
       var avail = t.parentElement ? t.parentElement.clientWidth : 0; if(!avail) return;
@@ -14370,7 +14370,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
         and pin the row to that height so AmrSlide's own centring/scaling is a no-op
         (this is what stops the top rows from being cut off when many tables are on). */
   function rmxFitTables(box){
-    // 1) per-table width fit — GROW the font to fill the box (like the Slide Builder),
+    // 1) per-table width fit — GROW the font to fill the box (like Product Segment),
     //    only shrinking if even the smallest step still overflows.
     [].forEach.call(box.querySelectorAll('.rmx-export-block table'), function(t){
       var avail = t.parentElement ? t.parentElement.clientWidth : 0; if(!avail) return;
@@ -15208,7 +15208,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
    *
    * THE DEVICE CACHE IS GATED ON THE READY-MIX VERSION, not this page's own.
    * AmrCache.boot() would ask for the 'segment' data version — the version of the
-   * Slide Builder tabs this page no longer reads. The Ready-Mix generation and
+   * Product Segment tabs this page no longer reads. The Ready-Mix generation and
    * build stamp come back with every payload instead, exactly as the RMX page
    * does it, so a re-sync or a backend change clears this device on its next
    * visit and a stale slide can't survive one.
@@ -15285,7 +15285,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
      alternative is throwing away a page that is already usable because one small
      call did not come back, and the next open asks again. Note what this page
      does NOT have: AmrFresh is never started here, because it would watch
-     getDataVersion('segment') - the Slide Builder tabs this page stopped reading
+     getDataVersion('segment') - the Product Segment tabs this page stopped reading
      - so there is no background poll to fall back on. The button is. */
   function bootLoad(){
     var st=document.getElementById('loadStat');

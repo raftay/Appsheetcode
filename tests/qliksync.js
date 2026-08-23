@@ -20,11 +20,12 @@
  *              a formula sitting in a column the export feeds is cleared, and
  *              the harness makes a write throw to prove the rest survive it.
  *
- *              And it deleted the surplus rows to make the sheet exactly as
- *              tall as the export. A row is the full width of the tab, so that
- *              took every other column with it. Rows grow and never shrink;
- *              the sync's own columns are cleared to the bottom instead, so
- *              nothing stale survives underneath either.
+ *              ROWS ARE THE OTHER WAY ROUND and stay that way: the data ends
+ *              exactly where the export ends, surplus rows deleted. Every
+ *              formula on these tabs is a single-cell ARRAY formula on the
+ *              first data row — nothing is filled down — so a surplus row
+ *              holds no formula of anybody's, and leaving them would have
+ *              January reading a December-sized sheet for eleven months.
  *
  *   THE CHECK  Nothing in the UI starts a sync. One time-driven trigger
  *              compares each export FILE's modified time against the one it
@@ -180,10 +181,10 @@ const RAW_FORMULAS = {
 
 function rawSheet() {
   /* COLUMN M IS SOMEBODY ELSE'S. The export does not feed it and the sync has
-     never heard of it: a note on the first data row and a filled-down formula
-     under it, running past the end of the new export. Deleting the surplus
-     rows to make the sheet as tall as the export took every one of those with
-     it, and that is the report this column exists to reproduce. */
+     never heard of it: a note on the first data row and content under it. The
+     sync must read straight past the whole column — never clear it, never
+     write into it — while still doing what it likes with the ROWS, which
+     belong to the export. */
   const hdr = ['LOOKUP KEY', 'Year', 'Month', 'Plant Type', 'Material Family',
                'Fuel Surchage', 'Volume', 'CY Fuel', 'PY Fuel', 'Net', 'Adj', 'Flag',
                'Notes'];
@@ -321,24 +322,25 @@ console.log('a clean run over both Price & Volume tabs:');
   check('the raw tab took all five export rows', res.done.filter(d => d.tab === RAW_TAB)[0].rows, 5);
 
   const raw = BOOKS._sheets.raw, other = BOOKS._sheets.other;
-  /* GROW ONLY. The export is five rows and the sheet is ten; it stays ten. */
-  check('a shorter export does not shrink the sheet', raw.getMaxRows(), 10);
-  check('...nor the other-revenue tab', other.getMaxRows(), 6);
+  /* The export is five rows and the sheet is ten: the surplus goes. Leaving it
+     would have January reading a December-sized sheet for eleven months, and
+     no reader can tell an empty row from one the export stopped sending. */
+  check('the sheet ends exactly where the export does', raw.getMaxRows(), 7);
+  check('...and so does the other-revenue tab', other.getMaxRows(), 4);
   check('the export data landed', raw.getRange(3, 6, 1, 2).getValues(), [[10, 100]]);
   check('the last export row landed', raw.getRange(7, 6, 1, 2).getValues(), [[50, 500]]);
   check('no stale row survived underneath', raw.getRange(7, 2, 1, 1).getValues(), [[2026]]);
-  /* The rows stay, so the sync's own columns have to be emptied all the way
-     down or the previous export's figures sit under the new ones. */
-  check('the surplus rows are cleared in the columns the sync owns',
-    valuesIn(raw, 8, 2, 3, 6), [['', '', '', '', '', ''],
-                                ['', '', '', '', '', ''],
-                                ['', '', '', '', '', '']]);
 }
 
 /* ======================================================================
  * 1b. A column the export does not feed is not the sync's to touch
+ * ----------------------------------------------------------------------
+ * THE RULE HAS TWO HALVES AND THEY POINT OPPOSITE WAYS. Rows below the data
+ * belong to the export and go when it shrinks — checked above. COLUMNS do not:
+ * the sync writes the ones it paired and reads past everything else, whatever
+ * is in it and whether or not this file has heard of it.
  * ==================================================================== */
-console.log('\na column nobody told the sync about survives a shorter export:');
+console.log('\na column nobody told the sync about is read past, not written:');
 {
   const ctx = load();
   ctx.qlikSyncNow('pricevolume');
@@ -346,16 +348,9 @@ console.log('\na column nobody told the sync about survives a shorter export:');
 
   check('the note on the first data row is still there',
     valuesIn(raw, 3, 13, 1, 1), [['keep-3']]);
-  check('the filled-down formula inside the new data is untouched',
-    formulaRow(raw, 5)[12], '=B5&"-note"');
-  /* Rows 8-10 are past the end of the new export. This is the report: they
-     were deleted, and the column went with them. */
-  check('and so is the one BELOW the end of the export',
-    formulaRow(raw, 10)[12], '=B10&"-note"');
-  check('every row of it is accounted for',
+  check('and its content across the data is untouched',
     raw._grid().slice(3).map(r => r[12].f),
-    ['=B4&"-note"', '=B5&"-note"', '=B6&"-note"',
-     '=B7&"-note"', '=B8&"-note"', '=B9&"-note"', '=B10&"-note"']);
+    ['=B4&"-note"', '=B5&"-note"', '=B6&"-note"', '=B7&"-note"']);
   check('nothing was written into it either',
     OPS.filter(o => o.sheet === RAW_TAB && /M/.test(o.a1) && o.op !== 'clearContents').length, 0);
 }
@@ -399,19 +394,16 @@ console.log('\nthe array formulas are restored at the new height:');
   ctx.qlikSyncNow('pricevolume');
   const got = formulaRow(BOOKS._sheets.raw, 3);
 
-  /* THE FULL HEIGHT OF THE SHEET, not the height of the export. The rows below
-     the data are still there, so the anchors have to cover them; their own
-     blank-row guards are what make that harmless. */
   check('its own rows are re-pointed at the sheet end',
-    got[0], '=ARRAYFORMULA(IF(B3:B10="","",B3:B10&"-"&C3:C10))');
-  check('a plain range too', got[7], '=ARRAYFORMULA(F3:F10*1)');
+    got[0], '=ARRAYFORMULA(IF(B3:B7="","",B3:B7&"-"&C3:C7))');
+  check('a plain range too', got[7], '=ARRAYFORMULA(F3:F7*1)');
   check('a cross-tab range follows the OTHER tab\'s height',
-    got[8], "=ARRAYFORMULA('Combined Data CPI Other Revenue'!C3:C6)");
-  check('two ranges in one formula both move', got[9], '=ARRAYFORMULA(H3:H10-I3:I10)');
-  check('an absolute range moves as well', got[10], '=SUM($G$3:$G$10)');
-  check('and the last of the run is not dropped', got[11], '=ARRAYFORMULA(IF(D3:D10="","",1))');
+    got[8], "=ARRAYFORMULA('Combined Data CPI Other Revenue'!C3:C4)");
+  check('two ranges in one formula both move', got[9], '=ARRAYFORMULA(H3:H7-I3:I7)');
+  check('an absolute range moves as well', got[10], '=SUM($G$3:$G$7)');
+  check('and the last of the run is not dropped', got[11], '=ARRAYFORMULA(IF(D3:D7="","",1))');
   check('the other tab keeps its own anchor',
-    formulaRow(BOOKS._sheets.other, 2)[0], '=ARRAYFORMULA(IF(B2:B6="","",B2:B6))');
+    formulaRow(BOOKS._sheets.other, 2)[0], '=ARRAYFORMULA(IF(B2:B4="","",B2:B4))');
 
   const mapped = formulaRow(BOOKS._sheets.raw, 3).filter((f, i) => f && i >= 1 && i <= 6);
   check('no formula was written into a column the export feeds', mapped, []);
@@ -468,7 +460,7 @@ console.log('\na write that blows up does not take the array formulas with it:')
   check('the tab is reported as failed', res.failed.length >= 1, true);
   const got = formulaRow(BOOKS._sheets.raw, 3);
   check('the lookup-key anchor is still on the sheet',
-    got[0], '=ARRAYFORMULA(IF(B3:B10="","",B3:B10&"-"&C3:C10))');
+    got[0], '=ARRAYFORMULA(IF(B3:B7="","",B3:B7&"-"&C3:C7))');
   check('...and so is the rest of the band',
     got.filter(f => f).length, 6);
   check('the other tab still wrote', BOOKS._sheets.other.getRange(2, 4, 1, 1).getValues(),
@@ -497,7 +489,7 @@ console.log('\nthe check syncs the export that moved, and only that one:');
   const third = ctx.qlikSyncCheck();
   check('the re-exported one is picked up', third.changed, ['Aggregates']);
   check('the other two are left alone', third.unchanged.sort(),
-    ['Ready-Mix', 'Slide Builder']);
+    ['Product Segment', 'Ready-Mix']);
 }
 
 console.log('\nmarking the current exports stops a needless first sync:');
@@ -534,7 +526,7 @@ console.log('\nqlikStamps says what the next check will do:');
   const rows = ctx.qlikStamps();
   check('one row per export', rows.length, 3);
   check('the moved one is flagged',
-    rows.filter(r => r.willSync).map(r => r.source), ['Slide Builder']);
+    rows.filter(r => r.willSync).map(r => r.source), ['Product Segment']);
   check('and it names the page it feeds',
     rows.filter(r => r.willSync)[0].feeds, 'segment');
 }

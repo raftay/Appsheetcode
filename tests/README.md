@@ -820,22 +820,23 @@ at all. It also pins the *result* — every anchor still re-pointed at the new h
 formulas is not the same sync.
 
 **What the sync owns, and what it must not touch.** The paired columns, from the first data
-row down. Everything else on the tab belongs to somebody else, and the fixture now carries a
-column that proves it: a note on the first data row and a filled-down formula under it,
-running past the end of the new export. Two things used to take it.
+row down. Every *other* column belongs to somebody else, and the fixture carries one that
+proves it: a note on the first data row and content under it, in a column the export does not
+feed. The sync must read straight past the whole of it.
 
-The band was **cleared whole** before the write and put back only after the *last* tab of the
-workbook, so it was absent for the entire pass — one throw, or one execution killed at the
-runtime limit, and every anchor was gone with nothing left to restore and nothing for the next
-run to find. That is why one workbook lost its formulas and the other never did on identical
-code: three tens-of-thousands-of-rows Ready-Mix tabs reach the limit far sooner than two
-Aggregates ones. Only a formula in a column the export *feeds* is cleared now, and the harness
-makes a write blow up to prove the rest are still on the sheet afterwards.
+The band used to be **cleared whole** before the write and put back only after the *last* tab
+of the workbook, so it was absent for the entire pass — one throw, or one execution killed at
+the runtime limit, and every anchor was gone with nothing left to restore and nothing for the
+next run to find. That is why one workbook lost its formulas and the other never did on
+identical code: three tens-of-thousands-of-rows Ready-Mix tabs reach the limit far sooner than
+two Aggregates ones. Only a formula in a column the export *feeds* is cleared now, and the
+harness makes a write blow up to prove the rest are still on the sheet afterwards.
 
-And the sheet was made **exactly as tall as the export**, surplus rows deleted. A row is the
-full width of the tab, so that took every other column with it. Rows grow and never shrink;
-the sync's own columns are cleared to the bottom instead, which is checked on the same fixture
-— nothing stale underneath, and nothing of anybody else's gone.
+**Rows point the other way and the harness says so.** The data ends exactly where the export
+ends, surplus rows deleted — checked on the same fixture, alongside the anchors being
+re-pointed at that new height. Leaving them would have January reading a December-sized sheet
+for eleven months, and it is safe because nothing on these tabs is filled down: every formula
+is a single-cell array formula on the first data row.
 
 **When it wrote, and off which export.** The run records both, per page, for the header's
 stamp — because Drive cannot tell a sync from a hand edit, and a run for one page must not
