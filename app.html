@@ -24214,7 +24214,18 @@ AMR.page('deckbuilder', {
     if(!window.confirm('Take "' + sp.title + '" out of the pack?\n\n' +
        'It goes to Deleted slides at the bottom of Arrange and can be put back. ' +
        'This is shared: it deletes it for everybody.')) return;
-    if(!sp.added){
+    if(sp.added){
+      /* AN ADDED ROW'S DELETION LEAVES NOTHING BEHIND. It comes out of `add`
+         when the plan is rebuilt below, so the only thing that could outlive
+         it is a layout somebody picked for it — an override keyed to an id
+         that will not exist a moment from now, which would banner on every
+         Plan and be clearable only by resetting every row's layout at once. */
+      /* Unconditionally, not only when this page believes there is one to
+         clear: the store is shared, so somebody else may have set one since
+         this Plan, and clearing a key that is not there costs one quick call
+         that writes nothing — setLayout's clear path opens no template. */
+      srv('DECK_setLayout', [sp.id, '']).catch(function(){});
+    } else {
       ARR.deleted.push({ id:sp.id, title:sp.title, group:sp.group, inRecipe:true });
     }
     ROWS.splice(i, 1);
@@ -24244,12 +24255,21 @@ AMR.page('deckbuilder', {
     var like = (at >= 0 ? ROWS[at] : null);
     var source = like ? like.spec.source : srcs[0];
     var id = arrNewId(source);
+    /* A LAYOUT IS NOT OPTIONAL - the server refuses an added slide without one,
+       because a row with no layout fails at slide 30 of 43 rather than here.
+       Copy the selected row's; with no rows left to copy from, take the first
+       report layout the template has. */
+    var firstLayout = '';
+    if(TPL){
+      var rep = (TPL.layouts||[]).filter(function(L){ return L.role === 'report'; });
+      firstLayout = rep.length ? rep[0].layoutId : '';
+    }
     var spec = {
       id: id, source: source,
       market: like ? like.spec.market : '',
       refine: '', period: (periodsFor(source)[0] || ''),
-      layout: like ? like.spec.layout : '',
-      recipeLayout: like ? (like.spec.recipeLayout || like.spec.layout) : '',
+      layout: (like ? like.spec.layout : '') || firstLayout,
+      recipeLayout: (like ? (like.spec.recipeLayout || like.spec.layout) : '') || firstLayout,
       layoutOverridden: false, title: 'New slide', subtitle: '',
       group: like ? like.spec.group : 'Other',
       optional: false, on: true, added: true, rowEdited: false, recipeRow: null,
@@ -24257,7 +24277,9 @@ AMR.page('deckbuilder', {
     };
     spec.scopeLadder = ladderFor(spec);
     if(!spec.layout){
-      banner('warn', 'Pick a layout for the new slide in the list below — it has none yet.');
+      banner('bad', 'The template has not loaded, so there is no layout to give a new ' +
+        'slide. Press <b>&#8635; Reload template</b> and add it again.');
+      return;
     }
     ROWS.splice(at + 1, 0, { spec:spec, on:true, status:'pending', png:null, w:0, h:0, err:'' });
     ARR.sel = id;

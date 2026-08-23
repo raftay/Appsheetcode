@@ -944,6 +944,81 @@ for (const mod of [...Object.keys(MODULES), 'Page_DeckBuilder.html']) {
       !(TBL_PROP in PROPS));
   }
 
+  /* ---- AN ADDED SLIDE IS A SLIDE LIKE ANY OTHER -------------------------
+     It takes a layout, it is retried by id, and its layout is overridable
+     from the same dropdown as every other row's. setLayout used to look the
+     id up in DECK_RECIPE alone, so the one row that only exists in the plan
+     was the one row whose layout could not be saved — and, worse, could not
+     be CLEARED either, which is what a deletion has to do or the override
+     outlives the slide as an orphan nobody can reach except by resetting
+     every row at once. */
+  {
+    PROPS = {};
+    ctx.DECK_setPlan({ add: [{ id: 'pv_added1', source: 'pv', market: 'North',
+      period: 'MTD', layout: 'L_COMMENT_IMAGE', group: 'AGG', title: 'New' }] });
+    const o = ctx.DECK_getRecipe();
+    check('layout · an added slide is in the recipe the page is given',
+      o.rows.some(r => r.id === 'pv_added1' && r.added));
+
+    /* CLEARING NEEDS NO TEMPLATE AND NO LOOKUP: there is no name to check. So
+       these are wrapped — a clear that reached readTemplate would throw
+       "Cannot open the template" in this harness, and an uncaught throw kills
+       the run instead of naming the check that found it. */
+    const clear = id => { try { return ctx.DECK_setLayout(id, ''); }
+                          catch (e) { return { error: e.message }; } };
+    const cleared = clear('pv_added1');
+    check('layout · an added slide\'s override can be cleared',
+      cleared.overridden === false && cleared.layout === 'L_COMMENT_IMAGE',
+      JSON.stringify(cleared));
+    check('layout · ...and so can one for a slide that no longer exists at all',
+      clear('deleted_before_you_looked').overridden === false,
+      JSON.stringify(clear('deleted_before_you_looked')) +
+      ' — a deleted added row leaves an override that nothing else can reach');
+
+    let msg = '';
+    try { ctx.DECK_setLayout('never_existed', 'L_FULL_IMAGE'); } catch (e) { msg = e.message; }
+    check('layout · but SETTING one on a slide that does not exist is refused',
+      /not in the recipe/.test(msg), msg || 'it was accepted');
+    check('layout · ...and the message says where it looked',
+      /Arrange stage/.test(msg), msg);
+
+    /* SETTING one needs a template, because that is the one path with a reason
+       to open it: a layout name that does not exist must never reach the store
+       or every later Plan carries the mistake. So this is the only check here
+       that stubs a presentation — the smallest one readTemplate reads. */
+    const shape = (text, x, y, w, h) => ({
+      getText: () => ({ asString: () => text }),
+      getLeft: () => x, getTop: () => y, getWidth: () => w, getHeight: () => h,
+    });
+    const layoutSlide = id => ({
+      getNotesPage: () => ({ getSpeakerNotesShape: () => ({
+        getText: () => ({ asString: () => 'LAYOUT: ' + id, setText() {} }) }) }),
+      getShapes: () => [shape('{{TITLE}}', 40, 30, 640, 40),
+                        shape('{{IMAGE}}', 40, 90, 640, 240),
+                        shape('{{PAGE}}', 660, 380, 40, 15)],
+    });
+    ctx.SlidesApp = { openById: () => ({
+      getName: () => 'Amrize Deck Template', getPageWidth: () => 720, getPageHeight: () => 405,
+      getSlides: () => [layoutSlide('L_COMMENT_IMAGE'), layoutSlide('L_FULL_IMAGE')],
+      saveAndClose() {},
+    }) };
+
+    const set = ctx.DECK_setLayout('pv_added1', 'L_FULL_IMAGE');
+    check('layout · an added slide can be re-pointed like any other row',
+      set.overridden === true && set.layout === 'L_FULL_IMAGE',
+      JSON.stringify(set));
+    check('layout · ...and the recipe the page is given says so',
+      ctx.DECK_getRecipe().rows.filter(r => r.id === 'pv_added1')[0].layoutOverridden === true);
+    check('layout · ...while an unknown layout name still never reaches the store',
+      (() => { try { ctx.DECK_setLayout('pv_added1', 'L_NOT_IN_TEMPLATE'); return false; }
+               catch (e) { return /not a report layout/.test(e.message); } })());
+    check('layout · ...and re-picking the row\'s own default removes the key, not stores it',
+      ctx.DECK_setLayout('pv_added1', 'L_COMMENT_IMAGE').overridden === false &&
+      !PROPS[LAYOUT_PROP]);
+    delete ctx.SlidesApp;
+    PROPS = {};
+  }
+
   PROPS = {};
 }
 

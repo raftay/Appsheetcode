@@ -12025,35 +12025,64 @@ var DECK = (function () {
      the override rather than storing a key that says "the default" - see the
      only-the-differences rule above. Returns the whole map so the caller can
      see the state it just produced instead of assuming it. */
+  /* The row an id names, whether DECK_RECIPE holds it or the Arrange stage
+     added it. An added slide is a slide like any other - it takes a layout,
+     it is retried by id, and its layout is overridable from the same dropdown
+     - so a lookup that only knew about the array would refuse to save one. */
+  function recipeRowById_(recipeId) {
+    for (var i = 0; i < DECK_RECIPE.length; i++) {
+      if (DECK_RECIPE[i].id === recipeId) return DECK_RECIPE[i];
+    }
+    var add = planStore_().add;
+    for (var j = 0; j < add.length; j++) if (add[j].id === recipeId) return add[j];
+    return null;
+  }
+
   function setLayout_(recipeId, layoutId) {
     recipeId = String(recipeId || '');
     layoutId = String(layoutId || '');
     if (!recipeId) fail_('setLayout needs a recipe row id.');
 
-    var row = null;
-    for (var i = 0; i < DECK_RECIPE.length; i++) {
-      if (DECK_RECIPE[i].id === recipeId) { row = DECK_RECIPE[i]; break; }
+    var map = layoutMap_();
+
+    /* CLEARING IS ALWAYS SAFE, and it is checked FIRST because it is the one
+       call that has to work for a slide that no longer exists: deleting an
+       added row takes it out of `add`, and the override it left behind would
+       otherwise be an orphan nobody could clear except by resetting every
+       row's layout at once. Nothing is looked up and the template is not
+       opened - there is no name to check. */
+    if (!layoutId) {
+      var back = recipeRowById_(recipeId);
+      if (recipeId in map) {
+        delete map[recipeId];
+        writeLayoutMap_(map);
+        Logger.log('DECK layout: %s cleared.', recipeId);
+      }
+      return { recipeId: recipeId, layout: (back && back.layout) || '',
+               overridden: false, map: map };
     }
-    if (!row) fail_('No recipe row with id "' + recipeId + '".');
+
+    var row = recipeRowById_(recipeId);
+    if (!row) {
+      fail_('No slide with id "' + recipeId + '". It is not in the recipe, and it is ' +
+        'not one the Arrange stage has added.');
+    }
 
     /* Checked HERE and not in layoutMap_ because this is the one path that
        already has a reason to open the template: a name that does not exist
        must never reach the store, or every later Plan carries the mistake. */
-    if (layoutId) {
-      var tpl = readTemplate(null), ok = false, names = [];
-      for (var j = 0; j < tpl.layouts.length; j++) {
-        if (tpl.layouts[j].role !== 'report') continue;
-        names.push(tpl.layouts[j].layoutId);
-        if (tpl.layouts[j].layoutId === layoutId) ok = true;
-      }
-      if (!ok) {
-        fail_('"' + layoutId + '" is not a report layout in this template. ' +
-          'It has: ' + (names.join(', ') || 'none') + '.');
-      }
+    var tpl = readTemplate(null), ok = false, names = [];
+    for (var j = 0; j < tpl.layouts.length; j++) {
+      if (tpl.layouts[j].role !== 'report') continue;
+      names.push(tpl.layouts[j].layoutId);
+      if (tpl.layouts[j].layoutId === layoutId) ok = true;
+    }
+    if (!ok) {
+      fail_('"' + layoutId + '" is not a report layout in this template. ' +
+        'It has: ' + (names.join(', ') || 'none') + '.');
     }
 
-    var map = layoutMap_();
-    if (!layoutId || layoutId === row.layout) delete map[recipeId];
+    if (layoutId === row.layout) delete map[recipeId];
     else map[recipeId] = layoutId;
 
     writeLayoutMap_(map);

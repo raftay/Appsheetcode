@@ -698,6 +698,33 @@ async function act(fn) { fn(); await settle(120); }
     'an added row\'s deletion removes it from `add`; it is not a `drop`: '
     + JSON.stringify(plan()));
 
+  /* AN ADDED SLIDE IS A SLIDE LIKE ANY OTHER, and its layout is overridable
+     from the same dropdown as every other row's. setLayout used to look the id
+     up in DECK_RECIPE alone, so the one row that exists only in the plan was
+     the one row whose layout could not be saved — and, worse, could not be
+     CLEARED either, which is what a deletion has to do or the override outlives
+     the slide as an orphan that banners on every Plan. */
+  const LAYOUT_PROP = server.DECK_CONFIG.PROP_LAYOUTS;
+  await act(() => click($('dbArrAdd')));
+  const newAt = titles().indexOf('New slide');
+  const newId = plan().add[0].id;
+  const lay = W.document.querySelectorAll('#dbList .db-lay')[newAt];
+  check('an added slide gets the same layout picker as every other row',
+    !!lay && [...lay.options].length > 1,
+    lay ? [...lay.options].map(o => o.value).join(', ') : 'no layout picker on the added row');
+  /* SAVING one is not provable here: DECK_setLayout opens the template, which
+     is the one thing off-platform cannot do — it is documented as the slow one
+     of the three and the only one that can fail. deckstatic.js proves that
+     half against a stubbed presentation. What IS reachable from here is the
+     clearing path, which deliberately opens nothing. */
+  PROPS[LAYOUT_PROP] = JSON.stringify({ [newId]: 'L_FULL_IMAGE' });
+  W.__confirms.length = 0;
+  await act(() => click(rows()[titles().indexOf('New slide')].querySelector('[data-db-arr="del"]')));
+  await settle(200);
+  check('...and deleting it takes that override with it',
+    !PROPS[LAYOUT_PROP] && plan() === null,
+    'layouts=' + PROPS[LAYOUT_PROP] + ' plan=' + JSON.stringify(plan()));
+
   /* ==== THE RAIL ========================================================== */
   section('the rail:');
   check('with nothing arranged it says so',

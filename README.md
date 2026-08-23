@@ -1254,6 +1254,13 @@ still right. Changing a row's source, market, period or refine drops its picture
 *unconditionally* — a different market is different figures, whatever it was rendered with.
 Reordering drops nothing: it changes only where a slide lands, which is `finish`'s job.
 
+**An added slide is a slide like any other.** It takes a layout, it is retried by id, and its
+layout is overridable from the same dropdown as every other row's — so `DECK_setLayout` resolves
+an id against the recipe *and* the plan's `add`. Clearing an override is checked first and opens
+no template, because it is the one call that has to work for a slide that no longer exists:
+deleting an added row takes it out of `add`, and the override it left behind would otherwise be
+an orphan reachable only by resetting every row's layout at once.
+
 **Changing a source is not a relabel.** A different adapter runs, so the market is re-spelled
 through `OVERVIEW.MARKETS` — the same market is `'Southwest'` to Price & Volume and `'HNS_SW'`
 to Ready-Mix, and a market the new source cannot spell blanks the field and forces a re-pick
