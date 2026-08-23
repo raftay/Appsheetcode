@@ -256,6 +256,14 @@ function serverStubs(model) {
     /* Deck Builder */
     DECK_readTemplate: () => model.template,
     DECK_getRecipe:    () => model.recipe,
+    /* The Arrange stage's three writers. This case never opens that stage —
+       it plans and unticks, which is all the LEGACY page can do and therefore
+       all there is to diff — but an unstubbed name is reported as a finding
+       rather than resolving to undefined, so they are declared. */
+    DECK_setPlan:      () => ({ plan: { v:1, order:[], off:[], on:[], drop:[], rows:{}, add:[] } }),
+    DECK_resetPlan:    () => ({ plan: { v:1, order:[], off:[], on:[], drop:[], rows:{}, add:[] } }),
+    DECK_setTables:    () => ({ scope: '', entry: null, map: { v:1, scopes:{} } }),
+    DECK_resetTables:  () => ({ map: { v:1, scopes:{} } }),
     /* TP01 */
     TP_getRecipients:  () => model,
     TP_saveRecipient:  () => ({ ok: true }),
@@ -613,10 +621,35 @@ const PAGES = [
     chrome: {
       /* no guide and no "?" hint on this page — asserting either would fail
          for the right reason on the wrong page */
+      /* The Arrange stage's names are here for the same reason as the rest:
+         this page's whole script was TOP LEVEL before the port, so every one
+         of these would have been on window, and a new one that escapes the
+         registration is the exact regression this list exists to catch. */
       noGlobals: ['ROWS', 'TPL', 'BUSY', 'DECK_MONTH', 'dbPlan', 'dbRenderAll',
                   'dbPublish', 'dbValidate', 'dbLoadTemplate', 'dbToggle',
                   'dbPickKpi', 'dbOpenLb', 'dbCloseLb', 'rowHtml', 'redraw',
-                  'esc', 'srv', 'banner', 'prog', 'setBusy', 'dbPageInit'],
+                  'esc', 'srv', 'banner', 'prog', 'setBusy', 'dbPageInit',
+                  'ARR', 'dbOpenArrange', 'dbArrClose', 'dbArrDraw',
+                  'dbDrawSide', 'dbAddSlide', 'dbArrDelete', 'dbArrRestore',
+                  'dbArrMove', 'dbArrTick', 'dbArrTitle', 'dbArrSetSource',
+                  'dbArrSetField', 'dbArrTables', 'dbArrKpi', 'dbArrResetAll',
+                  'dbSavePlan', 'dbPlanFromRows', 'arrStoreScope',
+                  'arrApplyScopes', 'arrScopeKey', 'arrEffTables',
+                  'arrToggleTable', 'arrMoveTable', 'arrKpiPatch',
+                  'scopeLabel', 'scopeReach', 'ladderFor', 'marketsFor',
+                  'marketKeyOf', 'marketAs', 'periodsFor', 'refinesFor',
+                  'srcOf', 'srcLabel', 'srcList', 'rowById', 'selRow',
+                  'scopeEntry', 'defaultTablesFor', 'arrRowHtml', 'arrNewId',
+                  'dbDrawRail', 'dbDrawCount', 'dbDrawDeleted',
+                  'dbArrDropPicture'],
+      /* AN ELEMENT ID IS A WINDOW PROPERTY. Named access means <div
+         id="dbArrange"> puts dbArrange on window, and from here that is
+         indistinguishable from a function that escaped the registration —
+         which is what this list found on its first run. The names above are
+         therefore all VERBS and every id in the markup is a NOUN, so a hit
+         here can only ever be the leak it is meant to catch. (The page had
+         one such pair already: dbLayoutCount is both, which is why it is not
+         on this list and why it never failed.) */
       modules: ['AMR', 'AmrSlide', 'AmrTick', 'AmrDeckSource', 'AmrKpi',
                 'AmrCache', 'AmrPvSlide', 'AmrSegSlide', 'AmrRmxSlide',
                 'AmrFuelExec', 'AmrProgress', 'AmrBoot', 'AmrFresh'],

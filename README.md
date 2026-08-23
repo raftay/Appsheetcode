@@ -1355,7 +1355,7 @@ elapsed ms; and no `APP_log` may sit inside a per-row loop.
 
 ### Testing
 
-24 Node harnesses in `tests/`. `npm install playwright chart.js jsdom` at the repo root gets
+28 Node harnesses in `tests/`. `npm install playwright chart.js jsdom` at the repo root gets
 everything; Chromium is already at `/opt/pw-browsers`. Start with `tests/README.md` — it says
 what each one claims and, for the comparison harnesses, exactly how much of that claim still
 holds.

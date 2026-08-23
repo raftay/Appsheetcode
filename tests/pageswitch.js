@@ -114,7 +114,20 @@ const STUB = `<script>
     if (name === 'getLogo')         return '';
     if (name === 'getSettingsFor' || name === 'getAllSettings') return [];
     if (name === 'DECK_readTemplate') return { layouts:[], slots:{} };
-    if (name === 'DECK_getRecipe')  return { ok:true, rows:[] };
+    /* The Arrange stage reads all five of these off one answer. An empty
+       recipe is still a real one — the page has to mount and leave the stage
+       disabled rather than throw on a missing key, which is precisely what a
+       switch-away-and-back would turn into a page that never comes up. */
+    if (name === 'DECK_getRecipe')  return { ok:true, rows:[], problems:[],
+      overrides:{}, overrideCount:0, plan:{ v:1, order:[], off:[], on:[],
+      drop:[], rows:{}, add:[] }, tables:{ v:1, scopes:{} }, naturalOrder:[],
+      deleted:[], markets:[], planned:false, scopeCount:0 };
+    if (name === 'DECK_setPlan')     return { plan:{ v:1, order:[], off:[], on:[],
+      drop:[], rows:{}, add:[] } };
+    if (name === 'DECK_resetPlan')   return { plan:{ v:1, order:[], off:[], on:[],
+      drop:[], rows:{}, add:[] } };
+    if (name === 'DECK_setTables')   return { scope:'', entry:null, map:{ v:1, scopes:{} } };
+    if (name === 'DECK_resetTables') return { map:{ v:1, scopes:{} } };
     if (name === 'IR_getSettings')  return { configured:false };
     if (name === 'TP_getRecipients') return { ok:true, rows:[] };
     if (name === 'CUBE_getManifest') return { ok:false, blocks:[] };

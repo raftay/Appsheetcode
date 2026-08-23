@@ -13303,11 +13303,28 @@ function DECK_getRecipe() {
                    group: d ? (d.group || 'Other') : '', inRecipe: !!d });
   }
 
+  /* THE ORDER WITH NOTHING SAVED - the recipe as written, then the added rows.
+     The page needs it to keep rule 1: an arrangement whose order matches this
+     one is not an arrangement, and writing `order` anyway would freeze the
+     recipe the first time anybody pressed a button. It cannot work this out
+     for itself, because what it is given has already had the saved order
+     applied to it. */
+  var natural = [];
+  for (i = 0; i < list.length; i++) natural.push(list[i].recipe.id);
+  natural.sort(function (a, b) {
+    function at(id) {
+      for (var n = 0; n < DECK_RECIPE.length; n++) if (DECK_RECIPE[n].id === id) return n;
+      for (var m = 0; m < plan.add.length; m++) if (plan.add[m].id === id) return DECK_RECIPE.length + m;
+      return DECK_RECIPE.length + plan.add.length;
+    }
+    return at(a) - at(b);
+  });
+
   return { rows: rows, count: rows.length, problems: problems,
            overrides: over, overrideCount: Object.keys(over).length,
            /* the arrangement as stored, so the page can save back exactly what
               it was given plus its own edit rather than reconstructing it */
-           plan: plan, tables: tmap,
+           plan: plan, tables: tmap, naturalOrder: natural,
            planned: !!(plan.order.length || plan.off.length || plan.on.length ||
                        plan.drop.length || plan.add.length ||
                        Object.keys(plan.rows).length),

@@ -716,6 +716,49 @@ The harness counts sheet reads: the same question twice must read the sheet **on
 different month must be its own entry rather than a stale hit. That is also what catches a
 cache key that varies when it should not.
 
+## `deckarrange.js` — the Arrange stage, driven, against the real server
+
+Mounts the Deck Builder under jsdom and drives the fourth stage: reorder a slide, untick one,
+delete one and put it back, retitle, change a source, pick tables for a scope, switch the KPI
+strip off, add a slide, reset. 83 checks.
+
+```bash
+npm install jsdom     # not vendored
+node tests/deckarrange.js
+```
+
+**`google.script.run` is not stubbed here.** `DECK_getRecipe`, `DECK_setPlan`,
+`DECK_setTables` and `DECK_resetTables` are the actual §9 functions, evaluated out of
+`script.gs` into a vm context over a Script Property store that is a plain object — so what is
+under test is the whole round trip rather than the page's half of it. Those four are the ones
+that deliberately make no Slides call, which is what keeps the Plan stage instant and what
+makes this possible at all; the arguments still cross a realm boundary on the way in, exactly
+as they do live, which is the thing that caught `x instanceof Array` in the stores.
+
+**Every check comes back to one rule: nothing stored means the deck is `DECK_RECIPE`.** The
+sharp cases are the ones where something *was* stored and then undone — move a slide and move
+it back, untick and re-tick, delete and Restore. Each has to leave the property **deleted**,
+not holding an order that happens to equal the recipe, because a stored order equal to the
+recipe is a frozen recipe and the next person to edit the array would change nothing and have
+no way to see why. Deleting is the case that is easy to get wrong twice over: it is not
+unticking (the slide leaves the list, and comes back through Deleted slides rather than a
+Script Property edit), and it is not reordering either — so the order is compared against the
+natural order *with the deleted rows taken out*, or every deletion would also write a 42-id
+order and freeze the recipe through a button nobody thought was about order at all.
+
+**Why not a `pageparity` case.** That harness compares this page against the one it was ported
+from, and the page it was ported from has no Arrange stage. There is no second side. What
+`pageparity` still owns is that `#dbList`'s rows are byte-identical, and the last two checks
+here assert the other direction of the same claim: no Arrange control is inside a `#dbList`
+row, and the panel is not inside the list.
+
+Two things it found on its first runs, neither of which a static check could see. **An element
+`id` is a `window` property**, so `<div id="dbArrange">` and `function dbArrange()` are
+indistinguishable from outside — `pageparity`'s `noGlobals` list reported six "leaks" that were
+markup. The functions are verbs now and every id is a noun. And **saving a scope redrew only
+the right-hand panel**, so the five other slides that scope reaches kept the line naming the
+rung they were on before the change.
+
 ## `deckstatic.js` — the CSS the deck can actually see, and the recipe
 
 No browser, no Google, no dependencies. Run it after touching a deck module, a report

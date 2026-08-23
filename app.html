@@ -1714,6 +1714,100 @@ body[data-page="deckbuilder"] .db-banner.bad{background:#FDECEC; border:1px soli
 body[data-page="deckbuilder"] .db-banner.ok{background:#E9F8EF; border:1px solid #A9DFC0; color:#15653A}
 body[data-page="deckbuilder"] .db-banner a{color:inherit; font-weight:800}
 
+/* ---- THE ARRANGE STAGE ------------------------------------------------------
+   Its own panel, above the slide list and never inside it. #dbList's rows are
+   what pageparity.js diffs byte for byte against the page this one was ported
+   from, and the arrangement is a fourth stage rather than a wider row: putting
+   any of it into rowHtml would mean narrowing that comparison a third time for
+   no reader's benefit.
+
+   TWO COLUMNS. The order on the left, because that is the list you scan; what
+   the selected scope shows on the right, because that is the thing you change
+   once and apply to five slides. Below --bp-mid they stack, side first, so the
+   panel you just opened is the one on screen.                               */
+body[data-page="deckbuilder"] .db-arr{background:var(--white); border:1px solid var(--line);
+  border-radius:var(--r); box-shadow:var(--shadow); margin-bottom:14px; overflow:hidden}
+body[data-page="deckbuilder"] .db-arr[hidden]{display:none}
+body[data-page="deckbuilder"] .db-arr-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  padding:10px 14px; background:var(--blue-10); border-bottom:1px solid var(--line)}
+body[data-page="deckbuilder"] .db-arr-head h3{margin:0; font:800 12px Archivo; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--blue-100)}
+body[data-page="deckbuilder"] .db-arr-head .db-spacer{flex:1}
+body[data-page="deckbuilder"] .db-arr-body{display:grid; grid-template-columns:minmax(0,1fr) 356px}
+@media (max-width:980px){ body[data-page="deckbuilder"] .db-arr-body{grid-template-columns:1fr}
+  body[data-page="deckbuilder"] .db-arr-side{order:-1; border-left:0; border-bottom:1px solid var(--line)} }
+body[data-page="deckbuilder"] .db-arr-list{min-width:0; max-height:620px; overflow:auto}
+body[data-page="deckbuilder"] .db-arr-side{border-left:1px solid var(--line); background:#FBFCFE;
+  padding:12px 14px; min-width:0}
+
+/* one arranged slide */
+body[data-page="deckbuilder"] .db-ar{display:grid; grid-template-columns:26px 22px 30px minmax(0,1fr) auto;
+  gap:9px; align-items:start; padding:8px 12px; border-bottom:1px solid #F0F4FA}
+body[data-page="deckbuilder"] .db-ar:last-child{border-bottom:0}
+body[data-page="deckbuilder"] .db-ar.sel{background:#EAF1FB}
+body[data-page="deckbuilder"] .db-ar.off{opacity:.5}
+body[data-page="deckbuilder"] .db-ar-move{display:flex; flex-direction:column; gap:2px}
+body[data-page="deckbuilder"] .db-ar-move button{border:1px solid var(--line); background:#fff; border-radius:4px;
+  width:22px; height:15px; line-height:1; padding:0; font:700 9px Inter; color:var(--blue-80); cursor:pointer}
+body[data-page="deckbuilder"] .db-ar-move button:hover:not(:disabled){background:var(--blue-10)}
+body[data-page="deckbuilder"] .db-ar-move button:disabled{opacity:.3; cursor:default}
+body[data-page="deckbuilder"] .db-ar-num{font:600 11px Inter; color:var(--muted); text-align:right; padding-top:3px}
+body[data-page="deckbuilder"] .db-ar-main{min-width:0}
+body[data-page="deckbuilder"] .db-ar-ttl{width:100%; box-sizing:border-box; border:1px solid transparent;
+  border-radius:6px; background:transparent; padding:3px 5px; font:600 12.5px Inter; color:var(--ink)}
+body[data-page="deckbuilder"] .db-ar-ttl:hover{border-color:var(--line); background:#fff}
+body[data-page="deckbuilder"] .db-ar-ttl:focus{border-color:var(--blue-40); background:#fff; outline:none}
+body[data-page="deckbuilder"] .db-ar-fields{display:flex; flex-wrap:wrap; gap:5px; margin-top:4px}
+body[data-page="deckbuilder"] .db-ar-fields select{border:1px solid var(--line); border-radius:6px; background:#F4F7FC;
+  padding:3px 5px; font:600 10.5px Inter; color:var(--ink); cursor:pointer; max-width:170px}
+body[data-page="deckbuilder"] .db-ar-fields select:hover{border-color:var(--blue-40)}
+body[data-page="deckbuilder"] .db-ar-fields select.edited{border-color:var(--blue-40); background:#EAF1FB}
+body[data-page="deckbuilder"] .db-ar-tag{font:600 10.5px Inter; color:var(--muted); padding:3px 5px}
+body[data-page="deckbuilder"] .db-ar-scope{font:500 10px Inter; color:var(--muted); margin-top:3px}
+body[data-page="deckbuilder"] .db-ar-scope b{color:var(--blue-80); font-weight:700}
+body[data-page="deckbuilder"] .db-ar-side-btns{display:flex; gap:4px; align-items:center}
+body[data-page="deckbuilder"] .db-ar-x{border:1px solid var(--line); background:#fff; border-radius:6px;
+  padding:3px 7px; font:700 11px Inter; color:var(--neg); cursor:pointer}
+body[data-page="deckbuilder"] .db-ar-x:hover{background:#FDECEC; border-color:#F3B7B7}
+body[data-page="deckbuilder"] .db-ar-pick{border:1px solid var(--line); background:#fff; border-radius:6px;
+  padding:3px 7px; font:600 10.5px Inter; color:var(--blue-80); cursor:pointer}
+body[data-page="deckbuilder"] .db-ar-pick:hover{background:var(--blue-10)}
+body[data-page="deckbuilder"] .db-ar.sel .db-ar-pick{background:var(--blue-100); border-color:var(--blue-100); color:#fff}
+
+/* the right-hand panel: scope, then tables, then KPI */
+body[data-page="deckbuilder"] .db-sc-h{font:800 11px Archivo; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--blue-100); margin:0 0 6px}
+body[data-page="deckbuilder"] .db-sc-h.sp{margin-top:16px}
+body[data-page="deckbuilder"] .db-sc{display:flex; flex-direction:column; gap:4px}
+body[data-page="deckbuilder"] .db-sc button{text-align:left; border:1px solid var(--line); background:#fff;
+  border-radius:7px; padding:6px 9px; font:600 11.5px Inter; color:var(--ink); cursor:pointer}
+body[data-page="deckbuilder"] .db-sc button:hover{border-color:var(--blue-40)}
+body[data-page="deckbuilder"] .db-sc button.on{border-color:var(--blue-100); background:var(--blue-10)}
+body[data-page="deckbuilder"] .db-sc .n{float:right; font:600 10.5px Inter; color:var(--muted)}
+body[data-page="deckbuilder"] .db-sc .ans{display:inline-block; margin-left:6px; font:700 8.5px Archivo;
+  letter-spacing:.06em; text-transform:uppercase; color:var(--blue-70)}
+body[data-page="deckbuilder"] .db-tb{display:flex; flex-direction:column; gap:3px}
+body[data-page="deckbuilder"] .db-tb-row{display:grid; grid-template-columns:18px minmax(0,1fr) 44px; gap:7px;
+  align-items:center; padding:4px 6px; border:1px solid transparent; border-radius:6px}
+body[data-page="deckbuilder"] .db-tb-row.on{border-color:var(--line); background:#fff}
+body[data-page="deckbuilder"] .db-tb-row label{font:600 11.5px Inter; color:var(--ink); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; cursor:pointer}
+body[data-page="deckbuilder"] .db-tb-row .db-ar-move{flex-direction:row; justify-content:flex-end}
+body[data-page="deckbuilder"] .db-tb-row .db-ar-move button{height:18px; width:19px}
+body[data-page="deckbuilder"] .db-kpi-line{display:flex; align-items:center; gap:8px; margin-bottom:8px;
+  font:600 11.5px Inter; color:var(--ink)}
+
+/* Deleted slides. Without it a deletion is invisible and permanent from the
+   page, and the only way back is a Script Property edit. */
+body[data-page="deckbuilder"] .db-del{border-top:1px solid var(--line); background:#FFF9F9; padding:9px 14px}
+body[data-page="deckbuilder"] .db-del[hidden]{display:none}
+body[data-page="deckbuilder"] .db-del h4{margin:0 0 6px; font:800 11px Archivo; letter-spacing:.06em;
+  text-transform:uppercase; color:#8A1F1F}
+body[data-page="deckbuilder"] .db-del-row{display:flex; align-items:center; gap:9px; padding:3px 0;
+  font:600 11.5px Inter; color:var(--ink)}
+body[data-page="deckbuilder"] .db-del-row .db-spacer{flex:1}
+body[data-page="deckbuilder"] .db-del-row .gone{font:500 10.5px Inter; color:var(--muted); font-style:italic}
+
 /* ---- §P tp01 ---------------------------------------------------------------
    69 rules and one deletion: this page's private .spinner was §A3's
    .spinner.sm to the pixel bar a 1px margin, and its @keyframes spin was the
@@ -6144,6 +6238,25 @@ var AmrPvSlide = (function(){
   }
 
   AmrDeckSource.register('pv', {
+    /* WHAT THE ARRANGE STAGE MAY OFFER A ROW OF THIS SOURCE. Declared here
+       rather than known by the page, for the same reason kpiPicker is: the
+       page has never known that Manitoba reads the second EBITDA workbook and
+       it must not start knowing that Ready-Mix spells the Southwest 'HNS_SW'.
+
+         markets.spell  which column of OVERVIEW.MARKETS is this page's own
+                        spelling. Changing a row's source re-maps through the
+                        KEY both spellings hang off, which is what makes it a
+                        re-map rather than a rename.
+         markets.rollup a market that is not in OVERVIEW.MARKETS because it is
+                        every market at once. '' to the backend.
+         periods        [] means the slide shows BOTH, and no picker is offered.
+         refine         the Land / Docks split, and the ONE market that has
+                        one. No other market divides below market level, so
+                        for them the finest cut is MTD vs YTD. */
+    label: 'Price & Volume',
+    markets: { spell: 'pv', rollup: 'Central Canada' },
+    periods: ['MTD', 'YTD'],
+    refine: { market: 'Southwest', labels: ['Land', 'Docks'] },
     /* Both the report and the KPI workbook; the KPI half never fails the
        slide, it just leaves the strip off. A Land / Docks row resolves its
        refine value first — that is one extra report for the market, which the
@@ -6218,6 +6331,11 @@ var AmrPvSlide = (function(){
   });
 
   AmrDeckSource.register('cust', {
+    /* NO PERIODS. The Top 10 block is MTD over YTD in one picture, so a period
+       picker on this row would be a control with nothing behind it. */
+    label: 'Top 10 Customers',
+    markets: { spell: 'pv', rollup: 'Central Canada' },
+    periods: [],
     prepare: function(spec){
       return Promise.all([loadCust(spec, 'MTD'), loadCust(spec, 'YTD')]);
     },
@@ -7547,6 +7665,11 @@ var AmrFuelExec = (function(){
   }
 
   AmrDeckSource.register('fsc', {
+    /* NO MARKET. Fuel Recovery is one table of every market at once, so the
+       Arrange stage offers no market picker on these rows - there is nothing
+       to pass. */
+    label: 'Fuel Recovery \u2014 AGG',
+    periods: ['MTD', 'YTD'],
     prepare: loader('fsc', 'getFscData', 'AGG Fuel Recovery'),
     content: contentFor('fsc', 'agg', 'AGG Fuel Recovery'),
     /* the page's own fitter, on the page's own frame */
@@ -7555,6 +7678,8 @@ var AmrFuelExec = (function(){
   });
 
   AmrDeckSource.register('rfsc', {
+    label: 'Fuel Recovery \u2014 RMX',
+    periods: ['MTD', 'YTD'],
     prepare: loader('rfsc', 'getRmxFuelData', 'RMX Fuel Recovery'),
     content: contentFor('rfsc', 'rmx', 'RMX Fuel Recovery'),
     /* the page's own fitter, on the page's own frame */
@@ -8292,6 +8417,10 @@ var AmrSegSlide = (function(){
   }
 
   AmrDeckSource.register('seg', {
+    /* The Ready-Mix spelling: this page's Southwest is 'HNS_SW'. */
+    label: 'Product Segment',
+    markets: { spell: 'rmx' },
+    periods: ['MTD', 'YTD'],
     prepare: function(spec){ return Promise.all([loadSeg(spec), loadKpi()]); },
     /* Just the KPI workbook, so the Region dropdown is answerable at Plan
        time. The segment tables themselves are per row and stay in prepare(). */
@@ -8892,6 +9021,9 @@ var AmrRmxSlide = (function(){
   }
 
   AmrDeckSource.register('rmx', {
+    label: 'Ready-Mix P&V',
+    markets: { spell: 'rmx' },
+    periods: ['MTD', 'YTD'],
     prepare: function(spec){ return load(spec); },
     content: function(spec){
       var k = key(spec), res = KEYS[k];
@@ -22368,6 +22500,14 @@ AMR.page('overview', {
     </div>
 
     <div class="db-panel">
+      <h3>Arrangement</h3>
+      <p class="db-note">Slide <b>order</b>, what each slide <b>shows</b>, and what is
+        in the pack. Saved for <b>everybody</b> &mdash; it is the deck&rsquo;s setting, not
+        this browser&rsquo;s.</p>
+      <div id="dbArrRail" class="db-note" style="margin-top:6px">&mdash;</div>
+    </div>
+
+    <div class="db-panel">
       <h3>Content sources</h3>
       <div id="dbSources" class="db-note">&mdash;</div>
     </div>
@@ -22382,13 +22522,36 @@ AMR.page('overview', {
         <button class="dbbtn" id="dbBtnPlan">Plan</button></div>
       <span class="db-arrow">&rarr;</span>
       <div class="db-stage" id="dbStage2"><span class="db-step">2</span>
+        <button class="dbbtn" id="dbBtnArrange" disabled
+          title="Slide order, what each slide shows, and what is in the pack">Arrange</button></div>
+      <span class="db-arrow">&rarr;</span>
+      <div class="db-stage" id="dbStage3"><span class="db-step">3</span>
         <button class="dbbtn" id="dbBtnRender" disabled
           title="Re-reads the source sheets, then photographs each content block">Render</button></div>
       <span class="db-arrow">&rarr;</span>
-      <div class="db-stage" id="dbStage3"><span class="db-step">3</span>
+      <div class="db-stage" id="dbStage4"><span class="db-step">4</span>
         <button class="dbbtn primary" id="dbBtnPublish" disabled>Publish to Slides</button></div>
       <div class="db-spacer"></div>
       <div class="db-prog" id="dbProg"></div>
+    </div>
+
+    <!-- THE ARRANGE STAGE. Its own panel, above the list and never inside a
+         row: #dbList's markup is what pageparity.js diffs byte for byte
+         against the page this was ported from. -->
+    <div class="db-arr" id="dbArrange" hidden>
+      <div class="db-arr-head">
+        <h3>Arrange</h3>
+        <span class="db-note" id="dbArrCount" style="margin:0"></span>
+        <div class="db-spacer"></div>
+        <button class="dbbtn" id="dbArrAdd">+ Add slide</button>
+        <button class="dbbtn" id="dbArrReset">&#8630; Reset arrangement</button>
+        <button class="dbbtn" id="dbArrDone">Done</button>
+      </div>
+      <div class="db-arr-body">
+        <div class="db-arr-list" id="dbArrList"></div>
+        <div class="db-arr-side" id="dbArrSide"></div>
+      </div>
+      <div class="db-del" id="dbArrDeleted" hidden></div>
     </div>
 
     <div class="db-list" id="dbList">
@@ -22552,6 +22715,7 @@ AMR.page('deckbuilder', {
   function setBusy(b){
     BUSY = b;
     document.getElementById('dbBtnPlan').disabled    = b;
+    document.getElementById('dbBtnArrange').disabled = b || !ROWS.length;
     document.getElementById('dbBtnRender').disabled  = b || !ROWS.length;
     document.getElementById('dbBtnPublish').disabled = b || !countReady();
     document.getElementById('dbReloadTpl').disabled  = b;
@@ -22803,9 +22967,21 @@ AMR.page('deckbuilder', {
     srv('DECK_getRecipe')
       .then(function(rec){
         ROWS = (rec.rows||[]).map(function(r){
-          return { spec:r, on:!r.optional, status:'pending', png:null,
-                   w:0, h:0, err:'' };
+          /* `on` is what THIS MONTH'S PACK does — the recipe's `optional`
+             unless somebody has ticked or unticked it in Arrange. A recipe
+             that predates the arrangement store answers with `optional`
+             alone, which is exactly what this used to read. */
+          return { spec:r, on:(r.on === undefined ? !r.optional : !!r.on),
+                   status:'pending', png:null, w:0, h:0, err:'' };
         });
+        /* the arrangement as stored, so a save writes back what it was given
+           plus this session's edit rather than reconstructing it */
+        ARR.plan    = rec.plan || null;
+        ARR.tables  = rec.tables || { v:1, scopes:{} };
+        ARR.deleted = (rec.deleted || []).slice();
+        ARR.markets = rec.markets || [];
+        ARR.natural = rec.naturalOrder || ROWS.map(function(r){ return r.spec.id; });
+        if(ARR.sel && !rowById(ARR.sel)) ARR.sel = '';
         (rec.problems||[]).forEach(function(p){
           banner('bad', '<b>Recipe:</b> '+esc(p));
         });
@@ -22834,6 +23010,8 @@ AMR.page('deckbuilder', {
 
         prog(ROWS.length + ' slides planned');
         redraw();
+        dbDrawRail();
+        if(ARR.open) dbArrDraw();
         setBusy(false);
         updateStages();
 
@@ -23315,6 +23493,767 @@ AMR.page('deckbuilder', {
       });
   }
 
+  /* =========================================================================
+   * STAGE 2 — ARRANGE
+   * -------------------------------------------------------------------------
+   * Slide ORDER, what each slide SHOWS, and what is in the pack — all of it
+   * from the page, all of it saved SHARED, and none of it freezing the recipe.
+   *
+   * WHY IT IS A FOURTH STAGE AND NOT A WIDER ROW. #dbList's markup is what
+   * pageparity.js diffs byte for byte against the page this one was ported
+   * from. That comparison has already been narrowed once, for the layout cell,
+   * and README §10's rule is to narrow a claim only as far as it has to go.
+   * Nothing below writes into rowHtml.
+   *
+   * THE TWO RULES THE SERVER'S STORE KEEPS, and what they cost here:
+   *   1. Nothing stored = the recipe. So dbPlanFromRows() writes DIFFERENCES:
+   *      an order equal to naturalOrder is no order, a tick equal to the
+   *      recipe's `optional` is no entry, a field equal to recipeRow is not in
+   *      `rows`. Writing what is on screen instead would freeze the recipe the
+   *      first time anybody pressed a button.
+   *   2. A recipe row added later is inserted beside its predecessor. That is
+   *      the server's job; this only has to not fight it, which is what rule 1
+   *      buys.
+   * ======================================================================= */
+
+  var ARR = { open:false, sel:'', scope:'', plan:null, deleted:[], markets:[], natural:[] };
+
+  /* Plain words for a scope key. 'pv|Southwest|Docks' is not something to put
+     in front of anybody, and the whole point of the selector is that you can
+     see whether you are about to change five slides or one. */
+  function scopeLabel(key, row){
+    if(key.indexOf('row:') === 0) return 'This slide only';
+    var bits = key.split('|');
+    var src = AmrDeckSource.get(bits[0]);
+    var name = (src && src.label) || bits[0];
+    if(bits.length === 1) return 'All ' + name + ' slides';
+    if(bits.length === 2) return bits[1] + ' only';
+    return bits[1] + ' · ' + bits[2] + ' only';
+  }
+
+  /* HOW MANY SLIDES A CHANGE AT THIS RUNG WOULD MOVE. A row is reached only
+     if nothing MORE SPECIFIC is already answering for it — otherwise "All
+     Price & Volume slides" would claim 20 while 4 of them have a market
+     setting that outranks it. */
+  function scopeReach(key, field){
+    var n = 0;
+    ROWS.forEach(function(r){
+      var L = r.spec.scopeLadder || [];
+      var at = L.indexOf(key);
+      if(at < 0) return;
+      var cur = r.spec[field] ? L.indexOf(r.spec[field]) : L.length;
+      if(cur >= at) n++;
+    });
+    return n;
+  }
+
+  function rowById(id){
+    for(var i = 0; i < ROWS.length; i++) if(ROWS[i].spec.id === id) return ROWS[i];
+    return null;
+  }
+  function selRow(){ return rowById(ARR.sel) || ROWS[0] || null; }
+
+  /* ---- what a source can be asked for ------------------------------------
+     Every one of these is DECLARED BY THE ADAPTER, so this stays generic: the
+     page has never known that Manitoba is on the second EBITDA workbook and it
+     must not start knowing that Ready-Mix spells the Southwest 'HNS_SW'. */
+  function srcOf(id){ return (window.AmrDeckSource && AmrDeckSource.get(id)) || null; }
+  function srcLabel(id){ var s = srcOf(id); return (s && s.label) || id; }
+  function srcList(){ return window.AmrDeckSource ? AmrDeckSource.list() : []; }
+
+  /* The market list a source can be given, in ITS OWN SPELLING. OVERVIEW.MARKETS
+     holds one market against both spellings, which is what makes changing a
+     row's source a re-map rather than a rename. A market the new source has no
+     spelling for is not offered — see dbArrSetSource. */
+  function marketsFor(source){
+    var d = srcOf(source), m = d && d.markets;
+    if(!m || !m.spell) return [];
+    var out = [];
+    if(m.rollup) out.push({ value:m.rollup, label:m.rollup });
+    (ARR.markets || []).forEach(function(row){
+      var v = row[m.spell];
+      if(v) out.push({ value:v, label:row.label + (v === row.label ? '' : ' · ' + v) });
+    });
+    return out;
+  }
+  /* The key one spelling belongs to, so the other spelling can be found. */
+  function marketKeyOf(source, value){
+    var d = srcOf(source), m = d && d.markets;
+    if(!m || !m.spell || !value) return '';
+    if(m.rollup && value === m.rollup) return '__rollup__';
+    var hit = '';
+    (ARR.markets || []).forEach(function(row){ if(row[m.spell] === value) hit = row.key; });
+    return hit;
+  }
+  function marketAs(source, key){
+    var d = srcOf(source), m = d && d.markets;
+    if(!m || !m.spell || !key) return '';
+    if(key === '__rollup__') return m.rollup || '';
+    var out = '';
+    (ARR.markets || []).forEach(function(row){ if(row.key === key) out = row[m.spell] || ''; });
+    return out;
+  }
+  function periodsFor(source){ var d = srcOf(source); return (d && d.periods) || []; }
+  /* Land / Docks, and only where they exist: they are two values of the
+     Southwest MB SUBMARKET column, not markets, and no other market splits
+     below market level. The adapter says which market has them. */
+  function refinesFor(source, market){
+    var d = srcOf(source), r = d && d.refine;
+    if(!r || !r.market || r.market !== market) return [];
+    return r.labels || [];
+  }
+
+  /* ---- opening and closing ---------------------------------------------- */
+  function dbOpenArrange(){
+    if(!ROWS.length){ banner('warn', 'Press <b>Plan</b> first.'); return; }
+    ARR.open = true;
+    if(!ARR.sel && ROWS.length) ARR.sel = ROWS[0].spec.id;
+    ARR.scope = '';
+    document.getElementById('dbArrange').hidden = false;
+    dbArrDraw();
+    updateStages();
+  }
+  function dbArrClose(){
+    ARR.open = false;
+    document.getElementById('dbArrange').hidden = true;
+    updateStages();
+  }
+
+  /* ---- the left column: the arrangement ---------------------------------- */
+  function dbArrDraw(){
+    if(!ARR.open) return;
+    var host = document.getElementById('dbArrList'), html = '', group = '';
+    ROWS.forEach(function(r, i){
+      if(r.spec.group !== group){
+        group = r.spec.group;
+        html += '<div class="db-group">' + esc(group) + '</div>';
+      }
+      html += arrRowHtml(r, i);
+    });
+    host.innerHTML = html || '<div class="db-note" style="padding:20px">No slides.</div>';
+    dbDrawSide();
+    dbDrawDeleted();
+    dbDrawCount();
+  }
+
+  function arrRowHtml(r, i){
+    var sp = r.spec, sel = (sp.id === ARR.sel);
+    var srcs = srcList();
+    if(srcs.indexOf(sp.source) === -1) srcs = [sp.source].concat(srcs);
+
+    function pick(kind, cur, opts, edited, title){
+      return '<select class="' + (edited ? 'edited' : '') + '" data-db-arr="' + kind +
+        '" data-i="' + i + '" title="' + esc(title) + '">' +
+        opts.map(function(o){
+          return '<option value="' + esc(o.value) + '"' + (o.value === cur ? ' selected' : '') +
+            '>' + esc(o.label) + '</option>';
+        }).join('') + '</select>';
+    }
+    var rec = sp.recipeRow || {};
+    var diff = function(f){ return sp.recipeRow ? (sp[f] || '') !== (rec[f] || '') : false; };
+
+    var fields = pick('source', sp.source,
+      srcs.map(function(x){ return { value:x, label:srcLabel(x) }; }),
+      diff('source'),
+      'Which page produces this slide’s content. Changing it changes the slide '
+      + 'entirely — the market is re-spelled for the new page, and the picture is dropped.');
+
+    var mk = marketsFor(sp.source);
+    if(mk.length){
+      if(sp.market && !mk.some(function(o){ return o.value === sp.market; })){
+        mk = [{ value:sp.market, label:sp.market + ' — not one of this page’s markets' }].concat(mk);
+      }
+      fields += pick('market', sp.market, [{ value:'', label:'— pick a market —' }].concat(mk),
+        diff('market'), 'Spelled the way this page spells it.');
+    }
+
+    var rf = refinesFor(sp.source, sp.market);
+    if(rf.length){
+      fields += pick('refine', sp.refine,
+        [{ value:'', label:'Whole market' }].concat(rf.map(function(x){ return { value:x, label:x }; })),
+        diff('refine'),
+        'Land and Docks are two values of this market’s MB SUBMARKET column, not markets.');
+    }
+
+    var pd = periodsFor(sp.source);
+    if(pd.length){
+      fields += pick('period', sp.period,
+        [{ value:'', label:'Both periods' }].concat(pd.map(function(x){ return { value:x, label:x }; })),
+        diff('period'), 'MTD is the month on its own; YTD is January through it.');
+    } else {
+      fields += '<span class="db-ar-tag">both periods</span>';
+    }
+    if(sp.added) fields += '<span class="db-ar-tag">added here</span>';
+
+    var scope = '';
+    if(sp.tablesScope || sp.kpiScope){
+      var bits = [];
+      if(sp.tablesScope) bits.push('tables from <b>' + esc(scopeLabel(sp.tablesScope, r)) + '</b>');
+      if(sp.kpiScope)    bits.push('KPI from <b>' + esc(scopeLabel(sp.kpiScope, r)) + '</b>');
+      scope = '<div class="db-ar-scope">' + bits.join(' · ') + '</div>';
+    }
+
+    return '<div class="db-ar' + (sel ? ' sel' : '') + (r.on ? '' : ' off') + '">' +
+      '<div class="db-ar-move">' +
+        '<button data-db-arr="up" data-i="' + i + '"' + (i === 0 ? ' disabled' : '') +
+          ' title="Move up">&#9650;</button>' +
+        '<button data-db-arr="down" data-i="' + i + '"' + (i === ROWS.length - 1 ? ' disabled' : '') +
+          ' title="Move down">&#9660;</button>' +
+      '</div>' +
+      '<input type="checkbox"' + (r.on ? ' checked' : '') + ' data-db-arr="tick" data-i="' + i +
+        '" title="In this month’s pack by default. Unticking leaves the slide here, greyed.">' +
+      '<div class="db-ar-num">' + (i + 1) + '</div>' +
+      '<div class="db-ar-main">' +
+        '<input class="db-ar-ttl" value="' + esc(r.spec.title) + '" data-db-arr="title" data-i="' + i +
+          '" title="The real, editable Slides heading. Not baked into the picture.">' +
+        '<div class="db-ar-fields">' + fields + '</div>' + scope +
+      '</div>' +
+      '<div class="db-ar-side-btns">' +
+        '<button class="db-ar-pick" data-db-arr="sel" data-i="' + i + '">Tables</button>' +
+        '<button class="db-ar-x" data-db-arr="del" data-i="' + i +
+          '" title="Take this slide out of the pack. It goes to Deleted slides and can be put back.">' +
+          '&times;</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  /* ---- the right column: tables and KPI for the chosen scope -------------- */
+  function dbDrawSide(){
+    var host = document.getElementById('dbArrSide'), r = selRow();
+    if(!r){ host.innerHTML = ''; return; }
+    var sp = r.spec, src = srcOf(sp.source);
+    var ladder = sp.scopeLadder || [];
+    var key = (ARR.scope && ladder.indexOf(ARR.scope) !== -1) ? ARR.scope
+            : (sp.tablesScope || ladder[ladder.length - 1] || '');
+
+    var html = '<h3 class="db-sc-h">' + esc(sp.title) + '</h3>' +
+      '<div class="db-sc">' + ladder.map(function(k){
+        var ans = [];
+        if(k === sp.tablesScope) ans.push('tables');
+        if(k === sp.kpiScope) ans.push('KPI');
+        var n = scopeReach(k, 'tablesScope');
+        return '<button class="' + (k === key ? 'on' : '') + '" data-db-scope="' + esc(k) + '">' +
+          '<span class="n">' + n + ' slide' + (n === 1 ? '' : 's') + '</span>' +
+          esc(scopeLabel(k, r)) +
+          (ans.length ? '<span class="ans">answering: ' + ans.join(' + ') + '</span>' : '') +
+          '</button>';
+      }).join('') + '</div>';
+
+    if(!src){
+      host.innerHTML = html + '<p class="db-note">No content source is registered for <b>' +
+        esc(sp.source) + '</b>, so there is nothing to choose from yet.</p>';
+      return;
+    }
+
+    /* ---- tables ---- */
+    html += '<h3 class="db-sc-h sp">Tables</h3>';
+    if(!src.tables){
+      html += '<p class="db-note">This page’s slide has fixed content — there are no ' +
+        'tables to choose.</p>';
+    } else {
+      var stored = (ARR.plan && scopeEntry(key) && scopeEntry(key).tables) || null;
+      var chosen = stored ? stored.slice() : null;
+      var eff = chosen || defaultTablesFor(src, sp);
+      var cat = src.tables.catalogue || [];
+      var order = eff.slice();
+      cat.forEach(function(t){ if(order.indexOf(t.key) === -1) order.push(t.key); });
+
+      html += '<div class="db-tb">' + order.map(function(k2, n){
+        var def = cat.filter(function(t){ return t.key === k2; })[0];
+        var on = eff.indexOf(k2) !== -1;
+        var at = eff.indexOf(k2);
+        return '<div class="db-tb-row' + (on ? ' on' : '') + '">' +
+          '<input type="checkbox"' + (on ? ' checked' : '') + ' data-db-tb="' + esc(k2) + '">' +
+          '<label>' + esc(def ? def.label : k2) +
+            (def ? '' : ' — not one this page offers') + '</label>' +
+          '<span class="db-ar-move">' +
+            '<button data-db-tbmove="up" data-k="' + esc(k2) + '"' +
+              (on && at > 0 ? '' : ' disabled') + '>&#9650;</button>' +
+            '<button data-db-tbmove="down" data-k="' + esc(k2) + '"' +
+              (on && at > -1 && at < eff.length - 1 ? '' : ' disabled') + '>&#9660;</button>' +
+          '</span></div>';
+      }).join('') + '</div>';
+
+      html += '<p class="db-note">' + (chosen
+        ? 'Chosen here. <a href="#" data-db-tbreset="1">Back to this page’s own tables</a>.'
+        : 'This page’s own tables. Ticking one saves a choice for <b>' +
+          esc(scopeLabel(key, r)) + '</b>.') + '</p>';
+
+      /* A FIVE-TABLE STACK IN A HALF-WIDTH SLOT is the shape behind the 0.52
+         scale the fitter's own header describes. Soft, because it is a
+         judgement about a readable slide and not a rule. */
+      if(eff.length > 4){
+        html += '<p class="db-note" style="color:#7A5200"><b>' + eff.length + ' tables.</b> ' +
+          'Past four they are scaled down hard to fit the image slot — check the ' +
+          'preview before you publish.</p>';
+      }
+      if(src.tables.min && eff.length < src.tables.min){
+        html += '<p class="db-note" style="color:#8A1F1F"><b>At least ' + src.tables.min +
+          ' needed.</b> The QlikView card reads a grand total off a table, and with none ' +
+          'it publishes a picture saying “Load market data”.</p>';
+      }
+    }
+
+    /* ---- KPI ---- */
+    html += '<h3 class="db-sc-h sp">KPI strip</h3>';
+    if(!src.kpiToggle){
+      html += '<p class="db-note">This page’s slide carries no KPI strip, so there is ' +
+        'nothing to configure.</p>';
+    } else {
+      var ke = (scopeEntry(key) && scopeEntry(key).kpi) || null;
+      var kon = !ke || ke.on !== false;
+      html += '<div class="db-kpi-line"><input type="checkbox"' + (kon ? ' checked' : '') +
+        ' data-db-kpion="1"> Show the KPI strip on these slides</div>';
+      if(src.kpiPicker){
+        var sheets = [];
+        try { sheets = src.kpiPicker.sheets(sp) || []; } catch(e){ sheets = []; }
+        if(!sheets.length){
+          html += '<p class="db-note">The EBITDA workbook this market reads has not been ' +
+            'uploaded yet, so there is no region to choose.</p>';
+        } else {
+          var cur = (ke && ke.sheet) || '';
+          html += '<label class="db-lbl">Region — shared</label>' +
+            '<select class="db-in" data-db-kpisheet="1">' +
+            '<option value="">— each person’s own choice —</option>' +
+            sheets.map(function(x){
+              return '<option value="' + esc(x) + '"' + (x === cur ? ' selected' : '') + '>' +
+                esc(x) + '</option>';
+            }).join('') + '</select>' +
+            '<p class="db-note">Left unset, each device uses whatever the Price &amp; Volume ' +
+            'page remembers for this market — which means a colleague building from your ' +
+            'arrangement can get different numbers. Choosing one here settles it for ' +
+            '<b>everybody</b>.</p>';
+        }
+      }
+    }
+    host.innerHTML = html;
+  }
+
+  function scopeEntry(key){
+    var t = ARR.tables || {};
+    return (t.scopes && t.scopes[key]) || null;
+  }
+  function defaultTablesFor(src, spec){
+    if(!src.tables || typeof src.tables.fallback !== 'function') return [];
+    try { return src.tables.fallback(spec) || []; } catch(e){ return []; }
+  }
+
+  /* ---- Deleted slides ----------------------------------------------------
+     A drop is invisible and permanent from the page without this, and the only
+     way back would be a Script Property edit. */
+  function dbDrawDeleted(){
+    var host = document.getElementById('dbArrDeleted');
+    if(!ARR.deleted.length){ host.hidden = true; host.innerHTML = ''; return; }
+    host.hidden = false;
+    host.innerHTML = '<h4>Deleted slides</h4>' + ARR.deleted.map(function(d, i){
+      return '<div class="db-del-row"><span>' + esc(d.title || d.id) + '</span>' +
+        (d.inRecipe ? '' : '<span class="gone">no longer in the recipe</span>') +
+        '<span class="db-spacer"></span>' +
+        '<button class="db-ar-pick" data-db-restore="' + i + '">' +
+        (d.inRecipe ? 'Restore' : 'Forget it') + '</button></div>';
+    }).join('');
+  }
+
+  function dbDrawCount(){
+    var el = document.getElementById('dbArrCount');
+    if(el) el.textContent = ROWS.length + ' slides · ' +
+      ROWS.filter(function(r){ return r.on; }).length + ' in the pack' +
+      (ARR.deleted.length ? ' · ' + ARR.deleted.length + ' deleted' : '');
+  }
+
+  /* In the rail beside the layout count, so a change made months ago is
+     noticeable without opening the stage. */
+  function dbDrawRail(){
+    var el = document.getElementById('dbArrRail');
+    if(!el) return;
+    if(!ROWS.length){ el.innerHTML = '&mdash;'; return; }
+    var bits = [];
+    var ids = ROWS.map(function(r){ return r.spec.id; });
+    var reordered = ARR.natural.length && ids.join(',') !== arrNaturalNow(ids).join(',');
+    if(reordered) bits.push('the order has been changed here');
+    var edited = ROWS.filter(function(r){ return r.spec.rowEdited; }).length;
+    if(edited) bits.push('<b>' + edited + '</b> slide' + (edited === 1 ? '' : 's') + ' edited');
+    var added = ROWS.filter(function(r){ return r.spec.added; }).length;
+    if(added) bits.push('<b>' + added + '</b> added');
+    if(ARR.deleted.length) bits.push('<b>' + ARR.deleted.length + '</b> deleted');
+    var scopes = Object.keys((ARR.tables && ARR.tables.scopes) || {}).length;
+    if(scopes) bits.push('<b>' + scopes + '</b> table setting' + (scopes === 1 ? '' : 's'));
+    el.innerHTML = bits.length
+      ? bits.join(', ').replace(/^./, function(c){ return c.toUpperCase(); }) + '.'
+      : 'The deck is exactly what <b>Deck_Recipe.gs</b> says.';
+  }
+
+  /* =========================================================================
+   * SAVING — differences only, optimistic on screen, checked on the server
+   * ======================================================================= */
+
+  /* The arrangement as a DIFFERENCE from the recipe. Everything here is about
+     rule 1: an order equal to naturalOrder is no order at all, a tick equal to
+     the recipe's `optional` is no entry, a field equal to recipeRow is not an
+     edit. Writing what is on screen instead would copy all 43 rows into the
+     store the first time anybody pressed a button, and the next person to
+     change the recipe in code would change nothing and have no way to see why. */
+  /* WHAT THE ORDER WOULD BE WITH NOTHING SAVED, for the deck as it stands.
+     naturalOrder is the recipe as written plus the added rows, and it is what
+     the server hands back — but it names every row, and this deck may have had
+     one deleted. DELETING IS NOT REORDERING: the rest keep their relative
+     places, so the comparison has to be against natural with the deleted rows
+     taken out, or every deletion would also write a 42-id order and the recipe
+     would be frozen by a button nobody thought was about order at all. A row
+     added in this session and not yet seen by the server appends, which is
+     where naturalOrder puts an added row. */
+  function arrNaturalNow(ids){
+    var live = {}, out = [];
+    ids.forEach(function(id){ live[id] = 1; });
+    ARR.natural.forEach(function(id){ if(live[id]){ out.push(id); delete live[id]; } });
+    ids.forEach(function(id){ if(live[id]) out.push(id); });
+    return out;
+  }
+
+  function dbPlanFromRows(){
+    var ids = ROWS.map(function(r){ return r.spec.id; });
+    var plan = { order: [], off: [], on: [], drop: [], rows: {}, add: [] };
+
+    if(ARR.natural.length && ids.join(',') !== arrNaturalNow(ids).join(',')) plan.order = ids;
+
+    ROWS.forEach(function(r){
+      var sp = r.spec, def = !sp.optional;
+      if(r.on !== def) (r.on ? plan.on : plan.off).push(sp.id);
+
+      if(sp.added){
+        plan.add.push({ id:sp.id, source:sp.source, market:sp.market, refine:sp.refine,
+                        period:sp.period, layout:sp.recipeLayout || sp.layout,
+                        group:sp.group, title:sp.title });
+        return;
+      }
+      var rec = sp.recipeRow || {}, edit = null;
+      ['source','market','refine','period','title','group'].forEach(function(f){
+        if((sp[f] || '') !== (rec[f] || '')) (edit = edit || {})[f] = sp[f] || '';
+      });
+      if(edit) plan.rows[sp.id] = edit;
+    });
+
+    ARR.deleted.forEach(function(d){ if(d.inRecipe) plan.drop.push(d.id); });
+    return plan;
+  }
+
+  /* One call. Every part of the arrangement is coupled — deleting a row has to
+     come out of `order` and out of `add` in the same write — so a field at a
+     time would leave an order naming a slide that no longer exists. */
+  function dbSavePlan(what){
+    var plan = dbPlanFromRows();
+    ARR.plan = plan;
+    dbDrawRail();
+    prog('Saving the arrangement…');
+    return srv('DECK_setPlan', [plan])
+      .then(function(){ prog(what || 'Arrangement saved — for everybody'); })
+      .catch(function(e){
+        prog('');
+        banner('bad', '<b>Could not save the arrangement:</b> ' +
+          esc(e && e.message ? e.message : String(e)) +
+          ' Press <b>Plan</b> to go back to what is stored.');
+      });
+  }
+
+  /* ---- the edits ---------------------------------------------------------- */
+  function dbArrMove(i, by){
+    var j = i + by;
+    if(j < 0 || j >= ROWS.length) return;
+    var t = ROWS[i]; ROWS[i] = ROWS[j]; ROWS[j] = t;
+    ARR.sel = ROWS[j].spec.id;
+    /* REORDERING DROPS NO PICTURE. It changes only where a slide lands, and
+       that is finish()'s job now — DECK_finish takes the order and moves the
+       built slides into place before it numbers them. */
+    dbArrDraw(); redraw();
+    dbSavePlan('Moved · ' + ROWS[j].spec.title);
+  }
+
+  function dbArrTick(i, on){
+    ROWS[i].on = on;
+    dbArrDraw(); redraw(); setBusy(BUSY);
+    dbSavePlan(ROWS.filter(function(r){ return r.on; }).length + ' of ' + ROWS.length +
+               ' slides in the pack');
+  }
+
+  function dbArrTitle(i, v){
+    ROWS[i].spec.title = v;
+    /* The title is real Slides text, filled at Publish — it is not in the
+       picture, so changing it does not stale one. */
+    redraw();
+    dbSavePlan('Title saved');
+  }
+
+  /* CHANGING A SOURCE INVALIDATES FOUR THINGS, and it is not a relabel: a
+     different adapter runs and produces a different page's content. */
+  function dbArrSetSource(i, next){
+    var sp = ROWS[i].spec, was = sp.source;
+    if(next === was) return;
+
+    /* 1 · THE MARKET MUST BE RE-SPELLED. The same market is 'Southwest' to
+       Price & Volume and 'HNS_SW' to Ready-Mix. Re-map through the key both
+       spellings hang off; a market the new source has no spelling for BLANKS
+       the field and forces a re-pick, rather than carrying a name that matches
+       no row — which is exactly what published Southwest Land as a page of
+       zeroes. */
+    var key = marketKeyOf(was, sp.market);
+    sp.source = next;
+    sp.market = key ? marketAs(next, key) : '';
+
+    /* 2 · REFINE CLEARS unless the new source still offers one here. */
+    if(refinesFor(next, sp.market).indexOf(sp.refine) === -1) sp.refine = '';
+
+    /* 3 · PERIOD CLEARS for a source that shows both. */
+    if(!periodsFor(next).length) sp.period = '';
+
+    /* 4 · ANY row: SCOPE IS DISCARDED. Its table keys are the old adapter's
+       catalogue and mean nothing to the new one. Broader scopes need nothing —
+       the row simply starts resolving up the new source's ladder. The server
+       abandons the entry either way, because setTables stamped the source on
+       it; clearing it here is what stops it sitting in the store for ever. */
+    var stale = 'row:' + sp.id;
+    if(scopeEntry(stale)) srv('DECK_resetTables', [stale]).catch(function(){});
+    if(ARR.tables && ARR.tables.scopes) delete ARR.tables.scopes[stale];
+    sp.tables = null; sp.tablesScope = ''; sp.kpi = null; sp.kpiScope = '';
+    sp.scopeLadder = ladderFor(sp);
+
+    dbArrDropPicture(ROWS[i]);
+    dbArrDraw(); redraw();
+    dbSavePlan(sp.title + ' → ' + srcLabel(next) +
+      (sp.market ? '' : ' · pick a market'));
+  }
+
+  function dbArrSetField(i, field, v){
+    var sp = ROWS[i].spec;
+    if((sp[field] || '') === v) return;
+    sp[field] = v;
+    if(field === 'market' && refinesFor(sp.source, sp.market).indexOf(sp.refine) === -1) {
+      sp.refine = '';
+    }
+    sp.scopeLadder = ladderFor(sp);
+    /* MARKET, PERIOD AND REFINE ARE THE PICTURE. Unlike a table change, there
+       is nothing to compare — a different market is different content, always. */
+    dbArrDropPicture(ROWS[i]);
+    dbArrDraw(); redraw();
+    dbSavePlan(sp.title + ' · ' + [sp.market, sp.refine, sp.period].filter(Boolean).join(' · '));
+  }
+
+  /* The same ladder the server builds, so a row edited here resolves the way
+     the next Plan will say it does. */
+  function ladderFor(sp){
+    var out = ['row:' + sp.id];
+    if(!sp.source) return out;
+    if(sp.market && sp.refine) out.push(sp.source + '|' + sp.market + '|' + sp.refine);
+    if(sp.market) out.push(sp.source + '|' + sp.market);
+    out.push(sp.source);
+    return out;
+  }
+
+  /* Whatever was photographed was photographed for the old content. */
+  function dbArrDropPicture(row){
+    if(!row.png && row.status !== 'error') return 0;
+    row.png = null; row.w = row.h = 0; row.status = 'pending'; row.err = '';
+    if(RQ && RQ.list.indexOf(row) < RQ.i) RQ.list.push(row);
+    return 1;
+  }
+
+  function dbArrDelete(i){
+    var sp = ROWS[i].spec;
+    if(!window.confirm('Take "' + sp.title + '" out of the pack?\n\n' +
+       'It goes to Deleted slides at the bottom of Arrange and can be put back. ' +
+       'This is shared: it deletes it for everybody.')) return;
+    if(!sp.added){
+      ARR.deleted.push({ id:sp.id, title:sp.title, group:sp.group, inRecipe:true });
+    }
+    ROWS.splice(i, 1);
+    if(ARR.sel === sp.id) ARR.sel = (ROWS[0] && ROWS[0].spec.id) || '';
+    dbArrDraw(); redraw(); setBusy(BUSY);
+    dbSavePlan('Deleted · ' + sp.title);
+  }
+
+  /* RESTORE puts a dropped recipe row back where the recipe puts it — which is
+     the server's insert-beside-its-predecessor rule doing the work, so the page
+     re-plans rather than guessing a position. */
+  function dbArrRestore(i){
+    var d = ARR.deleted[i];
+    ARR.deleted.splice(i, 1);
+    dbSavePlan(d.inRecipe ? ('Restoring · ' + (d.title || d.id))
+                          : 'Cleared a deletion that had nothing left behind it')
+      .then(function(){ if(d.inRecipe) dbPlan(); else { dbArrDraw(); dbDrawRail(); } });
+  }
+
+  /* ADD SLIDE is the same editor with an empty row: source from the registered
+     adapters, market from OVERVIEW.MARKETS. It lands after the selected slide,
+     because "add one like this one" is what anybody is actually doing. */
+  function dbAddSlide(){
+    var srcs = srcList();
+    if(!srcs.length){ banner('warn', 'No content sources are registered, so there is nothing to add.'); return; }
+    var at = ROWS.indexOf(selRow());
+    var like = (at >= 0 ? ROWS[at] : null);
+    var source = like ? like.spec.source : srcs[0];
+    var id = arrNewId(source);
+    var spec = {
+      id: id, source: source,
+      market: like ? like.spec.market : '',
+      refine: '', period: (periodsFor(source)[0] || ''),
+      layout: like ? like.spec.layout : '',
+      recipeLayout: like ? (like.spec.recipeLayout || like.spec.layout) : '',
+      layoutOverridden: false, title: 'New slide', subtitle: '',
+      group: like ? like.spec.group : 'Other',
+      optional: false, on: true, added: true, rowEdited: false, recipeRow: null,
+      tables: null, tablesScope: '', kpi: null, kpiScope: ''
+    };
+    spec.scopeLadder = ladderFor(spec);
+    if(!spec.layout){
+      banner('warn', 'Pick a layout for the new slide in the list below — it has none yet.');
+    }
+    ROWS.splice(at + 1, 0, { spec:spec, on:true, status:'pending', png:null, w:0, h:0, err:'' });
+    ARR.sel = id;
+    dbArrDraw(); redraw(); setBusy(BUSY);
+    dbSavePlan('Added · ' + spec.title);
+  }
+  function arrNewId(source){
+    var n = 1, id;
+    do { id = source + '_added' + n; n++; } while(rowById(id) ||
+      ARR.deleted.some(function(d){ return d.id === id; }));
+    return id;
+  }
+
+  function dbArrResetAll(){
+    if(!window.confirm('Put the deck back to exactly what Deck_Recipe.gs says?\n\n' +
+       'Order, ticks, edits, added slides, deletions and every table selection. ' +
+       'This is shared: it resets them for everybody.')) return;
+    clearBanners(); setBusy(true); prog('Resetting the arrangement…');
+    Promise.all([srv('DECK_resetPlan'), srv('DECK_resetTables')])
+      .then(function(){ setBusy(false); ARR.sel = ''; dbPlan(); })
+      .catch(function(e){
+        setBusy(false); prog('');
+        banner('bad', esc(e && e.message ? e.message : String(e)));
+      });
+  }
+
+  /* ---- the table / KPI panel's own saves ---------------------------------- */
+  function arrScopeKey(){
+    var r = selRow(); if(!r) return '';
+    var ladder = r.spec.scopeLadder || [];
+    return (ARR.scope && ladder.indexOf(ARR.scope) !== -1) ? ARR.scope
+         : (r.spec.tablesScope || ladder[ladder.length - 1] || '');
+  }
+
+  function dbArrTables(next){
+    var r = selRow(); if(!r) return;
+    var key = arrScopeKey(), src = srcOf(r.spec.source);
+    var min = (src && src.tables && src.tables.min) || 0;
+    if(min && next.length < min){
+      banner('warn', 'A ' + srcLabel(r.spec.source) + ' slide needs at least ' + min +
+        ' table: its KPI card reads a grand total off one, and with none it publishes ' +
+        'a picture saying “Load market data to fill this card”.');
+      dbDrawSide();
+      return;
+    }
+    arrStoreScope(key, { tables: next, source: r.spec.source, min: min });
+  }
+
+  function dbArrKpi(patch){
+    var r = selRow(); if(!r) return;
+    arrStoreScope(arrScopeKey(), { kpi: patch, source: r.spec.source });
+  }
+
+  /* Optimistic on screen and checked on the server, as dbPickLayout already
+     is: waiting on a round trip to show a tick box move reads as a broken
+     control. The server's answer is what the local copy is then set from. */
+  function arrStoreScope(key, patch){
+    if(!key) return;
+    ARR.tables = ARR.tables || { v:1, scopes:{} };
+    ARR.tables.scopes = ARR.tables.scopes || {};
+    var was = ARR.tables.scopes[key] ? JSON.parse(JSON.stringify(ARR.tables.scopes[key])) : null;
+    var e = ARR.tables.scopes[key] || (ARR.tables.scopes[key] = {});
+    if(patch.tables) e.tables = patch.tables.slice();
+    if(patch.kpi !== undefined){
+      if(patch.kpi === null) delete e.kpi; else e.kpi = patch.kpi;
+    }
+    arrApplyScopes();
+    /* THE WHOLE PANEL, not just the side. A scope reaches other slides — that
+       is the point of it — and each of those rows carries the line saying
+       which rung its tables come from. Redrawing only the side leaves five
+       rows on screen still naming the rung they were on before the change. */
+    dbArrDraw(); dbDrawRail();
+    prog('Saving…');
+
+    srv('DECK_setTables', [key, patch])
+      .then(function(res){
+        if(res && res.map) ARR.tables = res.map;
+        arrApplyScopes();
+        dbArrDraw(); dbDrawRail();
+        prog(scopeLabel(key, selRow()) + ' · saved for everybody');
+      })
+      .catch(function(err){
+        if(was) ARR.tables.scopes[key] = was; else delete ARR.tables.scopes[key];
+        arrApplyScopes();
+        dbArrDraw(); dbDrawRail(); prog('');
+        banner('bad', '<b>Could not save:</b> ' + esc(err && err.message ? err.message : String(err)));
+      });
+  }
+
+  /* THE SELECTION AS ONE ORDERED ARRAY. Ticking appends, unticking removes,
+     and the arrows move within it - so "which tables" and "in what order" are
+     one answer and cannot disagree with each other. */
+  function arrEffTables(){
+    var r = selRow(); if(!r) return [];
+    var e = scopeEntry(arrScopeKey());
+    if(e && e.tables) return e.tables.slice();
+    return defaultTablesFor(srcOf(r.spec.source), r.spec).slice();
+  }
+  function arrToggleTable(key, on){
+    var list = arrEffTables(), at = list.indexOf(key);
+    if(on && at === -1) list.push(key);
+    else if(!on && at !== -1) list.splice(at, 1);
+    else return;
+    dbArrTables(list);
+  }
+  function arrMoveTable(key, by){
+    var list = arrEffTables(), at = list.indexOf(key), to = at + by;
+    if(at === -1 || to < 0 || to >= list.length) return;
+    list.splice(to, 0, list.splice(at, 1)[0]);
+    dbArrTables(list);
+  }
+  /* The KPI entry is written WHOLE, so the half that is not being changed is
+     carried rather than dropped: turning the strip off must not also forget
+     the region somebody chose for it. */
+  function arrKpiPatch(change){
+    var e = scopeEntry(arrScopeKey()), cur = (e && e.kpi) || {};
+    var out = { on: (change.on !== undefined) ? change.on
+                  : (cur.on === undefined ? true : !!cur.on),
+                sheet: (change.sheet !== undefined) ? change.sheet : (cur.sheet || '') };
+    /* on with no region is the same as nothing stored, and nothing stored is
+       what keeps an untouched scope out of the store entirely */
+    if(out.on && !out.sheet) return null;
+    return out;
+  }
+
+  /* Re-resolve every row against the table map now on screen. The same ladder
+     the server walks, first answer wins, tables and KPI independently. */
+  function arrApplyScopes(){
+    var scopes = (ARR.tables && ARR.tables.scopes) || {};
+    ROWS.forEach(function(r){
+      var sp = r.spec, L = sp.scopeLadder || ladderFor(sp);
+      function resolve(field){
+        for(var i = 0; i < L.length; i++){
+          var e = scopes[L[i]];
+          if(!e || e[field] === undefined) continue;
+          if(e['for'] && e['for'] !== sp.source) continue;
+          return { value:e[field], scope:L[i] };
+        }
+        return { value:null, scope:'' };
+      }
+      var t = resolve('tables'), k = resolve('kpi');
+      sp.tables = t.value ? t.value.slice() : null;
+      sp.tablesScope = t.scope;
+      sp.kpi = k.value ? { on:(k.value.on === undefined ? true : !!k.value.on),
+                           sheet:k.value.sheet || '' } : null;
+      sp.kpiScope = k.scope;
+    });
+  }
+
   function rowHtml(r, i){
     /* refine sits next to the market it narrows, so a Land row is readable as
        "pv · Southwest · Land · MTD" rather than looking like a duplicate of the
@@ -23403,8 +24342,13 @@ AMR.page('deckbuilder', {
 
   function updateStages(){
     document.getElementById('dbStage1').classList.toggle('done', ROWS.length > 0);
-    document.getElementById('dbStage2').classList.toggle('done', countReady() > 0);
-    document.getElementById('dbStage3').classList.toggle('done', countDone() > 0);
+    /* Arrange is DONE once it has been opened, not once something has been
+       changed: a month where the pack is right as it stands is the normal
+       month, and a stage that only ticks when you edit something reads as a
+       step you skipped. */
+    document.getElementById('dbStage2').classList.toggle('done', ARR.open);
+    document.getElementById('dbStage3').classList.toggle('done', countReady() > 0);
+    document.getElementById('dbStage4').classList.toggle('done', countDone() > 0);
   }
 
 
@@ -23445,8 +24389,63 @@ AMR.page('deckbuilder', {
     document.getElementById('dbReloadTpl').addEventListener('click', function(){ dbLoadTemplate(); });
     document.getElementById('dbResetLayouts').addEventListener('click', dbResetLayouts);
     document.getElementById('dbBtnPlan').addEventListener('click', dbPlan);
+    document.getElementById('dbBtnArrange').addEventListener('click', dbOpenArrange);
     document.getElementById('dbBtnRender').addEventListener('click', dbRenderAll);
     document.getElementById('dbBtnPublish').addEventListener('click', dbPublish);
+    document.getElementById('dbArrAdd').addEventListener('click', dbAddSlide);
+    document.getElementById('dbArrReset').addEventListener('click', dbArrResetAll);
+    document.getElementById('dbArrDone').addEventListener('click', dbArrClose);
+
+    /* THE ARRANGE PANEL IS REDRAWN WHOLE on every change, exactly as #dbList
+       is, so its controls are delegated on the two hosts rather than bound to
+       elements that get replaced. Same reason, same pattern. */
+    var arr = document.getElementById('dbArrange');
+    arr.addEventListener('click', function(e){
+      var b = e.target.closest ? e.target.closest('[data-db-arr],[data-db-scope],[data-db-tbmove],[data-db-restore],[data-db-tbreset]') : null;
+      if(!b) return;
+      if(b.hasAttribute('data-db-scope')){
+        ARR.scope = b.getAttribute('data-db-scope'); dbDrawSide(); return;
+      }
+      if(b.hasAttribute('data-db-restore')){
+        e.preventDefault(); dbArrRestore(Number(b.getAttribute('data-db-restore'))); return;
+      }
+      if(b.hasAttribute('data-db-tbreset')){
+        e.preventDefault();
+        var key0 = arrScopeKey();
+        srv('DECK_resetTables', [key0]).then(function(res){
+          ARR.tables = (res && res.map) || { v:1, scopes:{} };
+          arrApplyScopes(); dbArrDraw(); dbDrawRail();
+          prog(scopeLabel(key0, selRow()) + ' · back to this page’s own tables');
+        }).catch(function(err){
+          banner('bad', esc(err && err.message ? err.message : String(err)));
+        });
+        return;
+      }
+      if(b.hasAttribute('data-db-tbmove')){
+        arrMoveTable(b.getAttribute('data-k'), b.getAttribute('data-db-tbmove') === 'up' ? -1 : 1);
+        return;
+      }
+      var act = b.getAttribute('data-db-arr'), i = Number(b.getAttribute('data-i'));
+      if(act === 'up')        dbArrMove(i, -1);
+      else if(act === 'down') dbArrMove(i, 1);
+      else if(act === 'del')  dbArrDelete(i);
+      else if(act === 'sel'){ ARR.sel = ROWS[i].spec.id; ARR.scope = ''; dbArrDraw(); }
+    });
+    arr.addEventListener('change', function(e){
+      var t = e.target;
+      if(t.hasAttribute('data-db-tb'))      return arrToggleTable(t.getAttribute('data-db-tb'), t.checked);
+      if(t.hasAttribute('data-db-kpion'))   return dbArrKpi(arrKpiPatch({ on: t.checked }));
+      if(t.hasAttribute('data-db-kpisheet'))return dbArrKpi(arrKpiPatch({ sheet: t.value }));
+      if(!t.hasAttribute('data-db-arr')) return;
+      var act = t.getAttribute('data-db-arr'), i = Number(t.getAttribute('data-i'));
+      if(act === 'tick')        dbArrTick(i, t.checked);
+      else if(act === 'source') dbArrSetSource(i, t.value);
+      /* the title is a text box, so `change` is when it is LEFT rather than on
+         every keystroke - one save per edit, not one per character */
+      else if(act === 'title')  dbArrTitle(i, t.value);
+      else if(act === 'market' || act === 'refine' || act === 'period')
+        dbArrSetField(i, act, t.value);
+    });
 
     /* The slide list IS redrawn, on every status change, so its three controls
        are delegated on the host rather than bound to rows that get replaced. */
