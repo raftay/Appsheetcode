@@ -84,6 +84,9 @@ const MODULES = [
   { name: 'AmrProgress',   open: 'window.AmrProgress = (function(){', from: 'Shell.html' },
   { name: 'AmrBoot',       open: 'window.AmrBoot = (function(){',     from: 'Shell.html' },
   { name: 'AmrFresh',      open: 'window.AmrFresh = (function(){',    from: 'Shell.html' },
+  /* Written for app.html rather than ported into it — the only one here
+     with no file behind it, which is what 'from' records. */
+  { name: 'AmrStamp',      open: 'window.AmrStamp = (function(){',    from: null },
   { name: 'AmrSlide',      open: 'var AmrSlide = (function(){',       from: 'SlideExport.html' },
   { name: 'AmrFuelExec',   open: 'var AmrFuelExec = (function(){',    from: 'Deck_Fuel.html' },
   { name: 'AmrCache',      open: 'window.AmrCache = (function(){',    from: 'Shell.html' },

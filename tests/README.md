@@ -813,11 +813,33 @@ node tests/qliksync.js           # no dependencies
 `getRange().clearContent()` at a time and restored one `setFormula()` at a time — a round
 trip to Sheets per cell, across every raw tab, twice. That is what pushed a sync past the
 Apps Script runtime limit and got the trigger killed mid-write, which is why it reported
-"failed" over sheets that were correctly updated. Both go a contiguous **run** at a time now,
-so the harness counts calls: six formulas in a row, two calls each way, and no `setFormula`
+"failed" over sheets that were correctly updated. The restore goes a contiguous **run** at a
+time now, so the harness counts calls: six formulas in a row, two calls, and no `setFormula`
 at all. It also pins the *result* — every anchor still re-pointed at the new height, its own
-(`B3:B50040` → `B3:B7`) and across tabs — because a faster sync that writes different
+(`B3:B50040` → `B3:B10`) and across tabs — because a faster sync that writes different
 formulas is not the same sync.
+
+**What the sync owns, and what it must not touch.** The paired columns, from the first data
+row down. Everything else on the tab belongs to somebody else, and the fixture now carries a
+column that proves it: a note on the first data row and a filled-down formula under it,
+running past the end of the new export. Two things used to take it.
+
+The band was **cleared whole** before the write and put back only after the *last* tab of the
+workbook, so it was absent for the entire pass — one throw, or one execution killed at the
+runtime limit, and every anchor was gone with nothing left to restore and nothing for the next
+run to find. That is why one workbook lost its formulas and the other never did on identical
+code: three tens-of-thousands-of-rows Ready-Mix tabs reach the limit far sooner than two
+Aggregates ones. Only a formula in a column the export *feeds* is cleared now, and the harness
+makes a write blow up to prove the rest are still on the sheet afterwards.
+
+And the sheet was made **exactly as tall as the export**, surplus rows deleted. A row is the
+full width of the tab, so that took every other column with it. Rows grow and never shrink;
+the sync's own columns are cleared to the bottom instead, which is checked on the same fixture
+— nothing stale underneath, and nothing of anybody else's gone.
+
+**When it wrote, and off which export.** The run records both, per page, for the header's
+stamp — because Drive cannot tell a sync from a hand edit, and a run for one page must not
+wipe another page's record. Checked here; the reading half is in `freshness.js`.
 
 **The hourly check.** Nothing in the UI starts a sync. The trigger compares the exports'
 modified times against the last set it saw, so an ordinary hour costs one Drive listing and
@@ -879,6 +901,17 @@ same reason the Overview is: it owns no workbook, so without `APP_EXTRA_SOURCES.
 its version is a constant and its button reports "no change" however stale the deck is. It also checks PV and RMX read that same stamp instead of
 keeping counters, and that the loading screen is the full-screen one with the API pages
 already call left intact.
+
+**And the header's stamp, which is the other half of the same question.** The version answers
+*has anything moved*; the stamp answers *how old is what I am holding*, and it needs two
+clocks that must never be collapsed into one — the workbook's modified time, and when QlikSync
+last wrote it. The check with a name to match: **a hand edit moves the sheet clock and leaves
+the QlikView clock exactly where it was.** Reading the second off Drive passes every other
+check here and fails that one, which is the mutation it was tested with. Also pinned: one row
+per workbook a page reads (the Overview owns none and reads three), a workbook nothing syncs
+reports no QlikView clock rather than repeating its own, and — on `app.html` §E — that the
+control mounts beside `#syncBtn`, never writes into it, and drops an answer that arrives after
+the page has gone.
 
 ## Also worth running
 

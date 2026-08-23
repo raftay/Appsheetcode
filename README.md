@@ -192,7 +192,7 @@ internal file order is not something this repo controls. Entry points are prefix
 | §B | **SLIDE CSS** — `.slide-bare` capture styles |
 | §C | **TUNABLES** — `AMR_TUNABLES`: the slide frame, every page's whitespace defaults. Runs before §D and §E, whose IIFEs read it while constructing |
 | §D | **RUNTIME** — the AMR core: logging, lib loader, nav, modals, the page switcher |
-| §E | **SHARED MODULES** — thirteen: `AmrTick`, `AmrCache`, `AmrKpi`, `AmrCube`, `AmrDeckSource`, `AmrPvSlide`, `AmrProgress`, `AmrBoot`, `AmrFresh`, `AmrSlide`, `AmrFuelExec`, `AmrSegSlide`, `AmrRmxSlide` |
+| §E | **SHARED MODULES** — fourteen: `AmrTick`, `AmrCache`, `AmrKpi`, `AmrCube`, `AmrDeckSource`, `AmrPvSlide`, `AmrProgress`, `AmrBoot`, `AmrFresh`, `AmrStamp`, `AmrSlide`, `AmrFuelExec`, `AmrSegSlide`, `AmrRmxSlide` |
 | §P | **PAGES** — one `<template>` + one registration per page |
 
 **The settings live at the top of each file, and the top of each file says where the rest
@@ -327,6 +327,35 @@ The Drive lookup is memoised for 30 seconds. `APP_bumpGen_` / `bumpGeneration_` 
 still exist because a dozen call sites use them after writing to a sheet — they no longer
 bump anything, they just drop that 30-second copy so the next read sees the new time.
 
+### The header says how old the figures are — two clocks, not one
+
+`↻ Update from source` answers *is there anything newer*. It has never said *how old is what I
+am looking at*, and on a page allowed to paint from a device cache those are different
+questions. **`AmrStamp` (`app.html` §E) is a separate control beside that button**, injected
+into every header that has one by `AMR.mount()` the same way the page switcher is — six page
+templates would otherwise be six copies to keep in step. `getSourceTimes(page)` feeds it, one
+row per workbook the page reads, so the Overview reports all three rather than a single time
+that would have to stand for the stalest of them.
+
+**The two clocks must never be collapsed into one.**
+
+- **The sheet** — when the workbook last *changed*. The data version's own time, so the page's
+  figures are that version of the sheet.
+- **QlikView** — when the sync last *wrote* it, plus the date on the export it read.
+  **`QLIKSYNC.run` records this itself**, because Drive cannot tell a sync from a hand edit: a
+  row typed into `REGION LOOKUP` moves the modified time exactly as a sync does, and a header
+  that called that a QlikView update would be lying about where the numbers came from.
+
+Usually seconds apart. When they are not — a hand edit today over a sync from Tuesday, or a
+sync this morning off an export QlikView dropped on Monday — the difference is the whole
+reason both are shown. `qlikStamps()` shows the same pair from the editor.
+
+**Every control on that bar costs width and the bar has almost none to spare** — Price &
+Volume had seven pixels of it at 1720 before this button existed. So the stamp shows the date
+and time while there is room and its age alone once there is not, and gives up its own frame
+before the bar gives up a row. `app.html` §A3 carries the measured before/after widths at
+which each header goes to two rows.
+
 ### Syncing: one trigger, and nothing else
 
 **The sync is trigger-only by design and has no UI.** (This is one of the suite's *two*
@@ -348,6 +377,32 @@ so a new year's column has to exist there before anything can be written into it
 does, the export's new column is reported unmatched rather than written somewhere wrong. There
 is **no positional fallback**: one existed, and it is how PY revenue was written into the
 wrong column for a whole run.
+
+### What the sync owns
+
+**The columns it pairs, from the first data row down. Nothing else on the tab.** Every other
+column — a lookup, a helper, a filled-down formula, a block parked to the right — is read past
+and left as it was, on every tab, whether or not the code knows it is there. **Assume one is
+there.** (The Slide Builder tabs are the exception and are in `'replace'` mode for it: they
+are pre-aggregated by QlikView, the tab *is* the export, and the whole of it is rewritten. Do
+not put a working column on one.)
+
+Two things used to take more than that, and both are gated by `tests/qliksync.js` now:
+
+- **The formula band was cleared whole** before the write and put back only after the *last*
+  tab of the workbook — absent for the entire pass. One throw, or one execution killed at the
+  runtime limit, and every anchor was deleted with nothing left to restore, and nothing for
+  the next run to find either. That is why the Ready-Mix workbook lost array formulas and the
+  Aggregates one never did on identical code: three tens-of-thousands-of-rows tabs reach the
+  limit far sooner than two. Only a formula in a column the export *feeds* is cleared now — by
+  construction the anchors are somewhere else, since `firstDataRow_` finds that row by looking
+  for a formula in a column nothing is written into. Left alone, an anchor is at worst still
+  pointing at the old height, which is the state re-anchoring exists to improve.
+- **Rows grow, never shrink.** The sheet used to be made exactly as tall as the export, with
+  the surplus deleted. A row is the full width of the tab, so deleting rows 30,001 to 50,040
+  takes every *other* column with them. The sync's own columns are cleared to the bottom of
+  the sheet instead, so nothing stale survives underneath either, and the anchors' blank-row
+  guards handle a sheet that is taller than the data — which is what they were always for.
 
 ### The `~qliksync temp` sheet
 
@@ -1375,6 +1430,7 @@ or was forgotten.**
 | 2026-08-21 | **The 500% threshold is a guard, not Qlik's rule — and the last session's evidence for it was an accident of the window.** Qlik zeroes **10 of 3,407** covered pairs in 2026 Jan–Aug; five move by less than 100% and two by less than 5% (**+4.55%**, **+0.26%**), while it *keeps* pairs at −115.9%, +225.4% and, on the Aug MTD export, **+472.8%**. No |ASP%| threshold selects that set; the "330–647% gap" only looked like one because Jan–Jul held no counter-example. **What actually selects it: `Weight` is CY revenue net of the per-tonne aggregate levy, and Qlik's coverage runs on the net figure.** `(CY revenue − Weight) ÷ CY volume` lands on **$2.248/t Ontario, $0.60/t Manitoba, $0.90/t Saskatchewan, nil on recycled** across 3,397 pairs and both exports — 9 of the 10 zeroed pairs have a net-of-levy ASP at or below ten cents in one year. That column does not exist here, so the guard stays, and it costs **0.0001pp** against Qlik's own selection (3.0933% vs 3.0934%) and drops no pair Qlik keeps. **The denominator was never the problem**: Σ covered CY revenue reproduces `TotalWeight` to the penny on both exports ($155,497,057.14 and $13,041,331.22). The residual after the fix is **+0.23pp** all-markets — Qlik weighting the numerator net and dividing by gross, ~0.905× with a per-row ratio. Manitoba +0.01pp, Saskatchewan +0.04pp, North 0.00pp, because their levy is small or nil. Do not spend another session tuning the threshold | ✅ |
 | 2026-08-21 | **Four field reports, and three of them were one bug wearing different clothes: a module that outlives the page that used it.** (1) **The AGG page loaded for ever until you refreshed.** `AmrCube` is a §E singleton and §D mounts ten pages into one document, so the second visit's `AmrCube.on()` listener met a cube whose `init()` had already run — it returned `Promise.resolve(false)` and emitted nothing, `AmrBoot`'s `month history` step was never answered, and `AmrProgress` is modal. A second `init()` is a **page switch**: `on()` replays the settled event to a late listener and returns an unsubscribe, `teardown()` calls `AmrCube.detach()`, and a line the first boot never fetched (PV configures `agg` alone; the Overview then wants `rmx`) is fetched now. `pageswitch.js` could not have caught it — its fixture answers `CUBE_getManifest` with `ok:false` and the **error** path does emit. (2) **Product Segment never once read its own device store.** `AmrCache.get()` is gated on `ready`, and the only thing that set `ready` was the reply to `RMX_prepare` — the call the store existed to avoid — so the store was **write-only for the life of the page** and every open paid the most expensive call in the suite to be handed back what was already there. `AmrCache.warm()` opens on the generation the device itself confirmed and `RMX_getStamp()` checks it behind the paint: `{generation, build}`, the same two fields under the same names as `prepareAll`'s `stamp()`, no sheet read. Not `getDataVersion('rmx')` — different pair, different shape, and §6 has the account of what two copies of one token cost. A warm open now costs one small call, and market and period switches cost **none**. (3) **Both fuel pages paint before the version call answers** rather than after it — same `warm()`, with `check()` returning whether the store survived and only a warm paint re-read. The version call is still issued FIRST, because `set()` will not write under a generation it does not know yet and sending the read first stored nothing at all. Measured at 800ms of stubbed latency: 1868ms → 905ms cold, **942ms → 31ms warm**. `ready` is per page now; it was one boolean across ten pages. (4) **The Ready-Mix UI at ≥1720px**: §A3 pins the QlikView guide open and hides the FAB that closes it, and the rule that carves the 288px names `.shell` — Ready-Mix lays out with `.wrap`, so the guide sat on top of the last 250px of every table, the ✓ matched pills and every per-card help button. One media query; also un-nested the Export theme `.field` that was a child of the N/A one. **`reopen.js` is the new gate and it asserts the thing a call count cannot see**: replies are held for a fixed latency and outstanding calls counted by name, so “a table is on screen while the version call has not come back” is an assertion. `APP_CODE_BUILD` bumped — the client now paints device entries before validating them, and one cold load per device buys the guarantee that every warm paint after this deploy came from a store this code wrote | ✅ |
 | 2026-08-21 | **The Ready-Mix mapping warning shipped unstyled, and four more of chunk 6's drops were sitting beside it.** Reported as the sentence under a table name; what it was is seven CSS rules — `.impact`, `.impact-i`, `.impact-t`, `.impact-go` — left behind when `Page_Rmx.html` was ported. The page kept emitting the markup, so the `!` badge ran straight into the sentence as **"!339 products"** and "Fix mapping" was a browser-grey UA button inside the text. **Three things had to be true at once for no gate to see it, and they were:** `setStrip()` builds the strip in JS, so no markup check ever meets the class; **no fixture in `tests/` answers `RMX_getUnmapped` with a row**, so the strip renders in no harness run; and `cssparity` derives its property list *from* the §A4 block, so a missing block's properties are not on the list. Four more came out of the same audit. **`#mapHost td.mkt` went too**, so the page's own `td{text-align:right; white-space:nowrap}` took the Market(s) column — right-aligned, and a list of markets that will not wrap. **Two classes were renamed by the promotion and only one caller was told**: §A3 took Price & Volume's `mchev` and `map-open`, Ready-Mix went on emitting `chev` and `sug-open`, so its mapping-check arrow fell through to the generic 10px `.chev` and **never rotated** — an open section looked exactly like a shut one — and the page behind the suggested-rows dialog kept scrolling. A promoted rule is only shared if every caller uses the promoted NAME. **And the strip was disappearing on every re-render**: `if(window.paintImpact) paintImpact()` was a page function asking whether it existed, which on `Page_Rmx.html`'s file scope was always yes and inside a page module is always no. Measured: 3 strips to 0 on one period click, and no way back but a reload. `tests/cssdropped.js` is the new gate — for every class the 20 deleted files styled, if `app.html` still emits it and has no rule, the port dropped it. 717 classes, **no allow-list**, mutation-tested by putting the block back in the bin. `cssparity`'s EXPAND gained `border-color` because the restored `.impact-go:hover` declares it, and its run is 50 properties to 52 | ✅ |
+| 2026-08-23 | **The sync was deleting columns it does not own, and the header now says how old the figures are.** Reported as "pulling RMX from Qlik deletes my array formulas on Main and Extras, and the Aggregates sheets keep theirs" — and the two workbooks go through **the same writer**, so the difference was never in the code, it was in how far the code got. `writeColumns_` cleared the WHOLE formula band before writing and put it back only after the LAST tab of the workbook, so the anchors were absent for the entire pass: one throw, or one execution killed at the runtime limit, and they were gone with nothing left to restore — and nothing for the next run to find either, which is why they never came back on their own. **Three tens-of-thousands-of-rows Ready-Mix tabs reach that limit far sooner than two Aggregates ones**, and that is the whole of the difference. Only a formula in a column the export FEEDS is cleared now — by construction the anchors are elsewhere, since `firstDataRow_` finds that row by looking for a formula in a column nothing is written into — and the band is registered for restore BEFORE anything destructive runs. The second half is the same rule about rows: the sheet was made exactly as tall as the export and **a row is the full width of the tab**, so deleting the surplus took every other column with it. Rows grow and never shrink, in both modes; the sync's own columns are cleared to the bottom instead, so nothing stale survives underneath either. `tests/qliksync.js` carries a column the sync has never heard of — a note on the first data row, a filled-down formula under it running past the end of the new export — and makes a write blow up to prove the anchors are still on the sheet afterwards; both mutations were put back to watch it fail. **And the header answers the other question.** ↻ Update from source says whether anything is NEWER; it has never said how old what you are looking at IS. `AmrStamp` (§E) is its own control beside it, injected into every header that has one the way the page switcher is, showing **two clocks that must never be collapsed into one**: when the workbook last changed, and when QlikSync last wrote it (plus the date on the export it read). The second is recorded by the run, because **Drive cannot tell a sync from a hand edit** — a row typed into REGION LOOKUP moves the modified time exactly as a sync does. `freshness.js` gates precisely that: a hand edit moves the sheet clock and leaves the QlikView clock where it was. The bar had **seven pixels** of slack on Price & Volume at 1720, so the stamp gives up its date for its age below `--bp-wide` and its frame with it; four pages lose one breakpoint step and three lose nothing, measured and written into §A3 | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |

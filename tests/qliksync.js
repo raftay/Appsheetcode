@@ -2,12 +2,29 @@
  *
  * Two things this file has to keep getting right.
  *
- *   BATCHING   The band of array formulas is cleared and restored a RUN at a
- *              time, not a CELL at a time. Every one of those was a round trip
- *              to Sheets, and the count is what used to push a sync past the
- *              Apps Script runtime limit and get the trigger killed mid-write.
- *              Batching them must change no formula: every anchor still comes
- *              back re-pointed at the new height, its own and across tabs.
+ *   BATCHING   The band of array formulas is restored a RUN at a time, not a
+ *              CELL at a time. Every one of those was a round trip to Sheets,
+ *              and the count is what used to push a sync past the Apps Script
+ *              runtime limit and get the trigger killed mid-write. Batching
+ *              them must change no formula: every anchor still comes back
+ *              re-pointed at the new height, its own and across tabs.
+ *
+ *   OWNERSHIP  The sync owns the columns it pairs, from the first data row
+ *              down, and NOTHING ELSE on the tab. Two ways it used to take
+ *              more than that, and both are gated here:
+ *
+ *              It cleared the whole formula band before writing and put it
+ *              back only after the LAST tab of the workbook, so a run that
+ *              died in between deleted every anchor with nothing left to
+ *              restore — and nothing for the next run to find either. Now only
+ *              a formula sitting in a column the export feeds is cleared, and
+ *              the harness makes a write throw to prove the rest survive it.
+ *
+ *              And it deleted the surplus rows to make the sheet exactly as
+ *              tall as the export. A row is the full width of the tab, so that
+ *              took every other column with it. Rows grow and never shrink;
+ *              the sync's own columns are cleared to the bottom instead, so
+ *              nothing stale survives underneath either.
  *
  *   THE CHECK  Nothing in the UI starts a sync. One time-driven trigger
  *              compares each export FILE's modified time against the one it
@@ -50,6 +67,7 @@ const RealDate = Date;
 let CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);   /* virtual, ms */
 let TICK = 0;                                     /* ms added per write call */
 let OPS = [];                                     /* every write, in order */
+let BOOM = null;                                  /* (sheet, a1) => throw here */
 
 function colA1(c) {                               /* 1-based → A, B, … */
   let s = '';
@@ -86,6 +104,10 @@ function makeSheet(name, rows) {
         getFormulas: () => Array.from({ length: nr }, (_, i) =>
                              Array.from({ length: nc }, (_, j) => at(i, j).f)),
         setValues(g) {
+          /* The runtime limit, in a form a harness can reach: BOOM makes one
+             write blow up where a killed execution would simply stop. What has
+             to be true either way is that the anchors are still on the sheet. */
+          if (BOOM && BOOM(name, a1)) { log('setValues'); throw new Error('write failed'); }
           log('setValues'); CLOCK += TICK;
           span((i, j) => { at(i, j).v = g[i][j]; at(i, j).f = ''; });
           return rng;
@@ -157,14 +179,22 @@ const RAW_FORMULAS = {
 };
 
 function rawSheet() {
+  /* COLUMN M IS SOMEBODY ELSE'S. The export does not feed it and the sync has
+     never heard of it: a note on the first data row and a filled-down formula
+     under it, running past the end of the new export. Deleting the surplus
+     rows to make the sheet as tall as the export took every one of those with
+     it, and that is the report this column exists to reproduce. */
   const hdr = ['LOOKUP KEY', 'Year', 'Month', 'Plant Type', 'Material Family',
-               'Fuel Surchage', 'Volume', 'CY Fuel', 'PY Fuel', 'Net', 'Adj', 'Flag'];
-  const banner  = ['Bill Year', 2025, 2025, '', '', '', '', '', '', '', '', ''];
+               'Fuel Surchage', 'Volume', 'CY Fuel', 'PY Fuel', 'Net', 'Adj', 'Flag',
+               'Notes'];
+  const banner  = ['Bill Year', 2025, 2025, '', '', '', '', '', '', '', '', '', ''];
   const anchors = hdr.map((_, i) => (RAW_FORMULAS[i + 1] ? { f: RAW_FORMULAS[i + 1] } : ''));
-  const stale   = () => ['', 'OLD', 'OLD', 'OLD', 'OLD', 'OLD', 'OLD', '', '', '', '', ''];
-  /* ten rows in the sheet, five in the export: it has to shrink */
-  return makeSheet(RAW_TAB, [banner, hdr, anchors, stale(), stale(), stale(),
-                             stale(), stale(), stale(), stale()]);
+  anchors[12] = 'keep-3';                     /* a plain value, not a formula */
+  const stale = n => ['', 'OLD', 'OLD', 'OLD', 'OLD', 'OLD', 'OLD', '', '', '', '', '',
+                      { f: '=B' + n + '&"-note"' }];
+  /* ten rows in the sheet, five in the export: it used to shrink */
+  return makeSheet(RAW_TAB, [banner, hdr, anchors, stale(4), stale(5), stale(6),
+                             stale(7), stale(8), stale(9), stale(10)]);
 }
 function otherSheet() {
   const hdr = ['LOOKUP KEY', 'Year', 'Month', 'Other Revenue'];
@@ -198,7 +228,7 @@ const NAMES = { [AGG_ID]: 'Agg Margin Monitor Export.xls',
 let MTIME = {};                                   /* per export file */
 
 function load({ tick = 0, lockFree = true } = {}) {
-  PROPS = {}; OPS = []; TICK = tick; SYNC_ALL_CALLS = 0;
+  PROPS = {}; OPS = []; TICK = tick; SYNC_ALL_CALLS = 0; BOOM = null;
   MTIME = { [AGG_ID]: 1000, [RMX_ID]: 2000, [SEG_ID]: 3000 };
   CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);
 
@@ -268,7 +298,14 @@ function load({ tick = 0, lockFree = true } = {}) {
 
 const writes = sheet => OPS.filter(o => o.sheet === sheet &&
   ['clearContent', 'setValues', 'setFormula', 'setFormulas', 'clearContents'].indexOf(o.op) !== -1);
-const formulaRow = (sh, row) => sh._grid()[row - 1].map(c => c.f);
+/* Tolerant of a row that is not there: a regression that SHRINKS the sheet has
+   to read as a failed check, not as a stack trace that hides the ones after
+   it — which is exactly how the row-deletion mutation first presented. */
+const formulaRow = (sh, row) => (sh._grid()[row - 1] || []).map(c => c.f);
+const valuesIn = (sh, r, c, nr, nc) =>
+  (sh.getMaxRows() >= r + nr - 1)
+    ? sh.getRange(r, c, nr, nc).getValues()
+    : 'the sheet is only ' + sh.getMaxRows() + ' rows tall';
 
 /* ======================================================================
  * 1. The run does what it always did
@@ -284,11 +321,73 @@ console.log('a clean run over both Price & Volume tabs:');
   check('the raw tab took all five export rows', res.done.filter(d => d.tab === RAW_TAB)[0].rows, 5);
 
   const raw = BOOKS._sheets.raw, other = BOOKS._sheets.other;
-  check('the sheet ends exactly where the export does', raw.getMaxRows(), 7);
-  check('...and so does the other-revenue tab', other.getMaxRows(), 4);
+  /* GROW ONLY. The export is five rows and the sheet is ten; it stays ten. */
+  check('a shorter export does not shrink the sheet', raw.getMaxRows(), 10);
+  check('...nor the other-revenue tab', other.getMaxRows(), 6);
   check('the export data landed', raw.getRange(3, 6, 1, 2).getValues(), [[10, 100]]);
   check('the last export row landed', raw.getRange(7, 6, 1, 2).getValues(), [[50, 500]]);
   check('no stale row survived underneath', raw.getRange(7, 2, 1, 1).getValues(), [[2026]]);
+  /* The rows stay, so the sync's own columns have to be emptied all the way
+     down or the previous export's figures sit under the new ones. */
+  check('the surplus rows are cleared in the columns the sync owns',
+    valuesIn(raw, 8, 2, 3, 6), [['', '', '', '', '', ''],
+                                ['', '', '', '', '', ''],
+                                ['', '', '', '', '', '']]);
+}
+
+/* ======================================================================
+ * 1b. A column the export does not feed is not the sync's to touch
+ * ==================================================================== */
+console.log('\na column nobody told the sync about survives a shorter export:');
+{
+  const ctx = load();
+  ctx.qlikSyncNow('pricevolume');
+  const raw = BOOKS._sheets.raw;
+
+  check('the note on the first data row is still there',
+    valuesIn(raw, 3, 13, 1, 1), [['keep-3']]);
+  check('the filled-down formula inside the new data is untouched',
+    formulaRow(raw, 5)[12], '=B5&"-note"');
+  /* Rows 8-10 are past the end of the new export. This is the report: they
+     were deleted, and the column went with them. */
+  check('and so is the one BELOW the end of the export',
+    formulaRow(raw, 10)[12], '=B10&"-note"');
+  check('every row of it is accounted for',
+    raw._grid().slice(3).map(r => r[12].f),
+    ['=B4&"-note"', '=B5&"-note"', '=B6&"-note"',
+     '=B7&"-note"', '=B8&"-note"', '=B9&"-note"', '=B10&"-note"']);
+  check('nothing was written into it either',
+    OPS.filter(o => o.sheet === RAW_TAB && /M/.test(o.a1) && o.op !== 'clearContents').length, 0);
+}
+
+/* ======================================================================
+ * 1c. The run says WHEN it wrote, and off which export
+ * ----------------------------------------------------------------------
+ * The header's stamp cannot read this off Drive. A row typed into a lookup tab
+ * moves the workbook's modified time exactly as a sync does, so the only thing
+ * that can say "QlikView updated this sheet" is the run that did it.
+ * ==================================================================== */
+console.log('\nthe run records when this page was last written from QlikView:');
+{
+  const ctx = load();
+  ctx.qlikSyncNow('pricevolume');
+  const log = JSON.parse(PROPS.QLIK_LAST_SYNC || '{}');
+
+  check('it recorded the page it wrote', Object.keys(log), ['pricevolume']);
+  check('with both tabs', log.pricevolume.tabs, 2);
+  check('and none of them broken', log.pricevolume.failed, 0);
+  check('the export it read is dated', log.pricevolume.exportAt, MTIME[AGG_ID]);
+  check('and named', log.pricevolume.exportName, NAMES[AGG_ID]);
+  checkThat('the time it WROTE is its own, not the export\'s date',
+    log.pricevolume.at !== log.pricevolume.exportAt,
+    'the two clocks have been collapsed into one');
+
+  /* A run for one page must not wipe another page's stamp — the same trap
+     qlikSyncNow already guards for the file stamps, one property over. */
+  ctx.qlikSyncNow('rmx');
+  const after = JSON.parse(PROPS.QLIK_LAST_SYNC || '{}');
+  check('and a run for another page leaves it alone',
+    after.pricevolume && after.pricevolume.tabs, 2);
 }
 
 /* ======================================================================
@@ -300,16 +399,19 @@ console.log('\nthe array formulas are restored at the new height:');
   ctx.qlikSyncNow('pricevolume');
   const got = formulaRow(BOOKS._sheets.raw, 3);
 
+  /* THE FULL HEIGHT OF THE SHEET, not the height of the export. The rows below
+     the data are still there, so the anchors have to cover them; their own
+     blank-row guards are what make that harmless. */
   check('its own rows are re-pointed at the sheet end',
-    got[0], '=ARRAYFORMULA(IF(B3:B7="","",B3:B7&"-"&C3:C7))');
-  check('a plain range too', got[7], '=ARRAYFORMULA(F3:F7*1)');
+    got[0], '=ARRAYFORMULA(IF(B3:B10="","",B3:B10&"-"&C3:C10))');
+  check('a plain range too', got[7], '=ARRAYFORMULA(F3:F10*1)');
   check('a cross-tab range follows the OTHER tab\'s height',
-    got[8], "=ARRAYFORMULA('Combined Data CPI Other Revenue'!C3:C4)");
-  check('two ranges in one formula both move', got[9], '=ARRAYFORMULA(H3:H7-I3:I7)');
-  check('an absolute range moves as well', got[10], '=SUM($G$3:$G$7)');
-  check('and the last of the run is not dropped', got[11], '=ARRAYFORMULA(IF(D3:D7="","",1))');
+    got[8], "=ARRAYFORMULA('Combined Data CPI Other Revenue'!C3:C6)");
+  check('two ranges in one formula both move', got[9], '=ARRAYFORMULA(H3:H10-I3:I10)');
+  check('an absolute range moves as well', got[10], '=SUM($G$3:$G$10)');
+  check('and the last of the run is not dropped', got[11], '=ARRAYFORMULA(IF(D3:D10="","",1))');
   check('the other tab keeps its own anchor',
-    formulaRow(BOOKS._sheets.other, 2)[0], '=ARRAYFORMULA(IF(B2:B4="","",B2:B4))');
+    formulaRow(BOOKS._sheets.other, 2)[0], '=ARRAYFORMULA(IF(B2:B6="","",B2:B6))');
 
   const mapped = formulaRow(BOOKS._sheets.raw, 3).filter((f, i) => f && i >= 1 && i <= 6);
   check('no formula was written into a column the export feeds', mapped, []);
@@ -330,16 +432,47 @@ console.log('\nthe formula band is handled a run at a time, not a cell at a time
     restores.filter(o => o.cells === 5).length, 1);
   check('nothing goes back one cell at a time', perCell.length, 0);
 
-  /* The clear happens before the write, over the same runs. Six formula cells,
-     all on row 3; the banner rows above hold none. (The block clear that
-     precedes the data write spans rows 3-7 and is not one of these.) */
+  /* AND THEY ARE NEVER TAKEN OUT TO MAKE ROOM. The write lands on the mapped
+     columns from row 3 down; every anchor is in a column the export does not
+     feed, so there is nothing to clear ahead of it. Clearing them used to leave
+     the band absent for the whole workbook's pass, which is why the next test
+     kills a write and expects to find them still there. (The block clear that
+     precedes the data write spans B3:G10 and is not one of these.) */
   const bandClears = OPS.filter(o =>
-    o.sheet === RAW_TAB && o.op === 'clearContent' && /^[A-L]3(:[A-L]3)?$/.test(o.a1));
-  check('and they are cleared in two calls, not six', bandClears.length, 2);
+    o.sheet === RAW_TAB && o.op === 'clearContent' && /^[A-M]3(:[A-M]3)?$/.test(o.a1));
+  check('the anchors are not cleared to make room for the write', bandClears.length, 0);
 
   checkThat('the whole tab costs well under a call per cell',
     writes(RAW_TAB).length <= 8, `${writes(RAW_TAB).length} write calls: ` +
     JSON.stringify(writes(RAW_TAB).map(o => o.op + ' ' + o.a1)));
+}
+
+/* ======================================================================
+ * 3b. A run that dies in the middle still leaves the formulas behind
+ * ----------------------------------------------------------------------
+ * The reported fault, and the reason the two changes above are one change.
+ * Apps Script kills an execution at the runtime limit with no `finally` and no
+ * catch — three tens-of-thousands-of-rows Ready-Mix tabs reach that far sooner
+ * than two Aggregates ones, which is why one workbook lost its formulas and the
+ * other never did on identical code. A throw is the closest a harness gets, and
+ * it also covers the case a kill does not: the run continues, records the tab
+ * as failed, and must still put the band back.
+ * ==================================================================== */
+console.log('\na write that blows up does not take the array formulas with it:');
+{
+  const ctx = load();
+  BOOM = (sheet) => sheet === RAW_TAB;
+  const res = ctx.qlikSyncNow('pricevolume');
+  BOOM = null;
+
+  check('the tab is reported as failed', res.failed.length >= 1, true);
+  const got = formulaRow(BOOKS._sheets.raw, 3);
+  check('the lookup-key anchor is still on the sheet',
+    got[0], '=ARRAYFORMULA(IF(B3:B10="","",B3:B10&"-"&C3:C10))');
+  check('...and so is the rest of the band',
+    got.filter(f => f).length, 6);
+  check('the other tab still wrote', BOOKS._sheets.other.getRange(2, 4, 1, 1).getValues(),
+    [[7]]);
 }
 
 /* ======================================================================

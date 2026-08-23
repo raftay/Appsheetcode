@@ -1940,6 +1940,71 @@ function updateFromSource(page, have) {
 }
 
 
+/* ------------------------------------------------------------------------
+ * WHERE THE FIGURES CAME FROM, AND WHEN — the header's stamp button.
+ * ------------------------------------------------------------------------
+ * TWO CLOCKS, AND THEY ARE NOT THE SAME CLOCK. "Update from source" answers
+ * whether there is something newer; it has never said how old what you are
+ * looking at is, and those are different questions on a page that is allowed
+ * to paint from a device cache.
+ *
+ *   sheetAt   when the workbook behind this page last CHANGED. This is the
+ *             modified time the data version is built from, so a page holding
+ *             generation G is holding the sheet as it stood at sheetAt — and
+ *             the browser can read its own generation to say so without asking
+ *             anybody. Moved by whoever moved it: a sync, or a hand edit.
+ *   qlik      when QLIKSYNC last WROTE that workbook, and the date on the
+ *             export it read. Drive cannot answer this and must not be made to
+ *             guess: a row typed into REGION LOOKUP moves sheetAt exactly as a
+ *             sync does. §5's run() records it.
+ *
+ * One row per workbook the page reads, so the Executive Overview — which owns
+ * no sheet and reads three — reports all three rather than a single time that
+ * would have to stand for the stalest of them. The Drive lookups are the same
+ * memoised half-minute stamps every freshness check already pays for.
+ * ---------------------------------------------------------------------- */
+function getSourceTimes(page) {
+  page = String(page || '');
+
+  /* The page's own workbook first, then anything its ⚙ panel lists for it —
+     the same set APP_sourceIds_ walks, kept as PAGES so each row can be named
+     and asked for its own sync stamp. */
+  var want = [], seen = {};
+  function add(p){
+    if (!p) return;
+    var o;
+    try { o = APP_sheetOwner_(p); } catch (e) { return; }
+    if (o && !seen[o]) { seen[o] = 1; want.push(o); }
+  }
+  add(page);
+  ((typeof APP_EXTRA_SOURCES === 'object' && APP_EXTRA_SOURCES[page]) || []).forEach(add);
+
+  var rows = [];
+  want.forEach(function (p) {
+    var id = '';
+    try { id = getSpreadsheetIdForPage_(p); } catch (e) { id = ''; }
+    if (!id) return;
+
+    var ms = parseInt(APP_oneStamp_(id), 10);
+    var q  = null;
+    try { q = QLIKSYNC.lastSync(p); } catch (e) { q = null; }
+
+    rows.push({
+      page:       p,
+      label:      (APP_CONFIG.PAGES[p] && APP_CONFIG.PAGES[p].label) || p,
+      sheetAt:    ms > 0 ? ms : 0,
+      qlikAt:     (q && q.at)       || 0,
+      exportAt:   (q && q.exportAt) || 0,
+      exportName: (q && q.exportName) || '',
+      tabs:       (q && q.tabs)     || 0,
+      qlikFailed: (q && q.failed)   || 0
+    });
+  });
+
+  return { ok: true, page: page, now: Date.now(), sources: rows };
+}
+
+
 /* ========================================================================
  * SLIDE BUILDER backend
  * ----------------------------------------------------------------------
@@ -2444,10 +2509,29 @@ function APP_permPad_(s, n) {
  *   cross-sheet references are re-pointed at the full height of the sheet they
  *   name. The blank-row guards already in those formulas do the rest.
  *
+ *   AN ANCHOR IS NEVER TAKEN OUT TO MAKE ROOM FOR THE WRITE. It is read, left
+ *   where it is, and written back re-pointed. Only a formula sitting in a
+ *   column the export FEEDS is cleared first, because that is a cell the write
+ *   is about to land on. The band used to be cleared whole, and it was absent
+ *   for the entire workbook's pass — one throw, or one execution killed at the
+ *   runtime limit, and every anchor was gone with nothing left to restore, and
+ *   nothing for the next run to find either.
+ *
  * ROWS
- *   Grow only. If the export is taller than the sheet, rows are inserted; if it
- *   is shorter, the surplus is cleared but the rows stay. Nothing is ever
- *   deleted out from under a formula.
+ *   Grow only, in both modes. If the export is taller than the sheet, rows are
+ *   inserted; if it is shorter, the sync's OWN columns are cleared to the
+ *   bottom of the sheet and the rows stay. Nothing is ever deleted out from
+ *   under a formula, and nothing is deleted out from under a column that
+ *   belongs to somebody else: a row is the full width of the tab, so deleting
+ *   the surplus to match the export takes every other column with it.
+ *
+ * WHAT THE SYNC OWNS
+ *   In 'columns' mode: the paired columns, from the first data row down. That
+ *   is all. Every other column on the tab — a lookup, a helper, a filled-down
+ *   formula, a block parked to the right — is read past and left exactly as it
+ *   was, on every tab, whether or not this file knows it is there. Assume one
+ *   is there. In 'replace' mode the tab is the export and the whole of it is
+ *   rewritten, which is why nothing but a QlikView tab is in that mode.
  *
  * SETUP
  *   The three file ids live in Config.gs → APP_CONFIG.QLIK_SYNC.
@@ -3197,27 +3281,59 @@ var QLIKSYNC = (function () {
     var n         = src.rows.length;
 
     /* Everything from row 1 down to the first data row: the totals band and the
-       array-formula anchors. Taken now, re-pointed and put back after the write.
-       They come out BEFORE the sheet is resized, so a shrink never leaves a
-       formula pointing past the end of its own sheet, and nothing is ever
-       written into a live spill range. */
+       array-formula anchors. Taken now, re-pointed and put back once every tab
+       in this workbook has its final height.
+
+       ONLY THE CELLS THE WRITE WILL LAND ON ARE CLEARED. The data write starts
+       at firstData and touches the MAPPED columns only, so the one band cell it
+       can collide with is a formula sitting in a mapped column on firstData
+       itself. The anchors are by definition somewhere else: firstDataRow_ found
+       this row by looking for a formula in a column nothing is written into.
+
+       Clearing the whole band bought nothing and cost everything. It left every
+       anchor absent for the WHOLE of the workbook's pass — the restore below
+       runs once, after the last tab — so a run that died in the middle of that
+       deleted them for good: a throw on one tab, or Apps Script killing the
+       execution at the runtime limit, which three tens-of-thousands-of-rows
+       Ready-Mix tabs reach far sooner than two Aggregates ones. And it does not
+       come back on the next run, because by then there is no formula left to
+       lift out. Left in place an anchor is at worst still pointing at the old
+       height, which is the state re-anchoring exists to improve rather than a
+       loss. */
+    var isMapped = {};
+    pairs.forEach(function (p) { isMapped[p.col] = 1; });
+
     var band = sh.getRange(1, 1, firstData, nCols).getFormulas();
-    for (var br = 0; br < band.length; br++) {
-      var clearRuns = cellRuns_(band[br]);
-      for (var cr = 0; cr < clearRuns.length; cr++) {
-        sh.getRange(br + 1, clearRuns[cr].start + 1, 1, clearRuns[cr].len).clearContent();
-      }
+    var onWrite = (band[firstData - 1] || []).map(function (f, i) {
+      return (f && isMapped[i + 1]) ? f : '';
+    });
+    var clearRuns = cellRuns_(onWrite);
+    for (var cr = 0; cr < clearRuns.length; cr++) {
+      sh.getRange(firstData, clearRuns[cr].start + 1, 1, clearRuns[cr].len).clearContent();
     }
 
-    /* --- the sheet ends up EXACTLY as tall as the export ---
-       Every row is replaced on every run, so a correction made to a month that
-       has already closed comes through: there is no history kept here that the
-       export does not still carry. Surplus rows are deleted rather than left
-       blank, so nothing stale can survive underneath the new data. */
+    /* REGISTERED BEFORE ANYTHING DESTRUCTIVE RUNS. If the resize or the write
+       throws, run() records the tab as failed and carries on — and the restore
+       pass still has this entry, so the band goes back re-pointed instead of
+       staying as the write left it. */
+    plan.push({ sh: sh, firstData: firstData, band: band, nCols: nCols });
+
+    /* --- ROWS GROW, NEVER SHRINK ---
+       Every row the sync owns is replaced on every run, so a correction made to
+       a month that has already closed still comes through: the mapped columns
+       are cleared to the BOTTOM of the sheet below, not just to the end of the
+       export, so nothing stale can survive underneath the new data.
+
+       What the sheet must not do is delete the surplus rows to get there. A row
+       is the full width of the tab, and the sync owns a handful of its columns:
+       deleting rows 30,001 to 50,040 takes every OTHER column with them — a
+       filled-down helper formula, a working column, anything parked below the
+       data. The export shrinking is not a licence to throw away somebody else's
+       column, and the anchors' blank-row guards already handle a sheet that is
+       taller than the data. */
     var target = Math.max(firstData, firstData + n - 1);
     var have   = sh.getMaxRows();
-    if (target > have)      sh.insertRowsAfter(have, target - have);
-    else if (target < have) sh.deleteRows(target + 1, have - target);
+    if (target > have) sh.insertRowsAfter(have, target - have);
     var sheetEnd = sh.getMaxRows();
 
     /* --- clear then write, one block per contiguous run of columns --- */
@@ -3253,8 +3369,6 @@ var QLIKSYNC = (function () {
       }
     });
 
-    plan.push({ sh: sh, firstData: firstData, band: band, nCols: nCols });
-
     var stamped = null;
     if (spec.stampMonth) {
       for (var sp = 0; sp < pairs.length; sp++) {
@@ -3286,13 +3400,18 @@ var QLIKSYNC = (function () {
       while (grid[r].length < cols) grid[r].push('');
     }
 
+    /* THE ONLY MODE THAT OWNS ITS WHOLE TAB. These are the Slide Builder tabs:
+       pre-aggregated by QlikView, no formulas and no columns of anybody else's,
+       so the tab IS the export and clearing it is the contract. Do not put a
+       working column on one of these — 'columns' mode is what keeps a tab's
+       other columns; this mode never has. */
     sh.clearContents();
 
-    /* Exactly as tall as the export — surplus rows go, so nothing stale is
-       left sitting under the new table. */
+    /* GROW ONLY, for the same reason as 'columns' mode above: a deleted row
+       takes the full width of the tab with it. The clear has already emptied
+       everything below, so surplus rows are blank rather than stale. */
     var have = sh.getMaxRows();
-    if (rows > have)      sh.insertRowsAfter(have, rows - have);
-    else if (rows < have) sh.deleteRows(rows + 1, have - rows);
+    if (rows > have) sh.insertRowsAfter(have, rows - have);
     if (cols > sh.getMaxColumns()) sh.insertColumnsAfter(sh.getMaxColumns(), cols - sh.getMaxColumns());
     sh.getRange(1, 1, rows, cols).setValues(grid);
 
@@ -3330,14 +3449,73 @@ var QLIKSYNC = (function () {
     return null;
   }
 
-  /* One export file, as { id, name, mime } — the shape readExport_ wants. */
+  /* One export file, as { id, name, mime } — the shape readExport_ wants, plus
+     the file's own modified time. That last field is how the header's stamp can
+     say WHICH export a page's figures came out of: the sheet was written at one
+     time, out of a file QlikView dropped at another, and a sync that ran an
+     hour ago off a two-day-old export is not fresh data. The File is already
+     open here, so it costs nothing. */
   function exportFile_(src) {
     var f;
     try { f = DriveApp.getFileById(src.id); } catch (e) {
       throw new Error('Could not open the ' + src.label + ' export (file id ' + src.id +
         '). Check APP_CONFIG.QLIK_SYNC in Config.gs, and that the file is shared with you.');
     }
-    return { id: f.getId(), name: f.getName(), mime: f.getMimeType() };
+    var at = 0;
+    try { at = f.getLastUpdated().getTime(); } catch (e2) {
+      /* Not silent (§7): a zero here is what makes the stamp panel say the
+         export's date is unknown, which reads as a bug in the panel. */
+      APP_log('warn', 'QLIKSYNC.exportFile', 'could not read when the export was dropped — the ' +
+              'stamp will not be able to date it', { source: src.label, error: String(e2) });
+    }
+    return { id: f.getId(), name: f.getName(), mime: f.getMimeType(), updated: at };
+  }
+
+  /* ==========================================================================
+   * WHEN A PAGE'S WORKBOOK WAS LAST WRITTEN FROM QLIKVIEW
+   * --------------------------------------------------------------------------
+   * Drive's modified time — the thing the data version is built from — answers
+   * "this sheet changed". It cannot answer "this sheet was synced", and the two
+   * must not read as the same event: typing one row into REGION LOOKUP moves the
+   * modified time exactly as a sync does, and a header that called that a
+   * QlikView update would be lying about where the figures came from.
+   *
+   * So the run records it, per page: when it wrote, how many tabs it wrote,
+   * whether they all landed, and the date on the export it read. One small
+   * property, written once per page per sync.
+   * ======================================================================== */
+  var QLIK_SYNC_LOG_KEY = 'QLIK_LAST_SYNC';
+
+  function syncLog_() {
+    try { return JSON.parse(PropertiesService.getScriptProperties()
+                              .getProperty(QLIK_SYNC_LOG_KEY) || '{}'); }
+    catch (e) {
+      APP_log('warn', 'QLIKSYNC.syncLog', 'the sync log is unreadable — every page will report ' +
+              'that it has never been synced', { error: String(e) });
+      return {};
+    }
+  }
+
+  function recordSync_(page, info) {
+    var all = syncLog_();
+    all[page] = info;
+    try { PropertiesService.getScriptProperties()
+            .setProperty(QLIK_SYNC_LOG_KEY, JSON.stringify(all)); }
+    catch (e) {
+      /* The data landed; only the stamp did not. Warn rather than fail — but
+         warn, because the header will go on showing the PREVIOUS sync's time
+         over figures that have moved since, which is the one way this can
+         mislead somebody. */
+      APP_log('warn', 'QLIKSYNC.recordSync', 'could not record when this page was synced — the ' +
+              'header stamp will keep showing the previous time',
+              { page: page, error: String(e) });
+    }
+  }
+
+  /* What the header asks for. null means this page has never been synced — the
+     Deck Builder and the Inventory Report never are. */
+  function lastSync_(page) {
+    return (page && syncLog_()[page]) || null;
   }
 
   /* scope: 'all', or a page id ('pricevolume' | 'rmx' | 'segment') so a tool's
@@ -3369,6 +3547,7 @@ var QLIKSYNC = (function () {
       /* --- open only the export files these tabs need, once each --- */
       var tabsByFolder = { AGG: [], RMX: [], SEG: [] };
       var filesSeen    = [];
+      var fileInfo     = {};          /* folder key → { name, updated } */
       var needed = {};
       SPEC.forEach(function (s) { needed[s.folder] = 1; });
 
@@ -3376,6 +3555,7 @@ var QLIKSYNC = (function () {
         if (!needed[src.key]) return;
         var f = exportFile_(src);
         filesSeen.push(src.label + ': ' + f.name);
+        fileInfo[src.key] = { name: f.name, updated: f.updated };
         tabsByFolder[src.key] = readExport_(f);
       });
 
@@ -3384,6 +3564,10 @@ var QLIKSYNC = (function () {
       SPEC.forEach(function (s) { (byPage[s.page] = byPage[s.page] || []).push(s); });
 
       Object.keys(byPage).forEach(function (page) {
+        /* Where this page's entries start in the two shared lists, so the stamp
+           below can count its own without matching on tab NAME — two workbooks
+           are free to hold a tab called the same thing. */
+        var doneAt = done.length, failedAt = failed.length;
         var ss;
         try {
           ss = APP_openSpreadsheet_(page);
@@ -3463,6 +3647,19 @@ var QLIKSYNC = (function () {
         });
 
         SpreadsheetApp.flush();
+
+        /* The workbook is written and its formulas are back: this is the moment
+           the page's figures actually became the export's. Recorded here rather
+           than at the end of run() so a page whose sibling failed still carries
+           its own true time. */
+        var exportAt = 0, exportName = '';
+        var wroteHere = done.length - doneAt, brokeHere = failed.length - failedAt;
+        byPage[page].forEach(function (sp) {
+          var fi = fileInfo[sp.folder];
+          if (fi && fi.updated > exportAt) { exportAt = fi.updated; exportName = fi.name; }
+        });
+        recordSync_(page, { at: Date.now(), tabs: wroteHere, failed: brokeHere,
+                            exportAt: exportAt, exportName: exportName });
       });
 
       /* --- every cached copy, everywhere, is now stale --- */
@@ -3495,7 +3692,7 @@ var QLIKSYNC = (function () {
     }
   }
 
-  return { run: run, sources: sources_ };
+  return { run: run, sources: sources_, lastSync: lastSync_ };
 })();
 
 
@@ -13403,15 +13600,26 @@ function qlikMarkCurrent() {
   return 'Marked ' + Object.keys(seen).length + ' export(s) as already synced.';
 }
 
-/* What the check is about to compare, for a look from the editor. */
+/* What the check is about to compare, for a look from the editor.
+
+   `lastSynced` is the EXPORT'S modified time as of the last sync — what the
+   next check compares against — and not when that sync ran. `wroteAt` is when
+   it ran, off the record §5 keeps for the header's stamp, and the two are
+   different questions: a source can have been synced this morning off a file
+   QlikView dropped on Monday. */
 function qlikStamps() {
   var props = PropertiesService.getScriptProperties(), seen = {};
   try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); } catch (e) {}
   return QLIKSYNC.sources().map(function (src) {
     var now = '';
     try { now = String(DriveApp.getFileById(src.id).getLastUpdated().getTime()); } catch (e) { now = 'unreadable'; }
+    var wrote = null;
+    try { wrote = QLIKSYNC.lastSync(src.scope); } catch (e) { wrote = null; }
     return { source: src.label, feeds: src.scope, lastSynced: seen[src.key] || '(never)',
-             fileNow: now, willSync: now !== seen[src.key] };
+             fileNow: now, willSync: now !== seen[src.key],
+             wroteAt: wrote ? new Date(wrote.at).toISOString() : '(never)',
+             wroteTabs: wrote ? wrote.tabs : 0,
+             wroteFailed: wrote ? wrote.failed : 0 };
   });
 }
 

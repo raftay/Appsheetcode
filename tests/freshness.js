@@ -13,6 +13,17 @@
  *   IT IS CHEAP TO ASK               pages check it every few minutes
  *   PV AND RMX AGREE WITH IT         one answer, not three counters
  *
+ * AND THE HEADER'S STAMP, which is the other half of the same question. The
+ * version answers "has anything moved"; the stamp answers "how old is what I am
+ * holding", and it needs TWO clocks that must never be collapsed into one:
+ *
+ *   THE SHEET      when the workbook last changed. The version's own time.
+ *   QLIKVIEW       when the sync last WROTE it. Recorded by the sync, because
+ *                  Drive cannot tell a sync from somebody typing into a lookup
+ *                  tab — and a header that called a hand edit a QlikView update
+ *                  would be lying about where the figures came from. That is
+ *                  the check below with a name to match.
+ *
  *   node tests/freshness.js
  */
 const fs = require('fs'), vm = require('vm'), path = require('path');
@@ -83,6 +94,12 @@ function load() {
   loadRegions(ctx, 'Config.gs', 'Code.gs');
   ctx.PV = { clearCache: () => {} };
   ctx.RMX_NS = { bumpGeneration: () => {} };
+  /* §5's engine, as far as §3 is concerned: one call, returning whatever the
+     last sync recorded for a page. The engine itself is qliksync.js's job —
+     including that it WRITES this — so what is proved here is that §3 reads it
+     and never falls back to Drive for the QlikView clock. */
+  state.synced = {};
+  ctx.QLIKSYNC = { lastSync: p => state.synced[p] || null };
 
   const PV_ID  = ctx.APP_CONFIG.PAGES.pricevolume.defaultSpreadsheetId;
   const RMX_ID = ctx.APP_CONFIG.PAGES.rmx.defaultSpreadsheetId;
@@ -257,6 +274,105 @@ console.log('\nit always reads Drive again rather than trusting the cached copy:
   const r = ctx.updateFromSource('pricevolume', '1000.x');
   check('Drive was asked', state.driveCalls, before + 1);
   check('so the change is seen straight away', r.changed, true);
+}
+
+/* ======================================================================
+ * 3b. The header's stamp — two clocks, and they are not the same clock
+ * ==================================================================== */
+console.log('\nthe stamp reports the sheet and QlikView separately:');
+{
+  const { ctx, state, PV_ID } = load();
+  state.synced.pricevolume = { at: 500, exportAt: 400, exportName: 'Agg.xls',
+                               tabs: 2, failed: 0 };
+
+  const r = ctx.getSourceTimes('pricevolume');
+  check('it answers', r.ok, true);
+  /* Its own workbook. The Saskatchewan rates sheet is listed for this page in
+     APP_EXTRA_SOURCES but has no id until somebody sets one, and a row with no
+     workbook has no clock to report — the same skip APP_sourceIds_ makes, and
+     the next block is what proves it comes back once it is configured. */
+  check('one row per workbook the page reads', r.sources.map(x => x.page),
+    ['pricevolume']);
+  check('the sheet clock is the workbook\'s modified time', r.sources[0].sheetAt, 1000);
+  check('the QlikView clock is what the sync recorded', r.sources[0].qlikAt, 500);
+  check('with the export it read', r.sources[0].exportAt, 400);
+  check('and the file it came out of', r.sources[0].exportName, 'Agg.xls');
+  check('each row is named for a human', r.sources[0].label,
+    ctx.APP_CONFIG.PAGES.pricevolume.label);
+
+  /* THE WHOLE REASON THERE ARE TWO. Somebody types a row into REGION LOOKUP:
+     the sheet moved, QlikView did not. Reading the second off Drive would have
+     called that a QlikView update. */
+  state.mtime[PV_ID] = 9000;
+  ctx.APP_forgetStamp_(null);
+  const after = ctx.getSourceTimes('pricevolume');
+  check('a hand edit moves the sheet clock', after.sources[0].sheetAt, 9000);
+  check('and leaves the QlikView clock exactly where it was',
+    after.sources[0].qlikAt, 500);
+}
+
+console.log('\na workbook QlikView never syncs says so, rather than guessing:');
+{
+  const { ctx, state } = load();
+  /* The Saskatchewan rates sheet, once somebody has pointed the ⚙ panel at one.
+     It is maintained by hand and no export feeds it, so the honest answer is a
+     sheet clock and NO QlikView clock — not the sheet's own time repeated,
+     which would read as "QlikView updated this" about a sheet it has never
+     touched. */
+  const props = ctx.PropertiesService.getScriptProperties();
+  props.setProperty(ctx.APP_propKey_('saskrates'), 'sask-book-id');
+  state.mtime['sask-book-id'] = 3300;
+  ctx.APP_forgetStamp_(null);
+
+  const r = ctx.getSourceTimes('pricevolume');
+  check('it is on the list now', r.sources.map(x => x.page), ['pricevolume', 'saskrates']);
+  const sask = r.sources.filter(x => x.page === 'saskrates')[0];
+  check('the rates sheet has a sheet clock', sask.sheetAt, 3300);
+  check('and no QlikView clock at all', sask.qlikAt, 0);
+  check('nor an export to name', sask.exportName, '');
+}
+
+console.log('\nthe Overview reports every workbook behind it, not one of them:');
+{
+  const { ctx, state } = load();
+  state.synced.rmx = { at: 700, exportAt: 650, exportName: 'RMX.xls', tabs: 3, failed: 0 };
+  const r = ctx.getSourceTimes('overview');
+  /* It owns no sheet — the same trap APP_EXTRA_SOURCES keeps the version out
+     of. A stamp that reported one workbook would date the page off whichever
+     one happened to be first while another sat two days stale. */
+  checkThat('more than one row', r.sources.length >= 3, r.sources.length);
+  checkThat('Ready-Mix is one of them',
+    r.sources.some(x => x.page === 'rmx' && x.qlikAt === 700));
+  checkThat('and Price & Volume, which has never been synced here',
+    r.sources.some(x => x.page === 'pricevolume' && x.qlikAt === 0));
+}
+
+console.log('\nthe stamp is its own control, beside the button and not inside it:');
+{
+  const stamp = APPHTML.module('AmrStamp');
+  const styles = APPHTML.styleBlock('A3');
+  const runtime = APPHTML.whole ? APPHTML.whole() : '';
+
+  checkThat('it asks the server for both clocks', /\.getSourceTimes\(/.test(stamp));
+  checkThat('it puts itself next to #syncBtn',
+    /getElementById\('syncBtn'\)/.test(stamp) && /insertBefore\(btn, sync\.nextSibling\)/.test(stamp),
+    'the stamp no longer mounts beside the button it belongs to');
+  /* NOT INSIDE THE BUTTON. Writing a date into #syncBtn's own label is the one
+     thing this must never do: the bar is one row only while every label on it
+     is a fixed nowrap string. */
+  checkThat('and never writes into that button',
+    !/syncBtn[^\n]*(textContent|innerHTML)\s*=/.test(stamp),
+    'the stamp is editing the Update from source button');
+  checkThat('a page with no ↻ button gets no stamp',
+    /if \(!sync \|\| !bar\.contains\(sync\)\) return;/.test(stamp));
+  checkThat('an answer for a page that has gone is dropped',
+    /if \(mine !== page\(\)\) return;/.test(stamp),
+    'a late answer will paint over whichever page is mounted now');
+  checkThat('the class it mounts is styled', /\.amr-stamp\{/.test(styles),
+    'the header would show an unstyled control');
+  checkThat('both clocks reach the panel',
+    /Last updated from the Google Sheet/.test(stamp) &&
+    /last updated from QlikView/.test(stamp));
 }
 
 /* ======================================================================
