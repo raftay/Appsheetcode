@@ -23132,9 +23132,11 @@ AMR.page('deckbuilder', {
     /* ONE month for the whole deck. Every adapter keys its cache on it and passes
        it to its backend, so MTD and YTD on every slide are the same month. */
     row.spec.month = DECK_MONTH || dbPrevMonth();
-    /* what the KPI strip on this picture is about to read - so changing the
-       Region later can tell which pictures went stale and which did not */
-    row.kpiUsed = dbKpiNow(row);
+    /* WHAT THIS PICTURE IS ABOUT TO BE BUILT FROM - the tables it shows, in
+       order, and what its KPI strip reads. Stamped here so "is this picture
+       stale?" is a comparison against what it was actually rendered with, and
+       not a guess from what changed. */
+    dbStampUsed(row);
 
     return AmrDeckSource.build(row.spec).then(function(el){
       return AmrSlide.captureBare(el, {
@@ -23297,6 +23299,28 @@ AMR.page('deckbuilder', {
     }
     var cur = '';
     try { cur = p.current(r.spec) || ''; } catch(e){}
+
+    /* A SHARED REGION OUTRANKS THIS DROPDOWN, so when one is set the dropdown
+       says so and does nothing. It used to be the only place the region could
+       be chosen and it wrote a PER-DEVICE memory; the arrangement can now set
+       one for a whole scope, shared, because a colleague building from your
+       saved arrangement has to get your numbers. Leaving the control live
+       under that would be a dropdown that visibly moves and changes nothing —
+       the same silent failure as a slide built from last week's figures.
+
+       THE MARKUP IS UNCHANGED WHERE NOTHING IS SHARED, which is the default
+       and is the state pageparity.js's fixture compares. Same shape as the
+       layout picker beside it, which also only grows its "changed" caption
+       once a row has been moved off its recipe default. */
+    var pinned = (r.spec.kpi && r.spec.kpi.sheet) || '';
+    if(pinned){
+      return '<div class="db-kpi-wrap"><span class="db-kpi-cap moved">Region \u00b7 shared</span>'+
+        '<select class="db-kpi moved" disabled title="'+esc('This market\u2019s region is set '+
+          'for everybody in the Arrange stage, so it is the same on every device. Change it '+
+          'there.')+'">'+
+        '<option selected>'+esc(pinned)+'</option></select></div>';
+    }
+
     return '<div class="db-kpi-wrap"><span class="db-kpi-cap">Region</span>'+
       '<select class="db-kpi" title="Which region sheet the KPI cards read. '+
         'Set it before Render, or during one - a slide not yet reached picks it up on its turn." '+
@@ -23313,6 +23337,76 @@ AMR.page('deckbuilder', {
     var p = src && src.kpiPicker;
     if(!p || !p.current) return null;
     try { return p.current(r.spec) || null; } catch(e){ return null; }
+  }
+  /* ...and the other two thirds of the same question: which tables it shows,
+     in order, and whether it carries a strip at all. One string each, because
+     the comparison is "did this move?" and nothing reads the parts. */
+  function dbTablesNow(r){
+    var src = srcOf(r.spec.source);
+    if(!src || !src.tables) return '';
+    var t = (r.spec.tables && r.spec.tables.length)
+      ? r.spec.tables : defaultTablesFor(src, r.spec);
+    return (t || []).join(',');
+  }
+  function dbKpiOnNow(r){
+    var src = srcOf(r.spec.source);
+    if(!src || !src.kpiToggle) return true;
+    return !(r.spec.kpi && r.spec.kpi.on === false);
+  }
+  function dbStampUsed(r){
+    r.kpiUsed    = dbKpiNow(r);
+    r.tablesUsed = dbTablesNow(r);
+    r.kpiOnUsed  = dbKpiOnNow(r);
+  }
+  /* THE WHOLE OF "is this picture still right?". A row that has never been
+     rendered has no stamp and answers true, which is harmless: dbRestale only
+     ever acts on a row that HAS a picture. */
+  function dbConfigMoved(r){
+    return dbTablesNow(r) !== r.tablesUsed
+        || dbKpiNow(r)    !== r.kpiUsed
+        || dbKpiOnNow(r)  !== r.kpiOnUsed;
+  }
+
+  /* =========================================================================
+   * A CHANGED SELECTION DROPS EXACTLY THE PICTURES IT CHANGED
+   * -------------------------------------------------------------------------
+   * This was dbPickKpi's, and it is shared rather than copied because the
+   * shape is the point: a change made HERE is not a re-render, it is a
+   * correction made BEFORE the slide is photographed. So
+   *   · a slide this pass has not reached yet needs nothing at all — it will
+   *     be built with the new selection when its turn comes;
+   *   · a slide already photographed has its picture dropped and is put BACK
+   *     ON THE LIVE QUEUE, so it is rebuilt at the end of this pass instead of
+   *     being left "pending" for somebody to notice.
+   *
+   * AND IT DROPS ONLY WHAT MOVED. A scope reaches every slide below it, but a
+   * row with a more specific rung answering for it did not change and its
+   * picture is still right — throwing that away would cost a re-render for
+   * nothing. Each row is checked against what it was RENDERED with, never
+   * against what was edited.
+   * ======================================================================= */
+  function dbRestale(){
+    var requeued = 0, ahead = 0;
+    ROWS.forEach(function(row){
+      if(!row.on) return;
+      if(!row.png){
+        /* not photographed yet: nothing to undo. It is only "ahead" if a pass
+           is actually running and has not passed it. */
+        if(RQ && RQ.list.indexOf(row) >= RQ.i && dbConfigMoved(row)) ahead++;
+        return;
+      }
+      if(!dbConfigMoved(row)) return;          // its picture is still right
+      row.png = null; row.w = row.h = 0; row.status = 'pending'; row.err = '';
+      requeued++;
+      if(RQ && RQ.list.indexOf(row) < RQ.i) RQ.list.push(row);
+    });
+    return { requeued: requeued, ahead: ahead };
+  }
+  function dbRestaleNote(n){
+    return n.requeued
+      ? (' · ' + n.requeued + ' slide' + (n.requeued === 1 ? '' : 's') + ' rebuilding' +
+         (RQ ? ' in this run' : ' — press Render'))
+      : (n.ahead ? ' · will be used when those slides render' : '');
   }
 
   /* CHOOSING A REGION IS NOT A RE-RENDER.
@@ -23338,29 +23432,19 @@ AMR.page('deckbuilder', {
        VIEW - market and refine - so it is the only thing that knows which rows
        this applies to. A kpiSheet pinned on a row would outrank it and go stale
        the moment its twin was changed instead, so the pins come off and every row
-       reads the memory. */
+       reads the memory.
+
+       THE SHARED CHOICE IS NOT A PIN AND IS NOT TOUCHED. spec.kpi comes from
+       the arrangement's scope, it outranks the device memory deliberately, and
+       it belongs to every device rather than this one. A row that has one does
+       not reach this function at all - the dropdown is disabled and says where
+       the value comes from - so deleting it here would only be a way to lose it
+       on some path nobody meant to take. */
     ROWS.forEach(function(row){ if(row.spec) delete row.spec.kpiSheet; });
 
-    var requeued = 0, ahead = 0;
-    ROWS.forEach(function(row){
-      if(!row.on) return;
-      if(!row.png){
-        /* not photographed yet: nothing to undo. It is only "ahead" if a pass is
-           actually running and has not passed it. */
-        if(RQ && RQ.list.indexOf(row) >= RQ.i && dbKpiNow(row) !== row.kpiUsed) ahead++;
-        return;
-      }
-      if(dbKpiNow(row) === row.kpiUsed) return;      // its picture is still right
-      row.png = null; row.w = row.h = 0; row.status = 'pending'; row.err = '';
-      requeued++;
-      if(RQ && RQ.list.indexOf(row) < RQ.i) RQ.list.push(row);
-    });
-
+    var n = dbRestale();
     redraw();
-    prog(requeued
-        ? ('Region set to ' + sheet + ' · ' + requeued + ' slide' + (requeued===1?'':'s') +
-           ' rebuilding' + (RQ ? ' in this run' : ' — press Render'))
-        : ('Region set to ' + sheet + (ahead ? ' · will be used when those slides render' : '')));
+    prog('Region set to ' + sheet + dbRestaleNote(n));
     setBusy(BUSY);                 // recompute the buttons; do not end a render
   }
 
@@ -24016,10 +24100,11 @@ AMR.page('deckbuilder', {
     sp.tables = null; sp.tablesScope = ''; sp.kpi = null; sp.kpiScope = '';
     sp.scopeLadder = ladderFor(sp);
 
-    dbArrDropPicture(ROWS[i]);
-    dbArrDraw(); redraw();
+    var dropped = dbArrDropPicture(ROWS[i]);
+    dbArrDraw(); redraw(); setBusy(BUSY);
     dbSavePlan(sp.title + ' → ' + srcLabel(next) +
-      (sp.market ? '' : ' · pick a market'));
+      (sp.market ? '' : ' · pick a market') +
+      (dropped ? ' · picture dropped' : ''));
   }
 
   function dbArrSetField(i, field, v){
@@ -24032,9 +24117,10 @@ AMR.page('deckbuilder', {
     sp.scopeLadder = ladderFor(sp);
     /* MARKET, PERIOD AND REFINE ARE THE PICTURE. Unlike a table change, there
        is nothing to compare — a different market is different content, always. */
-    dbArrDropPicture(ROWS[i]);
-    dbArrDraw(); redraw();
-    dbSavePlan(sp.title + ' · ' + [sp.market, sp.refine, sp.period].filter(Boolean).join(' · '));
+    var moved = dbArrDropPicture(ROWS[i]);
+    dbArrDraw(); redraw(); setBusy(BUSY);
+    dbSavePlan(sp.title + ' · ' + [sp.market, sp.refine, sp.period].filter(Boolean).join(' · ') +
+      (moved ? ' · picture dropped' : ''));
   }
 
   /* The same ladder the server builds, so a row edited here resolves the way
@@ -24048,7 +24134,14 @@ AMR.page('deckbuilder', {
     return out;
   }
 
-  /* Whatever was photographed was photographed for the old content. */
+  /* UNCONDITIONAL, unlike a table or KPI change. There is nothing to compare:
+     a different source is a different page's content, and a different market,
+     period or refine is different figures — always, and whatever the picture
+     was rendered with. Only the SELECTION is worth a comparison, because a
+     scope reaches slides it did not actually move.
+
+     REORDERING IS THE OTHER SIDE OF THAT: it changes only where a slide lands,
+     which is DECK_finish's job now, so it drops nothing. */
   function dbArrDropPicture(row){
     if(!row.png && row.status !== 'error') return 0;
     row.png = null; row.w = row.h = 0; row.status = 'pending'; row.err = '';
@@ -24183,8 +24276,15 @@ AMR.page('deckbuilder', {
       .then(function(res){
         if(res && res.map) ARR.tables = res.map;
         arrApplyScopes();
-        dbArrDraw(); dbDrawRail();
-        prog(scopeLabel(key, selRow()) + ' · saved for everybody');
+        /* THE PICTURES ARE DROPPED ON THE SERVER'S ANSWER, not optimistically
+           with the tick box. The tick has to move at once or the control reads
+           as broken, but a picture thrown away for a save the server then
+           refuses is a re-render nobody asked for - and unlike the tick, there
+           is no putting it back. dbPickLayout drops first and apologises in the
+           banner; there is no reason to, and this is the shape to copy. */
+        var n = dbRestale();
+        dbArrDraw(); dbDrawRail(); redraw(); setBusy(BUSY);
+        prog(scopeLabel(key, selRow()) + ' · saved for everybody' + dbRestaleNote(n));
       })
       .catch(function(err){
         if(was) ARR.tables.scopes[key] = was; else delete ARR.tables.scopes[key];

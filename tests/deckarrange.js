@@ -99,12 +99,56 @@ function template() {
   };
 }
 
+/* A Price & Volume payload the render path can actually build a slide out of.
+   getReport is modelled the way it really behaves — a table per requested
+   dimension, pushed in the SERVER's order whatever order the request used —
+   because the adapter reorders what comes back and a fixture that handed them
+   over pre-sorted would test nothing. */
+const PV_ORDER = [
+  ['REGION', 'Region'], ['MARKET', 'Market'], ['SUBMARKET1', 'Submarket'],
+  ['PLANT_TYPE', 'Plant Type'], ['MATERIAL_FAM', 'Material Family'],
+  ['PROD_CLASS', 'Product Class'], ['PLANT', 'Plant'], ['MATERIAL', 'Material'],
+  ['CUST_SEGMENT', 'Customer Segment'],
+];
+function pvReport(o) {
+  const want = (o && o.dimensions) || ['SUBMARKET1', 'PLANT_TYPE', 'PROD_CLASS'];
+  const total = { cyVol: 2266382, pyVol: 2444425, volPct: -0.073, cyAsp: 17.11,
+                  pyAsp: 16.64, aspPct: 0.028, ppi: 0.03 };
+  return {
+    ok: true, period: (o && o.period) || 'MTD', filterField: 'MARKET',
+    filterValue: (o && o.filterValue) || '__ALL__', filterOptions: [],
+    refineValue: '__ALL__', refineMode: 'include',
+    refineOptions: ['SW Land', 'SW DOCKS'], latestMonth: 7, rowCount: 1,
+    tables: PV_ORDER.filter(([k]) => want.indexOf(k) !== -1).map(([k, label]) => ({
+      dimension: label, key: k, volMix: -0.002, total: total,
+      rows: [{ label: 'A', cyVol: 1282643, pyVol: 1390172, volPct: -0.077,
+               cyAsp: 15.1, pyAsp: 14.47, aspPct: 0.044, ppi: 0.026 }],
+    })),
+    revenueBridge: { pyRev: 40668495, volImpact: -2962143, priceImpact: 1061457, cyRev: 38767809 },
+    priceBridge: { ppi: 0.03, totalAsp: 0.028, items: [{ label: 'Region/Market mix', value: -0.003 }] },
+  };
+}
+
 /* Everything the page asks for that is NOT the deck's own server half. */
 const OTHER = {
+  getReport: pvReport,
+  getCustomerReport: () => ({ rows: [], total: null }),
+  RMX_getKeys: () => ({ market: 'X', period: 'MTD', latestMonth: 7,
+                        rows: [], plants: [], keys: [], breakdowns: [] }),
+  RMX_getSlideTables: () => ({ market: 'X', period: 'MTD', latestMonth: 7,
+                               segment: { rows: [], total: null }, extras: { extras: [], vap: [] } }),
+  getFscData: () => ({ markets: [], exec: { MTD: { all: [], applied: [] },
+                                            YTD: { all: [], applied: [] } } }),
+  getRmxFuelData: () => ({ markets: [], exec: { MTD: { all: [], applied: [] },
+                                                YTD: { all: [], applied: [] } } }),
   DECK_readTemplate: () => template(),
   getKpiValues: () => ({ generation: 'kpi-1', cached: false,
                          values: { main: null, mbsk: null } }),
   getDataVersion: () => ({ generation: 'gen-1' }),
+  /* Render opens with the source check — deliberately, and it is not
+     skippable — so it has to be answerable here. Nothing has moved, which is
+     the normal answer and the one that leaves every picture alone. */
+  updateFromSource: () => ({ ok: true, changed: false, generation: 'gen-1' }),
   getSourceTimes: () => ({ ok: true, sources: [] }),
   getLogo: () => '',
   getGuideImages: ids => (ids || []).map(() => ''),
@@ -121,6 +165,15 @@ function mount() {
         ? { page: 'deckbuilder', appUrl: URL_BASE, appMode: 'false' }[name] : all));
 
   const errors = [], asked = [];
+  /* How long a server reply takes. 0 for everything above; the render checks
+     slow the DATA calls down so a change can be made WHILE a pass is running,
+     which is the case the live queue exists for.
+
+     ONLY THE DATA CALLS. The arrangement's four writers open no sheet and no
+     template — that is the whole reason the stage can save optimistically and
+     correct itself on the answer — so leaving them instant is not making the
+     harness convenient, it is modelling the difference the design rests on. */
+  const delay = { ms: 0, of: name => (/^DECK_/.test(name) ? 0 : delay.ms) };
   const vc = new VirtualConsole();
   vc.on('jsdomError', e => {
     const m = String(e && e.message);
@@ -133,9 +186,25 @@ function mount() {
     virtualConsole: vc, url: URL_BASE + '?page=deckbuilder',
     runScripts: 'dangerously', pretendToBeVisual: true,
     beforeParse(win) {
+      /* HTML2CANVAS, MINUS THE CANVAS. The staleness checks need rows that
+         actually HAVE a picture, and the only honest way to get one is to run
+         the render loop. What comes back is not compared — a canvas cannot be
+         — so the stub answers with the shape captureBare reads and nothing
+         more. It resolves on its own timer, which is what the real one does. */
+      win.html2canvas = () => new Promise(res => setTimeout(() => res({
+        width: 800, height: 450, toDataURL: () => 'data:image/png;base64,AA',
+      }), 5));
+      /* Chart.js. `options` is not decoration: captureChart turns the
+         animation off and the devicePixelRatio up around a capture and puts
+         both back afterwards, so a chart object without one throws inside the
+         render loop and every slide that draws a chart fails. */
       win.Chart = function (c, cfg) {
-        this.config = cfg; this.update = () => {}; this.destroy = () => {};
-        this.resize = () => {}; this.toBase64Image = () => '';
+        this.config = cfg; this.data = cfg && cfg.data;
+        this.options = (cfg && cfg.options) || {};
+        this.canvas = c && c.canvas ? c.canvas : null;
+        this.update = () => {}; this.destroy = () => {};
+        this.resize = () => {}; this.draw = () => {};
+        this.toBase64Image = () => 'data:image/png;base64,AA';
         this.getDatasetMeta = () => ({ data: [] });
       };
       win.Chart.register = () => {}; win.Chart.defaults = { font: {}, plugins: {}, scale: {} };
@@ -172,19 +241,25 @@ function mount() {
               asked.push(prop);
               setTimeout(() => {
                 try {
-                  /* THE REAL FUNCTION where there is one. google.script.run
-                     serialises, so the arguments cross a realm boundary here
-                     exactly as they do in the live app — which is the thing
-                     that caught `x instanceof Array` in the stores. */
-                  const fn = (typeof server[prop] === 'function') ? server[prop] : OTHER[prop];
+                  /* THE REAL FUNCTION where there is one, and OTHER wins
+                     where it is listed. DECK_readTemplate is a real global
+                     too — it just opens the template, which is a SlidesApp
+                     call and the one thing this harness cannot make — so the
+                     fixture has to be able to take a name back.
+
+                     google.script.run serialises, so the arguments cross a
+                     realm boundary here exactly as they do live, which is the
+                     thing that caught `x instanceof Array` in the stores. */
+                  const fn = OTHER[prop]
+                    || (typeof server[prop] === 'function' ? server[prop] : null);
                   if (!fn) {
                     errors.push('no stub for google.script.run.' + prop + '()');
                     return bad && bad(new Error('no stub for ' + prop));
                   }
-                  ok && ok(JSON.parse(JSON.stringify(fn(...args) === undefined ? null
-                                                     : fn(...args))));
+                  const out = fn(...args);
+                  ok && ok(JSON.parse(JSON.stringify(out === undefined ? null : out)));
                 } catch (e) { bad && bad(e); }
-              }, 0);
+              }, delay.of(prop));
             };
           },
         });
@@ -197,7 +272,7 @@ function mount() {
       win.addEventListener('error', e => errors.push(String(e.message || e.error)));
     },
   });
-  return { win: dom.window, errors, asked };
+  return { win: dom.window, errors, asked, delay };
 }
 
 const settle = ms => new Promise(r => setTimeout(r, ms));
@@ -626,6 +701,141 @@ async function act(fn) { fn(); await settle(120); }
       '#dbList [data-db-scope]').length === 0);
   check('...and the Arrange panel is not inside it',
     !$('dbList').contains($('dbArrange')));
+
+  /* ==========================================================================
+   * A CHANGED SELECTION DROPS EXACTLY THE PICTURES IT CHANGED
+   * --------------------------------------------------------------------------
+   * A scope reaches every slide below it. That is the point of it — and it is
+   * also why the drop cannot be "everything this scope reaches": a row with a
+   * more specific rung answering for it did not move, and throwing its picture
+   * away costs a re-render for nothing. Each row is compared against what it
+   * was actually RENDERED with.
+   *
+   * This runs on a SECOND page over a TRIMMED recipe. The checks above need all
+   * 43 rows — the Southwest spellings, the source counts, the market coverage —
+   * and these need every row to have a real picture, which means running the
+   * render loop for each of them. Four rows is enough to state the claim and
+   * fast enough to state it reliably.
+   * ======================================================================== */
+  {
+    const keep = ['pv_cc_mtd', 'pv_cc_ytd', 'pv_sk_mtd', 'rmx_sk_mtd'];
+    const full = server.DECK_RECIPE.slice();
+    server.DECK_RECIPE.length = 0;
+    keep.forEach(id => server.DECK_RECIPE.push(full.filter(r => r.id === id)[0]));
+    PROPS = {};
+
+    const m2 = mount();
+    W = m2.win; ERRORS = m2.errors;
+    await settle(400);
+    await planAndArrange();
+
+    section('a changed selection drops exactly the pictures it changed:');
+    check('the trimmed deck mounted', rows().length === 4, rows().length + ' rows');
+
+    const st = () => [...W.document.querySelectorAll('#dbList .db-st')]
+      .map(e => e.textContent.trim());
+    const shot = () => [...W.document.querySelectorAll('#dbList .db-thumb')]
+      .map(e => e.className.indexOf('empty') === -1);
+
+    click($('dbBtnRender'));
+    await settle(2500);
+    check('every slide renders', st().join(',') === 'ready,ready,ready,ready', st().join(','));
+    check('...and every one has a picture', shot().every(Boolean), JSON.stringify(shot()));
+
+    /* pv|Central Canada reaches two of the four: the MTD row and its YTD twin,
+       because `period` is in no scope key above the first. The Saskatchewan pv
+       row and the Ready-Mix row are on other rungs and did not move. */
+    await act(() => click(rows()[0].querySelector('[data-db-arr="sel"]')));
+    const scopeBtns2 = () => [...W.document.querySelectorAll('#dbArrSide [data-db-scope]')];
+    await act(() => click(scopeBtns2()[1]));                  // Central Canada only
+    const box = k => [...W.document.querySelectorAll('#dbArrSide [data-db-tb]')]
+      .filter(b => b.getAttribute('data-db-tb') === k)[0];
+    await act(() => { const b = box('PLANT'); b.checked = true; changeEl(b); });
+    await settle(200);
+
+    check('the two slides that scope moved lost their pictures',
+      st()[0] === '—' && st()[1] === '—', st().join(','));
+    check('...and the ones it did not move kept theirs',
+      st()[2] === 'ready' && st()[3] === 'ready', st().join(','));
+    check('...and the page says how many are rebuilding',
+      /2 slides rebuilding/.test($('dbProg').textContent), $('dbProg').textContent);
+    check('a change made after a pass has finished says to press Render',
+      /press Render/.test($('dbProg').textContent), $('dbProg').textContent);
+
+    /* AND A CHANGE THAT MOVES NOTHING TOUCHES NOTHING. Setting the same
+       selection again is not a re-render — the picture is still right. */
+    click($('dbBtnRender'));
+    await settle(2500);
+    check('re-rendering brings all four back', st().join(',') === 'ready,ready,ready,ready',
+      st().join(','));
+    await act(() => click(rows()[0].querySelector('[data-db-arr="sel"]')));
+    await act(() => click(scopeBtns2()[2]));                  // all pv slides
+    await act(() => {
+      /* a KPI region on the pv scope: it reaches all three pv rows, but the
+         workbook is not uploaded in this fixture, so there is no region to
+         choose and the strip toggle is the change to make instead */
+      const k = W.document.querySelector('#dbArrSide [data-db-kpion]');
+      k.checked = false; changeEl(k);
+    });
+    await settle(200);
+    check('a KPI change reaches every pv slide, and only those',
+      st()[0] === '—' && st()[1] === '—' && st()[2] === '—' && st()[3] === 'ready',
+      st().join(','));
+
+    /* THE LIVE QUEUE. A slide already photographed when the change lands has
+       to be rebuilt IN THIS PASS — not dropped to "pending" and then quietly
+       never rebuilt, which is what a plain local todo list did before the
+       queue and its cursor were kept on the page. The only way out of that
+       was to wait for the pass to end and press Render again.
+
+       The server is slowed so a change can be made while a pass is genuinely
+       running. The Ready-Mix row is dropped first, unconditionally, by
+       changing its period — that gives the pass something to do — and the pv
+       scope is then changed while that row is still being fetched. */
+    click($('dbBtnRender'));
+    await settle(3000);
+    check('everything is ready before the mid-pass check',
+      st().join(',') === 'ready,ready,ready,ready', st().join(','));
+
+    /* line the panel up FIRST, while nothing is running: the mid-pass action
+       has to be one synchronous change, or the clicks that set it up would
+       themselves take longer than the pass */
+    await act(() => click(rows()[0].querySelector('[data-db-arr="sel"]')));
+    await act(() => click(scopeBtns2()[2]));                 // all pv slides
+
+    const per = rows()[3].querySelector('[data-db-arr="period"]');
+    await act(() => { per.value = 'YTD'; changeEl(per); });
+    check('changing a period drops that picture with nothing to compare',
+      st()[3] === '—', st().join(','));
+    check('...and says so, because a market or period IS the picture',
+      /picture dropped/.test($('dbProg').textContent), $('dbProg').textContent);
+
+    m2.delay.ms = 400;
+    click($('dbBtnRender'));
+    await settle(600);                       // the check has answered; row 4 is in flight
+    check('a running pass leaves Render and Publish disabled',
+      $('dbBtnRender').disabled === true && $('dbBtnPublish').disabled === true,
+      'render=' + $('dbBtnRender').disabled + ' publish=' + $('dbBtnPublish').disabled);
+
+    const kBox = W.document.querySelector('#dbArrSide [data-db-kpion]');
+    kBox.checked = true; changeEl(kBox);                      // strip back on
+    await settle(200);
+    check('a change made mid-pass does not end the pass',
+      $('dbBtnRender').disabled === true,
+      'Render came back while a pass was still going: ' + $('dbProg').textContent);
+    check('...and says the slides are rebuilding IN THIS RUN',
+      /rebuilding in this run/.test($('dbProg').textContent), $('dbProg').textContent);
+
+    m2.delay.ms = 0;
+    await settle(4000);
+    check('...and they are — the pass finishes with every slide built',
+      st().join(',') === 'ready,ready,ready,ready', st().join(','));
+    check('...rather than leaving one pending for somebody to notice',
+      shot().every(Boolean), JSON.stringify(shot()));
+
+    server.DECK_RECIPE.length = 0;
+    full.forEach(r => server.DECK_RECIPE.push(r));
+  }
 
   section('');
   check('the page raised no errors', ERRORS.length === 0, ERRORS.slice(0, 4).join('\n         '));

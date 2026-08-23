@@ -746,6 +746,29 @@ Script Property edit), and it is not reordering either — so the order is compa
 natural order *with the deleted rows taken out*, or every deletion would also write a 42-id
 order and freeze the recipe through a button nobody thought was about order at all.
 
+**The staleness half runs a real render.** `html2canvas` is stubbed (a canvas cannot be
+diffed) but everything in front of it is not, so the rows genuinely have pictures — which is
+the only honest way to assert that a changed selection drops *exactly* the ones it changed. It
+runs on a second page over a four-row recipe: the checks above need all 43, and these need
+every row photographed. A scope reaches every slide below it, and that is precisely why the
+drop cannot be "everything this scope reaches" — a row with a more specific rung answering for
+it did not move, and throwing its picture away costs a re-render for nothing. Each row is
+compared against what it was **rendered** with, never against what was edited.
+
+The last three checks are the live queue. Only the DATA calls are slowed; the arrangement's
+four writers stay instant, which is not harness convenience — it is the difference the design
+rests on, and it is what lets a change land mid-pass. A slide already photographed when it
+lands has to be rebuilt **in that pass**, not dropped to "pending" and quietly never rebuilt,
+which is what a plain local todo list did before the queue and its cursor were kept on the
+page.
+
+Two fixture faults came out of writing that half, both of which made a check impossible
+rather than wrong. `DECK_readTemplate` is a real global too, so the runner has to let the
+fixture take a name **back** — it opens the template, which is the one thing this harness
+cannot do. And a Chart.js stub without an `options` object throws inside `captureChart`, which
+turns the animation off around a capture and puts it back: every slide that draws a chart
+failed, and the failure read as a broken render path.
+
 **Why not a `pageparity` case.** That harness compares this page against the one it was ported
 from, and the page it was ported from has no Arrange stage. There is no second side. What
 `pageparity` still owns is that `#dbList`'s rows are byte-identical, and the last two checks
