@@ -720,7 +720,7 @@ cache key that varies when it should not.
 
 Mounts the Deck Builder under jsdom and drives the fourth stage: reorder a slide, untick one,
 delete one and put it back, retitle, change a source, pick tables for a scope, switch the KPI
-strip off, add a slide, reset. 83 checks.
+strip off, add a slide, reset. 113 checks.
 
 ```bash
 npm install jsdom     # not vendored
@@ -774,6 +774,16 @@ from, and the page it was ported from has no Arrange stage. There is no second s
 `pageparity` still owns is that `#dbList`'s rows are byte-identical, and the last two checks
 here assert the other direction of the same claim: no Arrange control is inside a `#dbList`
 row, and the panel is not inside the list.
+
+**Which rung the panel opens on is checked, not assumed.** It is the market's — three checks
+say so from three directions: a Price & Volume row opens on `Central Canada only`, re-opening a
+row whose *own* rung was just written comes back to the market rather than following what was
+last saved, and a Fuel Recovery row, having no market rung at all, opens on the broadest one it
+has. The Region dropdown is asserted at all three rungs of a pv row: put on the market's, gone
+from the source's and the row's, while the strip's on/off stays offered at every one. No EBITDA
+workbook is uploaded in this fixture, so what the market rung shows is the "nothing to choose
+from yet" note rather than the dropdown — which is what the check reads, because the claim is
+that the *question* is put there and skipped entirely at the other two.
 
 Two things it found on its first runs, neither of which a static check could see. **An element
 `id` is a `window` property**, so `<div id="dbArrange">` and `function dbArrange()` are

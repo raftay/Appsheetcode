@@ -517,12 +517,22 @@ async function act(fn) { fn(); await settle(120); }
   await act(() => click(rows()[pvAt].querySelector('[data-db-arr="sel"]')));
 
   const scopeBtns = () => [...W.document.querySelectorAll('#dbArrSide [data-db-scope]')];
+  const onScope = () => {
+    const b = scopeBtns().filter(x => x.classList.contains('on'))[0];
+    return b ? b.textContent.replace(/\s+/g, ' ').trim() : '(none)';
+  };
   check('the scope selector is in plain words, most specific first',
     scopeBtns().length === 3 &&
     /This slide only/.test(scopeBtns()[0].textContent) &&
     /Central Canada only/.test(scopeBtns()[1].textContent) &&
     /All Price & Volume slides/.test(scopeBtns()[2].textContent),
     scopeBtns().map(b => b.textContent.replace(/\s+/g, ' ').trim()).join(' / '));
+  /* THE RUNG IT OPENS ON IS THE MARKET'S. A table selection or a KPI region is
+     nearly always "this market, both periods"; opening on the source rung made
+     the safe change the one you had to go looking for and the one that moves
+     every pv slide at once the one you got by not looking. */
+  check('...and it opens on the market rung, not the source one',
+    /Central Canada only/.test(onScope()), onScope());
   check('...and each rung says how many slides it would reach',
     /\d+ slides/.test(scopeBtns()[2].textContent),
     scopeBtns()[2].textContent.replace(/\s+/g, ' ').trim());
@@ -618,9 +628,14 @@ async function act(fn) { fn(); await settle(120); }
     !!tableMap().scopes[rowKey] && tableMap().scopes[rowKey]['for'] === 'pv',
     JSON.stringify(tableMap().scopes[rowKey]));
   await act(() => click(rows()[pvAt].querySelector('[data-db-arr="sel"]')));
-  check('...and the panel marks the rung that is actually answering',
-    /answering/.test(scopeBtns()[0].textContent),
-    scopeBtns().map(b => b.textContent.replace(/\s+/g, ' ').trim()).join(' / '));
+  check('...and re-opening the row comes back to the market rung',
+    /Central Canada only/.test(onScope()), onScope());
+  /* WHICH RUNG IS ANSWERING IS SAID ON THE ROW, ONCE — the `.db-ar-scope` line
+     checked above. The rung buttons carried a second copy of it as a badge, and
+     two answers to "where does this come from" in one panel is one too many. */
+  check('...with no rung wearing an "answering" badge of its own',
+    !/answering/i.test($('dbArrSide').textContent),
+    $('dbArrSide').textContent.replace(/\s+/g, ' ').slice(0, 200));
   check('...while the row beside it still resolves at the source',
     rows()[pvAt + 1].textContent.indexOf('All Price & Volume slides') !== -1);
 
@@ -653,6 +668,34 @@ async function act(fn) { fn(); await settle(120); }
     tableMap() === null,
     'on with no region is the same as nothing stored: ' + JSON.stringify(tableMap()));
 
+  /* THE REGION IS ASKED ON THE MARKET RUNG AND NOWHERE ELSE. A sheet name out
+     of Central Canada's EBITDA workbook is meaningless on the source rung — it
+     would be handed to every other market's slides too — and on the row rung it
+     settles one slide while its MTD/YTD twin still asks the device. Both were
+     reachable and both read as a choice the panel had offered.
+
+     No workbook is uploaded in this fixture, so what the market rung shows is
+     the "nothing to choose from yet" note rather than the dropdown. That is
+     what is being asserted: the question is PUT there, and not at the other
+     two rungs, where the whole block is skipped. */
+  const regionAsked = () => /region to choose/.test($('dbArrSide').textContent) ||
+    !!W.document.querySelector('#dbArrSide [data-db-kpisheet]');
+  await act(() => click(rows()[pv2].querySelector('[data-db-arr="sel"]')));
+  check('the Region is asked on the market rung', regionAsked(),
+    $('dbArrSide').textContent.replace(/\s+/g, ' ').slice(-160));
+  await act(() => click(scopeBtns()[2]));                    // all pv slides
+  check('...and not on the source rung', !regionAsked(),
+    $('dbArrSide').textContent.replace(/\s+/g, ' ').slice(-160));
+  await act(() => click(scopeBtns()[0]));                    // this slide only
+  check('...nor on the row rung', !regionAsked(),
+    $('dbArrSide').textContent.replace(/\s+/g, ' ').slice(-160));
+  /* THE ON/OFF IS NOT GATED WITH IT: that question is meaningful at every rung,
+     and switching the strip off across a whole source is a real thing to want. */
+  check('...while the strip on / off is offered at all three',
+    !!kpiBox(), $('dbArrSide').textContent.replace(/\s+/g, ' ').slice(-160));
+  check('...and none of that stored anything', tableMap() === null,
+    JSON.stringify(tableMap()));
+
   const segAt = titles().findIndex(t => /RMX - SASKATCHEWAN - Commercial MTD/.test(t));
   await act(() => click(rows()[segAt].querySelector('[data-db-arr="sel"]')));
   check('a Product Segment slide offers on / off and no Region',
@@ -672,6 +715,11 @@ async function act(fn) { fn(); await settle(120); }
   check('a Fuel Recovery slide says its content is fixed',
     /fixed content/.test($('dbArrSide').textContent),
     $('dbArrSide').textContent.replace(/\s+/g, ' ').slice(-160));
+  /* NO MARKET, SO NO MARKET RUNG. Its whole ladder is 'row:fsc_mtd' then 'fsc',
+     and the broadest of those is where it opens — which for a source with one
+     slide per period IS the market. */
+  check('...and, having no market, opens on the broadest rung it has',
+    /All Fuel Recovery/.test(onScope()), onScope());
 
   /* ==== ADDING ============================================================ */
   section('adding a slide:');
