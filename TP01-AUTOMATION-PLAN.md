@@ -1,6 +1,9 @@
 # TP01 Transfer Price — the report sends itself
 
-**Status: PLAN ONLY. Nothing below is built yet.**
+**Status: IN PROGRESS.** The decisions in §10 are made; §9 is the running order.
+
+**Delete this file when the work lands** and fold its durable half into `README.md` — that is
+the instruction, and the reason is below.
 
 This file is deliberately temporary. When the work lands, its durable half goes into
 `README.md` — §5 (a third mail watch beside the Inventory Report's), §7 (the domain rules
@@ -182,13 +185,26 @@ the key. Confirmed from the code: the key is built from **Plant**, **Sold To** a
 PC** and **Material** on the SAP side (`buildSAPKey`). `S Plant` in the SAP file *is* the
 plant that matches AGG's `Plant`. Nothing else is needed.
 
-**The one thing that must be checked against live data before this can be trusted** is the
-*shape* of AGG's `Sold To`. The page's `extractSoldToCode` takes the part **after** the last
-`" - "`, so `Amrize Rmx Toronto - 64G00` works and a bare `64G00` works, but
-`64G00 - Amrize Rmx Toronto` would silently produce a key that matches nothing. Same question
-for `Plant` and `Material`, where `extractCode` takes the part **before** the first `" - "`.
-This is not guessable from the repo — see §7, where `tp01ReportMailStatus()` answers it in one
-editor run.
+**These were open questions and they are now answered**, off the real workbook that landed on
+`main` (`CPI Combined CENTRAL CANADA AGG PRICE & VOLUME REPORT (1).xlsx`), not guessed:
+
+| | value in the sheet | what the key rule makes of it |
+|---|---|---|
+| `Customer Parent` | **`Amrize RMX`** | exact, normalised equality. `Metrix RMX` is also in that column, so a `contains 'RMX'` test would be wrong |
+| `Cust Segment [Rock]` | `INTERNAL RMX` on the same rows | a second, independent way to see the same set — useful in the status report, not used as the filter |
+| `Sold To` | `BURLINGTON READY MIX - P4Q01` | code **last**. `extractSoldToCode` → `P4Q01`, `.slice(1)` → `4Q01` |
+| `Plant` | `3P02 - DUNDAS QUARRY` | code **first**. `extractCode` → `3P02` |
+| `Material` | `9160 - LI,40-20MM,CLEAR` | code **first** → `9160`. The comma in the description is not a `" - "`, so the split is safe |
+| `Year` | `2026` / `2025`, one per row | **a row carries one year.** A 2025 row has its figures in the PY columns and zeros in CY; a 2026 row the other way round. So "2026 only" is `Year === cyYear` **and** the CY columns — both halves, not either |
+| REGION LOOKUP | `3G00 - STONEWALL QUARRY` → `Manitoba` | the Central Canada rows carry the spaced `code - name` form the raw tab uses, so the market resolves. (The US rows in the same tab use an unspaced `3223-MESA…`; not ours, but do not "fix" the lookup on the strength of them) |
+
+Against the SAP side that makes the key `3P02` + `4Q01` + `9160`, and the SAP file's
+`3G00` + `64G00`→`4G00` + `9023` is the same shape: **both sides drop a one-character prefix
+from the ship-to / sold-to and the remaining four characters are the plant space.** The
+existing key rule needs no change.
+
+The match *rate* still has to be measured against a real SAP file, and
+`tp01ReportMailStatus()` (§7) is what measures it.
 
 ---
 
@@ -470,28 +486,31 @@ Each step is one commit, per `README.md` §10.
 
 ---
 
-## 10. What I need from you before step 6
+## 10. The decisions, made
 
-Everything above can be built without these. They only change the last commit.
-
-1. **Which email, exactly?** You said "the exact same email as the one sent on that page
-   manually". The page has four send shapes. My default is **Send As One** for both panels —
-   one email with every market's file attached and the breakdowns stacked, for the market
-   breakdown, and a second one the same shape for exceptions. Two emails a week. The
-   alternative is one email per market (five-ish per panel). The config panel supports both;
-   I need to know what to default it to.
-2. **Send the exceptions email at all?** Cheap to leave on, and `off` is a config value.
-3. **If the SAP file has no `ZIPR` tab** — the page refuses the file outright. Mirror that
-   (log an error, send nothing, retry tomorrow), or proceed on TP01 alone and say so in the
-   email? I default to **mirroring the page**: a partial price list produces confidently wrong
-   corrections, which is worse than no email.
-4. **A "Send now" button on the panel?** `README.md` §5 argues against exactly this for the
-   QlikView sync — "a sync is a minutes-long Drive job, not something to put behind a control
-   a user can press twice". This run is shorter, but the argument is not nothing. My default
-   is a **Preview** button (runs `status()`, sends nothing) and no Send Now.
-5. **Your address** goes in through the panel, not into code. Nothing needs it before step 5.
-
----
+1. **Only the exceptions report is emailed.** The market breakdown is not sent. `TPMAIL` still
+   computes it — the comparison is one pass and the breakdown is what the exception rule reads
+   — it simply does not mail it. Turning it back on later is one config value.
+2. **Send As One.** A single email, every market's exceptions stacked in the body, per-market
+   breakdowns in the order the page shows them.
+3. **One combined attachment**, not one file per market: a single `.xlsx` holding every
+   market's exception rows, sorted longest-outstanding first, with `Market` as a column. This
+   is the one place the automated output is deliberately *not* the shape the page produces,
+   and `TPXLSX` is where that shape is defined.
+4. **The QlikView drop zone stays, as an override.** The page keeps both drop zones. Drop only
+   the SAP file and the QlikView side is built from the Aggregates sheet; drop a QlikView file
+   as well and it wins. The backend takes either input and the comparison downstream of it is
+   the same code, so this is two *inputs*, not two pipelines.
+5. **The calculations move to the backend.** This is the change that makes the rest safe. The
+   comparison arithmetic and the email HTML exist **once**, in `script.gs`, and both the page
+   and the trigger call it. The browser keeps two jobs it is better at and which are not
+   calculations: parsing a dropped workbook (SheetJS), and writing the `.xlsx` files the
+   manual Download and Send buttons produce. `TPXLSX` exists only because a trigger has no
+   browser to do that second job.
+6. **A week with no exceptions still sends.** A short "no exceptions" email with no
+   attachment. A pipeline that is silent when it works is indistinguishable from one that has
+   stopped, and this one runs unattended.
+7. **Your address goes in through the panel**, never into code.
 
 ## 11. One note on the branch
 
