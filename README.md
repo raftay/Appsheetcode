@@ -128,13 +128,13 @@ six. Each of the eight scopes was traced to a real call:
 
 | Scope | What needs it |
 |---|---|
-| `auth/spreadsheets` | `SpreadsheetApp.openById` — the project is not bound to a sheet, so the narrower current-document scope is no use |
+| `auth/spreadsheets` | `SpreadsheetApp.openById` — the project is not bound to a sheet, so the narrower current-document scope is no use. **Also the Sheets REST API**, which `settle_` polls to find out whether a converted export has stopped growing: the Spreadsheet service cannot answer that question twice in one execution, so the wait has to be made of HTTP calls |
 | `auth/drive` | `DriveApp` get/create **and** the Drive v3 REST `files/copy` in §5 that converts a QlikView export. Full `drive`, not `drive.file`: the files were not created by this script |
 | `auth/presentations` | `SlidesApp.openById` — the Deck Builder |
 | `auth/script.send_mail` | `MailApp.sendEmail` — TP01, both the per-market files a person sends from the page and the weekly exceptions report the trigger sends. Still not a Gmail scope: it is the narrow "send mail as you" grant and it cannot read a mailbox. The read side is the next row, and the two are separate grants on purpose |
 | `auth/gmail.readonly` | `GmailApp.search` / `getAttachments` — §10's **two** mail watches, the Inventory Report's and TP01's, and nothing else. **Read-only deliberately**: both remember which messages they have already handled in a Script Property rather than labelling or archiving them, so `gmail.modify` is not needed and nothing ever writes to a mailbox. This is the widest grant in the list — it can read every message the deployer can — and it is here only because Gmail has no "one sender, one subject" scope to ask for instead.
 The mailbox each reads is the **trigger creator's**, not the deployer's (§1). `APP_CONFIG.INVENTORY_MAIL.FROM` and `APP_CONFIG.TP01_MAIL.FROM` are the narrowing the project *can* do |
-| `auth/script.external_request` | `UrlFetchApp` — the logo, and the Drive REST call above |
+| `auth/script.external_request` | `UrlFetchApp` — the logo, the Drive REST call above, and the Sheets REST poll the sync waits on |
 | `auth/script.scriptapp` | `ScriptApp.getService().getUrl()`, which every page link is built from, **and** `ScriptApp.getProjectTriggers()`, the read that reports which of §11's three trigger targets are armed. That second call settles a doubt this row used to carry — the grant was described here as possibly reachable without it, and it is not. It would be here for the URL alone anyway: if that URL comes back empty every link goes **relative**, and a relative href inside the Apps Script sandbox iframe resolves against `googleusercontent.com`, navigating the user off the app. That shipped once |
 | `auth/userinfo.email` | `Session.getActiveUser().getEmail()` — who archived a KPI workbook, and the check's own report |
 
@@ -423,11 +423,23 @@ destructive**. By the time it returns, nothing has been cleared, no row deleted 
 lifted out. A tab that fails is left *exactly* as it was: last week's figures, wrong by a
 week, which a reader can recognise. What that replaces is this week's hole, which nobody can.
 
-Four checks, and three of them are only possible because **every successful write records what
-the tab looked like** — how many rows the export carried and how many values each paired column
-filled (`QLIK_TAB_SHAPE`). "This column is empty" is not a fault on its own; it is a fault
-against a column that was full last week.
+Five checks. **The first needs no history at all, and it is the only one that can see a copy
+read while Drive was still converting it** — the server says the export tab holds 47,634 rows
+and the read came back with 1,113 of them. Every other check on the list compares this export
+against the *last good one*, and a truncated read defeats all of them: the rows that did land
+are perfectly well formed, every column present and full, the grid rectangular. Those three
+are only possible because **every successful write records what the tab looked like** — how
+many rows the export carried and how many values each paired column filled
+(`QLIK_TAB_SHAPE`). "This column is empty" is not a fault on its own; it is a fault against a
+column that was full last week.
 
+- **The read is as tall as the file it came out of.** What `getDataRange()` returned against
+  what the Sheets REST poll says the copy actually holds — under half, above a 500-row floor,
+  because `rowCount` is an *allocated* height and a converted copy can carry blank rows past
+  its data. It also closes the hole the baseline leaves: the shrink check needs a previous
+  good shape, so the **first** truncated read after a sheet is emptied or a shape record is
+  lost has nothing to fail against, writes, and then records its own 1,113 rows as the
+  standard every later run is measured from.
 - **The grid is rectangular.** A row shorter than the header means the read came back
   truncated between Drive and here.
 - **No column has gone missing** — one that fed this tab on the last good run and pairs with
@@ -447,8 +459,9 @@ on, because this is the gap in the check. The period is read two ways and both a
 Ready-Mix from its `Bill Month`, and **Aggregates from the Year column** — only `Bill Month`
 canonicalises to `monthcol`, and AGG carries a bare `Month` beside a separate `Year`, so
 without the fallback every AGG tab has no period at all and January is refused on the line that
-most needs it. A truncated read of a January file would come through this gap: `settle_` below
-is what addresses that, and the row-count check after the write is what reports it if both miss.
+most needs it. A truncated read of a January file would come through this gap: check 0 and
+`settle_` below are what address that, and the row-count check after the write is what reports
+it if all three miss.
 
 **A refused run is never recorded as the baseline.** Recording it would move the standard down
 to the broken export, and the same broken export sent again would sail through — the gate would
@@ -511,10 +524,31 @@ It used to take more than that, and `tests/qliksync.js` gates it now:
   runtime limit, and every anchor was deleted with nothing left to restore, and nothing for
   the next run to find either. That is why the Ready-Mix workbook lost array formulas and the
   Aggregates one never did on identical code: three tens-of-thousands-of-rows tabs reach the
-  limit far sooner than two. Only a formula in a column the export *feeds* is cleared now — by
-  construction the anchors are somewhere else, since `firstDataRow_` finds that row by looking
-  for a formula in a column nothing is written into. Left alone, an anchor is at worst still
-  pointing at the old height, which is the state re-anchoring exists to improve.
+  limit far sooner than two.
+
+  **It still comes out whole, and that was the half of this that was right.** Leaving it in
+  place was tried, on the reasoning that it "bought nothing and cost everything", and what it
+  bought is the **recalculation**. `Combined Data CPI Raw` carries a single-cell array formula
+  on its first data row — `=IF(B3:B47634="", "", UPPER(SUBSTITUTE(TEXT(K3:K47634 & B3:B47634 &
+  …))))` — and a totals row above it summing `M3:M47634` and five columns beside it. Every
+  `setValues` into a mapped column changes the range that array formula reads, so the sheet
+  re-evaluates ~140,000 string operations and six full-column sums *before the next block can
+  go in*, dozens of times over a 47,000-row export. That is what turned a write that used to
+  finish into one that does not: the run dies partway down with `SpreadsheetApp` reporting the
+  workbook as **"missing"**, the mapped columns are already cleared to the bottom, and the tab
+  is left holding eleven hundred rows and a **half-written row at the boundary**. With the band
+  out there is nothing to recalculate and the write is a write.
+
+  **What changes is the window it is absent for, and what happens if that window is
+  interrupted.** The band goes back as soon as *that tab* is written, not at the end of the
+  workbook — and before it comes out it is **parked in a script property** (`QLIK_BAND_PARK::
+  <page>::<tab>`), so it survives the one thing a `finally` does not: Apps Script killing the
+  execution. `unpark_` puts a parked band home before anything reads that tab's formulas again.
+  A band too big to park (9 KB is the limit; these are a few hundred bytes) is **not taken out
+  at all** — the write falls back to clearing only the cell it would collide with, and is slow,
+  which is the right way round: slow is a state that finishes. The pass at the end of `run()`
+  still re-points the whole band once every tab has its final height, because a reference into
+  a *sibling* tab cannot be resolved until then.
 **Rows are the other way round, and stay that way.** The data ends exactly where the export
 ends: a taller export inserts rows, a shorter one has its surplus **deleted**. Leaving them
 would have January reading a December-sized sheet for eleven months, and no reader can tell an
@@ -527,23 +561,152 @@ the anchor is re-pointed at the new height.
 
 Apps Script cannot read `.xls` / `.xlsx` — `SpreadsheetApp` opens a Google Sheet and nothing
 else — so Drive converts each export to a temporary one, which is read and then trashed.
-**QlikView delivers `.xls` and cannot deliver anything else, so this happens on every sync.**
-`readExport_` does skip the copy for an export that is already a Google Sheet, but that is not
-a route this pipeline can take.
+**QlikView delivers an Excel workbook and cannot deliver anything else, so this happens on every
+sync.** The file names in Drive end `.xls`; the content is `.xlsx`, and that mismatch is worth
+knowing only because the *format* was twice guessed at as the reason one export truncated and
+another did not. It was not the reason either time. `readExport_` does skip the copy for an
+export that is already a Google Sheet, but that is not a route this pipeline can take.
 
-**The copy is not finished when Drive hands back its id, and this is the likeliest cause of a
-tab that stops partway down.** `files/copy` returns as soon as the file *record* exists;
-converting tens of thousands of rows of `.xls` is not instant, and the sheet is **readable
-while it is still filling** — `getDataRange()` answers with however much has landed,
-truthfully and short, with no error anywhere. Read straight away, a 49,000-row export comes
-back as a thousand-odd rows, is written as a thousand-odd rows, and the other 48,000 are
-**deleted** to match, because the sheet ends where the export ends. So `settle_` polls every
-tab's last row until two reads agree — one 1.5 s sleep in the common case, against a job that
-already takes minutes. **`SpreadsheetApp.flush()` before each look is load-bearing**: the Spreadsheet
-service caches within an execution, so without it the second poll can be answered from the first and
-the wait settles instantly on the short read it exists to wait out. **Giving up waiting does not throw**: a copy still growing after nine
-seconds is unusual but proves nothing, and the gate above is what actually stands between a
-short read and a wrecked tab. The wait makes a short read rare; the gate makes it harmless.
+**The copy is not finished when Drive hands back its id, and this is the cause of a tab that
+stops partway down.** `files/copy` returns as soon as the file *record* exists; converting tens
+of thousands of rows of Excel is not instant, and the sheet is **readable while it is still
+filling** — `getDataRange()` answers with however much has landed, truthfully and short, with
+no error anywhere. Read straight away, a 47,000-row export comes back as a thousand-odd rows,
+is written as a thousand-odd rows, and the other 46,000 are **deleted** to match, because the
+sheet ends where the export ends.
+
+**It is not a race, and the conversion is not what is slow.** Lengthening the wait from about a
+second and a half to about six moved the Aggregates tab from **1,113 rows to 2,224** — twice the
+wait, twice the rows, the same file — which reads like a fill in progress and is not one. The
+poll below settled it: asked over REST, the copy holds **all 47,845 rows by its second look**,
+about four seconds in, and has stopped changing. The file is finished. What is still catching up
+is **`SpreadsheetApp`'s view of it**, and it catches up far too slowly to wait out — the doubling
+was that view advancing, not rows landing. It is **not about size and not about `.xls` against
+`.xlsx`** either: every one of these exports is `.xlsx`, and both of those were guessed and both
+were wrong.
+
+**So the read has a second half.** The wait makes sure the file is done; `readExport_` then
+measures what `SpreadsheetApp` handed back against what the poll says the tab holds, logs both at
+`info` on **every tab of every run** — "they agreed" is the line that says the read is sound, and
+its absence is how a run that stopped earlier tells you where — and a short answer is **read
+again over the same REST calls the poll is made of**, with `UNFORMATTED_VALUE` so a date arrives
+as the Excel serial `monthText_` and `monthYM_` already expect. A tab `SpreadsheetApp` does not
+return *at all* is fetched the same way rather than written off. Ten rows of slack, because the
+poll measures a band of columns and the read measures the whole tab.
+
+**So the wait has to watch a number that moves while Drive is filling, and three were tried
+before one did.**
+
+- `SpreadsheetApp.getLastRow()`, flushed before each look, with a comment calling that flush
+  load-bearing. It is not: `flush()` pushes *this execution's pending writes* out to the server
+  and says nothing about a file **Drive's converter** is filling behind the script's back, and
+  the Spreadsheet service answers the second look out of the first look's snapshot. Two looks
+  that agree because nothing re-read.
+- **Drive's `version`.** It moves when a user or an API call changes the file. The converter's
+  own writing does not bump it, so it is stable from the first look — the wait agrees with
+  itself immediately and returns after six seconds. That is exactly what shipped, and exactly
+  why the row count *doubled* instead of arriving.
+- **`gridProperties.rowCount`.** The tab's *allocated* height, which Drive is free to size
+  before it fills a cell of it.
+
+What does move is **the number of rows that hold something**, and the Sheets REST API reports it
+live. So the poll asks `values.get` for the rows themselves — and only for the ones it has not
+already seen: a window of 20,000 rows starting at the frontier the last look found, walked
+forward until a window comes back short. The first look on a copy that is barely started costs
+one small call per tab, every later look costs one more, and the whole wait reads the equivalent
+of the probe columns once. The probe is **`A:E`, a band and not one column**, because
+`values.get` trims trailing empty rows out of its answer — which is what makes a window's length
+mean "the last row here with something in it" — but only for the columns asked about, and an
+export whose first column has gaps would end the walk on a hole. `rowCount` is still asked for,
+because a `values.get` whose range runs past the end of a sheet answers **HTTP 400** rather than
+with fewer rows: it bounds the probe, it does not end the wait. **The tab list is asked every
+look and never cached**, because Drive adds the tabs one at a time as well — a copy reporting one
+tab now can report four in thirty seconds, and a cached list is a way of settling happily on a
+third of a file.
+
+One agreeing pair of looks is not enough — a conversion pauses between tabs and a pause landing
+across a single gap reads exactly like a finished file — so it wants **two consecutive
+agreements**, starting 2 s apart and backing off to 10 s, because a copy that has been filling
+for two minutes is not going to be caught out by a look every second. The ceiling is **4
+minutes**, bounded by what is left of a five-minute slice of the execution (the export still has
+to be read and written afterwards) and floored at 60 s, and **the floor wins over the budget**: a
+run that has already spent its slice is a run about to be killed at the six-minute limit, and
+being killed during the *wait* costs a stranded temp copy the sweep clears, while giving up on
+the wait costs a truncated tab. **Giving up still does not throw**, and check 0 above is why.
+When the fill cannot be watched at all the wait goes blind for **45 s** and says so at `warn` —
+sized by the measurement above rather than by optimism — and a blind wait is served its full
+length rather than being allowed to finish early on Drive's `version`, which agrees with itself
+from the first look whatever the converter is doing.
+
+**And it needs the Sheets API switched on — which is a line in `appsscript.json`, not a scope.**
+The first `APP_verifyPermissions` after the poll shipped returned **HTTP 403 — "Google Sheets API
+has not been used in project … before or it is disabled"**. That is not OAuth and there is no
+consent screen to go looking for: the scope is granted and `SpreadsheetApp` works everywhere, the
+token is good and the Drive REST row passes on the same one. What is off is the **API itself, in
+the Cloud project behind the script** — a default Apps Script project has Drive switched on and
+Sheets switched off, which is precisely the shape of one of those two rows passing and the other
+not. `appsscript.json` now carries it as an advanced service —
+`dependencies.enabledAdvancedServices`, `userSymbol: "Sheets"`, `version: "v4"`,
+`serviceId: "sheets"` — and **that entry is what switches the API on**. **Nothing in the code
+calls the `Sheets` symbol**; §5 reaches the same API over `UrlFetchApp` on the script's own
+token. It looks unused. Deleting it breaks the QlikView sync, silently, in the way this whole
+section is about — §9's list has it. Without it the sync still runs and runs blind: the wait
+falls back to the fixed sleep and **check 0 cannot run at all**, with one `warn` per execution
+naming the fix.
+
+**One export at a time, and one workbook, because reading them whole is heavier than reading
+them truncated.** `run()` used to read every export the run needed up front and then write the
+pages out of what it held — three whole exports in one execution, something like a hundred and
+thirty thousand rows of Aggregates, Ready-Mix and Product Segment together. That wall was never
+reached while the reads were coming back short: eleven hundred rows a source costs nothing to
+hold. The first run that read all three whole died on the workbook it was writing, with
+`SpreadsheetApp` reporting the Price & Volume sheet as **"missing (perhaps it was deleted, or you
+don't have read access?)"** — a file its owner had opened successfully two minutes earlier in the
+same execution, and which `APP_verifyPermissions` opens every time. So an export is read when the
+page that needs it is about to be written and dropped as soon as the last page that needs it is
+done; the peak is one export instead of three. **The page is still the unit of the write** and has
+to be, because the array formulas are re-pointed once per workbook off an `ends` map that must
+hold every tab of it. Two things fall out of the move: a read that fails now fails **one page**
+instead of throwing into `run()`'s own catch, which reports an error and no failed tabs; and
+`openWorkbook_` asks **three times, three seconds apart**, because in the middle of a run that has
+already opened the same file, "missing" is the service refusing one call rather than a permission
+that is not there.
+
+**And a page that cannot be STARTED inside the budget is refused rather than killed halfway.**
+Apps Script kills an execution at six minutes without running a `finally` or throwing anywhere the
+code can see — the rows simply stop arriving, the tab is blank below wherever it got to, and the
+caller has no failure to report, so it stamps the export as read and nothing looks at that tab
+again. Past a five-minute mark `run()` refuses the remaining pages **as retryable**: nothing is
+opened, nothing is written, the stamp is withheld and the one-shot retry is armed with a whole
+six minutes of its own for what is left.
+
+**The whole job does not fit in six minutes, so it is meant to take more than one.** Measured on
+the run that finally read and wrote everything whole: Aggregates is 52,538 rows and takes about
+80 seconds to write, Ready-Mix is 82,200 and takes about 165, Product Segment is small, and the
+three conversions and reads cost another ~70 seconds on top. That is roughly seven minutes of
+work inside a six-minute limit, and no amount of tuning closes a gap that shape. **It is spread
+across executions instead, and the retry is the mechanism.**
+
+What made that circle rather than converge was the retry being armed for **the scope that was
+asked for**. A run of `'all'` that wrote Aggregates whole and ran out of time on Ready-Mix armed
+a retry for `'all'` — which re-converts, re-reads and re-writes the 52,000 rows that already
+landed before it reaches the work that did not, and then runs out in the same place. Three things
+fix that, and they only work together:
+
+- **Failures name their page.** Every `failed` record carries `page`, so the retry is armed for
+  the pages that failed and nothing else. Each attempt is strictly smaller than the one before.
+- **A clean page is stamped and cleared even when a sibling failed.** `qlikSyncNow` used to
+  withhold every export stamp if any tab anywhere was gated, because a `{ tab, error }` record
+  could not say which source its tab came from. It can now, so Aggregates is stamped and
+  Ready-Mix is not — and the page that worked is dropped from the retry list rather than being
+  redone.
+- **The clock retries under a higher ceiling than a broken export does.** One retry is the right
+  number for a file that failed its checks: a second failure means the export is wrong and asking
+  again only delays saying so. Running out of time is the other kind — nothing is wrong with
+  anything — and because each attempt is smaller, the chain converges. `QLIK_RETRY_MAX_BUDGET`
+  is 5, and it is a ceiling rather than a licence: a page whose own write cannot fit six minutes
+  would otherwise retry for ever. The ceiling is **per page**, and a page with one genuine check
+  failure among its clock failures is a one-retry page again.
 
 Because it happens every time, **`sweepTemps_` clears the strays**. The copy is trashed in a
 `finally`, which covers every way the read can fail except the runtime limit — Apps Script
@@ -1597,6 +1760,7 @@ the banner still stood for four chunks. **Read the code, not the label.**
 | `SB` · `getSlideData` | Live — the Overview's segment and product-category panels read them |
 | `RMX_getCrossReport` · `getRmxUnmapped` · `uploadRmxData` · `getMarkets` · `getKeys` · `getExtras` · `syncData` | The **legacy-name wrappers**. Zero callers is not the test: they exist so a stale deployment still resolves, and removing one changes what that deployment does. `getMarkets` / `getKeys` / `getExtras` are exactly the generic names the `RMX_NS` capture protects against. Treat as its own piece of work |
 | `doGet` | Apps Script itself is the caller |
+| `appsscript.json`'s `Sheets` advanced service | **Nothing calls the `Sheets` symbol** — §5 reaches the same API over `UrlFetchApp` on the script's own token. Listing it is what switches the **Sheets API on in the Cloud project**, which a default Apps Script project has off while Drive's is on. Remove it and every Sheets REST call answers 403: the sync's wait for a converted export goes blind, `check 0` stops running, and a 47,634-row export lands as 1,113 rows with nothing reporting it |
 
 **All seven debug functions are already gone**, and a repo-wide audit of every top-level
 declaration found no others: every remaining callerless name is either a deliberate keep above
@@ -1786,3 +1950,8 @@ or was forgotten.**
 | 2026-08-24 | **Nothing is written until the export has been checked, and the header's stamp stops asking a question it cannot answer.** Four field reports. **(1) The sync landed a bad export silently** — three columns (`CY Rev exWorks`, `PY Rev exWorks`, `Fuel Surcharge`) left out of a QlikView export, every other column paired and wrote, and the tab's totals read `0.00` with no failed tab, no error and no log line. Rows made it worse: the sheet ends where the export ends, so a short read does not leave the surplus, it **deletes** it. There is a gate now and **its position is the point** — it runs before the band comes out, before the resize, before a cell is cleared, so a refused tab is left *exactly* as it was. Three of its four checks need a baseline, so every successful write records the tab's shape (`QLIK_TAB_SHAPE`): rows carried, and values filled per paired column. "This column is empty" is only a fault against a column that was full. Two false positives were designed out and both are gated: the shape is keyed on the **canonical** column name, so fixing the "Fuel Surchage" typo in an export does not read as one column vanishing and another appearing; and a **collapse is allowed when the export's newest period has moved on**, because a January file really is a twelfth of a December one and refusing it would stop the pipeline every year — the period comes from `Bill Month` on Ready-Mix and from the **Year column** on Aggregates, which carries no `Bill Month` at all. **A refused run never becomes that baseline** — recording it would move the standard down to the broken export and the same export sent again would pass, so the gate would report a fault once and adopt it; `tests/qliksync.js` gates that specifically and it is the case a "does the gate fire" check cannot see. **(2) A 49,000-row export stopping at row 1,113.** The likeliest cause is upstream of the write entirely: `files/copy` returns as soon as the file **record** exists, and a large `.xls` is still converting after that — the sheet is readable while it fills, so `getDataRange()` answers short, truthfully, with no error, and the sync then deletes the rest of the tab to match. `settle_` polls every tab's last row until two reads agree before anything is read — with a `SpreadsheetApp.flush()` before each look, without which the whole function is a no-op, since the Spreadsheet service caches within an execution and two identical answers would mean only that nothing re-read — and it **deliberately does not throw when it gives up**, because the gate is what makes a short read harmless. Two further changes on the same symptom: a **read-back of each block's last row** now reports a short write instead of leaving it silent — and it is flagged **retryable**, which is the half that matters, since without it the truncated tab keeps the export's stamp and is never looked at again; and the shrink check stands between a truncated read and `deleteRows`. **One change was tried and reverted, and the harness is why**: dropping the redundant-looking `clearContent` before the write. On a run that completes it clears nothing the write does not overwrite. On a run that is KILLED it is the difference between a blank tail — wrong, obvious, detectable — and a tail still holding last month's figures under this month's heading. The staged short-write case reported success without it. It is worth one API call per block to keep the failure undisguised. **(3) Nobody is watching a trigger**, so a failed run mails the source, the tab, the reason, that **the sheet is unchanged rather than half-written**, and what happens next — and arms **one** retry five minutes out (`qlikSyncRetry`, the codebase's only `ScriptApp.newTrigger`, which deletes itself when it fires). A gate failure also withholds the export's stamp in both `qlikSyncCheck` and `qlikSyncNow`, which would otherwise mark a file as read that the run refused to read. Two bugs the harness found in that machinery: `runRetries_` held a copy of the retry log across `run()`, which writes the same property, so a second failure's "give up" decision was undone; and a clean run did not clear a pending retry, so the one-shot fired against a source already fixed and left `tries` at 1, telling the next genuine failure it had already had its retry. **(4) The Overview's age stamp** dropped the QlikView clock and the four closed-year history books. The QlikView clock is a fact about ONE workbook; the Overview reads three, and the history books are not synced at all, so the panel stacked three sync times under three sheet times and four sections whose only content was "not known". Not the two clocks collapsed into one — that rule forbids *deriving* the QlikView time from Drive; what is left is labelled "last updated from the Google Sheet". **(5) The opening screen belonged to the whole tab rather than to a page.** `AmrBoot` is a §E singleton and nothing reset it, so a completed boot left `over` set and every page after the first loaded behind no screen at all, and a page switched away from mid-boot left steps nothing would ever report — a modal screen over a finished page until the 150s watchdog. `AmrBoot.reset()` joins teardown's list, before `AmrProgress.reset()`. The other half is not fixable here: Apps Script runs a user's calls end to end, so a tab reloaded mid-load leaves its call running and the reload is queued behind it; at 12s the screen now says so, and says reloading again only lengthens the queue. New gates: `boot-refcount` and `slow-open` in `pageswitch.js`, thirteen cases in `qliksync.js` — the destructive ones assert the tab is **byte-identical** afterwards, and all are mutation-tested — and the Overview cases in `freshness.js` rewritten to the new contract. `APP_CODE_BUILD` → `2026-08-24a` | ✅ |
 | | **The sync gate has never run against a real export.** `QLIK_TAB_SHAPE` is empty until the first successful sync after this deploy, and **every check passes by default with no baseline** — so the first run records and the second is the first one actually guarded. Watch that a normal month-on-month change does not trip the shrink check | ☐ |
 | | **`QLIK_ALERT_TO` is unset**, so the failure mail goes to whoever created the trigger. Set the Script Property if it should go to somebody else | ☐ |
+| 2026-08-24 | **The row the sync stopped at was never about the export, the tab, or how full either of them was — it was one cached read.** Reported again after the gate shipped: the Aggregates tabs stop at **row 1,114** of a 47,634-row export, the same row whether the tab was full or had just been emptied by hand, while Ready-Mix comes through whole; and the `~qliksync temp` copy appears in Drive and is gone again seconds later. All three are one fact. **`settle_` polled the converting copy through `SpreadsheetApp`**, and the Spreadsheet service snapshots a spreadsheet on an execution's FIRST look at it and answers everything later in that execution from the snapshot — so the second poll agreed with the first *because it was the first*, the wait returned after one 1.5 s sleep, and `getDataRange()` then read the same frozen half-converted grid. The `SpreadsheetApp.flush()` in front of each look, which the last session called load-bearing, is not: it pushes **this execution's pending writes** out and says nothing about a file **Drive's converter** is filling behind the script's back. Same row every time because it is however much had landed when the snapshot was taken; independent of the tab because it never read the tab; one export whole and another not because a copy that finishes converting inside the first look has nothing left to land. **Not size** — that was guessed and it was wrong: Ready-Mix is the bigger read at 44k/23k/14k rows against Aggregates' 47k/4k. The likeliest difference is `.xlsx` against `.xls`, which Drive does not convert the same way, and it is not load-bearing either way: it decides only whether the copy is still filling at the moment of the first look, and the wait removes that moment. **The poll is HTTP now** — `spreadsheets.get` for `gridProperties.rowCount` **and Drive's `version` beside it**, on the same OAuth token the Drive calls use, so every look is a fresh answer, and **nothing opens the copy with `SpreadsheetApp` until the poll has settled**, which is the whole fix: the snapshot is then taken of a finished file. Both numbers, because `rowCount` is an *allocated* height and would be final from the first look if Drive sizes the grid up front and fills cells into it, while `version` moves for as long as anything is being written in. Two agreeing looks was never enough either (a conversion pauses between tabs), so it wants **two consecutive** agreements, 2 s apart, under a 90 s ceiling; a poll that cannot run at all waits blind for 15 s and says so at `warn`. **And the gate gets a check that needs no history** — `check 0`, the read's height against the height the server reports for that tab, under half above a 500-row floor. It is the only one of the five that can see this failure: the 1,113 rows that landed are perfectly well formed and defeat every check that compares against the last good export. It also closes the hole underneath them — with no baseline the first truncated read passes, writes, and **records its own 1,113 rows as the standard** the next run is judged against, which is why emptying the tab by hand and re-syncing did not clear it. `APP_verifyPermissions` gains a **Sheets REST** row, and it earned itself on the first run: **HTTP 403, "Google Sheets API has not been used in project … or it is disabled"**. That is not OAuth and no consent screen will appear for it — the scope is granted and `SpreadsheetApp` has always worked; what is off is the **API itself in the Cloud project behind the script**, which for a default Apps Script project has Drive on and Sheets off. So the poll is now built the other way up: **Drive's `version` is the half that always works** and is asked first and unconditionally, Sheets `rowCount` is asked on top of it, and one 403 turns the Sheets half off for the rest of the execution with a `warn` naming the fix rather than forty-five more refusals. Without it the sync still works — the wait still waits, which is what the truncation was about — and **check 0 is skipped rather than guessed at**. Turn it on in Apps Script ▸ Services ▸ Google Sheets API, or from the console link in the 403 itself. **`tests/qliksync.js` is red and left that way on purpose**: its two `settle_` cases drive the copy's growth through a fake `SpreadsheetApp` that re-reads honestly, which is the one thing the real service does not do — they assert the mechanism that was removed, and rewriting them means modelling the per-execution snapshot in the harness. Next session's first job | ☐ |
+| 2026-08-24 | **The wait was right in kind and wrong in what it watched, and the fix is one line of manifest plus a probe that measures rows.** Reported after the HTTP poll shipped: the Aggregates tab moved from **1,113 rows to 2,224** — twice the wait, twice the rows, the same file — which is the measurement that ends the guessing. It is a **slow fill at roughly 350 rows a second**, so a 47,634-row export is over **two minutes** of converting; nothing is intermittent, and the row it stops at is the same every run because the wait was the same length every run. **Both format guesses were wrong**: every export is `.xlsx` (the Drive names end `.xls`), and size was wrong before that. Three signals were tried and only the third moves while Drive fills: `SpreadsheetApp.getLastRow()` answers the second look from the first look's snapshot; **Drive's `version` is not bumped by the converter's own writing**, so a wait built on it agrees with itself from the first look and returns after six seconds — that is why the count doubled instead of arriving; `gridProperties.rowCount` is the *allocated* height. What moves is **how many rows hold something**, so the poll walks `values.get` over `A:E` in 20,000-row windows starting at the frontier the last look found — one small call per tab per look, the whole wait reading the probe columns once — with `rowCount` kept only to bound the range, since a `values.get` past the end of a sheet answers **400**, not fewer rows. The **tab list is re-asked every look**: Drive adds tabs one at a time too. Two consecutive agreements, 2 s backing off to 10 s, a 4-minute ceiling inside a five-minute slice of the execution, **floored at 60 s and the floor wins** — being killed during the wait costs a stranded copy the sweep clears, giving up on the wait costs a truncated tab. Blind wait raised 15 s → **45 s**, and a blind wait is served its full length rather than finishing early on `version`. **And the 403 was never an OAuth failure**: `appsscript.json` now carries the Sheets API as an advanced service (`dependencies.enabledAdvancedServices`), which is what switches that API on in the Cloud project — a default Apps Script project has Drive on and Sheets off. **Nothing in the code calls the `Sheets` symbol**, so it reads as unused and is in §9's do-not-delete list with the failure it causes spelled out. It had been added by hand in the live project and was not in the repo; that is why the same 403 came back on the next push. `tests/qliksync.js`'s two `settle_` cases are **still red and still deliberate** — they assert a mechanism now removed twice over, and rewriting them means modelling both the per-execution snapshot and a windowed HTTP probe. Not run this session: the change was pushed for a field test on the real exports, which is the only place a two-minute conversion exists | ☐ |
+| 2026-08-24 | **The conversion was never the slow part — `SpreadsheetApp`'s view of the converted file is.** The REST poll shipped and worked: it reports the Aggregates copy holding **47,845 and 4,693 rows, settled by its second look, about four seconds in**, and Ready-Mix at 44,247 / 23,795 / 14,158. So the file is finished almost immediately, and the earlier 1,113 → 2,224 doubling was **`SpreadsheetApp` catching up**, not rows landing — which is why waiting longer helped a little and would never have been enough. So the read has a second half: `readExport_` logs the read height against the poll's height at `info` for **every tab of every run**, and a read short by more than ten rows is **taken again over the same `values.get` calls the poll is made of**, `UNFORMATTED_VALUE` so dates arrive as the Excel serial `monthText_` and `monthYM_` already handle. A tab `SpreadsheetApp` omits entirely is fetched the same way instead of being written off. **The same run then died on the destination workbook** — `SpreadsheetApp` calling the Price & Volume sheet "missing (perhaps it was deleted, or you don't have read access?)" two minutes after opening it, on a file its owner owns. Reading whole is what exposed it: `run()` held **three whole exports at once** (~130k rows) where truncated reads had cost nothing, so an export is now read when the page that needs it is about to be written and dropped when the last page that needs it is done — peak one export, not three. The page stays the unit of the write (the formula re-point needs every tab's final height). A failed read now fails **one page**, not the run; `openWorkbook_` retries three times, three seconds apart; and past five minutes the remaining pages are refused **as retryable** rather than killed mid-write, which would leave a blank tail, no failure to report, and a stamped export nobody looks at again. Not run this session, at the field test's request | ☐ |
+| 2026-08-24 | **The write, not the read — and it was the formula band, put back the wrong way on 08-23.** A screenshot settled it: the tab is at **full height with the sync's columns cleared to the bottom**, ~1,113 rows written, and **one half-written row at the boundary** (`A` and `B` filled, everything right of them blank). So the read is whole now and the resize ran; what does not finish is the WRITE, and a half-written row is a flush that was cut off rather than an exception. The cause is the change made on 08-23: leaving the formula band on the tab during the write, on the reasoning that clearing it "bought nothing". What it bought is the **recalculation** — the LOOKUP KEY array formula reads `B3:B47634`, so every `setValues` into a mapped column re-evaluates ~140,000 string operations plus six full-column sums before the next block can go in, dozens of times over. The run dies partway with `SpreadsheetApp` calling the workbook **"missing"** at ~3½ minutes, nowhere near the six-minute limit — the generic shape of the Sheets backend refusing a request that took too long. **So the band comes out whole again, and both halves are kept**: it goes back the moment *that tab* is written rather than after the last tab of the workbook, and it is **parked in a script property first**, so a killed execution cannot lose it — `unpark_` restores it before anything reads that tab's formulas again. A band too big to park is not taken out at all and the write is merely slow. Two guards beside it: the chunk loop **stops itself past five minutes with a retryable throw**, because being killed mid-flush is the same tab in the same state minus the failure record, the mail and the armed retry; and the workbook pass still re-points the whole band at the end, since a sibling-tab reference cannot be resolved until every height is final | ☐ |
+| 2026-08-24 | **Aggregates is right, and what is left is arithmetic.** The band coming out fixed the write: `read=47845 holds=47845`, 52,538 rows written in ~80 s, tab whole. Ready-Mix then stopped 10,000 rows into a 23,794-row tab and Product Segment was never started — both reported cleanly by the guards rather than being killed mid-flush, which is the guards doing their job. The measurement it produced is the point: **~135,000 rows and three conversions is about seven minutes of work inside a six-minute limit.** No tuning closes a gap that shape, so the job is spread across executions and **the retry is the mechanism** — which needed three fixes to converge rather than circle. Failures now **name their page**, so a retry is armed for the pages that failed instead of for the scope that was asked for (a retry of `'all'` re-wrote the 52,000 Aggregates rows that had already landed before reaching the work that had not, then ran out in the same place). `qlikSyncNow` **stamps per page**: it used to withhold every stamp when any tab anywhere was gated, on the reasoning that a `{ tab, error }` record does not say which source its tab came from — it does now. And **the clock gets a higher ceiling than a broken export**: one retry is right for a file that failed its checks, because a second failure means the export is wrong, while running out of time means nothing is wrong at all and each attempt is strictly smaller than the last. `QLIK_RETRY_MAX_BUDGET` is 5, **per page**, and a page carrying one genuine check failure among its clock failures is a one-retry page again | ☐ |
