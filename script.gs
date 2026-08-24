@@ -2580,9 +2580,30 @@ function APP_verifyPermissions() {
           { muteHttpExceptions: true,
             headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } });
         if (r.getResponseCode() !== 200) {
+          /* A 403 HERE IS NOT AN OAUTH FAILURE, and reading it as one sends
+             whoever runs this looking for a consent screen that will never
+             appear. The scope is granted — SpreadsheetApp works on every page —
+             and the token is good, because the Drive REST row above went
+             through on the same one. What is off is the Sheets API in the CLOUD
+             PROJECT behind the script: a default Apps Script project has Drive
+             switched on and Sheets switched off, which is exactly the shape of
+             one of these two rows passing and the other not. */
+          var body = r.getContentText().slice(0, 300);
           throw new Error('The Sheets API answered HTTP ' + r.getResponseCode() + ' for ' + id +
-            ': ' + r.getContentText().slice(0, 200) + ' — the sync will still run, but it will ' +
-            'wait blind for each converted export and cannot check that it read one whole.');
+            ': ' + body +
+            (/has not been used in project|is disabled|SERVICE_DISABLED/i.test(body)
+              ? ' \u2014 THIS IS NOT A PERMISSION PROMPT ANYTHING CAN TRIGGER. The scope is ' +
+                'granted and the token is good (the Drive REST row above uses the same one); the ' +
+                'Sheets API is switched off in the Cloud project behind this script, as it is in ' +
+                'every default Apps Script project. Turn it on either way round: Apps Script ' +
+                'editor \u25b8 Services \u25b8 + \u25b8 Google Sheets API \u25b8 Add, or open ' +
+                'the console link in the message above and press Enable. Then run this again.'
+              : '') +
+            ' The sync still runs without it: the wait for a converted export falls back to ' +
+            'Drive\u2019s own version number, which is the half that always works. What is lost ' +
+            'is check 0, the one that measures what was READ against how tall the file is, so a ' +
+            'short read would have to be caught by the shrink check against the last good export ' +
+            'instead.');
         }
         var tabs = (JSON.parse(r.getContentText()).sheets || []).length;
         return 'read the grid of ' + tabs + ' tab(s)';
@@ -3322,9 +3343,21 @@ var QLIKSYNC = (function () {
    * that stops at the SAME ROW every single run, because the row it stops at is
    * however much of the conversion had landed when the wait took its snapshot;
    * the number being the same whether the tab was full or had just been emptied
-   * by hand, because it never depended on the tab at all; and only the biggest
-   * export suffering, because a copy that converts inside the first look has
-   * nothing left to land.
+   * by hand, because it never depended on the tab at all; and one export coming
+   * through whole while another does not, because a copy that finishes
+   * converting inside the first look has nothing left to land.
+   *
+   * WHICH EXPORT SUFFERS IS NOT ABOUT SIZE, and guessing that it was got this
+   * wrong once already. Aggregates truncates and Ready-Mix does not, and
+   * Ready-Mix is the bigger read of the two — three tabs of roughly 44k, 23k
+   * and 14k rows against Aggregates' 47k and 4k. The likeliest difference is
+   * the FORMAT: the Aggregates export arrives as .xlsx and Ready-Mix as .xls,
+   * and Drive does not convert the two the same way — a copy whose conversion
+   * runs after files/copy has answered is the one that gets read half-written,
+   * and a copy converted before it answers is not. That is a guess and it is
+   * not load-bearing: whichever way round it is, it decides only WHETHER the
+   * copy is still filling at the moment of the first look, and the wait below
+   * removes that moment entirely.
    *
    * So the poll goes through the Sheets REST API instead — an HTTP call on the
    * script's own token, the same one the Drive calls above use. Every look is a
@@ -3344,47 +3377,92 @@ var QLIKSYNC = (function () {
      driveFetch_ is what makes the call. */
   var SHEETS_V4 = 'https://sheets.googleapis.com/v4/spreadsheets/';
 
-  /* WHERE THE CONVERSION HAS GOT TO, in the two numbers that move while it is
-     running, as { version, tabs: { tabName: rows } }. Throws if either call
-     cannot be made — the caller decides what that is worth.
+  /* WHETHER THE SHEETS REST API IS ANSWERING AT ALL, for this execution.
 
-     TWO SOURCES BECAUSE ONE OF THEM MIGHT NOT MOVE. `rowCount` is the obvious
-     one and it is the one check 0 needs afterwards, but it is the tab's
-     ALLOCATED height: if Drive sizes the grid up front and then fills the cells
-     into it, rowCount is final from the first look while the data is still
-     landing, and a wait built on it alone would settle instantly on a sheet
-     that is still being written — the same failure as before wearing different
-     clothes. Drive's `version` is the other half: it is bumped by every change
-     made to the file on the server, so it keeps moving for as long as anything
-     is being written into the copy, whether or not the grid is growing.
-     Neither is trusted alone; the wait is over when BOTH have stopped. */
+     IT IS NOT AN OAUTH QUESTION AND THE 403 IT RETURNS SAYS SO — "Google Sheets
+     API has not been used in project NNN before or it is disabled". The scope
+     is granted (SpreadsheetApp has always worked), the token is fine (the Drive
+     REST calls above go through on it); what is off is the API itself, in the
+     CLOUD PROJECT behind this script. A default Apps Script project has Drive
+     switched on and Sheets switched off, which is why one of these two calls
+     worked the first time and the other did not. Nothing the script can do
+     grants it and no consent screen will appear — see the Sheets REST row in
+     APP_verifyPermissions for the two ways to turn it on.
+
+     ONE REFUSAL IS ENOUGH. The poll makes up to forty-five looks per export;
+     asking forty-four more times costs half a second each and answers the
+     same. */
+  var SHEETS_API_OFF = false;
+
+  /* WHERE THE CONVERSION HAS GOT TO, in the numbers that move while it is
+     running: { version, modified, tabs: { tabName: rows } | null }. Throws only
+     when DRIVE cannot answer — the caller decides what that is worth.
+
+     TWO SOURCES BECAUSE NEITHER IS ENOUGH ON ITS OWN.
+
+     `rowCount` is the one the checks want, because it is the only number in the
+     run that can be compared against what the read actually returned. But it is
+     the tab's ALLOCATED height: if Drive sizes the grid up front and then fills
+     the cells into it, rowCount is final from the first look while the data is
+     still landing — the same failure as before wearing different clothes.
+
+     Drive's `version` is bumped by every change made to the file on the server,
+     so it keeps moving for as long as anything is being written into the copy,
+     grid growing or not. It is the half that always works, because the Drive
+     API is on in every Apps Script project by construction — this file could
+     not convert an export without it.
+
+     So the wait is over when everything it can see has stopped. With Sheets
+     answering that is both numbers and the read is checked afterwards; without
+     it, it is Drive's alone and check 0 is skipped rather than guessed at. The
+     second is a weaker position and it is still the fix: what caused the
+     truncation was opening the copy with SpreadsheetApp before it was finished,
+     and this stops that either way. */
   function copyState_(ssId) {
+    /* DRIVE FIRST, and unconditionally, so that a run with the Sheets API off
+       still has a signal rather than a blind sleep. */
+    var d = driveFetch_(DRIVE_V3 + encodeURIComponent(ssId) +
+                        '?supportsAllDrives=true&fields=version,modifiedTime', { method: 'get' });
+    if (d.getResponseCode() !== 200) {
+      throw new Error('Drive answered HTTP ' + d.getResponseCode() + ': ' +
+                      d.getContentText().slice(0, 200));
+    }
+    var meta = JSON.parse(d.getContentText());
+    var out = { version:  String(meta.version || ''),
+                modified: String(meta.modifiedTime || ''),
+                tabs:     null };
+    if (SHEETS_API_OFF) return out;
+
     var g = driveFetch_(SHEETS_V4 + encodeURIComponent(ssId) +
                         '?fields=sheets.properties(title,gridProperties(rowCount))',
                         { method: 'get' });
     if (g.getResponseCode() !== 200) {
-      throw new Error('the Sheets API answered HTTP ' + g.getResponseCode() + ': ' +
-                      g.getContentText().slice(0, 200));
+      /* NOT A THROW, AND NOT SILENT (§7). The sync goes on without it — the
+         wait still has Drive's version to watch — but it loses the check that
+         measures the read against the file, and losing a check quietly is how
+         the failure this all came from lasted as long as it did. */
+      SHEETS_API_OFF = true;
+      APP_log('warn', 'QLIKSYNC.read', 'the Sheets API is not answering, so this run waits on ' +
+              'Drive alone and cannot check that it read each export whole — switch the Sheets ' +
+              'API on for the script’s Cloud project (Apps Script editor ▸ Services ▸ Google ' +
+              'Sheets API), then run APP_verifyPermissions',
+              { http: g.getResponseCode(), answer: g.getContentText().slice(0, 200) });
+      return out;
     }
     var sheets = JSON.parse(g.getContentText()).sheets || [], tabs = {};
     for (var i = 0; i < sheets.length; i++) {
       var pr = sheets[i].properties || {}, gp = pr.gridProperties || {};
       tabs[String(pr.title)] = Number(gp.rowCount || 0);
     }
-
-    var d = driveFetch_(DRIVE_V3 + encodeURIComponent(ssId) +
-                        '?supportsAllDrives=true&fields=version', { method: 'get' });
-    if (d.getResponseCode() !== 200) {
-      throw new Error('Drive answered HTTP ' + d.getResponseCode() + ': ' +
-                      d.getContentText().slice(0, 200));
-    }
-    return { version: String(JSON.parse(d.getContentText()).version || ''), tabs: tabs };
+    out.tabs = tabs;
+    return out;
   }
 
-  /* HOW LONG TO WAIT FOR A CONVERTED COPY TO STOP GROWING. copyState_'s two
-     numbers, unchanged SETTLE_STABLE looks running, WAIT apart, and a ceiling
-     on the whole thing because this runs inside a six-minute execution that has
-     three exports and several workbooks still to get through.
+  /* HOW LONG TO WAIT FOR A CONVERTED COPY TO STOP GROWING. Everything
+     copyState_ can see, unchanged SETTLE_STABLE looks running, WAIT apart, and
+     a ceiling on the whole thing because this runs inside a six-minute
+     execution that has three exports and several workbooks still to get
+     through.
 
      ONE AGREEING PAIR OF LOOKS IS NOT ENOUGH, which the old six-second version
      could not tell because it never re-read anything. A conversion does not
@@ -3392,11 +3470,11 @@ var QLIKSYNC = (function () {
      across a single gap reads exactly like a finished file. */
   var SETTLE_WAIT_MS = 2000, SETTLE_MAX_MS = 90000, SETTLE_STABLE = 2;
 
-  /* What to do when the poll itself cannot run — no network, the Sheets API
-     refusing the token, a 500. Wait blind, then read. It is a worse answer than
-     polling and a better one than not waiting: the single thing that must not
-     happen is SpreadsheetApp opening the copy while Drive is still filling it,
-     because that snapshot cannot be taken back for the rest of the run. */
+  /* What to do when the poll cannot run AT ALL — no network, Drive itself
+     refusing. Wait blind, then read. It is a worse answer than polling and a
+     better one than not waiting: the single thing that must not happen is
+     SpreadsheetApp opening the copy while Drive is still filling it, because
+     that snapshot cannot be taken back for the rest of the run. */
   var SETTLE_BLIND_MS = 15000;
 
   function settle_(ssId, name) {
@@ -3409,9 +3487,9 @@ var QLIKSYNC = (function () {
            hope, and the only thing left standing between a half-converted copy
            and the tab is check 0 — which cannot run either, because it is this
            call that gives it the number to compare against. */
-        APP_log('warn', 'QLIKSYNC.read', 'could not ask the server how tall the converted copy ' +
-                'is — waiting a fixed moment instead, and this run has nothing to check the ' +
-                'read against', { file: name, error: String(e && e.message || e) });
+        APP_log('warn', 'QLIKSYNC.read', 'Drive could not say whether the converted copy is ' +
+                'still being written — waiting a fixed moment instead, and this run has nothing ' +
+                'to check the read against', { file: name, error: String(e && e.message || e) });
         Utilities.sleep(SETTLE_BLIND_MS);
         return null;
       }
