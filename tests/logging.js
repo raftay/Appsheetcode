@@ -68,6 +68,15 @@ const ALLOWED = {
   cPut_:               ['delegates to APP_cachePut_, which logs and cannot throw',
                         'the second namespace\'s copy of the same wrapper'],
   qlikStamps:          ['a read-only editor diagnostic that PRINTS "(never)" in its own answer'],
+  /* The THIRD of the "already reported through the return value" kind, and the
+     one worth spelling out because the thing it is reporting is itself a
+     failure report. alertTo_ falls back to the effective user when no
+     QLIK_ALERT_TO is configured; if that lookup throws there is simply nobody
+     to write to, and alert_ — the only caller — logs THAT at error, naming the
+     subject of the mail that could not be sent. Logging here as well would be
+     the same fact twice, from the layer that knows less about it. */
+  alertTo_:            ['no effective user means no default recipient, which alert_ reports ' +
+                        'at error along with the mail it could not send'],
 };
 
 const SILENT = /catch\s*\(\s*[A-Za-z0-9_]+\s*\)\s*\{\s*\}/;

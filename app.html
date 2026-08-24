@@ -6635,6 +6635,16 @@ window.AmrProgress = (function(){
  * what it is still waiting for and offers a reload, rather than sitting
  * there saying nothing. That message is a bug report - if you ever see
  * it, some path forgot its done().
+ *
+ * AND WELL BEFORE IT, AT `SLOW`, THE SCREEN EXPLAINS ITSELF. Those two
+ * are not the same thing and must not read as if they were. The watchdog
+ * blames the code, correctly. A long open almost never IS the code: Apps
+ * Script runs a user's calls end to end, so a tab reloaded mid-load left
+ * its call running on the server and this one is queued behind it. See
+ * slowNote() - and note what it does NOT say, which is "reload".
+ *
+ * RESET. This is a §E singleton over ten pages in ONE document, so
+ * teardown clears it. See reset() for the two ways that showed.
  * ================================================================== */
 window.AmrBoot = (function(){
   var WATCHDOG = 150000;
@@ -6643,7 +6653,9 @@ window.AmrBoot = (function(){
      slowNote() for what a wait this long usually is. */
   var SLOW = 12000;
   var DEFAULT_TEXT = 'Pulling from Google Sheets\u2026';
-  var pending = {}, count = 0, over = false, started = false, wd = null, slow = null;
+  /* slowT, not `slow` — api.slow() is the harness's setter for SLOW, and one
+     name for the timer and the knob that starts it reads as a bug either way. */
+  var pending = {}, count = 0, over = false, started = false, wd = null, slowT = null;
   var TEXT = DEFAULT_TEXT, late = false;
 
   function names(){
@@ -6675,7 +6687,7 @@ window.AmrBoot = (function(){
   }
   function clocks(){
     if (wd){ clearTimeout(wd); wd = null; }
-    if (slow){ clearTimeout(slow); slow = null; }
+    if (slowT){ clearTimeout(slowT); slowT = null; }
   }
   function finish(){
     over = true;
@@ -6691,7 +6703,7 @@ window.AmrBoot = (function(){
       if (!pending[step]){ pending[step] = 1; count++; }
       if (!started){
         started = true;
-        slow = setTimeout(function(){
+        slowT = setTimeout(function(){
           if (over) return;
           late = true; paint();
         }, SLOW);

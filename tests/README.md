@@ -947,12 +947,52 @@ is a single-cell array formula on the first data row.
 stamp — because Drive cannot tell a sync from a hand edit, and a run for one page must not
 wipe another page's record. Checked here; the reading half is in `freshness.js`.
 
+**Nothing is written until the export has been checked, and what these cases really assert is
+that the tab does not move.** Three of them snapshot every cell of the raw tab after a good
+run and compare it byte-for-byte after a bad one — a column dropped from the export, a column
+arriving empty, and an export that collapsed to a fraction of its rows — because the position
+of the gate is the whole claim: it runs before the band comes out, before the resize, before a
+cell is cleared. The collapse case is the one with teeth, since the sheet ends where the export
+ends and a truncated read would otherwise take the rest of the tab with it.
+
+Three of the four checks need a baseline, so a successful write records the tab's shape. **The
+case that a "does the gate still fire" check cannot see** is the one that matters most: a
+*refused* run must never become that baseline. Record it and the standard moves down to the
+broken export, the same export sent again passes, and the gate reports a fault exactly once
+and then adopts it. That is asserted by sending the same bad export twice and requiring the
+second to be refused *for the same reason*.
+
+**The copy is not finished when Drive hands back its id.** `files/copy` returns as soon as the
+file record exists, and a large `.xls` is still converting — the sheet is readable while it
+fills. The fixture models that directly: a fake export that grows by one row per read. One case
+proves the read waits for it and gets all five rows; the other lets it never settle, and proves
+that giving up waiting produces a *refusal*, not a short write. That second one is the point —
+the wait makes a short read rare and the gate makes it harmless, and only the gate is load-bearing.
+
+**A write that stops partway down.** `SHORT` drops every write past a given row, which is what
+a kill at the runtime limit looks like from the outside — no throw, the rows simply stop
+arriving. The case asserts the run does not claim success, and that the failure is flagged
+**retryable**: without that the truncated tab keeps the export's stamp and nothing ever looks
+at it again. It is also what keeps the pre-write `clearContent` honest. Dropping that clear
+looks free — the write covers every cell of every block anyway — and this case fails without
+it, because the un-cleared tail still holds the previous export's figures and the last-row
+check reads them as evidence the write arrived.
+
+**And that a trigger nobody watches says something.** A failed run mails the source, the tab,
+the reason, and — the line that stops somebody "fixing" it — that the sheet is *unchanged*
+rather than half-written. It arms exactly one retry, five minutes out, on `qlikSyncRetry`; a
+second failure arms nothing and leaves nothing waiting. Both `MailApp` and `ScriptApp` are
+stubbed here for that, because every one of those paths is silent-on-throw by design and
+without the stubs these checks would pass against a run that told nobody anything.
+
 **The hourly check.** Nothing in the UI starts a sync. The trigger compares the exports'
 modified times against the last set it saw, so an ordinary hour costs one Drive listing and
 nothing else: the harness asserts a second look writes nothing and throws no cache away, and
 that bumping a file's modified time is picked up. It also pins the retry rule — a run that
 *could not happen* (lock held) leaves the stamp alone and is retried, a run that *finished
 with a bad tab* records the stamp and logs, because that tab will be just as broken next hour.
+**The one exception**, and it is checked: a tab that failed its *checks* wrote nothing at all,
+so the stamp is withheld — keeping it would mark a file as read that the run refused to read.
 
 **And that `qlikSyncNow` does NOT do that.** Two manual runs over an unchanged file both
 write, and write the same amount — while the trigger, on that same file, still skips it.

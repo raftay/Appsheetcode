@@ -69,6 +69,7 @@ let CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);   /* virtual, ms */
 let TICK = 0;                                     /* ms added per write call */
 let OPS = [];                                     /* every write, in order */
 let BOOM = null;                                  /* (sheet, a1) => throw here */
+let SHORT = null;                                 /* drop writes past this row  */
 
 function colA1(c) {                               /* 1-based → A, B, … */
   let s = '';
@@ -88,6 +89,14 @@ function makeSheet(name, rows) {
   const sh = {
     getName: () => name,
     getMaxRows: () => grid.length,
+    /* What settle_ polls: the last row carrying anything. A converted copy that
+       is still filling answers this with less than it will in a moment, which
+       is the whole failure it exists to wait out. */
+    getLastRow: () => {
+      let last = 0;
+      grid.forEach((r, i) => { if (r.some(c => c.v !== '' || c.f !== '')) last = i + 1; });
+      return last;
+    },
     getMaxColumns: () => nCols,
     _grid: () => grid,
 
@@ -110,7 +119,15 @@ function makeSheet(name, rows) {
              to be true either way is that the anchors are still on the sheet. */
           if (BOOM && BOOM(name, a1)) { log('setValues'); throw new Error('write failed'); }
           log('setValues'); CLOCK += TICK;
-          span((i, j) => { at(i, j).v = g[i][j]; at(i, j).f = ''; });
+          /* AND THE QUIETER HALF OF THE SAME FAILURE. A kill does not always
+             throw where the harness can see it — the rows simply stop arriving,
+             which is what a tab ending at 1,113 of 49,000 looks like from the
+             outside. SHORT drops every write past a row so the post-write check
+             has something real to catch. */
+          span((i, j) => {
+            if (SHORT != null && r + i > SHORT) return;
+            at(i, j).v = g[i][j]; at(i, j).f = '';
+          });
           return rng;
         },
         setFormulas(g) {
@@ -149,6 +166,10 @@ function makeSheet(name, rows) {
   };
   return sh;
 }
+
+/* Every cell of a tab, value and formula, as one comparable string. What most
+   of the gate checks below actually assert is that this does not move. */
+function snap(sh) { return JSON.stringify(sh._grid()); }
 
 function makeBook(sheets) {
   return {
@@ -220,6 +241,14 @@ function exportBook() {
 let PROPS = {};
 let BOOKS = {};
 let SYNC_ALL_CALLS = 0;
+/* WHICH EXPORT THE SYNC IS ABOUT TO READ. The gate below compares an export
+   against the shape of the LAST GOOD ONE, so proving anything about it needs
+   two runs with different files — a good one to set the baseline, then the bad
+   one. Reset to the good export by load(). */
+let EXPORT = exportBook;
+let SLEPT = [];        /* every Utilities.sleep, in ms */
+let MAILS = [];        /* every MailApp.sendEmail, in order */
+let TRIGGERS = [];     /* the project's triggers, as ScriptApp sees them */
 const AGG_ID = '19ptynrhtzC-Noi71znNbVIJw8GDmPUxZ';
 const RMX_ID = '1wUb82e1PVxstddK9IE2VxYLSQEicVAGK';
 const SEG_ID = '1d1XzYlENUyE6sxBewCd-Q3GpjTNzgRZH';
@@ -230,6 +259,7 @@ let MTIME = {};                                   /* per export file */
 
 function load({ tick = 0, lockFree = true } = {}) {
   PROPS = {}; OPS = []; TICK = tick; SYNC_ALL_CALLS = 0; BOOM = null;
+  EXPORT = exportBook; MAILS = []; TRIGGERS = []; SLEPT = []; SHORT = null;
   MTIME = { [AGG_ID]: 1000, [RMX_ID]: 2000, [SEG_ID]: 3000 };
   CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);
 
@@ -260,7 +290,7 @@ function load({ tick = 0, lockFree = true } = {}) {
     },
     LockService: { getScriptLock: () => ({ tryLock: () => lockFree, releaseLock: () => {} }) },
     SpreadsheetApp: {
-      openById: id => ((id in NAMES) ? exportBook() : BOOKS[id]),
+      openById: id => ((id in NAMES) ? EXPORT() : BOOKS[id]),
       flush: () => {},
     },
     DriveApp: {
@@ -277,10 +307,26 @@ function load({ tick = 0, lockFree = true } = {}) {
         };
       },
     },
-    Session: { getScriptTimeZone: () => 'America/Toronto' },
-    Utilities: { formatDate: d => String(d) },
+    Session: { getScriptTimeZone: () => 'America/Toronto',
+               getEffectiveUser: () => ({ getEmail: () => 'ops@example.test' }) },
+    /* sleep() ADVANCES THE VIRTUAL CLOCK rather than the real one, so settle_'s
+       wait is observable without the harness taking nine seconds to run. */
+    Utilities: { formatDate: d => String(d),
+                 sleep: ms => { CLOCK += ms; SLEPT.push(ms); } },
     MimeType: { GOOGLE_SHEETS: 'application/vnd.google-apps.spreadsheet' },
-    ScriptApp: { getOAuthToken: () => 'tok' },
+    /* A failed run reports itself by mail and arms one retry, and both are
+       silent-on-throw by design — so without these two the checks below would
+       pass against a run that told nobody anything. */
+    MailApp: { sendEmail: m => { MAILS.push(m); } },
+    ScriptApp: {
+      getOAuthToken: () => 'tok',
+      getProjectTriggers: () => TRIGGERS.slice(),
+      deleteTrigger: t => { const i = TRIGGERS.indexOf(t); if (i !== -1) TRIGGERS.splice(i, 1); },
+      newTrigger: fn => ({ timeBased: () => ({ after: ms => ({ create: () => {
+        const t = { getHandlerFunction: () => fn, _after: ms };
+        TRIGGERS.push(t); return t;
+      } }) }) }),
+    },
     UrlFetchApp: { fetch: () => { throw new Error('no conversion expected'); } },
     syncAll: () => { SYNC_ALL_CALLS++; return { ok: true }; },
   };
@@ -658,6 +704,102 @@ console.log('\nthe manual sync ignores the export\u2019s modified time:');
     OPS.filter(o => o.sheet === RAW_TAB).length, 0);
 }
 
+/* ======================================================================
+ * THE CONVERTED COPY IS NOT FINISHED WHEN DRIVE HANDS BACK ITS ID.
+ * ----------------------------------------------------------------------
+ * files/copy returns as soon as the file RECORD exists, and converting tens of
+ * thousands of rows of .xls is not instant — the sheet is READABLE while it is
+ * still filling, and answers getDataRange() with however much has landed,
+ * truthfully and short, with no error anywhere.
+ *
+ * That is the shape of the reported failure: a 49,000-row export read as ~1,100
+ * rows, written as 1,100 rows, and — because the sheet ends where the export
+ * ends — the other 48,000 DELETED to match. Two things have to be true, and the
+ * second matters more than the first: the read waits, and if it gives up
+ * waiting it must not throw, because the gate is what actually stops a short
+ * read reaching the tab.
+ * ==================================================================== */
+console.log('\na copy that is still filling is waited for, not read short:');
+{
+  const ctx = load();
+  const TEMP = 'temp-file-id';
+  /* Five rows arrive one read at a time — a copy caught mid-conversion. */
+  let landed = 1;
+  const growing = () => {
+    const raw = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage', 'Volume']];
+    for (let i = 1; i <= landed; i++) raw.push([2026, 'Apr', 'Fixed', 'Sand', 10 * i, 100 * i]);
+    if (landed < 5) landed++;
+    const other = [['Year', 'Month', 'Other Revenue']];
+    for (let i = 1; i <= 3; i++) other.push([2026, 'Apr', 7 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw), makeSheet('CPI Other Export', other)]);
+  };
+
+  ctx.DriveApp.getFileById = id => {
+    if (id === TEMP) return { setTrashed: () => {} };
+    return { getId: () => id, getName: () => NAMES[id],
+             getMimeType: () => 'application/vnd.ms-excel',      /* forces a conversion */
+             getLastUpdated: () => new RealDate(MTIME[id]), setTrashed: () => {} };
+  };
+  ctx.DriveApp.getRootFolder = () => ({ getId: () => 'my-drive-root' });
+  ctx.UrlFetchApp.fetch = url => {
+    if (/\/copy\?/.test(url)) return { getResponseCode: () => 200,
+                                       getContentText: () => JSON.stringify({ id: TEMP }) };
+    if (/\/permissions\?/.test(url)) return { getResponseCode: () => 200,
+                                              getContentText: () => JSON.stringify({ permissions: [] }) };
+    return { getResponseCode: () => 204, getContentText: () => '' };
+  };
+  ctx.SpreadsheetApp.openById = id => ((id === TEMP) ? growing() : BOOKS[id]);
+
+  const res = ctx.qlikSyncNow('pricevolume');
+  checkThat('it waited rather than reading the first answer', SLEPT.length > 0, SLEPT.join(','));
+  check('and read the export whole', res.done.filter(d => d.tab === RAW_TAB)[0].rows, 5);
+}
+
+console.log('\na copy that never settles is still refused rather than written short:');
+{
+  /* THE ONE THAT MATTERS. The wait makes a short read rare; it cannot make it
+     impossible, so giving up waiting must not become a way to write one. */
+  const ctx = load();
+  ctx.qlikSyncNow('pricevolume');                       /* a baseline to fail against */
+  const shape = JSON.parse(PROPS.QLIK_TAB_SHAPE);
+  const key = Object.keys(shape).filter(k => /combined data cpi raw/i.test(k))[0];
+  shape[key].rows = 49000;
+  Object.keys(shape[key].cols).forEach(c => { shape[key].cols[c] = 49000; });
+  PROPS.QLIK_TAB_SHAPE = JSON.stringify(shape);
+
+  const raw = BOOKS._sheets.raw;
+  const good = snap(raw), rowsBefore = raw.getMaxRows();
+  const TEMP = 'temp-file-id';
+  let n = 1;
+  ctx.DriveApp.getFileById = id => {
+    if (id === TEMP) return { setTrashed: () => {} };
+    return { getId: () => id, getName: () => NAMES[id],
+             getMimeType: () => 'application/vnd.ms-excel',
+             getLastUpdated: () => new RealDate(MTIME[id]), setTrashed: () => {} };
+  };
+  ctx.DriveApp.getRootFolder = () => ({ getId: () => 'my-drive-root' });
+  ctx.UrlFetchApp.fetch = url => {
+    if (/\/copy\?/.test(url)) return { getResponseCode: () => 200,
+                                       getContentText: () => JSON.stringify({ id: TEMP }) };
+    return { getResponseCode: () => 200,
+             getContentText: () => JSON.stringify({ permissions: [] }) };
+  };
+  /* Never the same twice: the wait runs out and the read gets what it gets. */
+  ctx.SpreadsheetApp.openById = id => {
+    if (id !== TEMP) return BOOKS[id];
+    const rows = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage', 'Volume']];
+    for (let i = 1; i <= n; i++) rows.push([2026, 'Apr', 'Fixed', 'Sand', 10 * i, 100 * i]);
+    n++;
+    return makeBook([makeSheet('CPI Raw Export', rows)]);
+  };
+
+  const res = ctx.qlikSyncNow('pricevolume');
+  checkThat('the wait ran out', SLEPT.length >= 6, SLEPT.join(','));
+  check('the short read is refused', res.ok, false);
+  check('the tab still has its rows', raw.getMaxRows(), rowsBefore);
+  check('and its content', snap(raw), good);
+}
+
 console.log('\nthe converted copy is private, and is cleaned up:');
 {
   const ctx = load();
@@ -764,6 +906,305 @@ console.log('\na sweep that throws does not stop the sync:');
   const res = ctx.qlikSyncNow('pricevolume');
   check('the sync still ran', res.done.length > 0, true);
   check('and it still says it succeeded', res.ok, true);
+}
+
+/* ======================================================================
+ * THE GATE — a bad export is refused, and refusing it costs nothing.
+ * ----------------------------------------------------------------------
+ * The reported failure, and it is worth stating exactly, because the shape of
+ * it is what makes it dangerous. An export went out with three columns left
+ * off. Every OTHER column paired, wrote cleanly, and landed a tab whose totals
+ * read 0.00 across revenue and fuel surcharge — no error, no failed tab, no
+ * log line, and a page that looked exactly like a page.
+ *
+ * Rows make it worse rather than better. The sheet ends where the export ends,
+ * so a SHORT export does not leave the surplus behind — it deletes it. That is
+ * right when the export is real and catastrophic when it is truncated: the good
+ * data is gone before anybody sees a number.
+ *
+ * So the gate runs before ANYTHING destructive, and what these checks are
+ * really about is the sheet being byte-identical afterwards.
+ * ==================================================================== */
+
+/* One good run, then one bad one. The baseline is the point: an empty column is
+   not a fault on its own, it is a fault against a column that was full. */
+function afterBad(makeBadExport) {
+  const ctx = load();
+  const first = ctx.qlikSyncNow('pricevolume');
+  const raw = BOOKS._sheets.raw;
+  const good = snap(raw);
+  MAILS = []; TRIGGERS = []; OPS = [];
+  EXPORT = makeBadExport;
+  MTIME[AGG_ID] = 9999;                       /* the file moved, so a check would read it */
+  const second = ctx.qlikSyncNow('pricevolume');
+  return { ctx, first, second, raw, good, after: snap(raw) };
+}
+
+console.log('\na column left out of the export does not empty the column in the sheet:');
+{
+  /* Volume gone from the header entirely. NOT one of the five names in this
+     tab's `match` fingerprint, deliberately: drop one of THOSE and the export
+     tab is not recognised at all, which is a different failure one step
+     earlier (and is checked below). This is the case the fingerprint cannot
+     see — an export that still looks like itself and is missing a figure. */
+  const r = afterBad(() => {
+    const raw = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage']];
+    for (let i = 1; i <= 5; i++) raw.push([2026, 'Apr', 'Fixed', 'Sand', 10 * i]);
+    const other = [['Year', 'Month', 'Other Revenue']];
+    for (let i = 1; i <= 3; i++) other.push([2026, 'Apr', 7 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw), makeSheet('CPI Other Export', other)]);
+  });
+  check('the first run wrote', r.first.ok, true);
+  check('the second is refused', r.second.ok, false);
+  checkThat('and says which column went missing',
+    /Volume/.test(JSON.stringify(r.second.failed)), JSON.stringify(r.second.failed));
+  check('the tab is byte-for-byte what the good run left', r.after, r.good);
+  checkThat('nothing was written, cleared or deleted on it',
+    OPS.filter(o => o.sheet === RAW_TAB &&
+                    /setValues|clearContent|clearContents/.test(o.op)).length === 0,
+    JSON.stringify(OPS.filter(o => o.sheet === RAW_TAB).map(o => o.op)));
+}
+
+console.log('\na column that arrives empty is refused, not written as blanks:');
+{
+  /* The header is there and every cell under it is not — which is what an
+     export built with the column unticked actually looks like. */
+  const r = afterBad(() => {
+    const raw = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage', 'Volume']];
+    for (let i = 1; i <= 5; i++) raw.push([2026, 'Apr', 'Fixed', 'Sand', '', 100 * i]);
+    const other = [['Year', 'Month', 'Other Revenue']];
+    for (let i = 1; i <= 3; i++) other.push([2026, 'Apr', 7 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw), makeSheet('CPI Other Export', other)]);
+  });
+  check('it is refused', r.second.ok, false);
+  checkThat('and says the column is empty and was not',
+    /empty in this export/.test(JSON.stringify(r.second.failed)), JSON.stringify(r.second.failed));
+  check('the tab is untouched', r.after, r.good);
+}
+
+console.log('\nan export that collapsed does not take the sheet down with it:');
+{
+  /* THE DESTRUCTIVE ONE. Rows belong to the export, so without this the sheet
+     is cut to the truncated export's height and last week's data is gone. */
+  const ctx = load();
+  ctx.qlikSyncNow('pricevolume');
+  const raw = BOOKS._sheets.raw;
+  /* Grow the baseline past SHRINK_FLOOR so the ratio applies at all — below it
+     a proportion means nothing and the check deliberately does not fire. */
+  const shape = JSON.parse(PROPS.QLIK_TAB_SHAPE);
+  const key = Object.keys(shape).filter(k => /combined data cpi raw/i.test(k))[0];
+  shape[key].rows = 49000;
+  Object.keys(shape[key].cols).forEach(c => { shape[key].cols[c] = 49000; });
+  PROPS.QLIK_TAB_SHAPE = JSON.stringify(shape);
+
+  const good = snap(raw), rowsBefore = raw.getMaxRows();
+  MAILS = []; TRIGGERS = [];
+  MTIME[AGG_ID] = 9999;
+  const res = ctx.qlikSyncNow('pricevolume');
+
+  check('it is refused', res.ok, false);
+  checkThat('and says the export is too short to be a month’s change',
+    /too few to be a month/.test(JSON.stringify(res.failed)), JSON.stringify(res.failed));
+  check('the tab still has its rows', raw.getMaxRows(), rowsBefore);
+  check('and its content', snap(raw), good);
+}
+
+console.log('\na write that stops partway down is reported, not left to be found in the numbers:');
+{
+  /* THE REPORTED SYMPTOM, staged directly: 49,000 rows sent, the tab stopping
+     at a fraction of it. A kill at the six-minute limit does not throw anywhere
+     the code can see — the rows simply stop arriving — so nothing in the pass
+     noticed, the run reported success, and the tab looked like a tab. */
+  const ctx = load();
+  SHORT = 4;                                  /* nothing lands past row 4 */
+  const res = ctx.qlikSyncNow('pricevolume');
+
+  check('the run does not claim success', res.ok, false);
+  const raw = res.failed.filter(f => f.tab === RAW_TAB)[0];
+  checkThat('it says the write stopped short', /stopped short/.test(raw.error), raw && raw.error);
+  checkThat('and names how many rows were sent', /5 rows were sent/.test(raw.error), raw.error);
+  /* IT IS RETRYABLE, and that is the half that matters: without the flag the
+     export keeps its stamp, the truncated tab is marked as synced, and nothing
+     ever looks at it again. */
+  check('it is flagged for a retry', raw.check, true);
+  check('and one is armed', TRIGGERS.length, 1);
+  const seen = JSON.parse(PROPS[Object.keys(PROPS).filter(k => /STAMP/.test(k))[0]] || '{}');
+  checkThat('with the export not stamped as synced', !seen.AGG, JSON.stringify(seen));
+}
+
+console.log('\nthe January export is a twelfth of the December one, and that is allowed:');
+{
+  /* THE FALSE POSITIVE THAT WOULD HAVE STOPPED THE PIPELINE ONCE A YEAR, on the
+     one day nobody is expecting it. These exports carry the year they are for,
+     so a January file IS a fraction of a December one — which is the whole
+     reason surplus rows are deleted rather than left. The shrink check has to
+     tell that from a truncated read, and what separates them is whether the
+     export's newest period has moved on.
+
+     The Aggregates line is the one that needs saying: only "Bill Month"
+     canonicalises to monthcol, and AGG carries a bare "Month" beside a separate
+     "Year", so the period here comes from the YEAR column or from nowhere. */
+  const ctx = load();
+  ctx.qlikSyncNow('pricevolume');
+  const shape = JSON.parse(PROPS.QLIK_TAB_SHAPE);
+  const key = Object.keys(shape).filter(k => /combined data cpi raw/i.test(k))[0];
+  shape[key].rows = 49000;                             /* a full December */
+  Object.keys(shape[key].cols).forEach(c => { shape[key].cols[c] = 49000; });
+  PROPS.QLIK_TAB_SHAPE = JSON.stringify(shape);
+  checkThat('the baseline knows which period it was for', shape[key].ym > 0, shape[key].ym);
+
+  /* January of the next year: three rows, and the year has moved on. */
+  EXPORT = () => {
+    const raw = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage', 'Volume']];
+    for (let i = 1; i <= 3; i++) raw.push([2027, 'Jan', 'Fixed', 'Sand', 10 * i, 100 * i]);
+    const other = [['Year', 'Month', 'Other Revenue']];
+    for (let i = 1; i <= 3; i++) other.push([2027, 'Jan', 7 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw), makeSheet('CPI Other Export', other)]);
+  };
+  MTIME[AGG_ID] = 22222;
+  const jan = ctx.qlikSyncNow('pricevolume');
+  check('the year roll writes', jan.ok, true);
+  check('and the tab is January-sized', BOOKS._sheets.raw.getMaxRows(),
+        jan.done.filter(d => d.tab === RAW_TAB)[0].firstDataRow + 2);
+
+  /* AND THE SAME SHRINK WITHOUT THE ROLL IS STILL REFUSED. Without this the
+     check above would pass just as well against a shrink check that had simply
+     been deleted. */
+  const ctx2 = load();
+  ctx2.qlikSyncNow('pricevolume');
+  const s2 = JSON.parse(PROPS.QLIK_TAB_SHAPE);
+  const k2 = Object.keys(s2).filter(k => /combined data cpi raw/i.test(k))[0];
+  s2[k2].rows = 49000;
+  Object.keys(s2[k2].cols).forEach(c => { s2[k2].cols[c] = 49000; });
+  PROPS.QLIK_TAB_SHAPE = JSON.stringify(s2);
+  EXPORT = () => {
+    const raw = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage', 'Volume']];
+    for (let i = 1; i <= 3; i++) raw.push([2026, 'Apr', 'Fixed', 'Sand', 10 * i, 100 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw)]);
+  };
+  MTIME[AGG_ID] = 33333;
+  check('the same collapse in the same period is refused',
+        ctx2.qlikSyncNow('pricevolume').ok, false);
+}
+
+console.log('\nnobody is watching a trigger, so a refused run says so:');
+{
+  const r = afterBad(() => {
+    const raw = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage']];
+    for (let i = 1; i <= 5; i++) raw.push([2026, 'Apr', 'Fixed', 'Sand', 10 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw)]);
+  });
+  check('one mail went out', MAILS.length, 1);
+  checkThat('it names the source a person would recognise',
+    /Aggregates/.test(MAILS[0].subject), MAILS[0].subject);
+  checkThat('it names the tab and the reason',
+    /Combined Data CPI Raw/.test(MAILS[0].body) && /"Volume"/.test(MAILS[0].body),
+    MAILS[0].body);
+  /* THE LINE THAT STOPS SOMEBODY "FIXING" IT. A refused run leaves the sheet
+     showing last week, which is out of date and not wrong — and that is the
+     opposite of what "the sync failed" usually means. */
+  checkThat('and says the sheet is unchanged rather than half-written',
+    /unchanged/.test(MAILS[0].body), MAILS[0].body);
+
+  /* ONE retry, five minutes out, armed by the run itself. */
+  check('a single retry trigger is armed', TRIGGERS.length, 1);
+  check('pointed at the retry handler', TRIGGERS[0].getHandlerFunction(), 'qlikSyncRetry');
+  check('five minutes out', TRIGGERS[0]._after, 5 * 60 * 1000);
+
+  /* AND THE EXPORT IS NOT MARKED AS READ. Keeping the stamp would tell the next
+     scheduled check that this file is done, having never written a cell of it. */
+  const seen = JSON.parse(PROPS.QLIK_LAST_STAMPS || PROPS[Object.keys(PROPS)
+    .filter(k => /STAMP/.test(k))[0]] || '{}');
+  checkThat('and the export is not stamped as synced', seen.AGG !== '9999',
+    JSON.stringify(seen));
+}
+
+console.log('\nthe retry runs once and then gives up:');
+{
+  const bad = () => {
+    const raw = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage']];
+    for (let i = 1; i <= 5; i++) raw.push([2026, 'Apr', 'Fixed', 'Sand', 10 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw)]);
+  };
+  const r = afterBad(bad);
+  check('the retry is waiting', Object.keys(r.ctx.QLIKSYNC.retryPending()).length, 1);
+
+  MAILS = [];
+  const out = r.ctx.qlikSyncRetry();
+  check('it ran and failed again', out.ok, false);
+  /* The one-shot deletes itself when it fires; a second failure arms nothing,
+     because a genuinely broken export is not fixed by asking a third time and
+     the mail has already gone out twice. */
+  check('no further trigger is left armed', TRIGGERS.length, 0);
+  check('and nothing is left waiting to be retried',
+    Object.keys(r.ctx.QLIKSYNC.retryPending()).length, 0);
+}
+
+console.log('\na header spelt differently is not a column going missing:');
+{
+  /* THE FALSE POSITIVE THAT WOULD HAVE MADE THIS GATE UNUSABLE. The sheet has
+     carried "Fuel Surchage" — a real typo, and one somebody will eventually fix
+     in the export. Keyed on the raw header, the corrected spelling reads as one
+     column vanishing and another appearing, and the sync would refuse to run
+     over a typo being fixed. The shape is keyed on the CANONICAL name instead,
+     which is the same form the pairing itself matches on, so it is stable under
+     exactly the variations pairing is stable under. */
+  const r = afterBad(() => {
+    const raw = [['Year', ' MONTH ', 'Plant Type', 'Material Family', 'Fuel  Surchage', 'Volume']];
+    for (let i = 1; i <= 5; i++) raw.push([2026, 'Apr', 'Fixed', 'Sand', 10 * i, 100 * i]);
+    const other = [['Year', 'Month', 'Other Revenue']];
+    for (let i = 1; i <= 3; i++) other.push([2026, 'Apr', 7 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw), makeSheet('CPI Other Export', other)]);
+  });
+  check('it writes rather than reporting three columns missing', r.second.ok, true);
+  check('every tab of it', r.second.done.length, 2);
+}
+
+console.log('\na refused export never becomes the baseline the next one is judged against:');
+{
+  /* THE FAILURE MODE A LATCH-CHECK CANNOT SEE, and the reason recordShape_ sits
+     past every throw rather than beside the check that produced the shape. If a
+     refused run recorded what it saw, the baseline would move DOWN to the
+     broken export — and the same broken export, sent again, would then sail
+     through, because a column that is empty against a baseline of empty is not
+     a fault. The gate would report the fault exactly once and then adopt it. */
+  const emptyFuel = () => {
+    const raw = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage', 'Volume']];
+    for (let i = 1; i <= 5; i++) raw.push([2026, 'Apr', 'Fixed', 'Sand', '', 100 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw)]);
+  };
+  const r = afterBad(emptyFuel);
+  check('the first bad export is refused', r.second.ok, false);
+
+  MTIME[AGG_ID] = 11111;
+  const third = r.ctx.qlikSyncNow('pricevolume');
+  check('and so is the same bad export sent again', third.ok, false);
+  checkThat('for the same reason, not a new one',
+    /empty in this export/.test(JSON.stringify(third.failed)), JSON.stringify(third.failed));
+  check('with the tab still untouched', snap(r.raw), r.good);
+}
+
+console.log('\na good export after a bad one still writes:');
+{
+  const r = afterBad(() => {
+    const raw = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage']];
+    for (let i = 1; i <= 5; i++) raw.push([2026, 'Apr', 'Fixed', 'Sand', 10 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw)]);
+  });
+  check('the bad one was refused', r.second.ok, false);
+  EXPORT = exportBook;
+  MTIME[AGG_ID] = 12345;
+  const third = r.ctx.qlikSyncNow('pricevolume');
+  /* THE GATE MUST NOT LATCH, and it must not drift either. It compares against
+     the last GOOD run: recording a refused run's shape would move the baseline
+     down to the broken export and let the fault through on the next one, a
+     column at a time. So the good export writes again, and what it writes is
+     what the first good run wrote. */
+  check('the good one writes', third.ok, true);
+  check('every tab of it', third.done.length, 2);
+  check('and the tab holds the good export again', snap(r.raw), r.good);
+  checkThat('with nothing left waiting to retry',
+    Object.keys(r.ctx.QLIKSYNC.retryPending()).length === 0);
 }
 
 console.log(fails ? `\n${fails} failing check(s)` : '\nall checks passed');
