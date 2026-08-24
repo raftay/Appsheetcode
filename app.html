@@ -2972,9 +2972,16 @@ window.AMR = (function(){
     MOUNTED = false;
     /* MODULES THAT OUTLIVE THE MOUNT BUT HOLD THIS PAGE'S STATE. None is
        reachable through the hooks above — one polls with a setTimeout chain, one
-       keeps a node §D is told to preserve, and one holds a callback list of its
-       own — so each exposes one method and teardown calls it. */
+       keeps a node §D is told to preserve, one counts steps behind two more
+       setTimeouts, and one holds a callback list of its own — so each exposes
+       one method and teardown calls it. installCapture records setInterval and
+       DOM listeners, which is why every one of these had to be added by hand. */
     try { if (window.AmrFresh && AmrFresh.stop) AmrFresh.stop(); } catch (e) {}
+    /* BEFORE AmrProgress, because AmrBoot drives the 'boot' job and this is the
+       order that leaves nothing behind: the refcount is dropped first, then the
+       screen it was holding up. The other way round, a done() arriving between
+       the two would put the screen straight back. */
+    try { if (window.AmrBoot && AmrBoot.reset) AmrBoot.reset(); } catch (e) {}
     try { if (window.AmrProgress && AmrProgress.reset) AmrProgress.reset(); } catch (e) {}
     /* AmrCube's listeners are neither DOM listeners nor timers, so installCapture
        never saw them: rmx -> pricevolume -> rmx left two copies of Price &
@@ -6631,21 +6638,48 @@ window.AmrProgress = (function(){
  * ================================================================== */
 window.AmrBoot = (function(){
   var WATCHDOG = 150000;
-  var pending = {}, count = 0, over = false, started = false, wd = null;
-  var TEXT = 'Pulling from Google Sheets\u2026';
+  /* WHEN AN OPEN STOPS BEING NORMAL AND STARTS BEING WORTH EXPLAINING.
+     Well short of the watchdog: the watchdog is a bug report, this is not. See
+     slowNote() for what a wait this long usually is. */
+  var SLOW = 12000;
+  var DEFAULT_TEXT = 'Pulling from Google Sheets\u2026';
+  var pending = {}, count = 0, over = false, started = false, wd = null, slow = null;
+  var TEXT = DEFAULT_TEXT, late = false;
 
   function names(){
     var out = []; for (var k in pending) out.push(k); return out;
+  }
+  /* WHY AN OPEN CAN SIT HERE, AND IT IS ALMOST ALWAYS THE SAME REASON.
+     Apps Script runs one user's calls end to end. A page that was part-way
+     through loading when the tab was reloaded left its call RUNNING on the
+     server \u2014 the browser let go, the execution did not \u2014 so this page's first
+     call does not start until that one finishes. Nothing is broken and nothing
+     is lost: that execution is filling the same caches this page is about to
+     read, which is why the wait happens once and the next open is quick.
+
+     Saying so is the whole fix available here. A reload cannot cancel the
+     execution it is waiting on; it can only add another one to the queue, which
+     is what turns one slow open into several. */
+  function slowNote(){
+    return 'This is taking longer than usual. If the page was reloaded while it '
+         + 'was still loading, the first load is still finishing on the server and '
+         + 'this one starts when it does \u2014 reloading again only adds to the queue. '
+         + 'Nothing is lost; the figures are being cached as they arrive.';
   }
   function paint(){
     if (!window.AmrProgress) return;
     var n = names();
     AmrProgress.set('boot', { text: TEXT, order: 0, now: true,
-      note: n.length ? ('Waiting for ' + n.join(', ')) : '' });
+      note: late ? slowNote()
+                 : (n.length ? ('Waiting for ' + n.join(', ')) : '') });
+  }
+  function clocks(){
+    if (wd){ clearTimeout(wd); wd = null; }
+    if (slow){ clearTimeout(slow); slow = null; }
   }
   function finish(){
     over = true;
-    if (wd){ clearTimeout(wd); wd = null; }
+    clocks();
     if (window.AmrProgress) AmrProgress.clear('boot');
   }
 
@@ -6657,6 +6691,10 @@ window.AmrBoot = (function(){
       if (!pending[step]){ pending[step] = 1; count++; }
       if (!started){
         started = true;
+        slow = setTimeout(function(){
+          if (over) return;
+          late = true; paint();
+        }, SLOW);
         wd = setTimeout(function(){
           if (over || !window.AmrProgress) return;
           AmrProgress.fail('boot', 'Still waiting for ' + names().join(', '));
@@ -6680,14 +6718,45 @@ window.AmrBoot = (function(){
     fail: function(msg){
       if (over) return api;
       over = true;
-      if (wd){ clearTimeout(wd); wd = null; }
+      clocks();
       if (window.AmrProgress) AmrProgress.fail('boot', msg || 'Could not load this page');
       return api;
     },
     /* Page-specific wording, set before the first need(). */
     text: function(t){ if (t) TEXT = t; return TEXT; },
     waiting: function(){ return names(); },
-    finished: function(){ return over; }
+    finished: function(){ return over; },
+
+    /* EVERYTHING THIS PAGE WAS WAITING FOR, GONE — §D's teardown calls this on a
+       page switch, beside AmrProgress.reset(), and for the same reason: this is
+       a §E singleton and §D mounts ten pages into ONE document, so without it
+       the first page's boot is the only boot the tab ever has. Two ways that
+       showed, and the second is the one that reads as the app being broken.
+
+         A page that FINISHED leaves `over` true, and `over` is deliberately
+         one-way — "boot is finished; never re-raise it" is what stops a later
+         fetch throwing the opening screen back up. It also stopped the NEXT
+         page raising one at all, so every page after the first opened with no
+         loading screen at all while it pulled from Sheets.
+
+         A page switched away from MID-boot is worse. Its steps are still in
+         `pending`, and its callbacks are dropped by §D's stale guard, so
+         nothing will ever report them. The next page adds its own step and
+         answers it, the count never reaches zero, and what is on screen is a
+         MODAL screen over a finished page — naming a step belonging to a page
+         that is gone — until the 150-second watchdog trips. Switching pages
+         while something is loading is exactly when a user clicks away.
+
+       Both timers are setTimeout and §D's installCapture records setInterval
+       only, so they are cleared here or they fire on somebody else's page. */
+    reset: function(){
+      clocks();
+      pending = {}; count = 0; over = false; started = false; late = false;
+      TEXT = DEFAULT_TEXT;
+      return api;
+    },
+    /* for the harnesses: how long before the screen explains itself */
+    slow: function(ms){ if (ms != null) SLOW = ms; return SLOW; }
   };
   return api;
 })();
