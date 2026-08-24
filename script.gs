@@ -13700,17 +13700,33 @@ function clearKpiBook(book) {
    list — see the section banner.  */
 
 /*****************************************************************************
- * TP01-ZIPR Transfer Price Tool — backend
+ * TP01-ZIPR Transfer Price Tool — the page's backend
  * ---------------------------------------------------------------------------
- * Three small functions:
- *   TP_sendMarketEmail  : the page builds the per-market Excel in the browser
- *                         (SheetJS, base64) and sends it here to be mailed.
- *   TP_getRecipients    : the shared market → email map (see below).
- *   TP_saveRecipient    : save/update one market's recipient in that map.
+ * WHAT THE PAGE ASKS FOR, IN THREE CALLS:
+ *   TP_getComparison    the numbers. The browser parses the dropped workbooks
+ *                       and sends grids; every figure is worked out here, by
+ *                       TPE — the same engine the weekly trigger uses.
+ *   TP_sendMarketEmail  one market's file, mailed. The page sends the workbook
+ *                       it built; the SUBJECT AND BODY ARE BUILT HERE, off the
+ *                       cached comparison, so there is one copy of them.
+ *   TP_sendCombinedEmail the same, with every market's file on one mail.
+ * plus the recipient map (below) and the automated report's settings (TPAUTO).
  *
- * SENDER IDENTITY: mail goes out as whoever the web app EXECUTES AS, and
- * appsscript.json pins that to "executeAs": "USER_DEPLOYING" - so every
- * TP01 email is sent by the account that DEPLOYED the app.
+ * WHY THE PAGE STOPPED DOING THE ARITHMETIC. It did all of it until the weekly
+ * report had to be sent by a trigger, and a trigger has no browser. The choice
+ * was one engine on this side or two copies of the same rules with nothing ever
+ * reporting that they had drifted. TPE's banner has the rest.
+ *
+ * WHAT THE BROWSER STILL DOES, because it is better at both and neither is a
+ * calculation: parsing a dropped .xlsx (SheetJS), and writing the .xlsx behind
+ * the Download and Send buttons. The trigger cannot do the second one, which is
+ * what TPXLSX is for.
+ *
+ * SENDER IDENTITY: mail from THIS file goes out as whoever the web app EXECUTES
+ * AS, and appsscript.json pins that to "executeAs": "USER_DEPLOYING" — so every
+ * mail a person sends from the page comes from the account that DEPLOYED the
+ * app. The weekly report does NOT: it is sent by a trigger, and a trigger runs
+ * as whoever created it. See §10's banner.
  *
  * That also makes getUserProperties() the deployer's for everybody, so the
  * market -> email map below is ONE shared list: editing a market's recipient
@@ -13739,37 +13755,116 @@ function TP_saveRecipient(market, email) {
   return { ok: true };
 }
 
+
+/* ---- the comparison, and the token the send calls come back with ---------
+ *
+ * The comparison is cached rather than handed back and forth, for one reason
+ * that is not size: the SUBJECT AND BODY OF EVERY MAIL ARE BUILT HERE. A page
+ * that posted rows back up with each Send would be a second chance for the two
+ * sides to disagree about what they are describing, which is the whole thing
+ * this arrangement exists to stop.
+ *
+ * SIX HOURS, which is CacheService's maximum, and the same expiry PV's uploaded
+ * sessions have. A page left open longer gets a message telling it to drop the
+ * file again rather than a stack trace.
+ */
+var TP_CMP_PREFIX = 'tp01|cmp|';
+
+function TP_getComparison(payload) {
+  var t0 = Date.now();
+  payload = payload || {};
+
+  var sap = TPE.readSap(payload.sap);
+
+  /* THE UPLOADED FILE WINS WHEN IT IS THERE. With no QlikView file the other
+     side is built from the Aggregates workbook, which is what the trigger
+     always does and what the page does when only the SAP file is dropped. */
+  var up = payload.qlk;
+  var qlk = (up && up.headers && up.headers.length)
+    ? { headers: up.headers, rows: up.rows || [], source: 'upload', meta: {} }
+    : TPE.qlikFromSheet();
+
+  var cmp = TPE.compare(sap, qlk);
+  cmp.token = Utilities.getUuid();
+  APP_cachePut_(TP_CMP_PREFIX + cmp.token, cmp);
+
+  /* Three things the browser needs to WRITE a workbook and cannot work out
+     without doing arithmetic again: the consolidated SAP grid behind the "SAP
+     Consolidated" button, and the number-format map for each of the two shapes
+     a market file comes in. iYearCol is what picks the volume and ASP columns,
+     and there is one copy of it. */
+  cmp.sapGrid = TPE.sapGrid(sap);
+  cmp.formats = {
+    mkt: TPE.numberFormats(cmp.headers),
+    exc: TPE.numberFormats(cmp.headers.concat(['SAP Valid From', 'Days at Incorrect Price']))
+  };
+
+  APP_log('info', 'TP.getComparison', 'compared', {
+    ms: Date.now() - t0, source: cmp.source, rows: cmp.rows.length,
+    matched: cmp.matched, unmatched: cmp.unmatched,
+    markets: Object.keys(cmp.markets || {}).length,
+    exceptionMarkets: Object.keys(cmp.exceptions || {}).length,
+    reportDate: cmp.reportDate, dateSource: cmp.dateSource
+  });
+  return cmp;
+}
+
+function TP_cmp_(token) {
+  var cmp = token ? APP_cacheGet_(TP_CMP_PREFIX + String(token)) : null;
+  if (!cmp) {
+    throw new Error('This comparison has expired (sessions last up to 6 hours). ' +
+      'Drop the SAP file again and the page will rebuild it.');
+  }
+  return cmp;
+}
+
+/* The subject both send paths use, so a market mail and the combined one
+   cannot end up describing different weeks. */
+function TP_subject_(kind, market, cmp) {
+  var what = (kind === 'exc') ? 'Transfer Price Exceptions' : 'Transfer Price Report';
+  return what + ' — ' + (market || 'All Markets') + ' (' + cmp.reportDate + ')';
+}
+
+var TP_XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/* One market's workbook, mailed. The page sends the file it built with SheetJS;
+   everything that describes it is built here. */
 function TP_sendMarketEmail(o) {
   if (!o || !o.to || !o.xlsxB64) throw new Error('Missing recipient or file.');
-  var blob = Utilities.newBlob(
-    Utilities.base64Decode(o.xlsxB64),
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    o.filename || 'Transfer_Price_Report.xlsx'
-  );
+  var cmp = TP_cmp_(o.token);
+  var kind = (o.kind === 'exc') ? 'exc' : 'mkt';
+  var market = String(o.market || '');
+  var list = ((kind === 'exc') ? cmp.exceptions : cmp.markets)[market];
+  if (!list) throw new Error('There is nothing to send for "' + market + '".');
+
   MailApp.sendEmail({
     to: String(o.to),
-    subject: String(o.subject || 'Transfer Price Report'),
-    htmlBody: String(o.htmlBody || ''),
-    attachments: [blob]
+    subject: TP_subject_(kind, market, cmp),
+    htmlBody: TPE.emailBody(kind, market, list, cmp),
+    attachments: [Utilities.newBlob(Utilities.base64Decode(o.xlsxB64), TP_XLSX_MIME,
+                                    o.filename || 'Transfer_Price_Report.xlsx')]
   });
   return { ok: true };
 }
 
+/* Every market on one mail: the files attached, the breakdowns stacked. */
 function TP_sendCombinedEmail(o) {
   if (!o || !o.to || !o.files || !o.files.length) throw new Error('Missing recipient or files.');
-  var mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-  var blobs = o.files.map(function (f) {
-    return Utilities.newBlob(Utilities.base64Decode(f.xlsxB64), mime,
-                             f.filename || 'Transfer_Price_Report.xlsx');
-  });
+  var cmp = TP_cmp_(o.token);
+  var kind = (o.kind === 'exc') ? 'exc' : 'mkt';
+
   MailApp.sendEmail({
     to: String(o.to),
-    subject: String(o.subject || 'Transfer Price Report'),
-    htmlBody: String(o.htmlBody || ''),
-    attachments: blobs
+    subject: TP_subject_(kind, '', cmp),
+    htmlBody: TPE.stackedBody(kind, cmp),
+    attachments: o.files.map(function (f) {
+      return Utilities.newBlob(Utilities.base64Decode(f.xlsxB64), TP_XLSX_MIME,
+                               f.filename || 'Transfer_Price_Report.xlsx');
+    })
   });
   return { ok: true };
 }
+
 
 /* ---- TP01_Engine.gs ----------------------------------------------------------
    The comparison itself, moved off the page. One copy of the arithmetic, called
@@ -14458,8 +14553,24 @@ var TPE = (function () {
     return out;
   }
 
+  /* The consolidated SAP rows as a grid, which is the ONLY thing the page's
+     "SAP Consolidated" button ever wanted out of readSap. It comes back with
+     the comparison rather than being rebuilt in the browser, because the merge
+     of the two tabs and the Concat Key on them are exactly the arithmetic that
+     stopped living there. */
+  function sapGrid(sap) {
+    var rows = [];
+    for (var i = 0; i < sap.rows.length; i++) {
+      var r = sap.rows[i], out = [];
+      for (var c = 0; c < SAP_COLS.length; c++) out.push(r[SAP_COLS[c]]);
+      rows.push(out);
+    }
+    return { headers: SAP_COLS.slice(), rows: rows, count: rows.length };
+  }
+
   return {
     readSap:       readSap,
+    sapGrid:       sapGrid,
     qlikFromSheet: qlikFromSheet,
     compare:       compare,
     emailBody:     emailBody,
@@ -14932,6 +15043,16 @@ var TPAUTO = (function () {
 /* ---- top-level wrappers for google.script.run ---- */
 function TP_getAutoConfig()    { return { config: TPAUTO.get(), state: TPAUTO.state() }; }
 function TP_saveAutoConfig(o)  { return { config: TPAUTO.save(o), state: TPAUTO.state() }; }
+
+/* The page's Preview button. Runs the same check the trigger would and reports
+   what it found, without sending anything or marking anything.
+
+   IT RUNS AS THE DEPLOYER, not as the person pressing it — a web request obeys
+   executeAs, and the trigger obeys who created it. Set both up from the same
+   account, which §10 says to anyway, and this previews the mailbox the trigger
+   will actually read. Set them up from different accounts and this is a preview
+   of the wrong inbox, which is exactly the failure worth being able to see. */
+function TP_autoStatus() { return TPMAIL.status(); }
 
 
 /* ------------------------------------------------------------------------
