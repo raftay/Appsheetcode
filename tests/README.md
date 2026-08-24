@@ -716,6 +716,82 @@ The harness counts sheet reads: the same question twice must read the sheet **on
 different month must be its own entry rather than a stale hit. That is also what catches a
 cache key that varies when it should not.
 
+## `deckarrange.js` — the Arrange stage, driven, against the real server
+
+Mounts the Deck Builder under jsdom and drives the fourth stage: reorder a slide, untick one,
+delete one and put it back, retitle, change a source, pick tables for a scope, switch the KPI
+strip off, add a slide, reset. 113 checks.
+
+```bash
+npm install jsdom     # not vendored
+node tests/deckarrange.js
+```
+
+**`google.script.run` is not stubbed here.** `DECK_getRecipe`, `DECK_setPlan`,
+`DECK_setTables` and `DECK_resetTables` are the actual §9 functions, evaluated out of
+`script.gs` into a vm context over a Script Property store that is a plain object — so what is
+under test is the whole round trip rather than the page's half of it. Those four are the ones
+that deliberately make no Slides call, which is what keeps the Plan stage instant and what
+makes this possible at all; the arguments still cross a realm boundary on the way in, exactly
+as they do live, which is the thing that caught `x instanceof Array` in the stores.
+
+**Every check comes back to one rule: nothing stored means the deck is `DECK_RECIPE`.** The
+sharp cases are the ones where something *was* stored and then undone — move a slide and move
+it back, untick and re-tick, delete and Restore. Each has to leave the property **deleted**,
+not holding an order that happens to equal the recipe, because a stored order equal to the
+recipe is a frozen recipe and the next person to edit the array would change nothing and have
+no way to see why. Deleting is the case that is easy to get wrong twice over: it is not
+unticking (the slide leaves the list, and comes back through Deleted slides rather than a
+Script Property edit), and it is not reordering either — so the order is compared against the
+natural order *with the deleted rows taken out*, or every deletion would also write a 42-id
+order and freeze the recipe through a button nobody thought was about order at all.
+
+**The staleness half runs a real render.** `html2canvas` is stubbed (a canvas cannot be
+diffed) but everything in front of it is not, so the rows genuinely have pictures — which is
+the only honest way to assert that a changed selection drops *exactly* the ones it changed. It
+runs on a second page over a four-row recipe: the checks above need all 43, and these need
+every row photographed. A scope reaches every slide below it, and that is precisely why the
+drop cannot be "everything this scope reaches" — a row with a more specific rung answering for
+it did not move, and throwing its picture away costs a re-render for nothing. Each row is
+compared against what it was **rendered** with, never against what was edited.
+
+The last three checks are the live queue. Only the DATA calls are slowed; the arrangement's
+four writers stay instant, which is not harness convenience — it is the difference the design
+rests on, and it is what lets a change land mid-pass. A slide already photographed when it
+lands has to be rebuilt **in that pass**, not dropped to "pending" and quietly never rebuilt,
+which is what a plain local todo list did before the queue and its cursor were kept on the
+page.
+
+Two fixture faults came out of writing that half, both of which made a check impossible
+rather than wrong. `DECK_readTemplate` is a real global too, so the runner has to let the
+fixture take a name **back** — it opens the template, which is the one thing this harness
+cannot do. And a Chart.js stub without an `options` object throws inside `captureChart`, which
+turns the animation off around a capture and puts it back: every slide that draws a chart
+failed, and the failure read as a broken render path.
+
+**Why not a `pageparity` case.** That harness compares this page against the one it was ported
+from, and the page it was ported from has no Arrange stage. There is no second side. What
+`pageparity` still owns is that `#dbList`'s rows are byte-identical, and the last two checks
+here assert the other direction of the same claim: no Arrange control is inside a `#dbList`
+row, and the panel is not inside the list.
+
+**Which rung the panel opens on is checked, not assumed.** It is the market's — three checks
+say so from three directions: a Price & Volume row opens on `Central Canada only`, re-opening a
+row whose *own* rung was just written comes back to the market rather than following what was
+last saved, and a Fuel Recovery row, having no market rung at all, opens on the broadest one it
+has. The Region dropdown is asserted at all three rungs of a pv row: put on the market's, gone
+from the source's and the row's, while the strip's on/off stays offered at every one. No EBITDA
+workbook is uploaded in this fixture, so what the market rung shows is the "nothing to choose
+from yet" note rather than the dropdown — which is what the check reads, because the claim is
+that the *question* is put there and skipped entirely at the other two.
+
+Two things it found on its first runs, neither of which a static check could see. **An element
+`id` is a `window` property**, so `<div id="dbArrange">` and `function dbArrange()` are
+indistinguishable from outside — `pageparity`'s `noGlobals` list reported six "leaks" that were
+markup. The functions are verbs now and every id is a noun. And **saving a scope redrew only
+the right-hand panel**, so the five other slides that scope reaches kept the line naming the
+rung they were on before the change.
+
 ## `deckstatic.js` — the CSS the deck can actually see, and the recipe
 
 No browser, no Google, no dependencies. Run it after touching a deck module, a report

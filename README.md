@@ -177,7 +177,7 @@ internal file order is not something this repo controls. Entry points are prefix
 | §6 | **AGG** — Price & Volume, its mapping check, AGG Fuel Recovery, Saskatchewan rates |
 | §7 | **RMX** — Ready-Mix, its lookup suggester, RMX Fuel Recovery |
 | §8 | **OVERVIEW** — the executive Overview and the month cube |
-| §9 | **DECK** — the Slides template reader, the deck writer, the recipe checker |
+| §9 | **DECK** — the Slides template reader, the deck writer, the recipe checker, and the three shared stores behind the Arrange stage |
 | §10 | **SMALL PAGES** — KPI workbooks, TP01 mail, the Inventory Report and the mail watch that publishes it |
 | §11 | **TRIGGERS** — everything reached from outside the repo |
 
@@ -1151,22 +1151,28 @@ comes back with every picture capped at 2048px on its longest side, so asking fo
 2400px canvas that Google then bilinear-resamples down, and text rendered at one scale is
 squeezed to another. Capturing at the ceiling means the text is rendered once, at final size.
 
-### Three stages, never one shot
+### Four stages, never one shot
 
 Forty-three slides of Slides API round trips do not fit in one execution, and a failure at
 slide 40 must not cost the first 39.
 
-1. **Plan** — read the recipe. No data, instant. Untick what this month skips.
-2. **Render** — check the source sheets first, then one slide at a time in the browser: ask the
+1. **Plan** — read the recipe. No data, instant.
+2. **Arrange** — order, membership, what each slide shows. No data either, and no Slides call:
+   it is three Script Property reads, which is what keeps it as quick as Plan. See *Arranging
+   the deck* below.
+3. **Render** — check the source sheets first, then one slide at a time in the browser: ask the
    source for its content block, photograph it, keep the PNG. All the compute is here. The
-   source check is *part of* Render rather than a fourth button, because photographing 43
+   source check is *part of* Render rather than a separate button, because photographing 43
    slides from figures the sheet replaced an hour ago is the one failure this page cannot show
    you — every slide builds, nothing goes red, and the deck is quietly last week's.
-3. **Publish** — one `google.script.run` per slide. ~2–4 s each, well inside the 6-minute limit
+4. **Publish** — one `google.script.run` per slide. ~2–4 s each, well inside the 6-minute limit
    because no call ever handles more than one slide.
 
 A row that fails is marked red and left alone; pressing Render again retries only the
-unfinished rows.
+unfinished rows — and `DECK_finish` is given the deck's order so the retried slide lands where
+it belongs rather than behind everything built on the first press. `addSlide` always appends,
+so before that a slide that failed at position 30 published at 44, and `{{PAGE}}` numbered that
+order confidently.
 
 ### The recipe, and changing it
 
@@ -1194,7 +1200,103 @@ changes it again. Three things about it are deliberate:
   silently ignored, and an unparseable store falls back to the recipe instead of locking the
   page out of Plan.
 
-Adding, dropping or reordering a slide is still an edit to `DECK_RECIPE` and nothing else.
+### Arranging the deck
+
+**Adding, dropping and reordering a slide are all things the page does now** — as are
+retitling one, changing which market or period it is for, changing which *page* produces it,
+and choosing which tables it shows. Two more shared Script Properties carry it, on exactly the
+pattern `PROP_LAYOUTS` set: `DECK_PLAN` holds the order, the membership and the per-row edits;
+`DECK_TABLE_MAP` holds what each scope shows.
+
+**Editing `DECK_RECIPE` is still the right way to change what the pack *is*.** The stage is for
+what *this month's* pack does, and two rules keep both true at once:
+
+- **Nothing stored is byte-identical to the recipe.** An untouched row has no key anywhere, and
+  an arrangement that happens to equal the recipe is *deleted* rather than kept. Otherwise the
+  first press of any button in Arrange would freeze all 43 rows, and the next person to
+  re-point a slide in code would change nothing and have no way to see why. The sharp cases are
+  the undos: move a slide and move it back, untick and re-tick, delete and Restore.
+- **A recipe row added after an order was saved is inserted beside its recipe predecessor.**
+  Not appended, not dropped — so adding a slide between two others in the array puts it between
+  those two others in the deck, whatever anybody has arranged.
+
+**Deleting and unticking answer different questions**, and both exist. `off` is "not in this
+month's pack" — the slide stays in the list, greyed, one click from coming back. `drop` is "not
+part of the pack any more", and it comes with a **Deleted slides** list and a Restore, because
+a deletion nobody can undo from the page is only undoable by editing a Script Property. The two
+also have to be told apart in the *stale-key* check, or every deletion produces a banner nobody
+can clear.
+
+**The scope ladder** is how "change every market at once, or just this one" works with no flag.
+A row walks four keys and takes the first answer, tables and KPI resolved independently:
+
+| Rung | Key | Means |
+|---|---|---|
+| 1 | `row:pv_sw_ytd` | one slide — the only way to make MTD and YTD differ |
+| 2 | `pv\|Southwest\|Docks` | the Land / Docks split. **Southwest only** |
+| 3 | `pv\|Manitoba` | one market, both periods |
+| 4 | `pv` | every slide that page produces |
+| — | the adapter's own default | nothing stored: what the deck builds today |
+
+`period` appears in no key above rung 1, which is what makes a change to a market reach its MTD
+and YTD slides together. **Rung 2 is Southwest's alone** — Land and Docks are two values of its
+`MB SUBMARKET` column, not markets, and no other market divides below market level.
+
+**The panel opens on the market rung**, rung 3 — not on the widest one. A table selection or a
+KPI region is nearly always "this market, both periods", and opening on `pv` made the safe
+change the one you had to go looking for and the one that moves all fourteen Price & Volume
+slides the one you got by not looking. A row that names no market — Fuel Recovery, whose whole ladder is `row:fsc_mtd` then
+`fsc` — opens on the broadest rung it has, which for a source with one slide per period *is*
+the market. **The Region dropdown belongs to that same rung and is offered nowhere else**: a
+sheet name out of one market's EBITDA workbook is meaningless on `pv`, where it would be handed
+to every other market's slides, and on `row:` it settles one slide while its MTD/YTD twin still
+asks the device. The strip's on/off is *not* gated with it — that question is meaningful at
+every rung, and switching the strip off across a whole source is a real thing to want.
+
+**Which rung is answering is said once, on the row.** The `.db-ar-scope` line under a slide's
+title names where its tables and KPI come from; the rung buttons carried a second copy of it as
+an "answering" badge, and two answers to *where does this come from* in one panel is one too
+many.
+
+`tables` is one **ordered** array, so "which tables" and "in what order" cannot disagree. The
+AGG side has to impose that order client-side: `getReport` walks `CONFIG.DIMENSIONS` and pushes
+a table for every key in the request, so the array comes back in the *server's* order however
+the request was written, with the customer-segment pivot appended last. Ready-Mix gets it free.
+
+**A changed selection drops exactly the pictures it changed.** `tablesUsed` / `kpiUsed` are
+stamped at render time, so it is a comparison and not a guess: a scope reaches every slide
+below it, but a row with a more specific rung answering for it did not move and its picture is
+still right. Changing a row's source, market, period or refine drops its picture
+*unconditionally* — a different market is different figures, whatever it was rendered with.
+Reordering drops nothing: it changes only where a slide lands, which is `finish`'s job.
+
+**An added slide is a slide like any other.** It takes a layout, it is retried by id, and its
+layout is overridable from the same dropdown as every other row's — so `DECK_setLayout` resolves
+an id against the recipe *and* the plan's `add`. Clearing an override is checked first and opens
+no template, because it is the one call that has to work for a slide that no longer exists:
+deleting an added row takes it out of `add`, and the override it left behind would otherwise be
+an orphan reachable only by resetting every row's layout at once.
+
+**Changing a source is not a relabel.** A different adapter runs, so the market is re-spelled
+through `OVERVIEW.MARKETS` — the same market is `'Southwest'` to Price & Volume and `'HNS_SW'`
+to Ready-Mix, and a market the new source cannot spell blanks the field and forces a re-pick
+rather than carrying a name that matches no row. That is exactly what once published Southwest
+Land as a page of zeroes. Refine clears unless the new source still offers one there, period
+clears for a source that shows both, and the row's own table scope is discarded because its
+keys belong to the old catalogue.
+
+**The KPI Region was per-device while everything else here is shared.** A colleague building
+from your saved arrangement could get different KPI numbers and nothing said so. The shared
+choice is on top now, then the device memory the Price & Volume page writes, then the first
+sheet on that row's workbook — and where a shared one is set, the per-row dropdown greys out
+and says where it comes from rather than moving and changing nothing.
+
+**A property value has a size limit and the writers measure before they write**, refusing with
+a readable sentence rather than truncating: a rejected save leaves the last good arrangement in
+place and a truncated one does not. The guard is Google's published 9 KB per value, not the
+larger figure the runtime is observed to accept, and it costs nothing — the whole deck
+reordered is 608 characters, ten added slides 2,227, and the pathological case (all 43 rows
+reordered *and* rewritten) 5,183.
 
 **Market coverage note:** the source pack has no AGG summary slide for North and no Top 10
 slide for Central Canada. That is copied faithfully rather than "corrected".
@@ -1205,7 +1307,9 @@ Nothing off-platform can do any of these. **A real end-to-end build has never be
 the live deployment** — every adapter is registered and the path is exercised offline, but
 `DECK_create` / `addSlide` / `finish` have not run for real, and no capture has gone through
 `html2canvas` outside a harness. `DECK_status` is kept until that build says whether the
-Publish stage needs it.
+Publish stage needs it. `finish` taking an order is on that same path: the ordering itself is
+gated against a stubbed presentation in `deckstatic.js`, but a real deck is what confirms
+`Slide.move()` behaves as the model assumes when 43 of them run in one execution.
 
 ---
 
@@ -1355,7 +1459,7 @@ elapsed ms; and no `APP_log` may sit inside a per-row loop.
 
 ### Testing
 
-24 Node harnesses in `tests/`. `npm install playwright chart.js jsdom` at the repo root gets
+28 Node harnesses in `tests/`. `npm install playwright chart.js jsdom` at the repo root gets
 everything; Chromium is already at `/opt/pw-browsers`. Start with `tests/README.md` — it says
 what each one claims and, for the comparison harnesses, exactly how much of that claim still
 holds.
@@ -1442,6 +1546,8 @@ or was forgotten.**
 | 2026-08-21 | **Four field reports, and three of them were one bug wearing different clothes: a module that outlives the page that used it.** (1) **The AGG page loaded for ever until you refreshed.** `AmrCube` is a §E singleton and §D mounts ten pages into one document, so the second visit's `AmrCube.on()` listener met a cube whose `init()` had already run — it returned `Promise.resolve(false)` and emitted nothing, `AmrBoot`'s `month history` step was never answered, and `AmrProgress` is modal. A second `init()` is a **page switch**: `on()` replays the settled event to a late listener and returns an unsubscribe, `teardown()` calls `AmrCube.detach()`, and a line the first boot never fetched (PV configures `agg` alone; the Overview then wants `rmx`) is fetched now. `pageswitch.js` could not have caught it — its fixture answers `CUBE_getManifest` with `ok:false` and the **error** path does emit. (2) **Product Segment never once read its own device store.** `AmrCache.get()` is gated on `ready`, and the only thing that set `ready` was the reply to `RMX_prepare` — the call the store existed to avoid — so the store was **write-only for the life of the page** and every open paid the most expensive call in the suite to be handed back what was already there. `AmrCache.warm()` opens on the generation the device itself confirmed and `RMX_getStamp()` checks it behind the paint: `{generation, build}`, the same two fields under the same names as `prepareAll`'s `stamp()`, no sheet read. Not `getDataVersion('rmx')` — different pair, different shape, and §6 has the account of what two copies of one token cost. A warm open now costs one small call, and market and period switches cost **none**. (3) **Both fuel pages paint before the version call answers** rather than after it — same `warm()`, with `check()` returning whether the store survived and only a warm paint re-read. The version call is still issued FIRST, because `set()` will not write under a generation it does not know yet and sending the read first stored nothing at all. Measured at 800ms of stubbed latency: 1868ms → 905ms cold, **942ms → 31ms warm**. `ready` is per page now; it was one boolean across ten pages. (4) **The Ready-Mix UI at ≥1720px**: §A3 pins the QlikView guide open and hides the FAB that closes it, and the rule that carves the 288px names `.shell` — Ready-Mix lays out with `.wrap`, so the guide sat on top of the last 250px of every table, the ✓ matched pills and every per-card help button. One media query; also un-nested the Export theme `.field` that was a child of the N/A one. **`reopen.js` is the new gate and it asserts the thing a call count cannot see**: replies are held for a fixed latency and outstanding calls counted by name, so “a table is on screen while the version call has not come back” is an assertion. `APP_CODE_BUILD` bumped — the client now paints device entries before validating them, and one cold load per device buys the guarantee that every warm paint after this deploy came from a store this code wrote | ✅ |
 | 2026-08-21 | **The Ready-Mix mapping warning shipped unstyled, and four more of chunk 6's drops were sitting beside it.** Reported as the sentence under a table name; what it was is seven CSS rules — `.impact`, `.impact-i`, `.impact-t`, `.impact-go` — left behind when `Page_Rmx.html` was ported. The page kept emitting the markup, so the `!` badge ran straight into the sentence as **"!339 products"** and "Fix mapping" was a browser-grey UA button inside the text. **Three things had to be true at once for no gate to see it, and they were:** `setStrip()` builds the strip in JS, so no markup check ever meets the class; **no fixture in `tests/` answers `RMX_getUnmapped` with a row**, so the strip renders in no harness run; and `cssparity` derives its property list *from* the §A4 block, so a missing block's properties are not on the list. Four more came out of the same audit. **`#mapHost td.mkt` went too**, so the page's own `td{text-align:right; white-space:nowrap}` took the Market(s) column — right-aligned, and a list of markets that will not wrap. **Two classes were renamed by the promotion and only one caller was told**: §A3 took Price & Volume's `mchev` and `map-open`, Ready-Mix went on emitting `chev` and `sug-open`, so its mapping-check arrow fell through to the generic 10px `.chev` and **never rotated** — an open section looked exactly like a shut one — and the page behind the suggested-rows dialog kept scrolling. A promoted rule is only shared if every caller uses the promoted NAME. **And the strip was disappearing on every re-render**: `if(window.paintImpact) paintImpact()` was a page function asking whether it existed, which on `Page_Rmx.html`'s file scope was always yes and inside a page module is always no. Measured: 3 strips to 0 on one period click, and no way back but a reload. `tests/cssdropped.js` is the new gate — for every class the 20 deleted files styled, if `app.html` still emits it and has no rule, the port dropped it. 717 classes, **no allow-list**, mutation-tested by putting the block back in the bin. `cssparity`'s EXPAND gained `border-color` because the restored `.impact-go:hover` declares it, and its run is 50 properties to 52 | ✅ |
 | 2026-08-23 | **The sync was deleting columns it does not own, and the header now says how old the figures are.** Reported as "pulling RMX from Qlik deletes my array formulas on Main and Extras, and the Aggregates sheets keep theirs" — and the two workbooks go through **the same writer**, so the difference was never in the code, it was in how far the code got. `writeColumns_` cleared the WHOLE formula band before writing and put it back only after the LAST tab of the workbook, so the anchors were absent for the entire pass: one throw, or one execution killed at the runtime limit, and they were gone with nothing left to restore — and nothing for the next run to find either, which is why they never came back on their own. **Three tens-of-thousands-of-rows Ready-Mix tabs reach that limit far sooner than two Aggregates ones**, and that is the whole of the difference. Only a formula in a column the export FEEDS is cleared now — by construction the anchors are elsewhere, since `firstDataRow_` finds that row by looking for a formula in a column nothing is written into — and the band is registered for restore BEFORE anything destructive runs. **Rows point the other way and stay as they were**: the data ends exactly where the export ends, surplus deleted, because nothing on these tabs is filled down — every formula is a single-cell array formula on the first data row — and leaving them would have January reading a December-sized sheet for eleven months. `tests/qliksync.js` carries a column the sync has never heard of and makes a write blow up to prove the anchors are still on the sheet afterwards; the whole-band clear and a full-width block clear were both put back to watch it fail. **And the header answers the other question.** ↻ Update from source says whether anything is NEWER; it has never said how old what you are looking at IS. `AmrStamp` (§E) is its own control beside it, injected into every header that has one the way the page switcher is, showing **two clocks that must never be collapsed into one**: when the workbook last changed, and when QlikSync last wrote it (plus the date on the export it read). The second is recorded by the run, because **Drive cannot tell a sync from a hand edit** — a row typed into REGION LOOKUP moves the modified time exactly as a sync does. `freshness.js` gates precisely that: a hand edit moves the sheet clock and leaves the QlikView clock where it was. The bar had **seven pixels** of slack on Price & Volume at 1720, so the stamp gives up its date for its age below `--bp-wide` and its frame with it; four pages lose one breakpoint step and three lose nothing, measured and written into §A3. **And the Slide Builder is Product Segment now** — one line away from "Deck Builder" it read as a second deck tool, and it is not one. Renamed in prose across `script.gs`, `app.html` and both READMEs; the workbook's own TAB names (`Slide Segment MTD`, `Slide Product <Market> MTD`) and the `SB` namespace keep the old spelling on purpose, the first because the sync matches tabs by name and the second because it is a rename across every call site for no reader's benefit — both now say so where they live. One stale comment fell out of it: the SEG folder's SPEC block was headed "RMX folder" | ✅ |
+| 2026-08-23 | **The Arrange stage — slide order, per-slide tables and the KPI strip are editable from the page, and `DECK_RECIPE` is still meaningful.** Two shared Script Properties on the `PROP_LAYOUTS` pattern: `DECK_PLAN` carries order, membership and per-row edits, `DECK_TABLE_MAP` carries what each scope shows. **A scope ladder answers “change every market at once, or just this one” with no flag** — `row:<id>` → `pv|Southwest|Docks` → `pv|Southwest` → `pv`, first answer wins, tables and KPI resolved independently. `period` is in no key above the first, so a change to a market reaches its MTD and YTD slides together; rung 2 is Southwest's alone, because Land and Docks are two values of its `MB SUBMARKET` column and no other market divides below market level. **The recipe stays the default on two rules**: nothing stored is byte-identical to it (an arrangement equal to the recipe is *deleted*, or the first button press would freeze all 43 rows), and a row added to the array later is inserted beside its predecessor rather than appended. Deleting and unticking are kept apart, with a Deleted slides list and Restore, and so are their two stale-key cases — otherwise every deletion banners something nobody can clear. **The finding worth keeping is the retried-slide ordering defect, invisible until order became editable**: `addSlide` always appends and Publish skips a row already `done`, so a slide that failed at position 30 and was retried published at 44 — and `finish` stamped `{{PAGE}}` against that order confidently. Three more came out of reading the same path. `getReport` **ignores the order of the `dimensions` array it is sent**, walking `CONFIG.DIMENSIONS` instead and appending the customer-segment pivot last, so AGG table order has to be imposed client-side — into a *shallow copy*, because one payload is shared by the MTD row, its YTD twin and the unrefined report Land/Docks resolves against. The QlikView ASP card read `d.tables[0].total`, so an empty or total-less first table baked “Load market data to fill this card” into a published picture — same shape as the Southwest Land page of zeroes. And the **KPI Region was per-device while everything else here is shared**, so a colleague building from your arrangement could get different numbers with nothing saying so; the shared value is on top now and the per-row dropdown greys out and says where it comes from rather than moving and changing nothing. Six commits, each with its own gate. `tests/deckarrange.js` is new and drives the page against the **real** §9 functions rather than stubs — 103 checks, including a real render, and it found two things static checks cannot see: **an element `id` is a `window` property**, so a function sharing a name with one is indistinguishable from a leak (functions are verbs now, ids are nouns), and saving a scope redrew only the right-hand panel, leaving the other slides it reaches naming the rung they were on before. Two fixture faults fell out of it too, both of which had made a check *impossible* rather than wrong: `deckpath`'s `getReport` stub ignored the request, so it could not reproduce the ordering defect at all, and its `AmrKpi.rmx` stub answered with the AGG card's fields — the Product Segment KPI strip had never once rendered under that harness | ✅ |
+| 2026-08-24 | **The Arrange panel opened on the widest rung and asked the Region everywhere.** Three things, all in the right-hand panel and all about the same thing — *how much does this button move*. (1) **The default rung is the market's now**, not the source's. A table selection or a KPI region is nearly always "this market, both periods"; opening on `pv` meant the safe change was the one you had to go looking for and the one that moves all fourteen Price & Volume slides was the one you got by not looking. `arrDefaultScope()` is one helper used by **both** the drawer and `arrScopeKey()`, because a panel that draws one rung and saves against another is worse than either. A row with no market — Fuel Recovery, ladder `row:fsc_mtd` then `fsc` — falls back to the broadest rung it has, which for a source with one slide per period *is* the market. (2) **The Region dropdown is a question about a market, so it is only put on the market's rung.** A sheet name out of Central Canada's EBITDA workbook means nothing on `pv` — it would be handed to every other market's slides as well — and on `row:` it settles one slide while its MTD/YTD twin still asks the device. Both were reachable and both read as a choice the panel had offered. The strip's **on/off is deliberately not gated with it**: that question is meaningful at every rung. (3) **The "answering:" badge comes off the rung buttons and its CSS with it** — the `.db-ar-scope` line under each slide title already says where that row's tables and KPI come from, and two answers to one question in one panel is one too many — **as does the paragraph under the Region select**, which explained the per-device fallback at length in a panel whose every other control says what it does in its own label. `tests/deckarrange.js` is 103 checks to **113**: the badge check is replaced by its opposite, and the Region gate is asserted at all three rungs — the fixture has no workbook uploaded, so what the market rung shows is the "nothing to choose from yet" note rather than the dropdown, which is exactly the claim, that the question is *put* there and not at the other two | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |
