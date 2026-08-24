@@ -14440,6 +14440,321 @@ var TPE = (function () {
   };
 })();
 
+/* ---- TP01_Xlsx.gs ------------------------------------------------------------
+   An .xlsx, written by hand, because a trigger has no SheetJS.  */
+
+/*****************************************************************************
+ * A MINIMAL XLSX WRITER (namespaced TPXLSX)
+ * ---------------------------------------------------------------------------
+ * The page attaches workbooks SheetJS built in the browser. The trigger has no
+ * browser, and Apps Script cannot load SheetJS. There were two ways out and
+ * this is the second one:
+ *
+ *   (a) write a temp Google Sheet, set its number formats, export it as .xlsx
+ *       through Drive and trash it. About fifty lines, uses only what is
+ *       already scoped - and costs a Drive file created, exported and trashed
+ *       on every run, against a six-minute execution ceiling this codebase has
+ *       already been killed by once (README.md §5). It also cannot produce the
+ *       Excel TABLE the page's files carry.
+ *
+ *   (b) this. An .xlsx IS a zip of XML and Utilities.zip makes zips. Seven
+ *       small parts, no network, no Drive file, milliseconds instead of most of
+ *       a minute - and, because it is pure string building, it is the only one
+ *       of the two that can be tested off-platform at all.
+ *
+ * IF THIS EVER FIGHTS EXCEL, (a) IS THE FALLBACK and it is written down here
+ * so the next person does not have to rediscover that there was a choice.
+ *
+ * WHAT IT DOES NOT DO, because nothing here needs it: no shared-string table
+ * (every string is inline), no formulas, no merged cells, no more than one
+ * sheet, no dates as date-typed cells - this engine hands over YYYY-MM-DD
+ * strings and they stay strings, exactly as the page's files do.
+ *
+ * THE TABLE IS SKIPPED WHEN TWO HEADERS MATCH. An Excel table's column names
+ * must be unique and must equal the header cells exactly; Excel repairs - that
+ * is, silently rewrites - a file where they do not. A QlikView export with two
+ * identically-named columns is not something this can fix without renaming a
+ * column the reader is looking for, so it gets a plain sheet with an
+ * AutoFilter instead, which loses banding and nothing else.
+ *****************************************************************************/
+var TPXLSX = (function () {
+
+  var CURRENCY_FMT_ID = 164;             // first id available for a custom format
+
+  function esc_(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      /* Control characters are not legal in XML 1.0 at all, and one arriving in
+         a sheet cell is what turns "Excel cannot open this file" into an hour.
+         Tab, newline and carriage return are the three that are. */
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  }
+
+  /* A1 for a zero-based column. */
+  function colName_(n) {
+    var s = '';
+    n = n + 1;
+    while (n > 0) { var r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - r) / 26); }
+    return s;
+  }
+
+  var XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+
+  function contentTypes_(withTable) {
+    return XML +
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+      '<Default Extension="xml" ContentType="application/xml"/>' +
+      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+      '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+      '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+      (withTable ? '<Override PartName="/xl/tables/table1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>' : '') +
+      '</Types>';
+  }
+
+  function rootRels_() {
+    return XML +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+      '</Relationships>';
+  }
+
+  function workbook_(sheetName) {
+    return XML +
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+      '<sheets><sheet name="' + esc_(sheetName) + '" sheetId="1" r:id="rId1"/></sheets>' +
+      '</workbook>';
+  }
+
+  function workbookRels_() {
+    return XML +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+      '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+      '</Relationships>';
+  }
+
+  /* FOUR cellXfs, and the order of them is the contract with cellStyle_ below:
+       0  general
+       1  header - bold, white on the Amrize navy
+       2  whole number      (built-in numFmtId 1, "0")
+       3  currency          (custom 164, "$"#,##0.00)
+     Anything added here goes on the END, or every styled cell in every file
+     this writes shifts by one. */
+  function styles_() {
+    return XML +
+      '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<numFmts count="1"><numFmt numFmtId="' + CURRENCY_FMT_ID +
+        '" formatCode="&quot;$&quot;#,##0.00"/></numFmts>' +
+      '<fonts count="2">' +
+        '<font><sz val="11"/><name val="Calibri"/></font>' +
+        '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>' +
+      '</fonts>' +
+      '<fills count="3">' +
+        '<fill><patternFill patternType="none"/></fill>' +
+        '<fill><patternFill patternType="gray125"/></fill>' +
+        '<fill><patternFill patternType="solid"><fgColor rgb="FF011E6A"/><bgColor indexed="64"/></patternFill></fill>' +
+      '</fills>' +
+      '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+      '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+      '<cellXfs count="4">' +
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+        '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+        '<xf numFmtId="1" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+        '<xf numFmtId="' + CURRENCY_FMT_ID + '" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+      '</cellXfs>' +
+      '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+      '</styleSheet>';
+  }
+
+  /* Which of the four cellXfs a body cell wants, from the format map TPE
+     hands over. */
+  function styleFor_(fmt) {
+    if (fmt === '0') return 2;
+    if (fmt) return 3;
+    return 0;
+  }
+
+  function sheet_(headers, rows, fmts, withTable, ref) {
+    var out = [], r, c, i;
+    out.push(XML);
+    /* The relationships namespace is declared on the ROOT rather than on the
+       tablePart that uses it. Both are well-formed XML and Excel accepts
+       either; on the root is what every other producer does, and a file that
+       looks like the ones Excel wrote is a file that never has to be argued
+       with. */
+    out.push('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+             'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
+    out.push('<sheetViews><sheetView workbookViewId="0">' +
+             '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>' +
+             '</sheetView></sheetViews>');
+
+    out.push('<cols>');
+    for (c = 0; c < headers.length; c++) {
+      out.push('<col min="' + (c + 1) + '" max="' + (c + 1) + '" width="22" customWidth="1"/>');
+    }
+    out.push('</cols>');
+
+    out.push('<sheetData>');
+    out.push('<row r="1">');
+    for (c = 0; c < headers.length; c++) {
+      out.push('<c r="' + colName_(c) + '1" s="1" t="inlineStr"><is><t xml:space="preserve">' +
+               esc_(headers[c]) + '</t></is></c>');
+    }
+    out.push('</row>');
+
+    for (i = 0; i < rows.length; i++) {
+      r = rows[i];
+      out.push('<row r="' + (i + 2) + '">');
+      for (c = 0; c < headers.length; c++) {
+        var v = r[c], fmt = fmts[c], s = styleFor_(fmt);
+        if (v === '' || v === null || v === undefined) {
+          /* A styled-but-empty cell, so a blank Additional Revenue to Post
+             still sits in a currency column instead of reverting to General
+             the moment somebody types in it. */
+          if (s) out.push('<c r="' + colName_(c) + (i + 2) + '" s="' + s + '"/>');
+          continue;
+        }
+        if (typeof v === 'number' && isFinite(v)) {
+          /* THE VOLUME COLUMN IS ROUNDED, NOT JUST FORMATTED, which is what the
+             page does too: a "0" format on 404.21 displays 404 and still sums
+             as 404.21, so a column of them does not add up to what it shows. */
+          var num = (fmt === '0') ? Math.round(v) : v;
+          out.push('<c r="' + colName_(c) + (i + 2) + '"' + (s ? ' s="' + s + '"' : '') + '><v>' +
+                   num + '</v></c>');
+        } else {
+          out.push('<c r="' + colName_(c) + (i + 2) + '"' + (s ? ' s="' + s + '"' : '') +
+                   ' t="inlineStr"><is><t xml:space="preserve">' + esc_(v) + '</t></is></c>');
+        }
+      }
+      out.push('</row>');
+    }
+    out.push('</sheetData>');
+
+    if (withTable) out.push('<tableParts count="1"><tablePart r:id="rId1"/></tableParts>');
+    else out.push('<autoFilter ref="' + ref + '"/>');
+
+    out.push('</worksheet>');
+    return out.join('');
+  }
+
+  function sheetRels_() {
+    return XML +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table1.xml"/>' +
+      '</Relationships>';
+  }
+
+  function table_(name, headers, ref) {
+    var cols = [];
+    for (var c = 0; c < headers.length; c++) {
+      cols.push('<tableColumn id="' + (c + 1) + '" name="' + esc_(headers[c]) + '"/>');
+    }
+    return XML +
+      '<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" ' +
+      'name="' + esc_(name) + '" displayName="' + esc_(name) + '" ref="' + ref + '" ' +
+      'headerRowCount="1">' +
+      '<autoFilter ref="' + ref + '"/>' +
+      '<tableColumns count="' + headers.length + '">' + cols.join('') + '</tableColumns>' +
+      '<tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" ' +
+      'showRowStripes="1" showColumnStripes="0"/>' +
+      '</table>';
+  }
+
+  /* An Excel table's displayName may hold letters, digits, underscores and
+     periods, must not start with a digit, and must not be a cell reference.
+     Anything else is what "Excel found unreadable content" is made of. */
+  function tableName_(s) {
+    var n = String(s || 'Data').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!n || /^[0-9]/.test(n)) n = 'T_' + n;
+    return n.slice(0, 60);
+  }
+
+  function uniqueHeaders_(headers) {
+    var seen = {};
+    for (var i = 0; i < headers.length; i++) {
+      var h = String(headers[i] == null ? '' : headers[i]).trim().toLowerCase();
+      if (!h || seen[h]) return false;
+      seen[h] = 1;
+    }
+    return true;
+  }
+
+  /* ONE WORKBOOK, ONE SHEET.
+   *   grid      { headers, rows }   - what TPE.grid returns
+   *   sheetName the tab name; Excel caps it at 31 characters and forbids  : \ / ? * [ ]
+   *   tableName the Excel table's name, or '' for no table
+   *   fmts      { columnIndex: numberFormatCode }, from TPE.numberFormats
+   * Returns a Blob named <filename>, ready for MailApp.
+   */
+  function build(grid, opts) {
+    opts = opts || {};
+    var headers = grid.headers || [], rows = grid.rows || [];
+    if (!headers.length) throw new Error('TPXLSX: a workbook needs at least one column.');
+
+    var fmts = opts.formats || {};
+    var sheetName = String(opts.sheetName || 'Sheet1').replace(/[:\\\/?*\[\]]/g, ' ').slice(0, 31) || 'Sheet1';
+    var ref = 'A1:' + colName_(headers.length - 1) + (rows.length + 1);
+    var wantTable = !!opts.tableName;
+    var withTable = wantTable && uniqueHeaders_(headers);
+    if (wantTable && !withTable) {
+      APP_log('warn', 'TPXLSX.build', 'two columns share a name, so the workbook gets a plain ' +
+              'AutoFilter instead of an Excel table - Excel rewrites a table whose column names ' +
+              'are not unique', { sheet: sheetName });
+    }
+
+    var parts = [
+      Utilities.newBlob(contentTypes_(withTable), 'application/xml', '[Content_Types].xml'),
+      Utilities.newBlob(rootRels_(),              'application/xml', '_rels/.rels'),
+      Utilities.newBlob(workbook_(sheetName),     'application/xml', 'xl/workbook.xml'),
+      Utilities.newBlob(workbookRels_(),          'application/xml', 'xl/_rels/workbook.xml.rels'),
+      Utilities.newBlob(styles_(),                'application/xml', 'xl/styles.xml'),
+      Utilities.newBlob(sheet_(headers, rows, fmts, withTable, ref),
+                                                  'application/xml', 'xl/worksheets/sheet1.xml')
+    ];
+    if (withTable) {
+      parts.push(Utilities.newBlob(sheetRels_(), 'application/xml', 'xl/worksheets/_rels/sheet1.xml.rels'));
+      parts.push(Utilities.newBlob(table_(tableName_(opts.tableName), headers, ref),
+                                   'application/xml', 'xl/tables/table1.xml'));
+    }
+
+    var name = String(opts.filename || 'workbook.xlsx');
+    if (!/\.xlsx$/i.test(name)) name += '.xlsx';
+    return Utilities.zip(parts, name)
+      .setContentType('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  }
+
+  /* The XML parts as { path: text }, without zipping any of them. Nothing on
+     the platform calls this - it is what lets a Node harness read what this
+     writer produced without a Blob, and the parts it checks are then literally
+     the parts that ship. */
+  function parts(grid, opts) {
+    opts = opts || {};
+    var headers = grid.headers || [], rows = grid.rows || [];
+    var fmts = opts.formats || {};
+    var sheetName = String(opts.sheetName || 'Sheet1').slice(0, 31) || 'Sheet1';
+    var ref = 'A1:' + colName_(headers.length - 1) + (rows.length + 1);
+    var withTable = !!opts.tableName && uniqueHeaders_(headers);
+    var out = {
+      '[Content_Types].xml':          contentTypes_(withTable),
+      '_rels/.rels':                  rootRels_(),
+      'xl/workbook.xml':              workbook_(sheetName),
+      'xl/_rels/workbook.xml.rels':   workbookRels_(),
+      'xl/styles.xml':                styles_(),
+      'xl/worksheets/sheet1.xml':     sheet_(headers, rows, fmts, withTable, ref)
+    };
+    if (withTable) {
+      out['xl/worksheets/_rels/sheet1.xml.rels'] = sheetRels_();
+      out['xl/tables/table1.xml'] = table_(tableName_(opts.tableName), headers, ref);
+    }
+    return out;
+  }
+
+  return { build: build, parts: parts, colName: colName_, tableName: tableName_ };
+})();
+
 /* ---- IR_Backend.gs -----------------------------------------------------------
    The Inventory Report's source setting. The smallest backend in the file.  */
 
