@@ -3944,6 +3944,115 @@ var QLIKSYNC = (function () {
 
 
   /* =====================================================================
+   * 5b. THE FORMULA BAND, WHILE A TAB IS BEING WRITTEN
+   * ---------------------------------------------------------------------
+   * THE BAND COMES OUT BEFORE THE WRITE AND GOES BACK STRAIGHT AFTER IT, AND
+   * THIS IS ABOUT SPEED. It was changed the other way on 2026-08-23 with the
+   * note "clearing the whole band bought nothing and cost everything", and the
+   * first half of that was wrong.
+   *
+   * What it bought is the recalculation. "Combined Data CPI Raw" carries a
+   * single-cell ARRAY formula on its first data row —
+   *
+   *   =IF(B3:B47634="", "", UPPER(SUBSTITUTE(TEXT(K3:K47634 & B3:B47634 & …))))
+   *
+   * — and a totals row above it summing M3:M47634 and five columns beside it.
+   * Every setValues into a mapped column is a change to the range that array
+   * formula reads, so the sheet re-evaluates a hundred and forty thousand
+   * string operations plus six full-column sums BEFORE THE NEXT WRITE CAN GO
+   * IN, dozens of times over a 47,000-row export. That is what turned a write
+   * that used to finish into one that does not: the run dies partway down with
+   * SpreadsheetApp reporting the workbook as "missing", the mapped columns are
+   * already cleared to the bottom, and the tab is left holding eleven hundred
+   * rows and a half-written one at the boundary. WITH THE BAND OUT there is
+   * nothing on the tab to recalculate and the write is a write.
+   *
+   * WHAT IT COST WAS REAL TOO, and it is the half worth keeping: the restore
+   * used to run ONCE, after the last tab of the workbook, so a run killed
+   * anywhere in between deleted every anchor for good — and the next run found
+   * no formula to lift out, so they never came back on their own.
+   *
+   * BOTH, THEN. The band goes back as soon as THIS tab is written, not at the
+   * end of the workbook, so the window it is absent for is one tab's write
+   * rather than a whole pass. And before it comes out it is PARKED in a script
+   * property, so the window survives the one thing a `finally` does not: Apps
+   * Script killing the execution. The next run puts a parked band back before
+   * it touches the tab.
+   *
+   * A BAND THAT WILL NOT FIT IN A PROPERTY IS NOT TAKEN OUT AT ALL. Nine
+   * kilobytes is the limit and these bands are a few hundred bytes; if one is
+   * ever bigger, the write falls back to the minimal clear below and is slow,
+   * which is the right way round — slow is a state that finishes.
+   * =================================================================== */
+
+  var BAND_PARK_PREFIX = 'QLIK_BAND_PARK::', BAND_PARK_MAX = 8000;
+
+  function bandKey_(spec) { return BAND_PARK_PREFIX + spec.page + '::' + spec.tab; }
+
+  function park_(spec, firstData, band, nCols) {
+    var payload;
+    try { payload = JSON.stringify({ firstData: firstData, nCols: nCols, band: band, at: Date.now() }); }
+    catch (e) { payload = ''; }
+    if (!payload || payload.length > BAND_PARK_MAX) {
+      APP_log('warn', 'QLIKSYNC.write', 'the formula band is too big to park, so it stays on the ' +
+              'tab while it is written — the write will be slower because the sheet recalculates ' +
+              'between blocks', { tab: spec.tab, bytes: payload ? payload.length : 0 });
+      return false;
+    }
+    try { PropertiesService.getScriptProperties().setProperty(bandKey_(spec), payload); return true; }
+    catch (e) {
+      /* Not silent (§7): without the park there is nothing to put the band back
+         if this execution is killed, so the write keeps it in place instead. */
+      APP_log('warn', 'QLIKSYNC.write', 'the formula band could not be parked, so it stays on the ' +
+              'tab while it is written', { tab: spec.tab, error: String(e && e.message || e) });
+      return false;
+    }
+  }
+
+  function dropPark_(spec) {
+    try { PropertiesService.getScriptProperties().deleteProperty(bandKey_(spec)); } catch (e) {}
+  }
+
+  /* Every formula of a band written back, re-pointed at the heights given.
+     `ends` empty means only the tab's OWN ranges move — a reference into
+     another tab of the workbook is left exactly as it was, for the pass at the
+     end of run() to fix once every tab has its final height. */
+  function putBand_(sh, band, ownEnd, ends, note) {
+    for (var r = 0; r < band.length; r++) {
+      var runs = cellRuns_(band[r] || []);
+      for (var q = 0; q < runs.length; q++) {
+        var start = runs[q].start, len = runs[q].len, seg = new Array(len);
+        for (var k = 0; k < len; k++) seg[k] = reanchor_(band[r][start + k], ownEnd, ends || {});
+        try { sh.getRange(r + 1, start + 1, 1, len).setFormulas([seg]); }
+        catch (e) {
+          APP_log('error', 'QLIKSYNC.write', 'a formula could not be put back' + (note ? ' (' + note + ')' : ''),
+                  { tab: sh.getName(), at: sh.getRange(r + 1, start + 1, 1, len).getA1Notation(),
+                    error: String(e && e.message || e) });
+        }
+      }
+    }
+  }
+
+  /* A band an earlier run took out and never put back, because that run was
+     killed. Restored before anything reads this tab's formulas, so the band
+     writeColumns_ lifts out is the real one and not an empty row. */
+  function unpark_(sh, spec) {
+    var raw = null;
+    try { raw = PropertiesService.getScriptProperties().getProperty(bandKey_(spec)); }
+    catch (e) { return; }
+    if (!raw) return;
+    var p = null;
+    try { p = JSON.parse(raw); } catch (e) { p = null; }
+    if (p && p.band && p.band.length) {
+      APP_log('warn', 'QLIKSYNC.write', 'a formula band was still parked from an earlier run — ' +
+              'putting it back before this tab is touched',
+              { tab: spec.tab, page: spec.page, parked: new Date(p.at || 0).toISOString() });
+      putBand_(sh, p.band, sh.getMaxRows(), {}, 'from the park');
+    }
+    dropPark_(spec);
+  }
+
+  /* =====================================================================
    * 6. WRITE — 'columns' mode
    * =================================================================== */
 
@@ -4073,6 +4182,12 @@ var QLIKSYNC = (function () {
   }
 
   function writeColumns_(sh, src, spec, plan) {
+    /* BEFORE ANYTHING READS THIS TAB'S FORMULAS. A band an earlier run took
+       out and was killed before putting back lives in a script property; it
+       goes home first, so what is lifted out below is the real band and not the
+       empty row that run left behind. */
+    unpark_(sh, spec);
+
     var nCols = sh.getMaxColumns();
 
     var srcKeys = src.hdr.map(canon_);
@@ -4160,39 +4275,48 @@ var QLIKSYNC = (function () {
        array-formula anchors. Taken now, re-pointed and put back once every tab
        in this workbook has its final height.
 
-       ONLY THE CELLS THE WRITE WILL LAND ON ARE CLEARED. The data write starts
-       at firstData and touches the MAPPED columns only, so the one band cell it
-       can collide with is a formula sitting in a mapped column on firstData
-       itself. The anchors are by definition somewhere else: firstDataRow_ found
-       this row by looking for a formula in a column nothing is written into.
+       IT COMES OUT WHOLE, AND §5b IS WHY — the short version being that every
+       write into a mapped column is a change to the range the LOOKUP KEY array
+       formula reads, so leaving it in place makes the sheet recalculate 47,000
+       rows of string work between one block of the write and the next until the
+       execution dies partway down. Parked first, so a kill cannot lose it, and
+       put back the moment this tab is written rather than at the end of the
+       workbook's pass.
 
-       Clearing the whole band bought nothing and cost everything. It left every
-       anchor absent for the WHOLE of the workbook's pass — the restore below
-       runs once, after the last tab — so a run that died in the middle of that
-       deleted them for good: a throw on one tab, or Apps Script killing the
-       execution at the runtime limit, which three tens-of-thousands-of-rows
-       Ready-Mix tabs reach far sooner than two Aggregates ones. And it does not
-       come back on the next run, because by then there is no formula left to
-       lift out. Left in place an anchor is at worst still pointing at the old
-       height, which is the state re-anchoring exists to improve rather than a
-       loss. */
+       WHEN IT CANNOT BE PARKED only the cells the write will land on are
+       cleared, which is the older, slower, safe behaviour: the data write
+       starts at firstData and touches the MAPPED columns only, so the one band
+       cell it can collide with is a formula sitting in a mapped column on
+       firstData itself. */
     var isMapped = {};
     pairs.forEach(function (p) { isMapped[p.col] = 1; });
 
     var band = sh.getRange(1, 1, firstData, nCols).getFormulas();
-    var onWrite = (band[firstData - 1] || []).map(function (f, i) {
-      return (f && isMapped[i + 1]) ? f : '';
-    });
-    var clearRuns = cellRuns_(onWrite);
-    for (var cr = 0; cr < clearRuns.length; cr++) {
-      sh.getRange(firstData, clearRuns[cr].start + 1, 1, clearRuns[cr].len).clearContent();
-    }
 
     /* REGISTERED BEFORE ANYTHING DESTRUCTIVE RUNS. If the resize or the write
        throws, run() records the tab as failed and carries on — and the restore
        pass still has this entry, so the band goes back re-pointed instead of
        staying as the write left it. */
     plan.push({ sh: sh, firstData: firstData, band: band, nCols: nCols });
+
+    var parked = park_(spec, firstData, band, nCols);
+    var cr;
+    if (parked) {
+      for (var br = 0; br < band.length; br++) {
+        var wholeRuns = cellRuns_(band[br]);
+        for (cr = 0; cr < wholeRuns.length; cr++) {
+          sh.getRange(br + 1, wholeRuns[cr].start + 1, 1, wholeRuns[cr].len).clearContent();
+        }
+      }
+    } else {
+      var onWrite = (band[firstData - 1] || []).map(function (f, i) {
+        return (f && isMapped[i + 1]) ? f : '';
+      });
+      var clearRuns = cellRuns_(onWrite);
+      for (cr = 0; cr < clearRuns.length; cr++) {
+        sh.getRange(firstData, clearRuns[cr].start + 1, 1, clearRuns[cr].len).clearContent();
+      }
+    }
 
     /* --- THE SHEET ENDS EXACTLY WHERE THE EXPORT DOES ---
        Every row is replaced on every run, so a correction made to a month that
@@ -4254,6 +4378,23 @@ var QLIKSYNC = (function () {
       });
 
       for (var off = 0; off < n; off += CHUNK) {
+        /* STOP ON PURPOSE RATHER THAN BE STOPPED. Apps Script kills an
+           execution at six minutes without running a `finally` and without
+           throwing anywhere this code can see: the rows simply stop arriving
+           mid-flush, which is why a killed write leaves a HALF-WRITTEN ROW at
+           the boundary and no error anywhere. A throw here is the same tab in
+           the same state, with three differences that decide everything — run()
+           records it as failed, the mail says so, and `retryable_` arms the
+           one-shot, so the tab is rewritten whole five minutes later instead of
+           sitting truncated until somebody notices the numbers. The formula
+           band goes back either way: it is registered in `plan` and parked in a
+           property. */
+        if (Date.now() - EXEC_T0 > EXEC_SAFE_MS) {
+          throw retryable_('"' + spec.tab + '" ran out of execution time ' +
+            off + ' rows into a ' + n + '-row write, so it was stopped before Apps Script could ' +
+            'kill it mid-row. The tab is blank below row ' + (firstData + off - 1) + ' in the ' +
+            'columns the sync owns; a retry has been armed and rewrites it whole.');
+        }
         var h = Math.min(CHUNK, n - off), grid = new Array(h);
         for (var r = 0; r < h; r++) {
           var row = new Array(w);
@@ -4310,6 +4451,22 @@ var QLIKSYNC = (function () {
             'the next run rewrites it whole.');
         }
       }
+    }
+
+    /* THE BAND GOES HOME NOW, NOT AT THE END OF THE WORKBOOK. Every write into
+       this tab is done, so there is nothing left for the array formulas to slow
+       down, and the window in which they are absent closes here rather than
+       after the last tab of the workbook — which is the difference between a
+       killed run costing one tab's anchors and costing all of them.
+
+       ONLY THIS TAB'S OWN RANGES ARE MOVED. A reference into another tab of the
+       same workbook is left exactly as it was, because that tab may not have
+       been written yet; the pass at the end of run() re-points the whole band
+       again once every height is final, and it re-points from the same `band`
+       this took out. */
+    if (parked) {
+      putBand_(sh, band, sh.getMaxRows(), {}, null);
+      dropPark_(spec);
     }
 
     /* Recorded only now, past every check, so a bad run cannot become the
