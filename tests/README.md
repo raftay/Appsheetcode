@@ -30,7 +30,19 @@ comparison really does mean something. `pageparity.js` and `cssparity.js` are wh
 that family; delete them at that point rather than weakening them.
 
 `gsparity.js` and `modparity.js` were the two parity gates and are **gone**, on exactly that
-rule and by their own instruction. The CY/PY header work changed code inside moved regions of
+rule and by their own instruction.
+
+**`pageparity.js`'s `tp01` case retired on the same rule**, and it is worth reading as the
+worked example. The Transfer Price page was deliberately changed: every number it produced
+moved to `script.gs` §10 (`TPE`), the QlikView file became an optional override of the
+Aggregates data, and three pieces of user-facing copy now say different things because
+different things are true. Those three were what failed — "Upload both files", "QlikView rows"
+— and each could have been reverted to make the gate pass, which is precisely the shape of
+weakening a gate rather than retiring it. What holds that page up instead: `tp01engine.js`
+states every rule the arithmetic has to keep, `merge.js` proves the ids resolve and the
+registration leaks no globals, and `pageswitch.js` proves it mounts and unmounts cleanly.
+**What went with it, and is worth knowing: nothing now proves the eleven ex-inline handlers
+are still wired.** The CY/PY header work changed code inside moved regions of
 both files on purpose, so neither file is a copy of anything any more and a gate saying
 otherwise could only be weakened, never passed. What they were protecting — that a region
 sliced out of `script.gs` or `app.html` is the code that actually runs — is now protected by
@@ -60,6 +72,23 @@ by hand into `$OLD_DIR`. Three things killed them, and the third is the one that
 **The lesson that outlived them: a gate whose second side has to be assembled by hand is a
 gate that stops running.** Point at a commit, never at a directory somebody fills in. That is
 why `apphtml.js` is built the way it is.
+
+## `tp01engine.js` and `tp01xlsx.js` — the transfer-price server
+
+`tp01engine.js` states thirteen rules `TPE` has to keep, one case each, because with the
+arithmetic in one place there is no second copy to diff it against — the key built from
+differently shaped inputs on the two sides, TP01 winning over ZIPR on a key priced by both, an
+unmatched row getting **blank and not zero**, the exact-equality customer-parent filter, the
+one-year-per-row rule, the revenue-weighted roll-up, the period columns found by shape (and a
+header naming none of them **throwing** rather than reading as −1), the asymmetric exception
+rule, the aging, and the report date coming off the file rather than the calendar.
+
+`tp01xlsx.js` zips what `TPXLSX` writes with Node's own zlib and reads it back with a reader
+written against the OOXML shape rather than against the writer — it resolves a cell's number
+format the way a consumer has to, cell → style index → `cellXfs` → `numFmtId` → the `numFmts`
+table. A self-consistent check would have been worthless. It is also the reason writing the
+file by hand was affordable at all: the alternative, a temp Google Sheet exported through
+Drive, could not have been checked off-platform.
 
 ## `merge.js` — the structural gate for `app.html`
 

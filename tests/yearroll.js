@@ -312,14 +312,21 @@ console.log('a workbook from ' + CY + ', read by code written in 2026:\n');
 }
 
 /* ===========================================================================
- * 4. TP01 — the same bug, client-side
+ * 4. TP01 — the same bug, and it is no longer client-side
+ * ---------------------------------------------------------------------------
+ * This reader used to be in app.html, because the page did its own arithmetic.
+ * It moved to script.gs §10 with the rest of TPE when the weekly trigger needed
+ * the same numbers and had no browser to compute them in. The claims are
+ * unchanged — they are about the rule, not about which file keeps it — and
+ * check 4b below still holds app.html to never growing a second copy.
  * ======================================================================== */
 {
-  const at = APP.indexOf('function iYearCol(headers, suffix)');
-  check('TP01 · iYearCol is in app.html', at !== -1);
+  const TPE_SRC = region('TP01_Engine.gs');
+  const at = TPE_SRC.indexOf('function iYearCol_(headers, suffix)');
+  check('TP01 · iYearCol is in script.gs §10 TP01_Engine.gs', at !== -1);
   if (at !== -1) {
-    const end = APP.indexOf('\n  }', at) + 4;
-    const iYearCol = new Function(APP.slice(at, end) + '; return iYearCol;')();
+    const end = TPE_SRC.indexOf('\n  }', at) + 4;
+    const iYearCol = new Function(TPE_SRC.slice(at, end) + '; return iYearCol_;')();
     const hdr = ['Sold To', 'Plant', 'Material', 'Month', CY + ' Volume', CY + ' ASP ex-Works'];
     eq('TP01 · the volume column is found by shape', iYearCol(hdr, 'Volume'), 4);
     eq('TP01 · so is ASP ex-Works', iYearCol(hdr, 'ASP ex-Works'), 5);
@@ -336,9 +343,15 @@ console.log('a workbook from ' + CY + ', read by code written in 2026:\n');
     eq('TP01 · PY on its own is read rather than missed',
        iYearCol(['x', 'PY ASP ex-Works'], 'ASP ex-Works'), 1);
   }
-  check('TP01 · no indexOf on a year-named column survives',
-        !/indexOf\('\d{4} (Volume|ASP ex-Works)'\)/.test(APP),
-        'a literal year is back in TP01\'s column lookup');
+  /* 4b. BOTH files, now that the reader lives in one of them and the page still
+     writes the headers it reads. A literal year coming back on either side is
+     the same bug wherever it lands. */
+  const YEARED = /indexOf\('\d{4} (Volume|ASP ex-Works)'\)/;
+  check('TP01 · no indexOf on a year-named column survives in app.html',
+        !YEARED.test(APP), 'a literal year is back in TP01\'s column lookup');
+  check('TP01 · nor in script.gs',
+        !YEARED.test(fs.readFileSync(path.join(ROOT, 'script.gs'), 'utf8')),
+        'a literal year is back in TPE\'s column lookup');
 }
 
 /* ===========================================================================

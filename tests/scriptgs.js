@@ -29,6 +29,14 @@
  * asks for 'Deck_Recipe.gs' (tests/deckstatic.js loads both, which is what the
  * one-global-scope runtime does anyway). A region ends at the next SECTION
  * banner, so the block cannot leak past §1.
+ *
+ * A REGION THAT IS NOT IN THIS LIST IS NOT MISSING, IT IS SWALLOWED. The walk
+ * finds each banner in ORDER sequence and a region runs to the NEXT ONE LISTED,
+ * so an unlisted banner in between just becomes part of the region before it —
+ * silently, and with the harness still passing. That is how region('IR_Backend.gs')
+ * came to include IR_MailWatch.gs, which is still true and still deliberate:
+ * nothing wants the mail watch on its own. TP01's three new regions ARE listed,
+ * because tp01engine.js and tp01xlsx.js each want exactly one of them.
  */
 'use strict';
 const fs = require('fs');
@@ -47,6 +55,7 @@ const ORDER = [
   'PV_Backend.gs', 'PV_Lookup.gs', 'FSC_Backend.gs', 'Sask_Backend.gs',
   'RMX_Backend.gs', 'RMX_Suggest.gs', 'RFSC_Backend.gs', 'Ov_Backend.gs',
   'Deck_Backend.gs', 'Deck_Recipe.gs', 'Kpi_Backend.gs', 'TP01_Backend.gs',
+  'TP01_Engine.gs', 'TP01_Xlsx.gs', 'TP01_MailWatch.gs',
   'IR_Backend.gs', 'QlikSync.gs',
 ];
 

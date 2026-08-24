@@ -1895,6 +1895,18 @@ body[data-page="tp01"] .mbtn.send{background:var(--blue-100); border-color:var(-
 body[data-page="tp01"] .mbtn.send:hover{background:var(--blue-90)}
 body[data-page="tp01"] .market-status{font:600 11.5px Inter; color:var(--muted); white-space:nowrap; min-width:64px; text-align:right}
 body[data-page="tp01"] .market-status.sending{color:var(--blue-70)}
+body[data-page="tp01"] .auto-grid{display:grid; gap:8px; margin:4px 0 12px}
+body[data-page="tp01"] .auto-row{display:flex; align-items:flex-start; gap:8px; font:500 12.5px Inter; color:var(--ink)}
+body[data-page="tp01"] .auto-row input[type=checkbox]{margin-top:2px; flex:none}
+body[data-page="tp01"] .auto-row em{font-style:normal; color:var(--muted)}
+body[data-page="tp01"] .auto-lbl{font:600 11px Inter; color:var(--muted); margin-top:6px}
+body[data-page="tp01"] .auto-lbl em{font-style:normal; font-weight:500}
+body[data-page="tp01"] .auto-input{border:1px solid var(--line); border-radius:9px; padding:8px 10px;
+  font:500 12.5px Inter; color:var(--ink); background:var(--white); width:100%}
+body[data-page="tp01"] .auto-state{font:500 11.5px Inter; color:var(--muted); line-height:1.55;
+  padding-top:10px; border-top:1px solid var(--line)}
+body[data-page="tp01"] .auto-out:not(:empty){font:500 11.5px/1.6 Inter; color:var(--ink); margin-top:10px;
+  padding:10px 12px; background:var(--blue-10); border-radius:10px; overflow-x:auto}
 body[data-page="tp01"] .market-status.sent{color:var(--pos)}
 body[data-page="tp01"] .market-status.err{color:var(--neg)}
 body[data-page="tp01"] .market-status.warn{color:#B45309}
@@ -24706,9 +24718,9 @@ AMR.page('deckbuilder', {
     <div class="tp-divider">then</div>
 
     <div class="step-block" id="block2">
-      <div class="step-label"><div class="stepnum">2</div> QlikView file &middot; RMX report</div>
+      <div class="step-label"><div class="stepnum">2</div> QlikView file &middot; optional override</div>
       <div class="step-title">QlikView Transfer Pricing Report</div>
-      <div class="step-desc">Looks up each row's SAP Transfer Price by Concat Key, then adds the calculated revenue columns.</div>
+      <div class="step-desc"><b>Optional.</b> Leave this empty and the comparison is built from the Aggregates data this suite already reads &mdash; Amrize RMX, this year, rolled up to plant &times; material &times; customer &times; month. Drop a QlikView export here and it is used instead.</div>
       <div class="drop-zone" id="drop2">
         <input type="file" id="file2" accept=".xlsx,.xls">
         <div class="drop-icon">&#128203;</div>
@@ -24735,7 +24747,7 @@ AMR.page('deckbuilder', {
 
   <div class="stats-grid" id="statsGrid">
     <div class="stat"><div class="stat-val" id="sSAP">&mdash;</div><div class="stat-lbl">SAP rows</div></div>
-    <div class="stat"><div class="stat-val" id="sQLK">&mdash;</div><div class="stat-lbl">QlikView rows</div></div>
+    <div class="stat"><div class="stat-val" id="sQLK">&mdash;</div><div class="stat-lbl">Rows compared</div></div>
     <div class="stat match"><div class="stat-val" id="sMatch">&mdash;</div><div class="stat-lbl">Matched</div></div>
     <div class="stat nomatch"><div class="stat-val" id="sNoMatch">&mdash;</div><div class="stat-lbl">No match</div></div>
   </div>
@@ -24764,7 +24776,7 @@ AMR.page('deckbuilder', {
        just those addresses. Emails are sent from the account that <b>deployed</b> the app,
        not from yours &mdash; and the saved addresses are shared with everyone for the
        same reason.</p>
-    <div id="marketList"><div class="exc-empty" style="color:var(--muted)">Upload both files to see the per-market breakdown.</div></div>
+    <div id="marketList"><div class="exc-empty" style="color:var(--muted)">Drop the SAP file to see the per-market breakdown.</div></div>
   </div>
 
   <div class="mkt-panel" id="excPanel">
@@ -24789,10 +24801,44 @@ AMR.page('deckbuilder', {
       the price has been in effect at the wrong value); exceptions are sorted longest-outstanding first.
       Each market gets its own exceptions file, with its own remembered recipient. The
       <b>always send to</b> addresses are appended to every exceptions email.</p>
-    <div id="excList"><div class="exc-empty" style="color:var(--muted)">Upload both files to check for exceptions.</div></div>
+    <div id="excList"><div class="exc-empty" style="color:var(--muted)">Drop the SAP file to check for exceptions.</div></div>
   </div>
 
-  <div class="tpfoot">Files are processed entirely in your browser &mdash; nothing is uploaded until you click Send.</div>
+
+  <div class="mkt-panel" id="autoPanel">
+    <div class="panel-head">
+      <div class="eyebrow">Automated email &middot; weekly</div>
+      <div class="head-actions">
+        <button class="mbtn" id="auto-preview"
+                title="Run the same check the trigger runs and show what it found. Sends nothing.">&#128269; Preview</button>
+        <button class="mbtn send" id="auto-save">Save settings</button>
+        <div class="market-status" id="auto-msg"></div>
+      </div>
+    </div>
+    <p class="mkt-note">The SAP transfer-price file arrives by email every week. When it does, this
+      sends the <b>exceptions</b> on its own &mdash; one email, every market stacked in the body, one
+      combined workbook attached &mdash; without anybody opening this page. The market breakdown is
+      not sent. The comparison is the same one above: the Aggregates data, this year, rolled up.
+      <b>These settings are shared with everyone</b>, and the mail is sent by the account that set
+      the trigger up, not by yours.</p>
+
+    <div class="auto-grid">
+      <label class="auto-row"><input type="checkbox" id="auto-on">
+        <span>Send the exceptions report when a new SAP file arrives</span></label>
+      <label class="auto-row"><input type="checkbox" id="auto-empty">
+        <span>Send it even when there are no exceptions
+          <em>&mdash; a report that stops arriving is hard to notice; this is how you know it ran</em></span></label>
+      <label class="auto-lbl" for="auto-to">To <em>(comma-separated)</em></label>
+      <input class="auto-input" type="text" id="auto-to" placeholder="name@amrize.com, someone.else@amrize.com">
+      <label class="auto-lbl" for="auto-cc">Cc <em>(optional)</em></label>
+      <input class="auto-input" type="text" id="auto-cc" placeholder="">
+    </div>
+
+    <div class="auto-state" id="auto-state">Checking&hellip;</div>
+    <div class="auto-out" id="auto-preview-out"></div>
+  </div>
+
+  <div class="tpfoot">The dropped file is read in your browser and its rows are sent to the server, which does the comparison &mdash; the same one the weekly automated email uses. Nothing is emailed to anybody until you press Send.</div>
 </div>
 </template>
 
@@ -24822,21 +24868,23 @@ AMR.page('deckbuilder', {
      · 69 style rules became §A4, scoped to body[data-page="tp01"]           */
 AMR.page('tp01', {
   title: 'Amrize · Transfer Price Tool',
-  /* SheetJS only. Both workbooks are read and both output files are written
-     in the browser; nothing is uploaded until Send. */
+  /* SheetJS still, and only for the two things a browser is better at than a
+     server: reading a dropped workbook, and writing the files the Download and
+     Send buttons produce. Every NUMBER comes from the server now. */
   libs: ['xlsx'],
   help:
-    '<h3>What is this?</h3><p>Compares SAP transfer prices (TP01-ZIPR) against the QlikView RMX report and calculates the revenue corrections.</p>'+
-    '<h3>How to use it</h3><p><b>1.</b> Drop the weekly SAP file (must contain TP01 and ZIPR tabs).<br>'+
-    '<b>2.</b> Drop the QlikView transfer pricing export.<br>'+
-    'The comparison builds automatically. Download the full file, or use the market list to download / email one market at a time.</p>'+
-    '<h3>Exceptions</h3><p>Below the market breakdown, the Exceptions panel lists matched rows where the SAP Transfer Price is lower than the ASP ex-Works by more than a cent (higher prices and \u00b1$0.01 differences are ignored). Each market\u2019s exceptions can be downloaded or emailed separately, with its own remembered recipient. Exception files and previews are sorted by urgency &mdash; how many days the price has been at an incorrect value (report date minus the SAP price\u2019s Valid From).</p>'+
-    '<h3>Emailing</h3><p>Type each market\u2019s recipient once &mdash; it\u2019s remembered for your account. '+
+    '<h3>What is this?</h3><p>Compares SAP transfer prices (TP01-ZIPR) against the Ready-Mix aggregate purchases and calculates the revenue corrections.</p>'+
+    '<h3>How to use it</h3><p><b>1.</b> Drop the weekly SAP file (must contain TP01 and ZIPR tabs). That is all that is needed — the other side of the comparison is built from the Aggregates workbook this suite already reads.<br>'+
+    '<b>2.</b> Optionally drop a QlikView transfer-pricing export as well. If you do, <b>it is used instead</b> of the Aggregates sheet.</p>'+
+    '<h3>Where the Aggregates side comes from</h3><p>Rows whose <b>Customer Parent</b> is <b>Amrize RMX</b>, for the current year, rolled up to plant × material × customer × month, with the ASP ex-Works recalculated as revenue ÷ volume. The market comes from the plant lookup.</p>'+
+    '<h3>Exceptions</h3><p>Below the market breakdown, the Exceptions panel lists matched rows where the SAP Transfer Price is lower than the ASP ex-Works by more than a cent (higher prices and ±$0.01 differences are ignored). Each market’s exceptions can be downloaded or emailed separately, with its own remembered recipient. Exception files and previews are sorted by urgency &mdash; how many days the price has been at an incorrect value (report date minus the SAP price’s Valid From).</p>'+
+    '<h3>Emailing</h3><p>Type each market’s recipient once &mdash; it is remembered for everyone, not just you. '+
     'The <b>always send to</b> box next to each Send All button appends its addresses (comma-separated) to every email in that panel; '+
     'markets with no recipient of their own still go out to just those addresses. '+
     'Use <b>Send All</b> to email every market that has at least one recipient. '+
-    '<b>Send As One</b> instead sends a single email to just the always-send-to addresses, with every market\u2019s file attached and the breakdowns stacked in the body. '+
-    'Emails are sent from the account of whoever clicks Send.</p>',
+    '<b>Send As One</b> instead sends a single email to just the always-send-to addresses, with every market’s file attached and the breakdowns stacked in the body. '+
+    'Emails are sent from the account that <b>deployed</b> the app, not from yours.</p>'+
+    '<h3>The weekly report</h3><p>The <b>Automated email</b> panel at the bottom sends the exceptions on its own, every time the weekly SAP file arrives by mail. Nobody has to open this page for it to go out. <b>Preview</b> shows what the next run would find without sending anything.</p>',
 
   boot: function(root){
 
@@ -24850,25 +24898,29 @@ AMR.page('tp01', {
       }
     });
 
-  let sapData  = null;
-  let qlkBytes = null;
-  let sapWB    = null;
-  let compWB   = null;
-  let sapDate  = '';
-  let marketDataMap = {};    // market → filtered rows
-  let excDataMap    = {};    // market → exception rows (matched, SAP TP ≠ ASP ex-Works)
-  let outHeadersG   = null;  // comparison output headers
-  let sapValidFromG = new Map(); // norm(Concat Key) → SAP Valid From (how long the price has been in effect)
-  let savedRecips   = {};    // recipient key → email, loaded from User Properties
-                             // (market breakdown = market name; exceptions = 'EXC::' + market)
+  /* THE PAGE HOLDS NO ARITHMETIC ANY MORE.
+     It used to hold all of it: the SAP read, the Concat Key on both sides, the
+     two revenue columns, the market split, the exception rule, the aging and
+     the email HTML. All of that is script.gs §10's TPE now, because the weekly
+     trigger needs the same numbers and a trigger has no browser - and the only
+     alternative was two copies of one set of rules with nothing at run time
+     ever reporting that they had drifted.
+
+     What is left here is presentation and file writing. `cmp` is whatever the
+     server last returned; every field on it is read, never recomputed. */
+  let sapTabs = null;          // { TP01: grid, ZIPR: grid } as SheetJS read them
+  let qlkGrid = null;          // optional override: { headers, rows }
+  let qlkName = '';
+  let cmp     = null;          // the whole server answer, including its token
+  let savedRecips = {};        // recipient key -> email, from User Properties
+                               // (market breakdown = market name; exceptions = 'EXC::' + market)
 
   const $ = id => document.getElementById(id);
   function showStatus(type, msg) { $('status').className='status '+type; $('status').innerHTML=msg; }
   function slug(s){ return String(s).replace(/[^a-zA-Z0-9]/g,'_'); }
+  const sapDate = () => (cmp && cmp.reportDate) || '';
 
-  // ── Recipients: stored per-user in Script User Properties ──────────────────
-  // Loaded once at page open; if the comparison is already on screen when they
-  // arrive, the list is re-rendered so the boxes fill in.
+  // ── Recipients: stored in Script User Properties, shared by everyone ───────
   (function loadSavedRecipients(){
     try {
       google.script.run
@@ -24876,7 +24928,7 @@ AMR.page('tp01', {
           savedRecips = r || {};
           $('alwaysto-mkt').value = savedRecips['ALL::mkt'] || '';
           $('alwaysto-exc').value = savedRecips['ALL::exc'] || '';
-          if (Object.keys(marketDataMap).length) renderPanels();
+          if (cmp) renderPanels();
         })
         .withFailureHandler(function(e){ console.warn('Could not load saved recipients', e); })
         .TP_getRecipients();
@@ -24887,7 +24939,6 @@ AMR.page('tp01', {
   function recipKey(kind, market) { return kind === 'exc' ? 'EXC::' + market : market; }
 
   // "always send to" — addresses appended to EVERY email in a panel.
-  // Stored per-user under ALL::mkt / ALL::exc via the same recipient map.
   function parseEmails(s) {
     return String(s || '').split(/[,;]/).map(x => x.trim()).filter(x => x.includes('@'));
   }
@@ -24916,96 +24967,33 @@ AMR.page('tp01', {
 
   function onRecipChange(kind, market, inputEl) {
     const email = inputEl.value.trim();
-    const key = recipKey(kind, market);
-    savedRecips[key] = email;
+    savedRecips[recipKey(kind, market)] = email;
     google.script.run
       .withFailureHandler(function(e){ console.warn('Could not save recipient', e); })
-      .TP_saveRecipient(key, email);
+      .TP_saveRecipient(recipKey(kind, market), email);
   }
 
-  // ── Utilities ──────────────────────────────────────────────────────────────
-  function toDateStr(val) {
-    if (!val && val !== 0) return '';
-    if (val instanceof Date) {
-      return `${val.getFullYear()}-${String(val.getMonth()+1).padStart(2,'0')}-${String(val.getDate()).padStart(2,'0')}`;
-    }
-    if (typeof val === 'number') {
-      try {
-        const p = XLSX.SSF.parse_date_code(val);
-        if (p && p.y > 1900) return `${p.y}-${String(p.m).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`;
-      } catch(e) {}
-    }
-    if (typeof val === 'string') {
-      const m = val.match(/(\d{4}[-\/]\d{2}[-\/]\d{2})/);
-      return m ? m[1].replace(/\//g,'-') : val;
-    }
-    return String(val);
-  }
-
-  function norm(v) { return String(v ?? '').trim(); }
-
-  /* THE EXPORT NAMES A PERIOD IN TWO OF ITS COLUMNS — "2026 Volume" or "CY
-     Volume", "2026 ASP ex-Works" or "CY ASP ex-Works" — AND THIS PAGE USED TO
-     NAME IT BACK, in six indexOf() calls. On the first export of a new year
-     every one of them returned -1: the volume and ASP columns read as missing,
-     every Additional Revenue to Post came out of a blank cell, and the
-     workbook still built and still downloaded. Nothing on the page said
-     anything was wrong, which is what makes it worth the lines below.
-
-     So the column is found by SHAPE. The period is CY, PY or a four-digit
-     year; it sits at either end of the name and the dash before it is
-     optional. Current wins: an explicit CY beats anything, a newer year beats
-     an older one, and a PY column is taken only when it is all there is —
-     which is still better than reading nothing at all.
-
-     Everything downstream passes the export's own header through to the output
-     file, so the period needs naming in exactly one place: here, and by shape
-     rather than by name. This is script.gs's APP_period_ rule, in the one place
-     on this side of the wire that has to know it. */
-  function iYearCol(headers, suffix) {
-    var want = String(suffix).replace(/\s+/g, ' ').trim().toLowerCase();
-    var best = -1, bestRank = -1;
-    for (var i = 0; i < headers.length; i++) {
-      var s = String(headers[i] == null ? '' : headers[i]).replace(/\s+/g, ' ').trim().toLowerCase();
-      var m = /^((?:19|20)\d{2}|cy|py)\b[\s\-]*(.+)$/.exec(s), tok, rest;
-      if (m) { tok = m[1]; rest = m[2]; }
-      else {
-        m = /^(.+?)[\s\-]*\b((?:19|20)\d{2}|cy|py)$/.exec(s);
-        if (!m) continue;
-        tok = m[2]; rest = m[1];
-      }
-      if (rest !== want) continue;
-      var rank = (tok === 'cy') ? Infinity : (tok === 'py') ? 0 : Number(tok);
-      if (rank > bestRank) { bestRank = rank; best = i; }
-    }
-    return best;
-  }
-  function round4(n) { return Math.round(n * 10000) / 10000; }
-
-  // SAP key: Plant + Ship-To Party (trim 1st char) + Material
-  function buildSAPKey(plant, shipTo, material) {
-    return norm(plant) + norm(shipTo).slice(1) + norm(material);
-  }
-
-  // QlikView key: codes embedded in descriptions
-  function extractCode(val)       { const s=norm(val); return s.includes(' - ') ? s.split(' - ')[0].trim() : s; }
-  function extractSoldToCode(val) { const s=norm(val); return s.includes(' - ') ? s.split(' - ').pop().trim() : s; }
-  function buildQLKKey(plant, soldTo, material) {
-    return extractCode(plant) + extractSoldToCode(soldTo).slice(1) + extractCode(material);
-  }
-
-  function findSAPHeader(rows) {
-    for (let i=0; i<rows.length; i++) if (rows[i].some(c => norm(c)==='CnTy')) return i;
-    return -1;
-  }
-
+  // ── Reading a dropped workbook ─────────────────────────────────────────────
   function readFile(file, cb) {
     const r = new FileReader();
     r.onload = e => cb(new Uint8Array(e.target.result));
     r.readAsArrayBuffer(file);
   }
 
-  // ── Drop zone setup ────────────────────────────────────────────────────────
+  /* Dates arrive from SheetJS as Date objects and would be posted to the server
+     as ISO strings in a different timezone. They are flattened here, where the
+     Date object still exists, using the same YYYY-MM-DD the server produces. */
+  function flat(v) {
+    if (v instanceof Date) {
+      return v.getFullYear() + '-' + String(v.getMonth()+1).padStart(2,'0') + '-' +
+             String(v.getDate()).padStart(2,'0');
+    }
+    return v;
+  }
+  function gridOf(ws) {
+    return XLSX.utils.sheet_to_json(ws, { header:1, defval:'' }).map(r => r.map(flat));
+  }
+
   function setupDrop(dropId, inputId, fnameId, handler) {
     const dz=$(dropId), inp=$(inputId);
     dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragging'); });
@@ -25026,289 +25014,104 @@ AMR.page('tp01', {
         if (!wb.SheetNames.includes('TP01') || !wb.SheetNames.includes('ZIPR')) {
           showStatus('error','&#10060; Could not find TP01 and ZIPR tabs. Is this the SAP file?'); return;
         }
-        const tp01All = XLSX.utils.sheet_to_json(wb.Sheets['TP01'], { header:1, defval:'' });
-        const ziprAll = XLSX.utils.sheet_to_json(wb.Sheets['ZIPR'], { header:1, defval:'' });
-        const tp01Hi = findSAPHeader(tp01All), ziprHi = findSAPHeader(ziprAll);
-        if (tp01Hi<0||ziprHi<0) { showStatus('error','&#10060; Could not locate header row in SAP file.'); return; }
-
-        const rawDate = tp01All[tp01Hi-3]?.[1] || tp01All[2]?.[1] || '';
-        sapDate = toDateStr(rawDate) || new Date().toISOString().slice(0,10);
-
-        const tp01H = tp01All[tp01Hi].map(h=>norm(h));
-        const ziprH = ziprAll[ziprHi].map(h=>norm(h));
-        const tp01D = tp01All.slice(tp01Hi+1).filter(r=>r.some(c=>c!==''));
-        const ziprD = ziprAll.slice(ziprHi+1).filter(r=>r.some(c=>c!==''));
-
-        const dateCols = new Set(['Valid From','Valid to']);
-        const outCols  = ['CnTy','Plant','Material','Ship-To Party','Concat Key','Amount','Currency','Pricing Unit','Unit of Measure','Valid From','Valid to'];
-        const tp01Map  = { 'CnTy':'CnTy','Plant':'S Plant','Material':'Material','Ship-To Party':'Ship-to / Partner PC','Amount':'Amount','Currency':'Unit','Pricing Unit':'per','Unit of Measure':'UoM','Valid From':'Valid From','Valid to':'Valid to' };
-        const ziprMap  = { 'CnTy':'CnTy','Plant':'Plant','Material':'Material','Ship-To Party':'Ship-To Party','Amount':'Amount','Currency':'Condition currency','Pricing Unit':'Pricing unit','Unit of Measure':'Unit of measure','Valid From':'Valid From','Valid to':'Valid to' };
-
-        function extractSAPRows(data, headers, colMap) {
-          return data.map(row => {
-            const obj={};
-            for (const col of outCols) {
-              if (col==='Concat Key') continue;
-              const idx = headers.indexOf(colMap[col]);
-              let val = idx>=0 ? row[idx] : '';
-              if (dateCols.has(col)) val = toDateStr(val);
-              obj[col] = val??'';
-            }
-            obj['Concat Key'] = buildSAPKey(obj['Plant'], obj['Ship-To Party'], obj['Material']);
-            return obj;
-          });
-        }
-
-        const tp01Rows = extractSAPRows(tp01D, tp01H, tp01Map);
-        const ziprRows = extractSAPRows(ziprD, ziprH, ziprMap);
-        const combined = [...tp01Rows, ...ziprRows];
-        sapData = { rows: combined, reportDate: sapDate, tp01Count: tp01Rows.length, ziprCount: ziprRows.length };
-
-        // Build SAP workbook
-        sapWB = XLSX.utils.book_new();
-        const ws = XLSX.utils.aoa_to_sheet([
-          ['Transfer Prices TP01-ZIPR Canada Central Region - Consolidated'],
-          [sapDate], ['Source: SAP'], [],
-          outCols,
-          ...combined.map(r => outCols.map(c=>r[c]))
-        ]);
-        ws['!cols'] = [{wch:10},{wch:8},{wch:10},{wch:20},{wch:22},{wch:10},{wch:10},{wch:13},{wch:16},{wch:13},{wch:13}];
-        XLSX.utils.book_append_sheet(sapWB, ws, 'Consolidated');
-
+        sapTabs = { TP01: gridOf(wb.Sheets['TP01']), ZIPR: gridOf(wb.Sheets['ZIPR']) };
         $(dropId).classList.add('loaded');
-        $(fnameId).textContent = '\u2713 ' + file.name;
+        $(fnameId).textContent = '✓ ' + file.name;
         $('block1').classList.add('ready');
-        showStatus('info', qlkBytes ? '<span class="spinner sm"></span> Both files loaded &mdash; building comparison&hellip;' : '&#9989; SAP file loaded! Now drop the QlikView file.');
-        if (qlkBytes) buildComparison();
+        build();
       } catch(e) { showStatus('error','&#10060; SAP error: '+e.message); console.error(e); }
     });
   }
 
-  // ── Load QlikView ──────────────────────────────────────────────────────────
+  // ── Load QlikView (optional — it overrides the Aggregates sheet) ────────────
   function loadQLKFile(file, dropId, fnameId) {
     if (!file.name.match(/\.xlsx?$/i)) { showStatus('error','&#10060; Please upload an .xlsx file.'); return; }
     showStatus('info','<span class="spinner sm"></span> Reading QlikView file&hellip;');
     readFile(file, bytes => {
       try {
-        const wb = XLSX.read(bytes, { type:'array' });
+        const wb = XLSX.read(bytes, { type:'array', cellDates:true });
         const sheetName = wb.SheetNames.includes('Sheet1') ? 'Sheet1' : wb.SheetNames[0];
-        const hRow = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:'' })[0]||[];
-        const hStr = hRow.map(h=>norm(h));
+        const grid = gridOf(wb.Sheets[sheetName]);
+        const hStr = (grid[0]||[]).map(h => String(h ?? '').trim());
         if (!hStr.includes('Sold To')||!hStr.includes('Plant')||!hStr.includes('Material')) {
           showStatus('error','&#10060; Could not find Sold To / Plant / Material columns. Is this the QlikView file?'); return;
         }
-        qlkBytes = bytes;
+        qlkGrid = { headers: hStr, rows: grid.slice(1).filter(r => r.some(c => c !== '')) };
+        qlkName = file.name;
         $(dropId).classList.add('loaded');
-        $(fnameId).textContent = '\u2713 ' + file.name;
+        $(fnameId).textContent = '✓ ' + file.name;
         $('block2').classList.add('ready');
-        showStatus('info', sapData ? '<span class="spinner sm"></span> Both files loaded &mdash; building comparison&hellip;' : '&#9989; QlikView file loaded! Now drop the SAP file.');
-        if (sapData) buildComparison();
+        build();
       } catch(e) { showStatus('error','&#10060; QlikView error: '+e.message); console.error(e); }
     });
   }
 
-  // ── Build Comparison ───────────────────────────────────────────────────────
-  function buildComparison() {
-    try {
-      const sapLookup = new Map();
-      sapValidFromG = new Map();
-      for (const row of sapData.rows) {
-        const key = norm(row['Concat Key']);
-        if (key && !sapLookup.has(key)) {
-          sapLookup.set(key, row['Amount']);
-          sapValidFromG.set(key, row['Valid From']);
-        }
-      }
+  // ── The one server call that produces every number on this page ────────────
+  function build() {
+    if (!sapTabs) { showStatus('info','&#9989; Drop the weekly SAP file to begin.'); return; }
+    showStatus('info','<span class="spinner sm"></span> Comparing against ' +
+      (qlkGrid ? AMR.esc(qlkName) : 'the Aggregates data') + '&hellip;');
+    $('btnSAP').disabled = true; $('btnComp').disabled = true;
 
-      const wb = XLSX.read(qlkBytes, { type:'array', cellDates:true });
-      const sheetName = wb.SheetNames.includes('Sheet1') ? 'Sheet1' : wb.SheetNames[0];
-      const allRows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1, defval:'' });
-
-      const qlkHeaders = allRows[0].map(h=>norm(h));
-      const qlkDataRows = allRows.slice(1).filter(r=>r.some(c=>c!==''));
-
-      const iSoldTo  = qlkHeaders.indexOf('Sold To');
-      const iPlant   = qlkHeaders.indexOf('Plant');
-      const iMat     = qlkHeaders.indexOf('Material');
-      const iMonth   = qlkHeaders.indexOf('Month');
-      const iVolume  = iYearCol(qlkHeaders, 'Volume');
-      const iASP     = iYearCol(qlkHeaders, 'ASP ex-Works');
-
-      const insertAfter = iMonth;
-      let matched = 0, unmatched = 0;
-
-      const outRows = qlkDataRows.map(row => {
-        const cleanRow = row.map(v => v instanceof Date ? toDateStr(v) : v);
-
-        const concatKey = buildQLKKey(
-          String(cleanRow[iPlant]  ?? ''),
-          String(cleanRow[iSoldTo] ?? ''),
-          String(cleanRow[iMat]    ?? '')
-        );
-
-        const sapAmt = sapLookup.has(concatKey) ? sapLookup.get(concatKey) : null;
-        const sapAmtNum = (sapAmt !== null && !isNaN(Number(sapAmt))) ? Number(sapAmt) : null;
-        if (sapAmtNum !== null) matched++; else unmatched++;
-
-        const asp    = iASP    >= 0 ? Number(cleanRow[iASP])    : NaN;
-        const volume = iVolume >= 0 ? Number(cleanRow[iVolume]) : NaN;
-
-        const additionalRevenue = (sapAmtNum !== null && !isNaN(asp) && !isNaN(volume))
-          ? round4((sapAmtNum - asp) * volume) : '';
-
-        const totalCorrectedRevenue = (additionalRevenue !== '' && !isNaN(asp) && !isNaN(volume))
-          ? round4(additionalRevenue + (asp * volume)) : '';
-
-        const before = cleanRow.slice(0, insertAfter + 1);
-        const after  = cleanRow.slice(insertAfter + 1);
-        return [
-          ...before,
-          concatKey,
-          ...after,
-          sapAmtNum !== null ? sapAmtNum : '',
-          additionalRevenue,
-          totalCorrectedRevenue
-        ];
-      });
-
-      const concatKeyIdx = insertAfter + 1;
-      outRows.sort((a, b) => String(a[concatKeyIdx]).localeCompare(String(b[concatKeyIdx])));
-
-      const beforeH = qlkHeaders.slice(0, insertAfter + 1);
-      const afterH  = qlkHeaders.slice(insertAfter + 1);
-      const outHeaders = [
-        ...beforeH,
-        'Concat Key',
-        ...afterH,
-        'SAP Transfer Price',
-        'Additional Revenue to Post',
-        'Total Corrected Revenue ex-Works'
-      ];
-
-      compWB = XLSX.utils.book_new();
-      const compWS = XLSX.utils.aoa_to_sheet([outHeaders, ...outRows]);
-      compWS['!cols'] = outHeaders.map(() => ({ wch: 24 }));
-      applyNumberFormats(compWS, outHeaders, outRows.length);
-
-      const tableRef = `A1:${XLSX.utils.encode_col(outHeaders.length - 1)}${outRows.length + 1}`;
-      compWS['!tables'] = [{
-        name: 'TransferPriceComparison',
-        ref: tableRef,
-        headerRow: true,
-        totalsRow: false,
-        style: { name: 'TableStyleMedium2', showRowStripes: true },
-        columns: outHeaders.map(h => ({ name: h }))
-      }];
-      XLSX.utils.book_append_sheet(compWB, compWS, 'Comparison');
-
-      // Split rows by market + render the email panel
-      storeMarketData(outRows, outHeaders);
-
-      // Column preview pills
-      const pills = outHeaders.map((h, i) => {
-        const isNew = ['Concat Key','SAP Transfer Price','Additional Revenue to Post','Total Corrected Revenue ex-Works'].includes(h);
-        const letter = i < 26 ? String.fromCharCode(65+i) : 'A'+String.fromCharCode(65+i-26);
-        return `<span class="col-pill ${isNew?'new':''}">${letter}: ${h}</span>`;
-      }).join('');
-      $('colPills').innerHTML = pills;
-
-      // Stats
-      $('sSAP').textContent     = sapData.rows.length.toLocaleString();
-      $('sQLK').textContent     = outRows.length.toLocaleString();
-      $('sMatch').textContent   = matched.toLocaleString();
-      $('sNoMatch').textContent = unmatched.toLocaleString();
-
-      const pct = outRows.length > 0 ? Math.round(matched/outRows.length*100) : 0;
-      if (unmatched > 0 && matched > 0) {
-        showStatus('warn', `&#9888;&#65039; <strong>${matched} of ${outRows.length} rows matched</strong> (${pct}%). ${unmatched} rows had no SAP price &mdash; check those Concat Keys.`);
-      } else if (matched === 0) {
-        showStatus('warn', `&#9888;&#65039; <strong>0 rows matched.</strong> The Concat Keys didn't line up &mdash; check that both files cover the same plants/customers.`);
-      } else {
-        showStatus('success', `&#9989; All <strong>${matched} rows matched</strong> &mdash; comparison ready to download!`);
-      }
-
-      $('btnSAP').disabled  = false;
-      $('btnComp').disabled = false;
-
-    } catch(e) { showStatus('error','&#10060; Comparison error: '+e.message); console.error(e); }
+    if (!AMR.live) { showStatus('warn','The comparison runs on the server, so it only works inside the live web app.'); return; }
+    const t0 = Date.now();
+    google.script.run
+      .withSuccessHandler(function(r){
+        cmp = r;
+        AMR.log('info', 'TP.getComparison', 'compared', {
+          ms: Date.now() - t0, source: r.source, rows: r.rows.length,
+          matched: r.matched, unmatched: r.unmatched });
+        render();
+      })
+      .withFailureHandler(function(e){
+        cmp = null;
+        AMR.log('error', 'TP.getComparison', 'failed', { ms: Date.now() - t0, error: String(e) });
+        showStatus('error','&#10060; ' + AMR.esc((e && e.message) || String(e)));
+        renderPanels();
+      })
+      .TP_getComparison({ sap: sapTabs, qlk: qlkGrid });
   }
 
-  // Shared: volume as integer, $ columns as currency (used by comparison + per-market files)
-  function applyNumberFormats(ws, headers, nRows) {
-    const iVol = iYearCol(headers, 'Volume');
-    const currCols = [
-      iYearCol(headers, 'ASP ex-Works'),
-      headers.indexOf('Total Standard Production Costs'),
-      headers.indexOf('SAP Transfer Price'),
-      headers.indexOf('Additional Revenue to Post'),
-      headers.indexOf('Total Corrected Revenue ex-Works')
-    ].filter(i => i >= 0);
+  // ── Render what came back ──────────────────────────────────────────────────
+  function render() {
+    const pills = cmp.headers.map((h, i) => {
+      const isNew = ['Concat Key','SAP Transfer Price','Additional Revenue to Post','Total Corrected Revenue ex-Works'].includes(h);
+      const letter = i < 26 ? String.fromCharCode(65+i) : 'A'+String.fromCharCode(65+i-26);
+      return `<span class="col-pill ${isNew?'new':''}">${letter}: ${AMR.esc(h)}</span>`;
+    }).join('');
+    $('colPills').innerHTML = pills;
 
-    for (let r = 1; r <= nRows; r++) {
-      if (iVol >= 0) {
-        const addr = XLSX.utils.encode_cell({ r, c: iVol });
-        if (ws[addr]) { ws[addr].z = '0'; if (typeof ws[addr].v === 'number') ws[addr].v = Math.round(ws[addr].v); }
-      }
-      for (const c of currCols) {
-        const addr = XLSX.utils.encode_cell({ r, c });
-        if (ws[addr] && ws[addr].v !== '') ws[addr].z = '"$"#,##0.00';
-      }
-    }
-  }
+    $('sSAP').textContent     = cmp.sapRows.toLocaleString();
+    $('sQLK').textContent     = cmp.rows.length.toLocaleString();
+    $('sMatch').textContent   = cmp.matched.toLocaleString();
+    $('sNoMatch').textContent = cmp.unmatched.toLocaleString();
 
-  // ── Downloads ──────────────────────────────────────────────────────────────
-  function downloadSAP()        { if (sapWB)  XLSX.writeFile(sapWB,  `Transfer_Prices_TP01-ZIPR_Consolidated_${sapDate}.xlsx`); }
-  function downloadComparison() { if (compWB) XLSX.writeFile(compWB, `Transfer_Price_Comparison_${sapDate}.xlsx`); }
-
-  // Days the SAP price has been in effect while wrong: report date − SAP Valid From.
-  // Null when either date is missing/unparseable. Both are YYYY-MM-DD strings, so
-  // new Date() parses them consistently (UTC midnight) and the diff is exact days.
-  function daysOutstanding(row) {
-    const iKey = outHeadersG ? outHeadersG.indexOf('Concat Key') : -1;
-    if (iKey < 0) return null;
-    const vf = sapValidFromG.get(norm(row[iKey]));
-    if (!vf) return null;
-    const from = new Date(vf), ref = new Date(sapDate);
-    if (isNaN(from) || isNaN(ref)) return null;
-    return Math.max(0, Math.floor((ref - from) / 86400000));
-  }
-
-  // ── Split by market + exceptions, then render both panels ──────────────────
-  // Exception = row that MATCHED (has a SAP Transfer Price) where that price
-  // differs from the export's ASP ex-Works. Both are rounded to cents first so the test
-  // agrees with what's visibly displayed.
-  function storeMarketData(outRows, outHeaders) {
-    outHeadersG = outHeaders;
-    marketDataMap = {};
-    excDataMap    = {};
-    const iMarket = outHeaders.indexOf('Market');
-    const iSAP    = outHeaders.indexOf('SAP Transfer Price');
-    const iASP    = iYearCol(outHeaders, 'ASP ex-Works');
-    if (iMarket < 0) return;
-    const cents = n => Math.round(Number(n) * 100);   // compare in whole cents
-    for (const row of outRows) {
-      const market = String(row[iMarket] ?? '').trim() || 'Unknown';
-      if (!marketDataMap[market]) marketDataMap[market] = [];
-      marketDataMap[market].push(row);
-
-      const sap = row[iSAP], asp = row[iASP];
-      const matched = sap !== '' && sap !== null && !isNaN(Number(sap));
-      // Exception = TP is BELOW ASP by more than 1 cent. Positive differences
-      // and ±$0.01 rounding noise are ignored.
-      if (matched && iASP >= 0 && asp !== '' && !isNaN(Number(asp)) && (cents(sap) - cents(asp)) < -1) {
-        if (!excDataMap[market]) excDataMap[market] = [];
-        excDataMap[market].push(row);
-      }
-    }
-    // Exceptions: most urgent first — longest at an incorrect price
-    for (const m in excDataMap)
-      excDataMap[m].sort((a, b) => (daysOutstanding(b) ?? -1) - (daysOutstanding(a) ?? -1));
     renderPanels();
+    $('btnSAP').disabled  = false;
+    $('btnComp').disabled = false;
+
+    /* Where the other side came from is a fact about the numbers on screen, so
+       it is said on screen rather than only in the log. */
+    const from = cmp.source === 'upload'
+      ? `the QlikView file <b>${AMR.esc(qlkName)}</b>`
+      : `the Aggregates data &mdash; <b>${AMR.esc(cmp.meta.customerParent || '')}</b>, ${AMR.esc(String(cmp.meta.cyYear || ''))}, ${(cmp.meta.rolledRows||0).toLocaleString()} rows`;
+    const dateNote = cmp.dateSource === 'file' ? '' :
+      ' &middot; <b>the SAP file carried no date</b>, so ' + AMR.esc(cmp.reportDate) + ' is a guess';
+    const tail = `<br><span style="opacity:.8">Report date ${AMR.esc(cmp.reportDate)}${dateNote} &middot; compared against ${from}.</span>`;
+
+    const pct = cmp.rows.length > 0 ? Math.round(cmp.matched/cmp.rows.length*100) : 0;
+    if (cmp.matched === 0) {
+      showStatus('warn', `&#9888;&#65039; <strong>0 rows matched.</strong> The Concat Keys didn't line up &mdash; check that both sides cover the same plants and customers.${tail}`);
+    } else if (cmp.unmatched > 0) {
+      showStatus('warn', `&#9888;&#65039; <strong>${cmp.matched} of ${cmp.rows.length} rows matched</strong> (${pct}%). ${cmp.unmatched} rows had no SAP price &mdash; check those Concat Keys.${tail}`);
+    } else {
+      showStatus('success', `&#9989; All <strong>${cmp.matched} rows matched</strong> &mdash; comparison ready to download!${tail}`);
+    }
   }
 
   const PANELS = {
-    mkt: { map: () => marketDataMap, listId: 'marketList', panelId: 'mktPanel' },
-    exc: { map: () => excDataMap,    listId: 'excList',    panelId: 'excPanel' }
+    mkt: { map: () => (cmp && cmp.markets)    || {}, listId: 'marketList', panelId: 'mktPanel' },
+    exc: { map: () => (cmp && cmp.exceptions) || {}, listId: 'excList',    panelId: 'excPanel' }
   };
 
   function renderPanels() { renderPanelList('mkt'); renderPanelList('exc'); }
@@ -25327,10 +25130,10 @@ AMR.page('tp01', {
       listEl.innerHTML += `
       <div class="market-row">
         <div style="min-width:110px">
-          <div class="market-name">${market}</div>
+          <div class="market-name">${AMR.esc(market)}</div>
           <div class="market-rows">${rows.length} row${rows.length!==1?'s':''}</div>
         </div>
-        <input type="email" id="recip-${s}" value="${recipient}"
+        <input type="email" id="recip-${s}" value="${AMR.escAttr(recipient)}"
                placeholder="name@amrize.com"
                data-tp-act="recip" data-tp-kind="${kind}" data-tp-market="${mAttr}">
         <button class="mbtn" title="Download this file"
@@ -25342,161 +25145,93 @@ AMR.page('tp01', {
     }
     if (kind === 'exc') {
       // Empty exceptions after a successful build = good news, not "waiting".
-      const anyData = Object.keys(marketDataMap).length > 0;
-      if (anyData && !markets.length) {
-        listEl.innerHTML = '<div class="exc-empty">&#9989; No exceptions — every matched SAP Transfer Price equals its ASP ex-Works.</div>';
+      if (cmp && !markets.length) {
+        listEl.innerHTML = '<div class="exc-empty">&#9989; No exceptions — every matched SAP Transfer Price is at or above its ASP ex-Works.</div>';
+      } else if (!cmp) {
+        listEl.innerHTML = '<div class="exc-empty" style="color:var(--muted)">Drop the SAP file to check for exceptions.</div>';
       }
-      $('sendall-exc').style.display = markets.length ? '' : 'none';
-      $('sendone-exc').style.display = markets.length ? '' : 'none';
-    } else {
-      $('sendall-mkt').style.display = markets.length ? '' : 'none';
-      $('sendone-mkt').style.display = markets.length ? '' : 'none';
+    } else if (!cmp) {
+      listEl.innerHTML = '<div class="exc-empty" style="color:var(--muted)">Drop the SAP file to see the per-market breakdown.</div>';
+    }
+    $('sendall-' + kind).style.display = markets.length ? '' : 'none';
+    $('sendone-' + kind).style.display = markets.length ? '' : 'none';
+  }
+
+  // ── Writing files. THE ONLY THING LEFT THAT TOUCHES A NUMBER, and it does
+  //    not compute one: the rows, the headers and the number formats all come
+  //    from the server, and this arranges them into a workbook. ──────────────
+  function applyFormats(ws, fmts, nRows, nCols) {
+    for (const c of Object.keys(fmts)) {
+      const col = Number(c), z = fmts[c];
+      for (let r = 1; r <= nRows; r++) {
+        const addr = XLSX.utils.encode_cell({ r, c: col });
+        if (!ws[addr] || ws[addr].v === '') continue;
+        ws[addr].z = z;
+        /* Rounded, not merely formatted - a "0" on 404.21 shows 404 and still
+           sums as 404.21, so a column of them does not add up to what it shows.
+           TPXLSX does the same thing on the server side. */
+        if (z === '0' && typeof ws[addr].v === 'number') ws[addr].v = Math.round(ws[addr].v);
+      }
     }
   }
 
-  // One workbook per market (same formatting + Excel table as the comparison)
-  function makeMarketWB(kind, market) {
-    let headers = outHeadersG;
-    let rows    = PANELS[kind].map()[market];
-    if (kind === 'exc') {
-      // Exceptions carry two extra columns: when the SAP price took effect, and
-      // how many days it has been at an incorrect price. Rows are pre-sorted by
-      // urgency (longest outstanding first) in storeMarketData.
-      const iKey = outHeadersG.indexOf('Concat Key');
-      headers = [...outHeadersG, 'SAP Valid From', 'Days at Incorrect Price'];
-      rows = rows.map(r => {
-        const d = daysOutstanding(r);
-        return [...r, iKey >= 0 ? (sapValidFromG.get(norm(r[iKey])) || '') : '', d === null ? '' : d];
-      });
-    }
+  function book(headers, rows, sheetName, tableName, fmts) {
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     ws['!cols'] = headers.map(() => ({ wch: 22 }));
-    applyNumberFormats(ws, headers, rows.length);
+    applyFormats(ws, fmts || {}, rows.length, headers.length);
     ws['!tables'] = [{
-      name: (kind === 'exc' ? 'Exceptions_' : 'Market_') + slug(market),
+      name: tableName,
       ref: `A1:${XLSX.utils.encode_col(headers.length - 1)}${rows.length + 1}`,
-      headerRow: true,
-      totalsRow: false,
+      headerRow: true, totalsRow: false,
       style: { name: 'TableStyleMedium2', showRowStripes: true },
       columns: headers.map(h => ({ name: h }))
     }];
-    XLSX.utils.book_append_sheet(wb, ws, (kind === 'exc' ? 'Exceptions' : market).slice(0, 31));
+    XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
     return wb;
   }
+
+  /* One market's workbook. Exceptions carry two extra columns - when the SAP
+     price took effect and how long it has been wrong - and both values come
+     back with the comparison rather than being worked out here. */
+  function makeMarketWB(kind, market) {
+    const isExc = kind === 'exc';
+    const list = PANELS[kind].map()[market] || [];
+    const headers = isExc ? [...cmp.headers, 'SAP Valid From', 'Days at Incorrect Price'] : cmp.headers;
+    const rows = list.map(i => isExc
+      ? [...cmp.rows[i], cmp.vfrom[i] || '', cmp.days[i] === null ? '' : cmp.days[i]]
+      : cmp.rows[i]);
+    return book(headers, rows, isExc ? 'Exceptions' : market,
+                (isExc ? 'Exceptions_' : 'Market_') + slug(market),
+                cmp.formats[isExc ? 'exc' : 'mkt']);
+  }
+
   function marketFilename(kind, market) {
     return kind === 'exc'
-      ? `Transfer_Price_Exceptions_${slug(market)}_${sapDate}.xlsx`
-      : `Transfer_Price_${slug(market)}_${sapDate}.xlsx`;
+      ? `Transfer_Price_Exceptions_${slug(market)}_${sapDate()}.xlsx`
+      : `Transfer_Price_${slug(market)}_${sapDate()}.xlsx`;
   }
 
+  function downloadSAP() {
+    if (!cmp) return;
+    XLSX.writeFile(book(cmp.sapGrid.headers, cmp.sapGrid.rows, 'Consolidated', 'SAP_Consolidated', {}),
+                   `Transfer_Prices_TP01-ZIPR_Consolidated_${sapDate()}.xlsx`);
+  }
+  function downloadComparison() {
+    if (!cmp) return;
+    XLSX.writeFile(book(cmp.headers, cmp.rows, 'Comparison', 'TransferPriceComparison', cmp.formats.mkt),
+                   `Transfer_Price_Comparison_${sapDate()}.xlsx`);
+  }
   function downloadMarket(kind, market) {
-    if (!outHeadersG || !PANELS[kind].map()[market]) return;
+    if (!cmp || !PANELS[kind].map()[market]) return;
     XLSX.writeFile(makeMarketWB(kind, market), marketFilename(kind, market));
     const st = $('mstatus-' + kind + '-' + slug(market));
-    st.className = 'market-status sent'; st.textContent = '\u2713 Saved';
+    st.className = 'market-status sent'; st.textContent = '✓ Saved';
   }
 
-  // ── Email body (summary + top-20 preview; exceptions show aging + urgency) ──
-  function buildEmailBody(kind, market, rows, outHeaders) {
-    const isExc = kind === 'exc';
-    const iASP  = iYearCol(outHeaders, 'ASP ex-Works');
-    const iSAP  = outHeaders.indexOf('SAP Transfer Price');
-    const iAdd  = outHeaders.indexOf('Additional Revenue to Post');
-    const iVol  = iYearCol(outHeaders, 'Volume');
-    const iSold = outHeaders.indexOf('Sold To');
-    const iMat  = outHeaders.indexOf('Material');
-
-    let totalAddRev = 0, totalVol = 0, oldest = null;
-    for (const r of rows) {
-      if (!isNaN(Number(r[iAdd])))  totalAddRev += Number(r[iAdd]);
-      if (!isNaN(Number(r[iVol])))  totalVol    += Number(r[iVol]);
-      if (isExc) {
-        const d = daysOutstanding(r);
-        if (d !== null && (oldest === null || d > oldest)) oldest = d;
-      }
-    }
-
-    const fmt = n => isNaN(n) ? '\u2014' : '$' + Number(n).toLocaleString('en-CA', {minimumFractionDigits:2, maximumFractionDigits:2});
-    const fmtVol = n => isNaN(n) ? '\u2014' : Math.round(n).toLocaleString();
-    const ageColor = d => d >= 60 ? '#B23A48' : d >= 30 ? '#B45309' : '#666';
-    const fmtDays  = d => d === null ? '\u2014' : `${d} day${d !== 1 ? 's' : ''}`;
-
-    const PREVIEW_N = 20;
-    const previewRows = rows.slice(0, PREVIEW_N);
-    let tableRows = previewRows.map(r => {
-      const delta = Number(r[iSAP]) - Number(r[iASP]);
-      const d = isExc ? daysOutstanding(r) : null;
-      return `
-    <tr>
-      <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;">${r[iSold] ?? ''}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;">${r[iMat] ?? ''}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmtVol(r[iVol])}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmt(r[iASP])}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right;">${fmt(r[iSAP])}</td>
-      ${isExc ? `<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right;${delta<0?'color:#B23A48;':'color:#1F7A4D;'}">${fmt(delta)}</td>` : ''}
-      <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right;${Number(r[iAdd])<0?'color:#B23A48;':'color:#1F7A4D;'}">${fmt(r[iAdd])}</td>
-      ${isExc ? `<td style="padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-weight:700;color:${d===null?'#666':ageColor(d)};">${fmtDays(d)}</td>` : ''}
-    </tr>`;
-    }).join('');
-
-    const nCols = isExc ? 8 : 6;
-    if (rows.length > PREVIEW_N) {
-      tableRows += `<tr><td colspan="${nCols}" style="padding:6px 10px;color:#999;font-style:italic;">... and ${rows.length - PREVIEW_N} more rows (see attached)</td></tr>`;
-    }
-
-    const heading  = isExc ? `Transfer Price Exceptions &mdash; ${market}` : `Transfer Price Report &mdash; ${market}`;
-
-    const oldestChip = isExc ? `
-        <td style="width:12px;"></td>
-        <td style="padding:8px 14px;background:${oldest !== null && oldest >= 60 ? '#F7E7EA' : '#FFF8E1'};border-radius:6px;text-align:center;">
-          <div style="font-size:20px;font-weight:700;color:${oldest === null ? '#666' : ageColor(oldest)};">${oldest === null ? '\u2014' : oldest + ' days'}</div>
-          <div style="font-size:11px;color:#666;">Longest at Incorrect Price</div>
-        </td>` : '';
-
-    return `
-<div style="font-family:Arial,sans-serif;max-width:700px;">
-  <div style="background:#011E6A;padding:20px 28px;border-radius:8px 8px 0 0;">
-    <h2 style="color:white;margin:0;font-size:18px;">${heading}</h2>
-    <p style="color:#A9C3E8;margin:4px 0 0;font-size:13px;">Report Date: ${sapDate} &middot; ${rows.length} record${rows.length!==1?'s':''}</p>
-  </div>
-  <div style="background:#F4F7FC;padding:16px 28px;border:1px solid #DCE6F2;border-top:none;">
-    <table style="width:100%;border-collapse:collapse;font-size:12px;">
-      <tr>
-        <td style="padding:8px 14px;background:#EEF7FF;border-radius:6px;text-align:center;">
-          <div style="font-size:20px;font-weight:700;color:#011E6A;">${fmtVol(totalVol)}</div>
-          <div style="font-size:11px;color:#666;">Total Volume</div>
-        </td>
-        <td style="width:12px;"></td>
-        <td style="padding:8px 14px;background:${totalAddRev>=0?'#E4F3EB':'#F7E7EA'};border-radius:6px;text-align:center;">
-          <div style="font-size:20px;font-weight:700;color:${totalAddRev>=0?'#1F7A4D':'#B23A48'};">${fmt(totalAddRev)}</div>
-          <div style="font-size:11px;color:#666;">Total Additional Revenue to Post</div>
-        </td>${oldestChip}
-      </tr>
-    </table>
-  </div>
-  <div style="padding:20px 28px;border:1px solid #DCE6F2;border-top:none;border-radius:0 0 8px 8px;">
-    <table style="width:100%;border-collapse:collapse;font-size:12px;">
-      <thead>
-        <tr style="background:#011E6A;color:white;">
-          <th style="padding:8px 10px;text-align:left;">Sold To</th>
-          <th style="padding:8px 10px;text-align:left;">Material</th>
-          <th style="padding:8px 10px;text-align:right;">Volume</th>
-          <th style="padding:8px 10px;text-align:right;">ASP ex-Works</th>
-          <th style="padding:8px 10px;text-align:right;">SAP Transfer Price</th>
-          ${isExc ? '<th style="padding:8px 10px;text-align:right;">TP &minus; ASP</th>' : ''}
-          <th style="padding:8px 10px;text-align:right;">Addl. Revenue to Post</th>
-          ${isExc ? '<th style="padding:8px 10px;text-align:right;">Past Due</th>' : ''}
-        </tr>
-      </thead>
-      <tbody>${tableRows}</tbody>
-    </table>
-  </div>
-</div>`;
-  }
-
-  // ── Send ONE file via the server ────────────────────────────────────────────
-  // Returns a Promise so Send All can run the queue sequentially.
+  // ── Send. The subject and the body are built on the SERVER, off the cached
+  //    comparison, so a market mail and the combined one cannot end up
+  //    describing different weeks. This sends the file and says which rows. ──
   function emailMarket(kind, market) {
     const s   = kind + '-' + slug(market);
     const st  = $('mstatus-' + s);
@@ -25510,32 +25245,26 @@ AMR.page('tp01', {
     }
 
     btn.disabled = true;
-    st.className = 'market-status sending'; st.textContent = 'Sending\u2026';
-
-    const isExc = kind === 'exc';
-    const subject = isExc
-      ? `Transfer Price Exceptions — ${market} (${sapDate})`
-      : `Transfer Price Report — ${market} (${sapDate})`;
+    st.className = 'market-status sending'; st.textContent = 'Sending…';
 
     const wbout = XLSX.write(makeMarketWB(kind, market), { bookType:'xlsx', type:'base64' });
     return new Promise(function(resolve){
       google.script.run
         .withSuccessHandler(function(){
           btn.disabled = false;
-          st.className = 'market-status sent'; st.textContent = '\u2713 Sent';
+          st.className = 'market-status sent'; st.textContent = '✓ Sent';
           resolve(true);
         })
         .withFailureHandler(function(e){
           btn.disabled = false;
-          st.className = 'market-status err'; st.textContent = '\u2717 Failed';
-          showStatus('error', '&#10060; Could not send ' + market + ': ' + (e && e.message ? e.message : 'unknown error'));
+          st.className = 'market-status err'; st.textContent = '✗ Failed';
+          showStatus('error', '&#10060; Could not send ' + AMR.esc(market) + ': ' + AMR.esc((e && e.message) || 'unknown error'));
           console.error('Email failed for ' + market, e);
           resolve(false);
         })
         .TP_sendMarketEmail({
+          token: cmp.token, kind: kind, market: market,
           to: toList.join(','),
-          subject: subject,
-          htmlBody: buildEmailBody(kind, market, PANELS[kind].map()[market], outHeadersG),
           filename: marketFilename(kind, market),
           xlsxB64: wbout
         });
@@ -25543,7 +25272,6 @@ AMR.page('tp01', {
   }
 
   // ── Send ALL markets in a panel (sequential queue) ─────────────────────────
-  // Markets without a valid saved address are skipped and flagged, not failed.
   async function sendAll(kind) {
     const btn = $('sendall-' + kind);
     const markets = Object.keys(PANELS[kind].map()).sort();
@@ -25567,9 +25295,8 @@ AMR.page('tp01', {
     const orig = btn.innerHTML;
     let sent = 0;
     for (let i = 0; i < ready.length; i++) {
-      btn.innerHTML = `Sending ${i + 1}/${ready.length}\u2026`;
-      const ok = await emailMarket(kind, ready[i]);
-      if (ok) sent++;
+      btn.innerHTML = `Sending ${i + 1}/${ready.length}…`;
+      if (await emailMarket(kind, ready[i])) sent++;
     }
     btn.disabled = false;
     btn.innerHTML = orig;
@@ -25579,14 +25306,10 @@ AMR.page('tp01', {
     else                       showStatus('warn', `&#9888;&#65039; Sent ${sent} of ${ready.length} &mdash; check the rows marked Failed.${skippedNote}`);
   }
 
-  // ── Send ALL markets as ONE email ───────────────────────────────────────────
-  // Goes to the panel's "always send to" addresses — the people who would
-  // otherwise receive every individual report. All market files attached,
-  // per-market breakdowns stacked one after another in the body.
+  // ── Send ALL markets as ONE email ─────────────────────────────────────────
   function sendAsOne(kind) {
     const btn = $('sendone-' + kind);
-    const dataMap = PANELS[kind].map();
-    const markets = Object.keys(dataMap).sort();
+    const markets = Object.keys(PANELS[kind].map()).sort();
     if (!markets.length) return;
 
     const toList = alwaysList(kind);
@@ -25598,41 +25321,144 @@ AMR.page('tp01', {
 
     btn.disabled = true;
     const orig = btn.innerHTML;
-    btn.innerHTML = 'Building\u2026';
+    btn.innerHTML = 'Building…';
 
     try {
-      const isExc = kind === 'exc';
-      const subject = (isExc ? 'Transfer Price Exceptions' : 'Transfer Price Report') +
-                      ` — All Markets (${sapDate})`;
-
-      const htmlBody = markets
-        .map(m => buildEmailBody(kind, m, dataMap[m], outHeadersG))
-        .join('<div style="height:26px;"></div>');
-
       const files = markets.map(m => ({
         filename: marketFilename(kind, m),
         xlsxB64: XLSX.write(makeMarketWB(kind, m), { bookType: 'xlsx', type: 'base64' })
       }));
 
-      btn.innerHTML = 'Sending\u2026';
+      btn.innerHTML = 'Sending…';
       google.script.run
         .withSuccessHandler(function () {
           btn.disabled = false; btn.innerHTML = orig;
-          showStatus('success', `&#9989; Sent one email with ${files.length} attachment${files.length !== 1 ? 's' : ''} to ${toList.join(', ')}.`);
+          showStatus('success', `&#9989; Sent one email with ${files.length} attachment${files.length !== 1 ? 's' : ''} to ${AMR.esc(toList.join(', '))}.`);
         })
         .withFailureHandler(function (e) {
           btn.disabled = false; btn.innerHTML = orig;
-          showStatus('error', '&#10060; Combined email failed: ' + (e && e.message ? e.message : 'unknown error'));
+          showStatus('error', '&#10060; Combined email failed: ' + AMR.esc((e && e.message) || 'unknown error'));
           console.error('Combined email failed', e);
         })
-        .TP_sendCombinedEmail({ to: toList.join(','), subject: subject, htmlBody: htmlBody, files: files });
+        .TP_sendCombinedEmail({ token: cmp.token, kind: kind, to: toList.join(','), files: files });
     } catch (e) {
       btn.disabled = false; btn.innerHTML = orig;
-      showStatus('error', '&#10060; Could not build the combined email: ' + e.message);
+      showStatus('error', '&#10060; Could not build the combined email: ' + AMR.esc(e.message));
     }
   }
 
-    /* The six controls that live in the template and are never redrawn. */
+  /* ── THE AUTOMATED WEEKLY REPORT ────────────────────────────────────────────
+     Nothing on this panel touches the comparison above it. It reads and writes
+     one Script Property, and the trigger reads the same one - which is the
+     point: a SCRIPT property is visible to both the deployer (who serves this
+     page) and the trigger's creator (who runs the weekly job), and a USER
+     property would not be. script.gs §10 has the whole of that argument. */
+  let autoCfg = null;
+
+  function autoRender(r) {
+    autoCfg = (r && r.config) || { enabled:false, to:[], cc:[], sendWhenEmpty:true };
+    const st = (r && r.state) || null;
+    $('auto-on').checked   = !!autoCfg.enabled;
+    $('auto-to').value     = (autoCfg.to || []).join(', ');
+    $('auto-cc').value     = (autoCfg.cc || []).join(', ');
+    $('auto-empty').checked = autoCfg.sendWhenEmpty !== false;
+
+    let line;
+    if (!st) {
+      line = 'It has not run yet.';
+    } else if (st.error) {
+      line = `<b style="color:var(--neg)">Last run failed</b> &middot; ${AMR.esc(st.at || '')} &middot; ${AMR.esc(st.error)}`;
+    } else if (st.mailed) {
+      line = `<b style="color:var(--pos)">Last sent</b> ${AMR.esc(st.at || '')} &middot; SAP file dated ${AMR.esc(st.reportDate || '')} &middot; ` +
+             `${st.exceptions} exception${st.exceptions === 1 ? '' : 's'} across ${st.markets} market${st.markets === 1 ? '' : 's'} &middot; ` +
+             `${st.matched} of ${(st.matched||0)+(st.unmatched||0)} rows matched &middot; to ${AMR.esc(st.to || '')}`;
+    } else {
+      line = `Last ran ${AMR.esc(st.at || '')} &middot; nothing to send.`;
+    }
+    if (autoCfg.updatedAt) line += `<br><span style="opacity:.75">Settings saved ${AMR.esc(autoCfg.updatedAt)}${autoCfg.updatedBy ? ' by ' + AMR.esc(autoCfg.updatedBy) : ''}.</span>`;
+    $('auto-state').innerHTML = line;
+  }
+
+  function autoLoad() {
+    if (!AMR.live) { $('auto-state').textContent = 'The automated email can only be set up inside the live web app.'; return; }
+    google.script.run
+      .withSuccessHandler(autoRender)
+      .withFailureHandler(function(e){ $('auto-state').innerHTML = '<b style="color:var(--neg)">Could not read the settings:</b> ' + AMR.esc(String(e && e.message || e)); })
+      .TP_getAutoConfig();
+  }
+
+  function autoSave() {
+    if (!AMR.live) return;
+    const btn = $('auto-save'), out = $('auto-msg');
+    btn.disabled = true;
+    out.className = 'market-status sending'; out.textContent = 'Saving…';
+    google.script.run
+      .withSuccessHandler(function(r){
+        btn.disabled = false;
+        out.className = 'market-status sent'; out.textContent = '✓ Saved';
+        autoRender(r);
+      })
+      .withFailureHandler(function(e){
+        btn.disabled = false;
+        out.className = 'market-status err'; out.textContent = (e && e.message) || 'Failed';
+      })
+      .TP_saveAutoConfig({
+        enabled: $('auto-on').checked,
+        to: $('auto-to').value,
+        cc: $('auto-cc').value,
+        sendWhenEmpty: $('auto-empty').checked
+      });
+  }
+
+  /* Preview runs the whole check and sends nothing. It is the answer to "is it
+     going to work on Tuesday", asked on a Thursday. */
+  function autoPreview() {
+    if (!AMR.live) return;
+    const btn = $('auto-preview'), out = $('auto-preview-out');
+    btn.disabled = true;
+    out.innerHTML = '<span class="spinner sm"></span> Looking&hellip; this reads the mailbox and the Aggregates sheet, and can take a minute.';
+    google.script.run
+      .withSuccessHandler(function(s){ btn.disabled = false; out.innerHTML = autoPreviewHtml(s); })
+      .withFailureHandler(function(e){ btn.disabled = false; out.innerHTML = '<b style="color:var(--neg)">Preview failed:</b> ' + AMR.esc(String(e && e.message || e)); })
+      .TP_autoStatus();
+  }
+
+  function autoPreviewHtml(s) {
+    if (!s) return 'Nothing came back.';
+    const esc = AMR.esc, rows = [];
+    const kv = (k, v) => `<div><b>${esc(k)}</b> ${v}</div>`;
+    if (s.error) return '<b style="color:var(--neg)">' + esc(s.error) + '</b>';
+
+    (s.notes || []).forEach(n => rows.push(`<div style="color:#B45309">&#9888;&#65039; ${esc(n)}</div>`));
+
+    rows.push(kv('Mail matching', (s.mail || []).length + ' message(s)'));
+    (s.mail || []).slice(-3).forEach(m => rows.push(
+      `<div style="padding-left:14px">${m.unreported ? '&#9679; ' : '&#9675; '}${esc(m.sent)} &middot; ${esc(m.from)} &middot; ${esc(m.attachment)}</div>`));
+
+    if (s.sheet && !s.sheet.error) {
+      rows.push(kv('Aggregates', `${esc(String(s.sheet.customerParent))} &middot; ${esc(String(s.sheet.year))} &middot; ` +
+        `${s.sheet.rowsForThatParent} raw rows &rarr; ${s.sheet.rolledRows} rolled`));
+      const mk = s.sheet.markets || {};
+      rows.push(kv('Markets', Object.keys(mk).map(k => esc(k) + ' (' + mk[k] + ')').join(', ') || 'none'));
+    } else if (s.sheet) {
+      rows.push(`<div style="color:var(--neg)"><b>Aggregates</b> ${esc(s.sheet.error)}</div>`);
+    }
+
+    if (s.join && !s.join.error) {
+      rows.push(kv('Match rate', `${s.join.matched} of ${s.join.comparedRows} (${esc(s.join.matchRate)}) &middot; ` +
+        `report date ${esc(s.join.reportDate)}${s.join.dateSource === 'file' ? '' : ' (guessed)'}`));
+      rows.push(kv('Exceptions', `${s.join.exceptions} across ${(s.join.exceptionMarkets||[]).length} market(s)`));
+    } else if (s.join) {
+      rows.push(`<div style="color:var(--neg)"><b>Comparison</b> ${esc(s.join.error)}</div>`);
+    }
+
+    if (s.wouldSend) {
+      rows.push(kv('Would send', `${esc(s.wouldSend.subject)}<br><span style="padding-left:14px">to ${esc(s.wouldSend.to || '(nobody)')} &middot; ${esc(s.wouldSend.attachment)}</span>`));
+    }
+    return rows.join('');
+  }
+
+    /* The controls that live in the template and are never redrawn. */
     document.getElementById('btnSAP').addEventListener('click', downloadSAP);
     document.getElementById('btnComp').addEventListener('click', downloadComparison);
     ['mkt', 'exc'].forEach(function(kind){
@@ -25641,6 +25467,8 @@ AMR.page('tp01', {
       document.getElementById('sendall-' + kind).addEventListener('click', function(){ sendAll(kind); });
       document.getElementById('sendone-' + kind).addEventListener('click', function(){ sendAsOne(kind); });
     });
+    document.getElementById('auto-save').addEventListener('click', autoSave);
+    document.getElementById('auto-preview').addEventListener('click', autoPreview);
 
     /* Both market lists are rewritten wholesale by renderPanels(), so their
        per-row controls are delegated on the host that survives it. */
@@ -25670,10 +25498,12 @@ AMR.page('tp01', {
       title: 'Download from QlikView',
       fabLabel: '&#128229; QlikView Guide',
       steps: [
-        { text: 'Step 1 — Select the displayed fields and selections from QlikView and then export to excel  (TP01-ZIPR QlikView export).',
+        { text: 'Step 1 — Select the displayed fields and selections from QlikView and then export to excel  (TP01-ZIPR QlikView export). This is OPTIONAL now: with no QlikView file the comparison is built from the Aggregates data the suite already holds.',
           img: 'https://drive.google.com/file/d/1DLqOg5TfdK_ImR0SoCvolzNtlA_KYDr7/view?usp=sharing' }
       ]
     });
+
+    autoLoad();
   }
 });
 </script>

@@ -43,8 +43,11 @@
  *   §9   DECK ................. the Slides template reader, the deck writer and
  *                               the recipe checker. The template id, the folder
  *                               and the slide list are CONFIG, and live in §1.
- *   §10  SMALL PAGES .......... KPI workbooks, TP01 mail, the Inventory Report
- *                               and the mail watch that publishes it.
+ *   §10  SMALL PAGES .......... KPI workbooks, the Inventory Report and the mail
+ *                               watch that publishes it, and TP01 — its mail
+ *                               sender, the comparison engine the page and the
+ *                               trigger share, an .xlsx writer, and the mail
+ *                               watch that reports the exceptions weekly.
  *   §11  TRIGGERS ............. everything reached from outside this file.
  *
  * THE THINGS THAT WILL BITE YOU
@@ -137,6 +140,8 @@
  *     APP_CONFIG.KPI_FOLDER_ID                       where the EBITDA books live
  *     APP_CONFIG.INVENTORY_MAIL                      the mailbox the Inventory
  *                                                    Report publishes itself from
+ *     APP_CONFIG.TP01_MAIL                           the mailbox the weekly SAP
+ *                                                    transfer-price file arrives in
  *     APP_CONFIG.LOGO_URL                            the logo every export uses
  *     APP_CONFIG.LOG_LEVEL                           how much the server logs (§2)
  *     APP_CONFIG.CUBE.ERAS                           the closed-year books
@@ -175,6 +180,8 @@
  *                                  that makes editing one take effect
  *     §10  TP_RECIP_KEY            names the PROPERTY the TP01 recipient map is
  *                                  stored in — the map itself is not in this file
+ *     §10  TP_AUTO_KEY            same, for the AUTOMATED TP01 email's recipients
+ *                                  and switches. A SCRIPT property, not a user one
  *
  *   THE CLIENT HAS ITS OWN, AND THE TWO DO NOT OVERLAP. Nothing in app.html
  *   reads a constant from this file; its tunables — the slide frame, and every
@@ -280,6 +287,61 @@ var APP_CONFIG = {
        named, which is what lets a re-issue find and replace the copy it is
        replacing. */
     LABEL_PREFIX: 'Inventory Report - '
+  },
+
+
+  /* WHERE THE WEEKLY TRANSFER-PRICE FILE COMES FROM BY ITSELF.
+
+     The SAP TP01/ZIPR export is mailed every Tuesday. tp01ReportMailCheck (§11)
+     is the DAILY trigger target; the TPMAIL engine it drives is in §10, beside
+     the TP01 backend it sends through. Nothing here is read at load time.
+
+     Daily rather than weekly on purpose: a run that finds no new mail costs one
+     Gmail search and NOTHING else — no sheet read, no comparison, no property
+     written — so six days out of seven are free, and a report re-issued
+     mid-week goes out the next morning instead of waiting a week. */
+  TP01_MAIL: {
+
+    /* THE WHOLE SUBJECT SENTENCE, and the match is CONTAINS rather than
+       STARTS-WITH — which is where this differs from INVENTORY_MAIL above.
+       The mail reaches the mailbox as a forward, and a ticket system adds its
+       own furniture around the line, so anchoring at the front would miss it.
+       "Re:"/"Fwd:" markers are stripped before the test either way.
+
+       Gmail's own subject: term matches WORDS in any order, so the search is
+       only the cheap filter — this string is the real one. */
+    SUBJECT: 'TP01 - ZIPR Report ECAN Plants 3Q, 3P, 3R, 3G and 3L',
+
+    /* Who the mail is accepted from, as a Gmail `from:` term. The report is
+       raised by nabs.customermaster@amrize.com and reaches this mailbox
+       FORWARDED BY A COLLEAGUE, so the sender on the message is theirs, not the
+       robot's — which is why this is the domain and not the address. A subject
+       line is not a credential (§5); this is the only narrowing Gmail offers,
+       and '' accepts anybody. */
+    FROM: 'amrize.com',
+
+    /* How far back each check searches. Three weekly sends is plenty: a message
+       already reported on is skipped on its id, so a longer window costs
+       nothing and buys nothing. */
+    WINDOW_DAYS: 21,
+
+    /* WHICH ROWS OF THE AGGREGATES SHEET ARE THE QLIKVIEW SIDE.
+
+       Matched as an exact value once normalised, NEVER as "contains RMX": that
+       column also carries "Metrix RMX", which is a different company. */
+    CUSTOMER_PARENT: 'Amrize RMX',
+
+    /* Recipients are NOT here. They live in the TP01_AUTOMAIL Script Property,
+       typed on the page's Automated email panel, because a trigger runs as
+       whoever created it (§1) and getUserProperties() would then resolve to a
+       different store than the website writes to. TP_getAutoConfig is the
+       reader. */
+
+    /* Subject and filename of what goes out. The report date is appended, and
+       it comes off the SAP FILE'S OWN date cell — never off the calendar, for
+       the reason §7 gives about naming a period. */
+    OUT_SUBJECT: 'Transfer Price Exceptions',
+    OUT_FILENAME: 'Transfer_Price_Exceptions_All_Markets'
   },
 
 
@@ -2285,14 +2347,14 @@ function getSlideData() {
  *                                and it does not let anything read a mailbox.
  *                                The read side is the line below, and the two
  *                                are separate grants on purpose.
- *   auth/gmail.readonly          GmailApp.search and getAttachments — §10's
- *                                Inventory Report mail watch, and nothing else
- *                                in the file. READ-ONLY deliberately: the watch
- *                                remembers which messages it has already
- *                                published in a Script Property rather than
- *                                labelling or archiving them, so it never writes
- *                                to anybody's mailbox and gmail.modify is not
- *                                needed. This is the widest grant in the list —
+ *   auth/gmail.readonly          GmailApp.search and getAttachments — §10's TWO
+ *                                mail watches, the Inventory Report's and
+ *                                TP01's, and nothing else in the file.
+ *                                READ-ONLY deliberately: both remember which
+ *                                messages they have already handled in a Script
+ *                                Property rather than labelling or archiving
+ *                                them, so neither ever writes to anybody's
+ *                                mailbox and gmail.modify is not needed. This is the widest grant in the list —
  *                                it can read every message the deployer can —
  *                                and it is here only because Gmail has no
  *                                "one sender, one subject" scope to ask for
@@ -2363,21 +2425,30 @@ function APP_verifyPermissions() {
       } },
 
     { service: 'MailApp', scope: 'auth/script.send_mail',
-      usedFor: 'TP01 only — the per-market transfer-price workbooks',
+      usedFor: 'TP01 — the per-market workbooks a person sends, and the weekly ' +
+               'exceptions report the trigger sends',
       probe: function () {
         /* Reads the quota. Sends nothing. */
         return MailApp.getRemainingDailyQuota() + ' message(s) left in today’s quota';
       } },
 
     { service: 'GmailApp', scope: 'auth/gmail.readonly',
-      usedFor: "the Inventory Report's mail watch — §10's IRMAIL",
+      usedFor: "two mail watches — the Inventory Report's (§10 IRMAIL) and TP01's (§10 TPMAIL)",
       probe: function () {
-        /* Runs the watch's OWN search, so what this proves is the thing that
-           matters: the grant is live AND the query the trigger will run comes
-           back. Reads nothing else, publishes nothing, marks nothing seen. */
-        var q = (typeof IRMAIL !== 'undefined' && IRMAIL.query && IRMAIL.query()) || '';
-        if (!q) return 'no report subject configured — scope referenced, not proven';
-        return GmailApp.search(q, 0, 5).length + ' thread(s) match ' + q;
+        /* Runs BOTH watches' OWN searches, so what this proves is the thing
+           that matters: the grant is live AND the queries the triggers will run
+           come back. A probe that runs a lookalike query proves the wrong
+           thing, which is why neither is spelled out here. Reads nothing else,
+           publishes nothing, sends nothing, marks nothing seen. */
+        var out = [];
+        [['Inventory', typeof IRMAIL !== 'undefined' && IRMAIL.query && IRMAIL.query()],
+         ['TP01',      typeof TPMAIL !== 'undefined' && TPMAIL.query && TPMAIL.query()]
+        ].forEach(function (pair) {
+          var q = pair[1] || '';
+          out.push(q ? (pair[0] + ': ' + GmailApp.search(q, 0, 5).length + ' thread(s) match ' + q)
+                     : (pair[0] + ': no subject configured — scope referenced, not proven'));
+        });
+        return out.join('  |  ');
       } },
 
     { service: 'SlidesApp', scope: 'auth/presentations',
@@ -2433,7 +2504,8 @@ function APP_verifyPermissions() {
       } },
 
     { service: 'PropertiesService', scope: '(none needed)',
-      usedFor: 'per-page sheet overrides, TP01 recipients, QlikView sync stamps',
+      usedFor: 'per-page sheet overrides, TP01 recipients and its automated-email ' +
+               'settings, QlikView sync stamps, the two mail watches\u2019 seen-lists',
       probe: function () {
         var n = PropertiesService.getScriptProperties().getKeys().length;
         var u = PropertiesService.getUserProperties().getKeys().length;
@@ -2981,6 +3053,12 @@ var QLIKSYNC = (function () {
      Every sync makes a copy — the exports are .xls and there is no reading one
      in place — so a stranded file is not a one-off, it is a slow leak in the
      script account's Drive. This is the only thing that clears them.
+
+     IT IS NO LONGER THE ONLY ENGINE MAKING THEM. §10's TPMAIL converts the
+     weekly SAP attachment through convertToSheet_ as well, so a copy this
+     sweep trashes may have been made by the transfer-price trigger rather than
+     by a sync. Matching on the prefix rather than on who made it is what lets
+     that be true without this function knowing anything about TP01.
 
      THREE GUARDS, because this trashes files. The name must actually start
      with the prefix (Drive's `title contains` is looser than it looks), it
@@ -3800,7 +3878,14 @@ var QLIKSYNC = (function () {
     }
   }
 
-  return { run: run, sources: sources_, lastSync: lastSync_ };
+  /* toSheet and trash are exposed for §10's TPMAIL, which has the same problem
+     this engine has - Apps Script cannot read an .xlsx, only Drive can convert
+     one - and no reason to own a second answer to it. A copy made through
+     convertToSheet_ is born in the script account's own Drive root, has every
+     non-owner permission stripped, and wears TEMP_PREFIX, so sweepTemps_ above
+     clears one a runtime kill strands whichever engine made it. */
+  return { run: run, sources: sources_, lastSync: lastSync_,
+           toSheet: convertToSheet_, trash: trashFile_, tempPrefix: TEMP_PREFIX };
 })();
 
 
@@ -13401,13 +13486,21 @@ function DECK_getRecipe() {
 /* ============================================================================
  * §10  SMALL PAGES
  * ----------------------------------------------------------------------------
- * The three pages with a backend small enough to have no namespace of its own:
- * the shared EBITDA workbooks, TP01's mail sender, and the Inventory Report.
+ * The pages whose backends are small: the shared EBITDA workbooks, the Inventory
+ * Report and its mail watch, and TP01 — which is no longer small. TP01 now holds
+ * the comparison the page used to do in the browser (TPE), an .xlsx writer for
+ * the trigger (TPXLSX), the automated report's settings (TPAUTO) and the mail
+ * watch that drives it (TPMAIL), beside the mail sender that was always here.
  *
- * TP01 mail is sent by whoever DEPLOYED the app, because appsscript.json pins
- * "executeAs": "USER_DEPLOYING". That also makes getUserProperties() the
- * deployer's for everybody, which is why the market → email map is ONE shared
- * list.
+ * WHO SENDS TP01's MAIL DEPENDS ON WHAT STARTED IT, and the two answers differ.
+ * A person pressing Send on the page goes through a WEB REQUEST, and
+ * appsscript.json pins "executeAs": "USER_DEPLOYING" — so it is sent by whoever
+ * DEPLOYED the app. That also makes getUserProperties() the deployer's for
+ * everybody, which is why the market → email map is ONE shared list. The weekly
+ * report is sent by a TRIGGER, and a trigger runs as WHOEVER CREATED IT. Create
+ * the trigger from the deploying account and the two are the same one; the
+ * automated settings are in SCRIPT properties either way, precisely so they
+ * cannot end up in a store only one of the two can see.
  * ============================================================================ */
 
 /* ---- Kpi_Backend.gs ----------------------------------------------------------
@@ -13607,17 +13700,33 @@ function clearKpiBook(book) {
    list — see the section banner.  */
 
 /*****************************************************************************
- * TP01-ZIPR Transfer Price Tool — backend
+ * TP01-ZIPR Transfer Price Tool — the page's backend
  * ---------------------------------------------------------------------------
- * Three small functions:
- *   TP_sendMarketEmail  : the page builds the per-market Excel in the browser
- *                         (SheetJS, base64) and sends it here to be mailed.
- *   TP_getRecipients    : the shared market → email map (see below).
- *   TP_saveRecipient    : save/update one market's recipient in that map.
+ * WHAT THE PAGE ASKS FOR, IN THREE CALLS:
+ *   TP_getComparison    the numbers. The browser parses the dropped workbooks
+ *                       and sends grids; every figure is worked out here, by
+ *                       TPE — the same engine the weekly trigger uses.
+ *   TP_sendMarketEmail  one market's file, mailed. The page sends the workbook
+ *                       it built; the SUBJECT AND BODY ARE BUILT HERE, off the
+ *                       cached comparison, so there is one copy of them.
+ *   TP_sendCombinedEmail the same, with every market's file on one mail.
+ * plus the recipient map (below) and the automated report's settings (TPAUTO).
  *
- * SENDER IDENTITY: mail goes out as whoever the web app EXECUTES AS, and
- * appsscript.json pins that to "executeAs": "USER_DEPLOYING" - so every
- * TP01 email is sent by the account that DEPLOYED the app.
+ * WHY THE PAGE STOPPED DOING THE ARITHMETIC. It did all of it until the weekly
+ * report had to be sent by a trigger, and a trigger has no browser. The choice
+ * was one engine on this side or two copies of the same rules with nothing ever
+ * reporting that they had drifted. TPE's banner has the rest.
+ *
+ * WHAT THE BROWSER STILL DOES, because it is better at both and neither is a
+ * calculation: parsing a dropped .xlsx (SheetJS), and writing the .xlsx behind
+ * the Download and Send buttons. The trigger cannot do the second one, which is
+ * what TPXLSX is for.
+ *
+ * SENDER IDENTITY: mail from THIS file goes out as whoever the web app EXECUTES
+ * AS, and appsscript.json pins that to "executeAs": "USER_DEPLOYING" — so every
+ * mail a person sends from the page comes from the account that DEPLOYED the
+ * app. The weekly report does NOT: it is sent by a trigger, and a trigger runs
+ * as whoever created it. See §10's banner.
  *
  * That also makes getUserProperties() the deployer's for everybody, so the
  * market -> email map below is ONE shared list: editing a market's recipient
@@ -13646,37 +13755,1801 @@ function TP_saveRecipient(market, email) {
   return { ok: true };
 }
 
+
+/* ---- the comparison, and the token the send calls come back with ---------
+ *
+ * The comparison is cached rather than handed back and forth, for one reason
+ * that is not size: the SUBJECT AND BODY OF EVERY MAIL ARE BUILT HERE. A page
+ * that posted rows back up with each Send would be a second chance for the two
+ * sides to disagree about what they are describing, which is the whole thing
+ * this arrangement exists to stop.
+ *
+ * SIX HOURS, which is CacheService's maximum, and the same expiry PV's uploaded
+ * sessions have. A page left open longer gets a message telling it to drop the
+ * file again rather than a stack trace.
+ */
+var TP_CMP_PREFIX = 'tp01|cmp|';
+
+function TP_getComparison(payload) {
+  var t0 = Date.now();
+  payload = payload || {};
+
+  var sap = TPE.readSap(payload.sap);
+
+  /* THE UPLOADED FILE WINS WHEN IT IS THERE. With no QlikView file the other
+     side is built from the Aggregates workbook, which is what the trigger
+     always does and what the page does when only the SAP file is dropped. */
+  var up = payload.qlk;
+  var qlk = (up && up.headers && up.headers.length)
+    ? { headers: up.headers, rows: up.rows || [], source: 'upload', meta: {} }
+    : TPE.qlikFromSheet();
+
+  var cmp = TPE.compare(sap, qlk);
+  cmp.token = Utilities.getUuid();
+  APP_cachePut_(TP_CMP_PREFIX + cmp.token, cmp);
+
+  /* Three things the browser needs to WRITE a workbook and cannot work out
+     without doing arithmetic again: the consolidated SAP grid behind the "SAP
+     Consolidated" button, and the number-format map for each of the two shapes
+     a market file comes in. iYearCol is what picks the volume and ASP columns,
+     and there is one copy of it. */
+  cmp.sapGrid = TPE.sapGrid(sap);
+  cmp.formats = {
+    mkt: TPE.numberFormats(cmp.headers),
+    exc: TPE.numberFormats(cmp.headers.concat(['SAP Valid From', 'Days at Incorrect Price']))
+  };
+
+  APP_log('info', 'TP.getComparison', 'compared', {
+    ms: Date.now() - t0, source: cmp.source, rows: cmp.rows.length,
+    matched: cmp.matched, unmatched: cmp.unmatched,
+    markets: Object.keys(cmp.markets || {}).length,
+    exceptionMarkets: Object.keys(cmp.exceptions || {}).length,
+    reportDate: cmp.reportDate, dateSource: cmp.dateSource
+  });
+  return cmp;
+}
+
+function TP_cmp_(token) {
+  var cmp = token ? APP_cacheGet_(TP_CMP_PREFIX + String(token)) : null;
+  if (!cmp) {
+    throw new Error('This comparison has expired (sessions last up to 6 hours). ' +
+      'Drop the SAP file again and the page will rebuild it.');
+  }
+  return cmp;
+}
+
+/* The subject both send paths use, so a market mail and the combined one
+   cannot end up describing different weeks. */
+function TP_subject_(kind, market, cmp) {
+  var what = (kind === 'exc') ? 'Transfer Price Exceptions' : 'Transfer Price Report';
+  return what + ' — ' + (market || 'All Markets') + ' (' + cmp.reportDate + ')';
+}
+
+var TP_XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/* One market's workbook, mailed. The page sends the file it built with SheetJS;
+   everything that describes it is built here. */
 function TP_sendMarketEmail(o) {
   if (!o || !o.to || !o.xlsxB64) throw new Error('Missing recipient or file.');
-  var blob = Utilities.newBlob(
-    Utilities.base64Decode(o.xlsxB64),
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    o.filename || 'Transfer_Price_Report.xlsx'
-  );
+  var cmp = TP_cmp_(o.token);
+  var kind = (o.kind === 'exc') ? 'exc' : 'mkt';
+  var market = String(o.market || '');
+  var list = ((kind === 'exc') ? cmp.exceptions : cmp.markets)[market];
+  if (!list) throw new Error('There is nothing to send for "' + market + '".');
+
   MailApp.sendEmail({
     to: String(o.to),
-    subject: String(o.subject || 'Transfer Price Report'),
-    htmlBody: String(o.htmlBody || ''),
-    attachments: [blob]
+    subject: TP_subject_(kind, market, cmp),
+    htmlBody: TPE.emailBody(kind, market, list, cmp),
+    attachments: [Utilities.newBlob(Utilities.base64Decode(o.xlsxB64), TP_XLSX_MIME,
+                                    o.filename || 'Transfer_Price_Report.xlsx')]
   });
   return { ok: true };
 }
 
+/* Every market on one mail: the files attached, the breakdowns stacked. */
 function TP_sendCombinedEmail(o) {
   if (!o || !o.to || !o.files || !o.files.length) throw new Error('Missing recipient or files.');
-  var mime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-  var blobs = o.files.map(function (f) {
-    return Utilities.newBlob(Utilities.base64Decode(f.xlsxB64), mime,
-                             f.filename || 'Transfer_Price_Report.xlsx');
-  });
+  var cmp = TP_cmp_(o.token);
+  var kind = (o.kind === 'exc') ? 'exc' : 'mkt';
+
   MailApp.sendEmail({
     to: String(o.to),
-    subject: String(o.subject || 'Transfer Price Report'),
-    htmlBody: String(o.htmlBody || ''),
-    attachments: blobs
+    subject: TP_subject_(kind, '', cmp),
+    htmlBody: TPE.stackedBody(kind, cmp),
+    attachments: o.files.map(function (f) {
+      return Utilities.newBlob(Utilities.base64Decode(f.xlsxB64), TP_XLSX_MIME,
+                               f.filename || 'Transfer_Price_Report.xlsx');
+    })
   });
   return { ok: true };
 }
+
+
+/* ---- TP01_Engine.gs ----------------------------------------------------------
+   The comparison itself, moved off the page. One copy of the arithmetic, called
+   by the browser and by the trigger.  */
+
+/*****************************************************************************
+ * TP01-ZIPR - the comparison engine (namespaced TPE)
+ * ---------------------------------------------------------------------------
+ * THIS USED TO LIVE IN THE BROWSER, and the whole of it did: the SAP read, the
+ * Concat Key on both sides, the two revenue columns, the market split, the
+ * exception rule, the aging and the email HTML were all in app.html's §P tp01.
+ * That was fine while a person was the only way to start it. It stopped being
+ * fine the moment a trigger had to do the same job, because a trigger has no
+ * browser - and the alternative to moving it was a SECOND copy of the same
+ * arithmetic on this side, with nothing at runtime ever reporting that the two
+ * had drifted.
+ *
+ * So the split is now:
+ *
+ *   the browser   parses a dropped workbook (SheetJS) and writes the .xlsx the
+ *                 Download and Send buttons produce. Neither is a calculation.
+ *   this file     every number, and the email body.
+ *   TPXLSX        writes the .xlsx for the trigger, which has no SheetJS.
+ *
+ * TWO INPUTS, ONE PIPELINE. The QlikView side can come from either:
+ *
+ *   · qlikFromSheet()  - the Aggregates workbook this app already reads,
+ *     filtered to APP_CONFIG.TP01_MAIL.CUSTOMER_PARENT, restricted to the
+ *     current year, rolled back up to the export's grain. This is the default
+ *     and the only one the trigger can use.
+ *   · a QlikView export dropped on the page, passed through as a grid. It WINS
+ *     when it is there.
+ *
+ * Everything downstream of that choice is the same code, so this is two
+ * sources, not two pipelines.
+ *
+ * WHAT MUST NOT DRIFT (README.md §7):
+ *   · the period is never named back at a header. iYearCol_ finds the volume
+ *     and ASP columns by SHAPE - CY, PY or a four-digit year at either end -
+ *     and qlikFromSheet takes the year off the Year COLUMN, never off the
+ *     calendar. A near miss returns -1 and the workbook then builds perfectly
+ *     with blank revenue in it, which is the failure that shipped once.
+ *   · the report date is the SAP file's OWN date cell. A file re-issued late
+ *     must carry its own date, not the day the trigger happened to fire.
+ *****************************************************************************/
+var TPE = (function () {
+
+  /* ======================================================================
+   * PRIMITIVES - moved from the page, unchanged in meaning
+   * ==================================================================== */
+
+  function norm_(v) { return String(v == null ? '' : v).trim(); }
+
+  function round4_(n) { return Math.round(n * 10000) / 10000; }
+
+  function pad2_(n) { return (n < 10 ? '0' : '') + n; }
+
+  /* Every date this engine handles ends up as YYYY-MM-DD, because that is what
+     daysOutstanding_ subtracts: new Date('2026-01-01') is UTC midnight on both
+     sides and the difference is exact days. A cell that cannot be read as a
+     date is passed through as its own text rather than guessed at.
+
+     THE mm/dd/yyyy BRANCH IS NEW. The SAP export writes "01/01/2026" and the
+     page left that string alone - it happened to work because V8 parses US
+     order, but it meant two shapes of the same field flowing through one
+     subtraction. Normalising here costs nothing and removes the question. */
+  function toDateStr_(val) {
+    if (!val && val !== 0) return '';
+    if (Object.prototype.toString.call(val) === '[object Date]') {
+      return val.getFullYear() + '-' + pad2_(val.getMonth() + 1) + '-' + pad2_(val.getDate());
+    }
+    if (typeof val === 'number') {
+      /* An Excel serial that survived a round trip through .xls. 25569 is the
+         days between the 1900 and 1970 epochs; the range is what stops a plain
+         quantity being read as a date. */
+      if (val > 20000 && val < 80000) {
+        var d = new Date(Math.round((val - 25569) * 86400000));
+        return d.getUTCFullYear() + '-' + pad2_(d.getUTCMonth() + 1) + '-' + pad2_(d.getUTCDate());
+      }
+      return String(val);
+    }
+    var s = String(val).trim();
+    var m = s.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if (m) return m[1] + '-' + pad2_(Number(m[2])) + '-' + pad2_(Number(m[3]));
+    m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);            // 01/14/2026
+    if (m) return m[3] + '-' + pad2_(Number(m[1])) + '-' + pad2_(Number(m[2]));
+    return s;
+  }
+
+  /* THE COLUMN THAT NAMES A PERIOD, FOUND BY SHAPE AND NEVER BY NAME.
+     Verbatim from app.html's §P tp01, and its comment there is the account of
+     the day the six indexOf() calls it replaced all returned -1 at once: the
+     volume and ASP columns read as missing, every Additional Revenue to Post
+     came out of a blank cell, and the workbook still built and still
+     downloaded with nothing on the page saying anything was wrong.
+
+     Current wins: an explicit CY beats anything, a newer year beats an older
+     one, and PY is taken only when it is all there is.
+
+     NOTE it does NOT fold "ex-Works" / "exWorks" / "ex Works" together the way
+     APP_hdrNorm_ does. The remainder is compared literally, so a caller asking
+     for 'ASP ex-Works' gets nothing from a header spelling it 'ASP exWorks'.
+     That is deliberate - both sides of this comparison are files this project
+     writes or reads verbatim - but it is why qlikFromSheet spells its own
+     headers the way it does. */
+  function iYearCol_(headers, suffix) {
+    var want = String(suffix).replace(/\s+/g, ' ').trim().toLowerCase();
+    var best = -1, bestRank = -1;
+    for (var i = 0; i < headers.length; i++) {
+      var s = String(headers[i] == null ? '' : headers[i]).replace(/\s+/g, ' ').trim().toLowerCase();
+      var m = /^((?:19|20)\d{2}|cy|py)\b[\s\-]*(.+)$/.exec(s), tok, rest;
+      if (m) { tok = m[1]; rest = m[2]; }
+      else {
+        m = /^(.+?)[\s\-]*\b((?:19|20)\d{2}|cy|py)$/.exec(s);
+        if (!m) continue;
+        tok = m[2]; rest = m[1];
+      }
+      if (rest !== want) continue;
+      var rank = (tok === 'cy') ? Infinity : (tok === 'py') ? 0 : Number(tok);
+      if (rank > bestRank) { bestRank = rank; best = i; }
+    }
+    return best;
+  }
+
+  /* THE KEY, AND WHY THE TWO SIDES ARE EXTRACTED DIFFERENTLY.
+
+     SAP:  S Plant + Ship-to/Partner PC (first character dropped) + Material
+             3G00  +  64G00 -> 4G00                              +  9023
+     AGG:  Plant   + Sold To            (first character dropped) + Material
+             "3P02 - DUNDAS QUARRY"      "BURLINGTON READY MIX - P4Q01"
+             -> 3P02                   +  P4Q01 -> 4Q01          +  9160
+
+     Plant and Material put their CODE FIRST and Sold To puts it LAST, which is
+     why there are two extractors and not one. Both sides then drop a
+     one-character prefix from the customer / ship-to code - 6 on the SAP side,
+     P on the Aggregates side - and the four characters that remain are the
+     plant space, which is what makes the two line up at all. Verified against
+     the Aggregates workbook, not assumed. */
+  function buildSapKey_(plant, shipTo, material) {
+    return norm_(plant) + norm_(shipTo).slice(1) + norm_(material);
+  }
+  function code_(val)       { var s = norm_(val); return s.indexOf(' - ') >= 0 ? s.split(' - ')[0].trim() : s; }
+  function soldToCode_(val) { var s = norm_(val); return s.indexOf(' - ') >= 0 ? s.split(' - ').pop().trim() : s; }
+  function buildQlkKey_(plant, soldTo, material) {
+    return code_(plant) + soldToCode_(soldTo).slice(1) + code_(material);
+  }
+
+  /* Minimal HTML escape for the two sheet-sourced values the email prints.
+     THE PAGE DID NOT DO THIS and a customer named "G&L Group" is why it is
+     here - the ampersand is harmless, a stray angle bracket is not, and both
+     come out of a column anybody can type into. */
+  function esc_(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  /* ======================================================================
+   * THE SAP HALF
+   * ==================================================================== */
+
+  /* The eleven columns both tabs are reduced to, and what each tab calls them.
+     TP01 and ZIPR carry the same figures under different headings; this is the
+     only place that knows which is which. */
+  var SAP_COLS = ['CnTy', 'Plant', 'Material', 'Ship-To Party', 'Concat Key', 'Amount',
+                  'Currency', 'Pricing Unit', 'Unit of Measure', 'Valid From', 'Valid to'];
+  var SAP_DATE_COLS = { 'Valid From': 1, 'Valid to': 1 };
+  var SAP_MAP = {
+    TP01: { 'CnTy':'CnTy', 'Plant':'S Plant', 'Material':'Material',
+            'Ship-To Party':'Ship-to / Partner PC', 'Amount':'Amount', 'Currency':'Unit',
+            'Pricing Unit':'per', 'Unit of Measure':'UoM',
+            'Valid From':'Valid From', 'Valid to':'Valid to' },
+    ZIPR: { 'CnTy':'CnTy', 'Plant':'Plant', 'Material':'Material',
+            'Ship-To Party':'Ship-To Party', 'Amount':'Amount',
+            'Currency':'Condition currency', 'Pricing Unit':'Pricing unit',
+            'Unit of Measure':'Unit of measure',
+            'Valid From':'Valid From', 'Valid to':'Valid to' }
+  };
+
+  /* The header row is not row 1 - the export puts a title, a date and a source
+     line above it. It is the row carrying 'CnTy', and that is also what proves
+     the grid is a SAP export at all. */
+  function sapHeaderRow_(rows) {
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i] || [];
+      for (var c = 0; c < r.length; c++) if (norm_(r[c]) === 'CnTy') return i;
+    }
+    return -1;
+  }
+
+  function sapRows_(data, headers, colMap) {
+    var out = [];
+    for (var i = 0; i < data.length; i++) {
+      var row = data[i], obj = {};
+      for (var c = 0; c < SAP_COLS.length; c++) {
+        var col = SAP_COLS[c];
+        if (col === 'Concat Key') continue;
+        var idx = headers.indexOf(colMap[col]);
+        var val = idx >= 0 ? row[idx] : '';
+        if (SAP_DATE_COLS[col]) val = toDateStr_(val);
+        obj[col] = (val == null) ? '' : val;
+      }
+      obj['Concat Key'] = buildSapKey_(obj['Plant'], obj['Ship-To Party'], obj['Material']);
+      out.push(obj);
+    }
+    return out;
+  }
+
+  /* One SAP workbook, as { TP01: grid, ZIPR: grid } where a grid is an array of
+     rows. Returns the consolidated rows, the report date, and the two counts.
+
+     THE REPORT DATE COMES OFF THE FILE, three rows above its own header - the
+     export writes a title, then the date, then "Source: SAP". Never off the
+     calendar: a file re-issued a fortnight late still describes the day it was
+     run, and README.md §7 is the rule this is an instance of. A file that has
+     lost that cell is REPORTED rather than stamped with today, and the caller
+     decides - which is the difference between a wrong date and a known one.
+
+     BOTH TABS ARE REQUIRED, which is the page's rule and is kept deliberately.
+     A price list with one of its two condition types missing produces
+     confidently wrong corrections for every row the missing half priced, and
+     there is nothing downstream that could notice. */
+  function readSap(tabs) {
+    if (!tabs) throw new Error('No SAP workbook was supplied.');
+    var haveTp01 = !!(tabs.TP01 && tabs.TP01.length);
+    var haveZipr = !!(tabs.ZIPR && tabs.ZIPR.length);
+    if (!haveTp01 || !haveZipr) {
+      throw new Error('The SAP workbook must contain both a TP01 and a ZIPR tab. Found: ' +
+        (!haveTp01 && !haveZipr ? 'neither' : (haveTp01 ? 'TP01 only' : 'ZIPR only')) + '.');
+    }
+
+    var out = { rows: [], reportDate: '', dateSource: '', tp01Count: 0, ziprCount: 0 };
+    ['TP01', 'ZIPR'].forEach(function (tab) {
+      var g = tabs[tab] || [], hi = sapHeaderRow_(g);
+      if (hi < 0) throw new Error('Could not find the header row (the one carrying "CnTy") on ' +
+        'the ' + tab + ' tab of the SAP workbook.');
+      var hdr = (g[hi] || []).map(norm_);
+      var data = [], i, c;
+      for (i = hi + 1; i < g.length; i++) {
+        var r = g[i] || [], any = false;
+        for (c = 0; c < r.length; c++) if (norm_(r[c]) !== '') { any = true; break; }
+        if (any) data.push(r);
+      }
+      var rows = sapRows_(data, hdr, SAP_MAP[tab]);
+      out.rows = out.rows.concat(rows);
+      out[tab === 'TP01' ? 'tp01Count' : 'ziprCount'] = rows.length;
+
+      if (tab === 'TP01' && !out.reportDate) {
+        var cell = (g[hi - 3] && g[hi - 3][1]) || (g[2] && g[2][1]) || '';
+        var got = toDateStr_(cell);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(got)) { out.reportDate = got; out.dateSource = 'file'; }
+      }
+    });
+    return out;
+  }
+
+  /* ======================================================================
+   * THE QLIKVIEW HALF, BUILT FROM THE AGGREGATES SHEET
+   * ==================================================================== */
+
+  /* WHY THIS IS NOT A SECOND EXPORT. The QlikView transfer-pricing report is a
+     filtered, rolled-up view of the same Aggregates data this app already
+     reads - so PV.rawEnriched() is the whole source. It arrives already
+     market-enriched (REGION LOOKUP, keyed on Plant) and already carrying the
+     current year, worked out from the Year COLUMN rather than the calendar.
+     Nothing new is opened and no setting is added.
+
+     A RAW ROW CARRIES ONE YEAR. A 2025 row parks its figures in the PY columns
+     and zeros the CY ones; a 2026 row does the opposite. So "this year only" is
+     BOTH halves - the Year column AND the CY columns - and testing only one of
+     them silently drops or doubles rows depending which you pick.
+
+     THE FILTER IS EXACT EQUALITY, NEVER A CONTAINS. That column also carries
+     "Metrix RMX", which is a different company.
+
+     THE ROLL-UP. The Aggregates tab is drilled down further than the export
+     was: it also splits by Plant Type, Material Family, Product Class, Product
+     Application and Cust Segment. Summing those away leaves the export's own
+     grain, and the ASP is RECOMPUTED from the sums -
+
+         ASP ex-Works = SUM(revenue) / SUM(volume)
+
+     never averaged from the row-level ASPs. That is the revenue-weighted rule
+     every Price & Volume pivot uses (§6), and it is what makes
+     (SAP TP - ASP) x Volume come out right at this grain rather than at the one
+     the rows arrived in. */
+  var GK_ = String.fromCharCode(1);      // group-key join, as the month cube does it
+
+  function qlikFromSheet() {
+    var wantParent = String((APP_CONFIG.TP01_MAIL && APP_CONFIG.TP01_MAIL.CUSTOMER_PARENT) || '');
+    var wantKey = wantParent.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!wantKey) throw new Error('APP_CONFIG.TP01_MAIL.CUSTOMER_PARENT is empty - there is ' +
+      'nothing to filter the Aggregates rows down to.');
+
+    var rows = PV.rawEnriched();
+    var cyYear = Number(rows.cyYear || 0);
+    if (!cyYear) throw new Error('The Aggregates sheet Year column gave no current year, so ' +
+      'there is no way to tell which of its two volume columns is this year.');
+
+    var acc = {}, order = [], parents = {}, noMarket = {}, kept = 0, seen = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var e = rows[i];
+      seen++;
+      var p = String(e.custParent == null ? '' : e.custParent).replace(/\s+/g, ' ').trim();
+      parents[p] = (parents[p] || 0) + 1;
+      if (p.toLowerCase() !== wantKey) continue;
+      if (Number(e.year || 0) && Number(e.year) !== cyYear) continue;
+
+      var vol = Number(e.cyVol) || 0, rev = Number(e.cyRev) || 0;
+      if (!vol && !rev) continue;
+
+      var market = String(e.market == null ? '' : e.market).trim();
+      if (!market) { noMarket[String(e.plant || '(blank plant)')] = 1; market = 'Unknown'; }
+
+      var soldTo   = String(e.soldTo   == null ? '' : e.soldTo).trim();
+      var plant    = String(e.plant    == null ? '' : e.plant).trim();
+      var material = String(e.material == null ? '' : e.material).trim();
+      var month    = String(e.month    == null ? '' : e.month).trim();
+
+      var k = [market, month, plant, material, soldTo].join(GK_);
+      var a = acc[k];
+      if (!a) {
+        a = acc[k] = { market: market, soldTo: soldTo, plant: plant,
+                       material: material, month: month, vol: 0, rev: 0 };
+        order.push(k);
+      }
+      a.vol += vol; a.rev += rev;
+      kept++;
+    }
+
+    /* The two headers the comparison finds by shape. They name the year the
+       DATA is, taken off the Year column - so this rolls to 2027 on its own,
+       and neither name is ever written in code. Spelled to match what
+       iYearCol_ compares literally: "ASP ex-Works", with the hyphen. */
+    var headers = ['Market', 'Customer Parent', 'Sold To', 'Plant', 'Material', 'Month',
+                   cyYear + ' Volume', cyYear + ' Rev exWorks', cyYear + ' ASP ex-Works'];
+
+    var out = [];
+    for (var n = 0; n < order.length; n++) {
+      var g = acc[order[n]];
+      out.push([g.market, wantParent, g.soldTo, g.plant, g.material, g.month,
+                round4_(g.vol), round4_(g.rev), g.vol ? round4_(g.rev / g.vol) : '']);
+    }
+
+    var strays = Object.keys(noMarket);
+    if (strays.length) {
+      /* NOT SILENT (§7). These rows are kept, under the market "Unknown", so
+         the money is still reported - but a plant missing from REGION LOOKUP is
+         a lookup that needs a row, not a rounding error. */
+      APP_log('warn', 'TPE.qlikFromSheet', 'plants with no REGION LOOKUP row - their rows are ' +
+              'grouped under the market "Unknown" rather than dropped',
+              { plants: strays.slice(0, 10).join(', '), count: strays.length });
+    }
+
+    return {
+      headers: headers, rows: out, source: 'sheet',
+      meta: { cyYear: cyYear, customerParent: wantParent, rawRows: seen,
+              matchedParentRows: kept, rolledRows: out.length,
+              unmappedPlants: strays, parents: parents }
+    };
+  }
+
+  /* ======================================================================
+   * THE COMPARISON
+   * ==================================================================== */
+
+  /* THE THREE COLUMNS THIS ADDS, and the shape of the output.
+
+     Concat Key goes in immediately after Month, exactly where the page put it,
+     because that is the column order everyone downstream has learned to read.
+     The three calculated columns go on the end:
+
+       SAP Transfer Price                 looked up by Concat Key
+       Additional Revenue to Post       = (TP - ASP) x Volume
+       Total Corrected Revenue ex-Works = that + (ASP x Volume)
+
+     A ROW WITH NO SAP PRICE GETS ALL THREE BLANK, never zero. Zero is a price;
+     blank is "there is no price for this", and the difference between them is
+     the entire meaning of the unmatched count. */
+  function compare(sap, qlk) {
+    var sapPrice = {}, sapFrom = {}, i;
+    for (i = 0; i < sap.rows.length; i++) {
+      var sr = sap.rows[i], sk = norm_(sr['Concat Key']);
+      /* FIRST ROW PER KEY WINS, and TP01 is concatenated ahead of ZIPR, so a
+         key priced on both tabs takes its TP01 price. That is the page's rule
+         and the business's. */
+      if (sk && !(sk in sapPrice)) { sapPrice[sk] = sr['Amount']; sapFrom[sk] = sr['Valid From']; }
+    }
+
+    var qH = qlk.headers.map(norm_);
+    var iSoldTo = qH.indexOf('Sold To');
+    var iPlant  = qH.indexOf('Plant');
+    var iMat    = qH.indexOf('Material');
+    var iMonth  = qH.indexOf('Month');
+    var iVolume = iYearCol_(qH, 'Volume');
+    var iASPin  = iYearCol_(qH, 'ASP ex-Works');
+    if (iSoldTo < 0 || iPlant < 0 || iMat < 0) {
+      throw new Error('The QlikView data has no Sold To / Plant / Material columns, so no ' +
+        'Concat Key can be built from it. Headers seen: ' + qlk.headers.join(' | '));
+    }
+    if (iVolume < 0 || iASPin < 0) {
+      /* NOT a silent -1. This is README.md §7 exactly: every Additional Revenue
+         to Post would come out of a blank cell and the workbook would still
+         build, still download and still send, under correct-looking headings. */
+      throw new Error('The QlikView data has no volume and/or ASP ex-Works column naming a ' +
+        'period (CY, PY or a four-digit year). Headers seen: ' + qlk.headers.join(' | '));
+    }
+
+    var at = iMonth;                              // Concat Key is inserted after Month
+    var headers = qlk.headers.slice(0, at + 1)
+      .concat(['Concat Key'])
+      .concat(qlk.headers.slice(at + 1))
+      .concat(['SAP Transfer Price', 'Additional Revenue to Post',
+               'Total Corrected Revenue ex-Works']);
+
+    var rows = [], vfrom = [], matched = 0, unmatched = 0;
+    for (var n = 0; n < qlk.rows.length; n++) {
+      var src = qlk.rows[n], clean = [], c;
+      for (c = 0; c < src.length; c++) {
+        clean.push(Object.prototype.toString.call(src[c]) === '[object Date]'
+                   ? toDateStr_(src[c]) : src[c]);
+      }
+      var key = buildQlkKey_(String(clean[iPlant]  == null ? '' : clean[iPlant]),
+                             String(clean[iSoldTo] == null ? '' : clean[iSoldTo]),
+                             String(clean[iMat]    == null ? '' : clean[iMat]));
+      var raw = (key in sapPrice) ? sapPrice[key] : null;
+      var tp = (raw !== null && raw !== '' && !isNaN(Number(raw))) ? Number(raw) : null;
+      if (tp !== null) matched++; else unmatched++;
+
+      var asp = Number(clean[iASPin]), vol = Number(clean[iVolume]);
+      var add = (tp !== null && !isNaN(asp) && !isNaN(vol)) ? round4_((tp - asp) * vol) : '';
+      var tot = (add !== '' && !isNaN(asp) && !isNaN(vol)) ? round4_(add + (asp * vol)) : '';
+
+      rows.push(clean.slice(0, at + 1).concat([key]).concat(clean.slice(at + 1))
+                     .concat([tp !== null ? tp : '', add, tot]));
+      vfrom.push((key in sapFrom) ? (sapFrom[key] || '') : '');
+    }
+
+    /* Sorted on the Concat Key, like the page's file, so the same week's files
+       produce the same workbook however many times they are run. */
+    var keyAt = at + 1, idx = [];
+    for (i = 0; i < rows.length; i++) idx.push(i);
+    idx.sort(function (a, b) { return String(rows[a][keyAt]).localeCompare(String(rows[b][keyAt])); });
+    var sRows = [], sFrom = [];
+    for (i = 0; i < idx.length; i++) { sRows.push(rows[idx[i]]); sFrom.push(vfrom[idx[i]]); }
+
+    var cmp = { headers: headers, rows: sRows, vfrom: sFrom,
+                matched: matched, unmatched: unmatched,
+                reportDate: sap.reportDate, dateSource: sap.dateSource,
+                sapRows: sap.rows.length, tp01Count: sap.tp01Count, ziprCount: sap.ziprCount,
+                source: qlk.source || 'sheet', meta: qlk.meta || {} };
+    split_(cmp);
+    return cmp;
+  }
+
+  /* Days the SAP price has been in effect while wrong: report date minus that
+     price's Valid From. null when either date is missing - which is not the
+     same as zero, and is printed as a dash rather than "0 days". */
+  function daysOutstanding_(cmp, i) {
+    var vf = cmp.vfrom[i];
+    if (!vf || !cmp.reportDate) return null;
+    var from = new Date(vf), ref = new Date(cmp.reportDate);
+    if (isNaN(from.getTime()) || isNaN(ref.getTime())) return null;
+    return Math.max(0, Math.floor((ref - from) / 86400000));
+  }
+
+  /* THE MARKET SPLIT AND THE EXCEPTION RULE.
+
+     An exception is a row that MATCHED and whose SAP price is BELOW the ASP by
+     more than a cent. Both sides are rounded to whole cents first so the test
+     agrees with what is printed. A price that is higher, equal, or off by only
+     a cent either way is not an exception - the asymmetry is the rule and not
+     an oversight: revenue is being under-posted only when SAP is the lower
+     number.
+
+     Exceptions come out longest-outstanding first, so the row that has been
+     wrong since January is at the top of the mail. */
+  function split_(cmp) {
+    var H = cmp.headers.map(norm_);
+    var iMarket = H.indexOf('Market');
+    var iSAP = H.indexOf('SAP Transfer Price');
+    var iASP = iYearCol_(H, 'ASP ex-Works');
+    var i;
+    cmp.markets = {}; cmp.exceptions = {}; cmp.days = [];
+    for (i = 0; i < cmp.rows.length; i++) cmp.days.push(daysOutstanding_(cmp, i));
+
+    if (iMarket < 0) {
+      /* NOT SILENT. The page returned early here and simply rendered nothing,
+         which looks identical to "no rows". */
+      APP_log('warn', 'TPE.split', 'the comparison has no Market column, so it cannot be split ' +
+              'by market and nothing can be mailed', { headers: cmp.headers.join(' | ') });
+      return;
+    }
+
+    function cents(n) { return Math.round(Number(n) * 100); }
+    for (i = 0; i < cmp.rows.length; i++) {
+      var row = cmp.rows[i];
+      var market = String(row[iMarket] == null ? '' : row[iMarket]).trim() || 'Unknown';
+      (cmp.markets[market] || (cmp.markets[market] = [])).push(i);
+
+      var sap = row[iSAP], asp = iASP >= 0 ? row[iASP] : '';
+      var isMatched = sap !== '' && sap !== null && !isNaN(Number(sap));
+      if (isMatched && iASP >= 0 && asp !== '' && !isNaN(Number(asp)) &&
+          (cents(sap) - cents(asp)) < -1) {
+        (cmp.exceptions[market] || (cmp.exceptions[market] = [])).push(i);
+      }
+    }
+    Object.keys(cmp.exceptions).forEach(function (m) {
+      cmp.exceptions[m].sort(function (a, b) { return byAge_(cmp, a, b); });
+    });
+  }
+
+  function byAge_(cmp, a, b) {
+    var da = cmp.days[a], db = cmp.days[b];
+    return (db == null ? -1 : db) - (da == null ? -1 : da);
+  }
+
+  /* ======================================================================
+   * THE EMAIL BODY
+   * ==================================================================== */
+
+  /* One market's block: the summary chips, then the first twenty rows. Moved
+     from the page unchanged except that Sold To and Material are ESCAPED now -
+     see esc_ - and that the row list arrives as indexes into cmp.rows rather
+     than as a second copy of the rows. */
+  function emailBody(kind, market, list, cmp) {
+    var isExc = kind === 'exc';
+    var H = cmp.headers.map(norm_);
+    var iASP = iYearCol_(H, 'ASP ex-Works'), iVol = iYearCol_(H, 'Volume');
+    var iSAP = H.indexOf('SAP Transfer Price');
+    var iAdd = H.indexOf('Additional Revenue to Post');
+    var iSold = H.indexOf('Sold To'), iMat = H.indexOf('Material');
+
+    var totalAdd = 0, totalVol = 0, oldest = null, i, r;
+    for (i = 0; i < list.length; i++) {
+      r = cmp.rows[list[i]];
+      if (!isNaN(Number(r[iAdd]))) totalAdd += Number(r[iAdd]);
+      if (!isNaN(Number(r[iVol]))) totalVol += Number(r[iVol]);
+      if (isExc) {
+        var d0 = cmp.days[list[i]];
+        if (d0 !== null && (oldest === null || d0 > oldest)) oldest = d0;
+      }
+    }
+
+    var DASH = '&mdash;';
+    function fmt(n) {
+      return isNaN(Number(n)) ? DASH : '$' + Number(n).toLocaleString('en-CA',
+             { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function fmtVol(n) { return isNaN(Number(n)) ? DASH : Math.round(Number(n)).toLocaleString(); }
+    function ageColor(d) { return d >= 60 ? '#B23A48' : d >= 30 ? '#B45309' : '#666'; }
+    function fmtDays(d) { return d === null ? DASH : d + ' day' + (d !== 1 ? 's' : ''); }
+
+    var PREVIEW_N = 20, body = '', td = 'padding:6px 10px;border-bottom:1px solid #e5e7eb;';
+    for (i = 0; i < Math.min(list.length, PREVIEW_N); i++) {
+      r = cmp.rows[list[i]];
+      var delta = Number(r[iSAP]) - Number(r[iASP]);
+      var d = isExc ? cmp.days[list[i]] : null;
+      body += '<tr>' +
+        '<td style="' + td + '">' + esc_(r[iSold]) + '</td>' +
+        '<td style="' + td + '">' + esc_(r[iMat]) + '</td>' +
+        '<td style="' + td + 'text-align:right;">' + fmtVol(r[iVol]) + '</td>' +
+        '<td style="' + td + 'text-align:right;">' + fmt(r[iASP]) + '</td>' +
+        '<td style="' + td + 'text-align:right;">' + fmt(r[iSAP]) + '</td>' +
+        (isExc ? '<td style="' + td + 'text-align:right;' +
+                 (delta < 0 ? 'color:#B23A48;' : 'color:#1F7A4D;') + '">' + fmt(delta) + '</td>' : '') +
+        '<td style="' + td + 'text-align:right;' +
+          (Number(r[iAdd]) < 0 ? 'color:#B23A48;' : 'color:#1F7A4D;') + '">' + fmt(r[iAdd]) + '</td>' +
+        (isExc ? '<td style="' + td + 'text-align:right;font-weight:700;color:' +
+                 (d === null ? '#666' : ageColor(d)) + ';">' + fmtDays(d) + '</td>' : '') +
+        '</tr>';
+    }
+    if (list.length > PREVIEW_N) {
+      body += '<tr><td colspan="' + (isExc ? 8 : 6) + '" style="padding:6px 10px;color:#999;' +
+              'font-style:italic;">... and ' + (list.length - PREVIEW_N) +
+              ' more rows (see attached)</td></tr>';
+    }
+
+    var heading = (isExc ? 'Transfer Price Exceptions &mdash; ' : 'Transfer Price Report &mdash; ')
+                + esc_(market);
+    var oldestChip = !isExc ? '' :
+      '<td style="width:12px;"></td>' +
+      '<td style="padding:8px 14px;background:' +
+        (oldest !== null && oldest >= 60 ? '#F7E7EA' : '#FFF8E1') +
+        ';border-radius:6px;text-align:center;">' +
+        '<div style="font-size:20px;font-weight:700;color:' +
+          (oldest === null ? '#666' : ageColor(oldest)) + ';">' +
+          (oldest === null ? DASH : oldest + ' days') + '</div>' +
+        '<div style="font-size:11px;color:#666;">Longest at Incorrect Price</div>' +
+      '</td>';
+
+    return '<div style="font-family:Arial,sans-serif;max-width:700px;">' +
+      '<div style="background:#011E6A;padding:20px 28px;border-radius:8px 8px 0 0;">' +
+        '<h2 style="color:white;margin:0;font-size:18px;">' + heading + '</h2>' +
+        '<p style="color:#A9C3E8;margin:4px 0 0;font-size:13px;">Report Date: ' +
+          esc_(cmp.reportDate) + ' &middot; ' + list.length + ' record' +
+          (list.length !== 1 ? 's' : '') + '</p>' +
+      '</div>' +
+      '<div style="background:#F4F7FC;padding:16px 28px;border:1px solid #DCE6F2;border-top:none;">' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12px;"><tr>' +
+          '<td style="padding:8px 14px;background:#EEF7FF;border-radius:6px;text-align:center;">' +
+            '<div style="font-size:20px;font-weight:700;color:#011E6A;">' + fmtVol(totalVol) + '</div>' +
+            '<div style="font-size:11px;color:#666;">Total Volume</div>' +
+          '</td>' +
+          '<td style="width:12px;"></td>' +
+          '<td style="padding:8px 14px;background:' + (totalAdd >= 0 ? '#E4F3EB' : '#F7E7EA') +
+            ';border-radius:6px;text-align:center;">' +
+            '<div style="font-size:20px;font-weight:700;color:' +
+              (totalAdd >= 0 ? '#1F7A4D' : '#B23A48') + ';">' + fmt(totalAdd) + '</div>' +
+            '<div style="font-size:11px;color:#666;">Total Additional Revenue to Post</div>' +
+          '</td>' + oldestChip +
+        '</tr></table>' +
+      '</div>' +
+      '<div style="padding:20px 28px;border:1px solid #DCE6F2;border-top:none;' +
+           'border-radius:0 0 8px 8px;">' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead>' +
+          '<tr style="background:#011E6A;color:white;">' +
+            '<th style="padding:8px 10px;text-align:left;">Sold To</th>' +
+            '<th style="padding:8px 10px;text-align:left;">Material</th>' +
+            '<th style="padding:8px 10px;text-align:right;">Volume</th>' +
+            '<th style="padding:8px 10px;text-align:right;">ASP ex-Works</th>' +
+            '<th style="padding:8px 10px;text-align:right;">SAP Transfer Price</th>' +
+            (isExc ? '<th style="padding:8px 10px;text-align:right;">TP &minus; ASP</th>' : '') +
+            '<th style="padding:8px 10px;text-align:right;">Addl. Revenue to Post</th>' +
+            (isExc ? '<th style="padding:8px 10px;text-align:right;">Past Due</th>' : '') +
+          '</tr>' +
+        '</thead><tbody>' + body + '</tbody></table>' +
+      '</div>' +
+    '</div>';
+  }
+
+  /* Every market's block, stacked - the page's "Send As One" body, and the only
+     shape the automated mail uses. */
+  function stackedBody(kind, cmp) {
+    var map = (kind === 'exc') ? cmp.exceptions : cmp.markets;
+    var names = Object.keys(map).sort(), out = [];
+    for (var i = 0; i < names.length; i++) out.push(emailBody(kind, names[i], map[names[i]], cmp));
+    return out.join('<div style="height:26px;"></div>');
+  }
+
+  /* ======================================================================
+   * THE WORKBOOK GRIDS
+   * ==================================================================== */
+
+  /* One market's grid, or - with market null - EVERY market's rows in one grid,
+     which is the shape the automated mail attaches. Market is already a column,
+     so the combined file needs nothing added to say which rows belong where;
+     the two aging columns go on the end, as on the page. */
+  function grid(kind, market, cmp) {
+    var isExc = (kind === 'exc');
+    var map = isExc ? cmp.exceptions : cmp.markets;
+    var list = [], i;
+    if (market === null || market === undefined) {
+      var names = Object.keys(map).sort();
+      for (i = 0; i < names.length; i++) list = list.concat(map[names[i]]);
+      if (isExc) list.sort(function (a, b) { return byAge_(cmp, a, b); });
+    } else {
+      list = map[market] || [];
+    }
+
+    var headers = isExc ? cmp.headers.concat(['SAP Valid From', 'Days at Incorrect Price'])
+                        : cmp.headers.slice();
+    var rows = [];
+    for (i = 0; i < list.length; i++) {
+      var n = list[i];
+      rows.push(isExc
+        ? cmp.rows[n].concat([cmp.vfrom[n] || '', cmp.days[n] === null ? '' : cmp.days[n]])
+        : cmp.rows[n].slice());
+    }
+    return { headers: headers, rows: rows, count: rows.length };
+  }
+
+  /* Which columns get which number format, for whoever is writing the file -
+     the same list the page applies. A column that is not there is simply
+     absent from the map rather than present as -1. */
+  function numberFormats(headers) {
+    var H = headers.map(norm_), out = {};
+    var vol = iYearCol_(H, 'Volume');
+    if (vol >= 0) out[vol] = '0';
+    [iYearCol_(H, 'ASP ex-Works'),
+     H.indexOf('Total Standard Production Costs'),
+     H.indexOf('SAP Transfer Price'),
+     H.indexOf('Additional Revenue to Post'),
+     H.indexOf('Total Corrected Revenue ex-Works')].forEach(function (i) {
+      if (i >= 0) out[i] = '"$"#,##0.00';
+    });
+    return out;
+  }
+
+  /* The consolidated SAP rows as a grid, which is the ONLY thing the page's
+     "SAP Consolidated" button ever wanted out of readSap. It comes back with
+     the comparison rather than being rebuilt in the browser, because the merge
+     of the two tabs and the Concat Key on them are exactly the arithmetic that
+     stopped living there. */
+  function sapGrid(sap) {
+    var rows = [];
+    for (var i = 0; i < sap.rows.length; i++) {
+      var r = sap.rows[i], out = [];
+      for (var c = 0; c < SAP_COLS.length; c++) out.push(r[SAP_COLS[c]]);
+      rows.push(out);
+    }
+    return { headers: SAP_COLS.slice(), rows: rows, count: rows.length };
+  }
+
+  return {
+    readSap:       readSap,
+    sapGrid:       sapGrid,
+    qlikFromSheet: qlikFromSheet,
+    compare:       compare,
+    emailBody:     emailBody,
+    stackedBody:   stackedBody,
+    grid:          grid,
+    numberFormats: numberFormats,
+    /* used by TPXLSX, by the status report and by the harnesses */
+    iYearCol:      iYearCol_,
+    toDateStr:     toDateStr_,
+    buildSapKey:   buildSapKey_,
+    buildQlkKey:   buildQlkKey_
+  };
+})();
+
+/* ---- TP01_Xlsx.gs ------------------------------------------------------------
+   An .xlsx, written by hand, because a trigger has no SheetJS.  */
+
+/*****************************************************************************
+ * A MINIMAL XLSX WRITER (namespaced TPXLSX)
+ * ---------------------------------------------------------------------------
+ * The page attaches workbooks SheetJS built in the browser. The trigger has no
+ * browser, and Apps Script cannot load SheetJS. There were two ways out and
+ * this is the second one:
+ *
+ *   (a) write a temp Google Sheet, set its number formats, export it as .xlsx
+ *       through Drive and trash it. About fifty lines, uses only what is
+ *       already scoped - and costs a Drive file created, exported and trashed
+ *       on every run, against a six-minute execution ceiling this codebase has
+ *       already been killed by once (README.md §5). It also cannot produce the
+ *       Excel TABLE the page's files carry.
+ *
+ *   (b) this. An .xlsx IS a zip of XML and Utilities.zip makes zips. Seven
+ *       small parts, no network, no Drive file, milliseconds instead of most of
+ *       a minute - and, because it is pure string building, it is the only one
+ *       of the two that can be tested off-platform at all.
+ *
+ * IF THIS EVER FIGHTS EXCEL, (a) IS THE FALLBACK and it is written down here
+ * so the next person does not have to rediscover that there was a choice.
+ *
+ * WHAT IT DOES NOT DO, because nothing here needs it: no shared-string table
+ * (every string is inline), no formulas, no merged cells, no more than one
+ * sheet, no dates as date-typed cells - this engine hands over YYYY-MM-DD
+ * strings and they stay strings, exactly as the page's files do.
+ *
+ * THE TABLE IS SKIPPED WHEN TWO HEADERS MATCH. An Excel table's column names
+ * must be unique and must equal the header cells exactly; Excel repairs - that
+ * is, silently rewrites - a file where they do not. A QlikView export with two
+ * identically-named columns is not something this can fix without renaming a
+ * column the reader is looking for, so it gets a plain sheet with an
+ * AutoFilter instead, which loses banding and nothing else.
+ *****************************************************************************/
+var TPXLSX = (function () {
+
+  var CURRENCY_FMT_ID = 164;             // first id available for a custom format
+
+  function esc_(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      /* Control characters are not legal in XML 1.0 at all, and one arriving in
+         a sheet cell is what turns "Excel cannot open this file" into an hour.
+         Tab, newline and carriage return are the three that are. */
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  }
+
+  /* A1 for a zero-based column. */
+  function colName_(n) {
+    var s = '';
+    n = n + 1;
+    while (n > 0) { var r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - r) / 26); }
+    return s;
+  }
+
+  var XML = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+
+  function contentTypes_(withTable) {
+    return XML +
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+      '<Default Extension="xml" ContentType="application/xml"/>' +
+      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+      '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+      '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+      (withTable ? '<Override PartName="/xl/tables/table1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml"/>' : '') +
+      '</Types>';
+  }
+
+  function rootRels_() {
+    return XML +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+      '</Relationships>';
+  }
+
+  function workbook_(sheetName) {
+    return XML +
+      '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+      'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+      '<sheets><sheet name="' + esc_(sheetName) + '" sheetId="1" r:id="rId1"/></sheets>' +
+      '</workbook>';
+  }
+
+  function workbookRels_() {
+    return XML +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+      '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+      '</Relationships>';
+  }
+
+  /* FOUR cellXfs, and the order of them is the contract with cellStyle_ below:
+       0  general
+       1  header - bold, white on the Amrize navy
+       2  whole number      (built-in numFmtId 1, "0")
+       3  currency          (custom 164, "$"#,##0.00)
+     Anything added here goes on the END, or every styled cell in every file
+     this writes shifts by one. */
+  function styles_() {
+    return XML +
+      '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<numFmts count="1"><numFmt numFmtId="' + CURRENCY_FMT_ID +
+        '" formatCode="&quot;$&quot;#,##0.00"/></numFmts>' +
+      '<fonts count="2">' +
+        '<font><sz val="11"/><name val="Calibri"/></font>' +
+        '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>' +
+      '</fonts>' +
+      '<fills count="3">' +
+        '<fill><patternFill patternType="none"/></fill>' +
+        '<fill><patternFill patternType="gray125"/></fill>' +
+        '<fill><patternFill patternType="solid"><fgColor rgb="FF011E6A"/><bgColor indexed="64"/></patternFill></fill>' +
+      '</fills>' +
+      '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+      '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+      '<cellXfs count="4">' +
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+        '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+        '<xf numFmtId="1" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+        '<xf numFmtId="' + CURRENCY_FMT_ID + '" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+      '</cellXfs>' +
+      '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+      '</styleSheet>';
+  }
+
+  /* Which of the four cellXfs a body cell wants, from the format map TPE
+     hands over. */
+  function styleFor_(fmt) {
+    if (fmt === '0') return 2;
+    if (fmt) return 3;
+    return 0;
+  }
+
+  function sheet_(headers, rows, fmts, withTable, ref) {
+    var out = [], r, c, i;
+    out.push(XML);
+    /* The relationships namespace is declared on the ROOT rather than on the
+       tablePart that uses it. Both are well-formed XML and Excel accepts
+       either; on the root is what every other producer does, and a file that
+       looks like the ones Excel wrote is a file that never has to be argued
+       with. */
+    out.push('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+             'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
+    out.push('<sheetViews><sheetView workbookViewId="0">' +
+             '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>' +
+             '</sheetView></sheetViews>');
+
+    out.push('<cols>');
+    for (c = 0; c < headers.length; c++) {
+      out.push('<col min="' + (c + 1) + '" max="' + (c + 1) + '" width="22" customWidth="1"/>');
+    }
+    out.push('</cols>');
+
+    out.push('<sheetData>');
+    out.push('<row r="1">');
+    for (c = 0; c < headers.length; c++) {
+      out.push('<c r="' + colName_(c) + '1" s="1" t="inlineStr"><is><t xml:space="preserve">' +
+               esc_(headers[c]) + '</t></is></c>');
+    }
+    out.push('</row>');
+
+    for (i = 0; i < rows.length; i++) {
+      r = rows[i];
+      out.push('<row r="' + (i + 2) + '">');
+      for (c = 0; c < headers.length; c++) {
+        var v = r[c], fmt = fmts[c], s = styleFor_(fmt);
+        if (v === '' || v === null || v === undefined) {
+          /* A styled-but-empty cell, so a blank Additional Revenue to Post
+             still sits in a currency column instead of reverting to General
+             the moment somebody types in it. */
+          if (s) out.push('<c r="' + colName_(c) + (i + 2) + '" s="' + s + '"/>');
+          continue;
+        }
+        if (typeof v === 'number' && isFinite(v)) {
+          /* THE VOLUME COLUMN IS ROUNDED, NOT JUST FORMATTED, which is what the
+             page does too: a "0" format on 404.21 displays 404 and still sums
+             as 404.21, so a column of them does not add up to what it shows. */
+          var num = (fmt === '0') ? Math.round(v) : v;
+          out.push('<c r="' + colName_(c) + (i + 2) + '"' + (s ? ' s="' + s + '"' : '') + '><v>' +
+                   num + '</v></c>');
+        } else {
+          out.push('<c r="' + colName_(c) + (i + 2) + '"' + (s ? ' s="' + s + '"' : '') +
+                   ' t="inlineStr"><is><t xml:space="preserve">' + esc_(v) + '</t></is></c>');
+        }
+      }
+      out.push('</row>');
+    }
+    out.push('</sheetData>');
+
+    if (withTable) out.push('<tableParts count="1"><tablePart r:id="rId1"/></tableParts>');
+    else out.push('<autoFilter ref="' + ref + '"/>');
+
+    out.push('</worksheet>');
+    return out.join('');
+  }
+
+  function sheetRels_() {
+    return XML +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table1.xml"/>' +
+      '</Relationships>';
+  }
+
+  function table_(name, headers, ref) {
+    var cols = [];
+    for (var c = 0; c < headers.length; c++) {
+      cols.push('<tableColumn id="' + (c + 1) + '" name="' + esc_(headers[c]) + '"/>');
+    }
+    return XML +
+      '<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" ' +
+      'name="' + esc_(name) + '" displayName="' + esc_(name) + '" ref="' + ref + '" ' +
+      'headerRowCount="1">' +
+      '<autoFilter ref="' + ref + '"/>' +
+      '<tableColumns count="' + headers.length + '">' + cols.join('') + '</tableColumns>' +
+      '<tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" ' +
+      'showRowStripes="1" showColumnStripes="0"/>' +
+      '</table>';
+  }
+
+  /* An Excel table's displayName may hold letters, digits, underscores and
+     periods, must not start with a digit, and must not be a cell reference.
+     Anything else is what "Excel found unreadable content" is made of. */
+  function tableName_(s) {
+    var n = String(s || 'Data').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!n || /^[0-9]/.test(n)) n = 'T_' + n;
+    return n.slice(0, 60);
+  }
+
+  function uniqueHeaders_(headers) {
+    var seen = {};
+    for (var i = 0; i < headers.length; i++) {
+      var h = String(headers[i] == null ? '' : headers[i]).trim().toLowerCase();
+      if (!h || seen[h]) return false;
+      seen[h] = 1;
+    }
+    return true;
+  }
+
+  /* ONE WORKBOOK, ONE SHEET.
+   *   grid      { headers, rows }   - what TPE.grid returns
+   *   sheetName the tab name; Excel caps it at 31 characters and forbids  : \ / ? * [ ]
+   *   tableName the Excel table's name, or '' for no table
+   *   fmts      { columnIndex: numberFormatCode }, from TPE.numberFormats
+   * Returns a Blob named <filename>, ready for MailApp.
+   */
+  function build(grid, opts) {
+    opts = opts || {};
+    var headers = grid.headers || [], rows = grid.rows || [];
+    if (!headers.length) throw new Error('TPXLSX: a workbook needs at least one column.');
+
+    var fmts = opts.formats || {};
+    var sheetName = String(opts.sheetName || 'Sheet1').replace(/[:\\\/?*\[\]]/g, ' ').slice(0, 31) || 'Sheet1';
+    var ref = 'A1:' + colName_(headers.length - 1) + (rows.length + 1);
+    var wantTable = !!opts.tableName;
+    var withTable = wantTable && uniqueHeaders_(headers);
+    if (wantTable && !withTable) {
+      APP_log('warn', 'TPXLSX.build', 'two columns share a name, so the workbook gets a plain ' +
+              'AutoFilter instead of an Excel table - Excel rewrites a table whose column names ' +
+              'are not unique', { sheet: sheetName });
+    }
+
+    var parts = [
+      Utilities.newBlob(contentTypes_(withTable), 'application/xml', '[Content_Types].xml'),
+      Utilities.newBlob(rootRels_(),              'application/xml', '_rels/.rels'),
+      Utilities.newBlob(workbook_(sheetName),     'application/xml', 'xl/workbook.xml'),
+      Utilities.newBlob(workbookRels_(),          'application/xml', 'xl/_rels/workbook.xml.rels'),
+      Utilities.newBlob(styles_(),                'application/xml', 'xl/styles.xml'),
+      Utilities.newBlob(sheet_(headers, rows, fmts, withTable, ref),
+                                                  'application/xml', 'xl/worksheets/sheet1.xml')
+    ];
+    if (withTable) {
+      parts.push(Utilities.newBlob(sheetRels_(), 'application/xml', 'xl/worksheets/_rels/sheet1.xml.rels'));
+      parts.push(Utilities.newBlob(table_(tableName_(opts.tableName), headers, ref),
+                                   'application/xml', 'xl/tables/table1.xml'));
+    }
+
+    var name = String(opts.filename || 'workbook.xlsx');
+    if (!/\.xlsx$/i.test(name)) name += '.xlsx';
+    return Utilities.zip(parts, name)
+      .setContentType('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  }
+
+  /* The XML parts as { path: text }, without zipping any of them. Nothing on
+     the platform calls this - it is what lets a Node harness read what this
+     writer produced without a Blob, and the parts it checks are then literally
+     the parts that ship. */
+  function parts(grid, opts) {
+    opts = opts || {};
+    var headers = grid.headers || [], rows = grid.rows || [];
+    var fmts = opts.formats || {};
+    var sheetName = String(opts.sheetName || 'Sheet1').slice(0, 31) || 'Sheet1';
+    var ref = 'A1:' + colName_(headers.length - 1) + (rows.length + 1);
+    var withTable = !!opts.tableName && uniqueHeaders_(headers);
+    var out = {
+      '[Content_Types].xml':          contentTypes_(withTable),
+      '_rels/.rels':                  rootRels_(),
+      'xl/workbook.xml':              workbook_(sheetName),
+      'xl/_rels/workbook.xml.rels':   workbookRels_(),
+      'xl/styles.xml':                styles_(),
+      'xl/worksheets/sheet1.xml':     sheet_(headers, rows, fmts, withTable, ref)
+    };
+    if (withTable) {
+      out['xl/worksheets/_rels/sheet1.xml.rels'] = sheetRels_();
+      out['xl/tables/table1.xml'] = table_(tableName_(opts.tableName), headers, ref);
+    }
+    return out;
+  }
+
+  return { build: build, parts: parts, colName: colName_, tableName: tableName_ };
+})();
+
+/* ---- TP01_MailWatch.gs -------------------------------------------------------
+   The other half of the automation: the daily mailbox check that runs the
+   comparison and sends the exceptions, so nobody has to open the page at all.  */
+
+/*****************************************************************************
+ * TP01 - THE AUTOMATED EXCEPTIONS REPORT (namespaced TPAUTO / TPMAIL)
+ * ---------------------------------------------------------------------------
+ * The weekly job used to be: wait for the SAP mail, save its attachment, export
+ * the QlikView transfer-pricing report, open the page, drop both files, type an
+ * address, press Send. This does all of it on a trigger, and the QlikView
+ * export is not needed at all - TPE.qlikFromSheet builds that side out of the
+ * Aggregates workbook the app already reads.
+ *
+ * WHOSE MAILBOX, AND WHO THE MAIL COMES FROM - because it is not the obvious
+ * answer and it is two different accounts if you set it up carelessly.
+ * appsscript.json pins executeAs: USER_DEPLOYING, and that governs WEB REQUESTS
+ * ONLY. An installable trigger runs as WHOEVER CREATED IT in the Triggers UI.
+ * So this reads the trigger creator's mail, converts in the trigger creator's
+ * Drive, and SENDS AS THE TRIGGER CREATOR - which is not who the page's own
+ * Send button sends as. Add the trigger from the account that deployed the web
+ * app and the two are the same one. §4 reports the effective user and a
+ * trigger's execution log names who each firing ran as.
+ *
+ * THAT IS ALSO WHY THE CONFIG IS A SCRIPT PROPERTY. TP_getRecipients uses
+ * getUserProperties(), which resolves to the deployer for every web user - and
+ * to the TRIGGER CREATOR inside a trigger. If those two accounts ever differ, a
+ * recipient typed on the website would be invisible here, silently, and the run
+ * would mail nobody while reporting success. TPAUTO below is Script Properties,
+ * which is one store for both.
+ *
+ * DAILY, FOR A WEEKLY MAIL. A day with no new mail costs one Gmail search and
+ * NOTHING else: no sheet read, no comparison, no Drive file, no property
+ * written. That is six days out of seven, and it buys the seventh - a report
+ * re-issued mid-week goes out the next morning instead of waiting for Tuesday.
+ *
+ * ONLY THE NEWEST UNSEEN MAIL IS PROCESSED, and this is the one place the
+ * Inventory Report's watch and this one deliberately differ. IRMAIL publishes
+ * every unseen message because each one is a different month's report and they
+ * are all wanted. A transfer-price file is a SNAPSHOT: three unseen mails are
+ * three versions of the same list, and sending three emails about them would be
+ * three chances to act on the stale two. So the older ones are marked done
+ * without being sent, and the newest is the one that goes.
+ *
+ * NOTHING IS MARKED DONE WHEN THE RUN FAILS, so a Drive hiccup, an unshared
+ * sheet or an empty recipient list is retried tomorrow rather than swallowed.
+ * A mail carrying no spreadsheet IS marked, because it will never grow one.
+ *
+ * IT NEVER WRITES TO THE MAILBOX. Which messages are done is a Script Property,
+ * not a Gmail label, which is what keeps the grant at gmail.readonly (§4).
+ *****************************************************************************/
+
+/* ------------------------------------------------------------------------
+ * THE CONFIG RECORD - what the page's Automated email panel writes.
+ * ---------------------------------------------------------------------- */
+var TP_AUTO_KEY = 'TP01_AUTOMAIL';          // JSON: the switches and the addresses
+var TP_AUTO_STATE_KEY = 'TP01_AUTOMAIL_STATE';   // JSON: what the last run did
+
+var TPAUTO = (function () {
+
+  function blank_() {
+    return { enabled: false, to: [], cc: [], sendWhenEmpty: true, updatedAt: '', updatedBy: '' };
+  }
+
+  function emails_(v) {
+    var list = (v instanceof Array) ? v : String(v == null ? '' : v).split(/[,;]/);
+    var seen = {}, out = [];
+    for (var i = 0; i < list.length; i++) {
+      var e = String(list[i] || '').trim();
+      if (e.indexOf('@') < 0) continue;
+      var k = e.toLowerCase();
+      if (seen[k]) continue;
+      seen[k] = 1; out.push(e);
+    }
+    return out;
+  }
+
+  function get() {
+    var raw = PropertiesService.getScriptProperties().getProperty(TP_AUTO_KEY) || '';
+    var rec = blank_();
+    if (raw) {
+      var got = null;
+      try { got = JSON.parse(raw); }
+      catch (e) {
+        /* NOT SILENT (§7). An unreadable record reads as "switched off", and a
+           report that quietly stopped arriving is the hardest kind of failure
+           to notice - nobody misses an email they were not expecting. */
+        APP_log('warn', 'TPAUTO.get', 'the automated-email settings are unreadable, so the ' +
+                'report is switched OFF until they are saved again', { error: String(e) });
+      }
+      if (got) {
+        rec.enabled = !!got.enabled;
+        rec.to = emails_(got.to);
+        rec.cc = emails_(got.cc);
+        rec.sendWhenEmpty = (got.sendWhenEmpty !== false);
+        rec.updatedAt = String(got.updatedAt || '');
+        rec.updatedBy = String(got.updatedBy || '');
+      }
+    }
+    return rec;
+  }
+
+  function save(input) {
+    input = input || {};
+    var rec = {
+      enabled: !!input.enabled,
+      to: emails_(input.to),
+      cc: emails_(input.cc),
+      sendWhenEmpty: (input.sendWhenEmpty !== false),
+      updatedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MMM d, yyyy HH:mm'),
+      updatedBy: ''
+    };
+    try { rec.updatedBy = Session.getActiveUser().getEmail() || ''; } catch (e) { rec.updatedBy = ''; }
+    if (rec.enabled && !rec.to.length) {
+      throw new Error('Turn the automated email on and it has to have somewhere to go - ' +
+        'add at least one recipient, or leave it switched off.');
+    }
+    PropertiesService.getScriptProperties().setProperty(TP_AUTO_KEY, JSON.stringify(rec));
+    return rec;
+  }
+
+  function state() {
+    var raw = PropertiesService.getScriptProperties().getProperty(TP_AUTO_STATE_KEY) || '';
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch (e) { return null; }
+  }
+
+  function setState(o) {
+    o = o || {};
+    o.at = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MMM d, yyyy HH:mm');
+    try { PropertiesService.getScriptProperties().setProperty(TP_AUTO_STATE_KEY, JSON.stringify(o)); }
+    catch (e) {
+      APP_log('warn', 'TPAUTO.setState', 'the run happened but its outcome was not recorded, so ' +
+              'the page will keep showing the previous run', { error: String(e) });
+    }
+    return o;
+  }
+
+  return { get: get, save: save, state: state, setState: setState, emails: emails_ };
+})();
+
+/* ---- top-level wrappers for google.script.run ---- */
+function TP_getAutoConfig()    { return { config: TPAUTO.get(), state: TPAUTO.state() }; }
+function TP_saveAutoConfig(o)  { return { config: TPAUTO.save(o), state: TPAUTO.state() }; }
+
+/* The page's Preview button. Runs the same check the trigger would and reports
+   what it found, without sending anything or marking anything.
+
+   IT RUNS AS THE DEPLOYER, not as the person pressing it — a web request obeys
+   executeAs, and the trigger obeys who created it. Set both up from the same
+   account, which §10 says to anyway, and this previews the mailbox the trigger
+   will actually read. Set them up from different accounts and this is a preview
+   of the wrong inbox, which is exactly the failure worth being able to see. */
+function TP_autoStatus() { return TPMAIL.status(); }
+
+
+/* ------------------------------------------------------------------------
+ * THE WATCH ITSELF.
+ * ---------------------------------------------------------------------- */
+var TPMAIL = (function () {
+
+  var SEEN_KEY = 'TP01_REPORT_MAIL_SEEN';   // JSON: [ gmail message id, ... ]
+  var SEEN_CAP = 200;                       // an order of magnitude over a window's worth
+
+  function cfg_() {
+    var c = (typeof APP_CONFIG !== 'undefined' && APP_CONFIG.TP01_MAIL) || {};
+    return {
+      subject:    String(c.SUBJECT || ''),
+      from:       String(c.FROM || ''),
+      windowDays: Number(c.WINDOW_DAYS) > 0 ? Math.round(Number(c.WINDOW_DAYS)) : 21,
+      outSubject: String(c.OUT_SUBJECT || 'Transfer Price Exceptions'),
+      outFile:    String(c.OUT_FILENAME || 'Transfer_Price_Exceptions_All_Markets')
+    };
+  }
+
+  /* The Gmail query. Exposed because §4's permission probe runs exactly this -
+     a scope check that proves a different query than the trigger uses proves
+     the wrong thing. */
+  function query() {
+    var c = cfg_();
+    if (!c.subject) return '';
+    return 'subject:"' + c.subject + '" has:attachment newer_than:' + c.windowDays + 'd' +
+           (c.from ? ' from:(' + c.from + ')' : '');
+  }
+
+  /* "Re:" and "Fwd:" come off the front first, in any combination - the report
+     reaches this mailbox forwarded, and a rule that only accepted the original
+     delivery would never fire once. */
+  function stripMarkers_(subject) {
+    var s = String(subject || '').replace(/^\s+/, ''), was;
+    do { was = s; s = s.replace(/^(?:re|fw|fwd)\s*:\s*/i, ''); } while (s !== was);
+    return s;
+  }
+
+  /* CONTAINS, not starts-with, and that is where this differs from IRMAIL.
+     Gmail's subject: term matches WORDS in any order, so the search finds far
+     more than the report; this is the real filter, and it wants the WHOLE
+     configured sentence present. The ticket system that relays the report wraps
+     its own furniture round the line, so anchoring at the front would miss it
+     while still being no stricter about what else is in there. */
+  function subjectMatches_(subject, want) {
+    return stripMarkers_(subject).toLowerCase().indexOf(String(want).toLowerCase()) >= 0;
+  }
+
+  function readSeen_() {
+    var raw = PropertiesService.getScriptProperties().getProperty(SEEN_KEY) || '';
+    if (!raw) return [];
+    var list = null;
+    try { list = JSON.parse(raw); }
+    catch (e) {
+      /* NOT SILENT (§7). Every message still inside the window looks new, so
+         the next run sends the newest one again - which is a duplicate of an
+         email that was already correct, not a wrong number. Loud because a
+         duplicate nobody can explain is worse than one that is explained. */
+      APP_log('warn', 'TPMAIL.seen', 'the reported-message list is unreadable - the newest mail ' +
+              'in the window will look new and be reported again', { error: String(e) });
+      return [];
+    }
+    return (list && list.length) ? list : [];
+  }
+
+  function writeSeen_(list) {
+    if (list.length > SEEN_CAP) list = list.slice(list.length - SEEN_CAP);
+    PropertiesService.getScriptProperties().setProperty(SEEN_KEY, JSON.stringify(list));
+  }
+
+  function spreadsheetOn_(msg) {
+    var atts = msg.getAttachments({ includeInlineImages: false, includeAttachments: true });
+    for (var i = 0; i < atts.length; i++) {
+      var a = atts[i], n = String(a.getName() || '');
+      if (/\.xlsx?$/i.test(n)) return a;
+      var t = String(a.getContentType() || '').toLowerCase();
+      if (t.indexOf('spreadsheetml') >= 0 || t.indexOf('ms-excel') >= 0) return a;
+    }
+    return null;
+  }
+
+  /* ONE .xlsx ATTACHMENT, AS { tabName: grid }.
+
+     Apps Script cannot read an .xlsx - SpreadsheetApp opens a Google Sheet and
+     nothing else - so the bytes go to Drive, Drive converts a copy, the copy is
+     read and both are trashed. §5 already owns that conversion (private parent,
+     every non-owner permission stripped, TEMP_PREFIX on the name) and this
+     calls it rather than keeping a second answer to the same problem.
+
+     Both files are trashed in a `finally`, which covers every way the read can
+     fail EXCEPT the runtime limit - Apps Script kills the execution and no
+     `finally` runs. §5's sweepTemps_ clears a stranded Google Sheet; sweep_
+     below clears the stranded upload, which is not a Sheet and so is not its
+     business. */
+  function gridsFrom_(att) {
+    var upId = null, sheetId = null;
+    try {
+      var name = QLIKSYNC.tempPrefix + ' — ' + (att.getName() || 'sap.xlsx');
+      upId = DriveApp.createFile(att.copyBlob().setName(name)).getId();
+      sheetId = QLIKSYNC.toSheet(upId, att.getName() || 'sap.xlsx');
+
+      var ss = SpreadsheetApp.openById(sheetId), out = {};
+      ss.getSheets().forEach(function (sh) {
+        var values = sh.getDataRange().getValues();
+        if (values.length) out[String(sh.getName()).trim()] = values;
+      });
+      return out;
+    } finally {
+      if (sheetId) {
+        /* QLIKSYNC.trash swallows and logs its own failures, so reaching this
+           catch means something else did — and a temp Google Sheet left in
+           Drive is the leak §5's sweep exists to stop. Not silent. */
+        try { QLIKSYNC.trash(sheetId); }
+        catch (e) {
+          APP_log('warn', 'TPMAIL.grids', 'the converted copy of the SAP attachment was not ' +
+                  'trashed — the sync\u2019s sweep will clear it within the hour',
+                  { fileId: sheetId, error: String(e && e.message || e) });
+        }
+      }
+      if (upId) {
+        try { DriveApp.getFileById(upId).setTrashed(true); }
+        catch (e) {
+          APP_log('warn', 'TPMAIL.grids', 'the uploaded copy of the SAP attachment would not ' +
+                  'trash - it stays in Drive under the temp prefix',
+                  { fileId: upId, error: String(e && e.message || e) });
+        }
+      }
+    }
+  }
+
+  /* THE STRANDED UPLOADS, and this is a function that trashes files, so it
+     carries the same three guards §5's sweep does: the name must actually START
+     with the prefix (Drive's `title contains` is looser than it looks), it must
+     NOT be a Google Sheet (those are the sync's sweep to clear, and one may be
+     being read right now by a sync this knows nothing about), and it must be
+     over an hour old. Trashed, never deleted. */
+  var STRAY_MIN_AGE_MS = 60 * 60 * 1000;
+  var STRAY_CAP = 20;
+
+  function sweep_() {
+    var trashed = 0, stuck = [];
+    try {
+      var prefix = QLIKSYNC.tempPrefix;
+      var it = DriveApp.searchFiles('title contains "' + prefix + '" and trashed = false');
+      var cutoff = Date.now() - STRAY_MIN_AGE_MS, looked = 0;
+      while (it.hasNext() && looked < STRAY_CAP) {
+        var f = it.next();
+        looked++;
+        if (String(f.getName()).indexOf(prefix) !== 0) continue;
+        if (f.getMimeType() === MimeType.GOOGLE_SHEETS) continue;
+        if (f.getDateCreated().getTime() > cutoff) continue;
+        /* Collected, not logged here: a line per file would put APP_log inside
+           a loop, which §2 forbids for the reason a per-row log always turns
+           out to have. One line after the loop says the same thing. */
+        try { f.setTrashed(true); trashed++; } catch (e) { stuck.push(f.getName()); }
+      }
+    } catch (e) {
+      APP_log('warn', 'TPMAIL.sweep', 'could not look for stranded attachment copies',
+              { error: String(e) });
+    }
+    if (trashed) APP_log('info', 'TPMAIL.sweep', 'trashed attachment copies a killed run left ' +
+                         'behind', { trashed: trashed });
+    if (stuck.length) APP_log('warn', 'TPMAIL.sweep', 'some stranded attachment copies would not ' +
+                              'trash — they stay in Drive under the temp prefix',
+                              { files: stuck.slice(0, 5).join(', '), count: stuck.length });
+    return trashed;
+  }
+
+  /* Every message the query finds that actually carries the sentence, newest
+     last. Read-only; used by both run() and status(). */
+  function candidates_(c) {
+    var q = query(), threads = GmailApp.search(q, 0, 50), out = [];
+    for (var t = 0; t < threads.length; t++) {
+      var msgs = threads[t].getMessages();
+      for (var i = 0; i < msgs.length; i++) {
+        if (subjectMatches_(msgs[i].getSubject(), c.subject)) out.push(msgs[i]);
+      }
+    }
+    out.sort(function (a, b) { return a.getDate().getTime() - b.getDate().getTime(); });
+    return out;
+  }
+
+  function stamp_(d) {
+    return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+  }
+
+  /* A one-line provenance strip under the report. It is the only thing in the
+     mail the page's own Send does not produce, and it is here because this one
+     arrives without anybody having asked for it: the first question about an
+     unexpected email is where it came from. */
+  function footer_(cmp, c) {
+    var m = cmp.meta || {};
+    return '<div style="font-family:Arial,sans-serif;max-width:700px;margin-top:18px;' +
+           'padding:10px 14px;background:#F4F7FC;border:1px solid #DCE6F2;border-radius:6px;' +
+           'color:#666;font-size:11px;line-height:1.5;">' +
+           'Sent automatically from the Amrize Commercial Suite. ' +
+           'SAP file dated <b>' + cmp.reportDate + '</b> (' + cmp.tp01Count + ' TP01 + ' +
+           cmp.ziprCount + ' ZIPR rows). ' +
+           'Compared against ' + (cmp.source === 'sheet'
+             ? ('the Aggregates workbook &mdash; ' + (m.customerParent || '') + ', ' +
+                (m.cyYear || '') + ', ' + (m.rolledRows || 0) + ' rows')
+             : 'an uploaded QlikView export') + '. ' +
+           cmp.matched + ' of ' + (cmp.matched + cmp.unmatched) + ' rows matched a SAP price.' +
+           '</div>';
+  }
+
+  function emptyBody_(cmp, c) {
+    return '<div style="font-family:Arial,sans-serif;max-width:700px;">' +
+      '<div style="background:#011E6A;padding:20px 28px;border-radius:8px 8px 0 0;">' +
+        '<h2 style="color:white;margin:0;font-size:18px;">Transfer Price Exceptions &mdash; none</h2>' +
+        '<p style="color:#A9C3E8;margin:4px 0 0;font-size:13px;">Report Date: ' +
+          cmp.reportDate + '</p>' +
+      '</div>' +
+      '<div style="padding:20px 28px;border:1px solid #DCE6F2;border-top:none;' +
+           'border-radius:0 0 8px 8px;font-size:13px;color:#1F7A4D;font-weight:600;">' +
+        'Every matched SAP transfer price is at or above its ASP ex-Works. ' +
+        'Nothing needs correcting this week.' +
+      '</div></div>';
+  }
+
+  /* One message, end to end: read the attachment, build the other side, compare,
+     and send. Throws on anything worth retrying tomorrow; the caller decides
+     what that means for the seen-list. */
+  function report_(msg, c, auto) {
+    var grids = gridsFrom_(spreadsheetOn_(msg));
+    var sap = TPE.readSap(grids);
+    if (!sap.reportDate) {
+      /* THE DATE IS THE FILE'S OR IT IS THE MESSAGE'S, and never today's. A
+         file re-issued a fortnight late describes the day it was run, and
+         stamping it with the day the trigger fired is README.md §7's rule
+         broken in the one place nobody would check. The send date is the
+         nearest honest thing and it is reported as a guess. */
+      sap.reportDate = TPE.toDateStr(msg.getDate());
+      sap.dateSource = 'message';
+      APP_log('warn', 'TPMAIL.report', 'the SAP file carried no readable date cell - the ' +
+              'message send date is being used instead, and it is a guess',
+              { subject: String(msg.getSubject() || ''), used: sap.reportDate });
+    }
+
+    var qlk = TPE.qlikFromSheet();
+    var cmp = TPE.compare(sap, qlk);
+    var exc = TPE.grid('exc', null, cmp);
+
+    var out = { subject: String(msg.getSubject() || ''), sent: stamp_(msg.getDate()),
+                reportDate: cmp.reportDate, dateSource: cmp.dateSource,
+                matched: cmp.matched, unmatched: cmp.unmatched,
+                exceptions: exc.count, markets: Object.keys(cmp.exceptions).length,
+                mailed: false, to: auto.to.join(', '), cc: auto.cc.join(', ') };
+
+    if (!exc.count && !auto.sendWhenEmpty) {
+      APP_log('info', 'TPMAIL.report', 'no exceptions, and the settings say not to send on a ' +
+              'clean week', { reportDate: cmp.reportDate });
+      return out;
+    }
+
+    var subject = c.outSubject + ' — All Markets (' + cmp.reportDate + ')';
+    var body = (exc.count ? TPE.stackedBody('exc', cmp) : emptyBody_(cmp, c)) + footer_(cmp, c);
+
+    var mail = { to: auto.to.join(','), subject: subject, htmlBody: body };
+    if (auto.cc.length) mail.cc = auto.cc.join(',');
+    if (exc.count) {
+      /* ONE COMBINED FILE, and this is the one place the automated output is
+         deliberately not the shape the page produces. Market is already a
+         column, so a single workbook says everything five per-market ones
+         would and arrives as one thing to open. */
+      mail.attachments = [TPXLSX.build(exc, {
+        sheetName: 'Exceptions',
+        tableName: 'Exceptions',
+        formats: TPE.numberFormats(exc.headers),
+        filename: c.outFile + '_' + cmp.reportDate + '.xlsx'
+      })];
+    }
+    MailApp.sendEmail(mail);
+    out.mailed = true;
+    return out;
+  }
+
+  /* THE TRIGGER TARGET'S BODY. */
+  function run() {
+    var t0 = Date.now(), c = cfg_(), auto = TPAUTO.get();
+
+    if (!c.subject) {
+      APP_log('error', 'TPMAIL.run', 'not configured - set APP_CONFIG.TP01_MAIL.SUBJECT',
+              { ms: Date.now() - t0 });
+      return { ok: false, error: 'APP_CONFIG.TP01_MAIL.SUBJECT is empty.' };
+    }
+    if (!auto.enabled) {
+      /* Off is a setting, not a failure, and it costs nothing to say so once a
+         day in the log rather than leaving the trigger looking broken. */
+      APP_log('info', 'TPMAIL.run', 'the automated exceptions report is switched off',
+              { ms: Date.now() - t0 });
+      return { ok: true, skipped: 'disabled' };
+    }
+
+    var threads;
+    try { threads = candidates_(c); }
+    catch (e) {
+      APP_log('error', 'TPMAIL.run', 'the mailbox search failed - nothing was sent',
+              { ms: Date.now() - t0, query: query(), error: String(e && e.message || e) });
+      return { ok: false, error: String(e && e.message || e) };
+    }
+
+    var order = readSeen_(), seen = {}, k;
+    for (k = 0; k < order.length; k++) seen[order[k]] = true;
+
+    var fresh = [];
+    for (k = 0; k < threads.length; k++) if (!seen[threads[k].getId()]) fresh.push(threads[k]);
+
+    /* THE ORDINARY DAY. Nothing new means nothing happens - no sheet read, no
+       Drive file, no property written. The Gmail search is the whole cost, and
+       that is six days in seven. */
+    if (!fresh.length) {
+      APP_log('info', 'TPMAIL.run', 'no new mail - nothing to do',
+              { ms: Date.now() - t0, matched: threads.length });
+      return { ok: true, sent: 0, alreadyDone: threads.length };
+    }
+
+    if (!auto.to.length) {
+      /* NOT marked done. The mail is here and correct; what is missing is
+         somewhere to send it, and that is fixed on the page in ten seconds -
+         at which point tomorrow's run picks this same message up. */
+      APP_log('error', 'TPMAIL.run', 'a new SAP file is here but the automated email has no ' +
+              'recipients - nothing was sent, and it will be retried tomorrow',
+              { ms: Date.now() - t0, waiting: fresh.length });
+      TPAUTO.setState({ ok: false, error: 'No recipients are configured.', sent: 0 });
+      return { ok: false, error: 'No recipients are configured.' };
+    }
+
+    sweep_();
+
+    /* ONLY THE NEWEST. The older unseen ones are earlier versions of the same
+       list; reporting them too would be three chances to act on the stale two.
+       They are marked done without being sent, and the log says how many. */
+    var newest = fresh[fresh.length - 1], skipped = fresh.length - 1;
+    var att = spreadsheetOn_(newest);
+    if (!att) {
+      /* Marked done: a mail with no workbook on it will never grow one, and
+         retrying it daily forever would log the same warning until somebody
+         deleted the message. */
+      order.push(newest.getId()); writeSeen_(order);
+      APP_log('warn', 'TPMAIL.run', 'a matching mail carried no spreadsheet - ignored from now on',
+              { subject: String(newest.getSubject() || '') });
+      return { ok: true, sent: 0, ignored: 1 };
+    }
+
+    var rec;
+    try { rec = report_(newest, c, auto); }
+    catch (e) {
+      /* NOT marked done, on purpose: a Drive hiccup, a sheet that has lost its
+         sharing or a header that moved is fixed by tomorrow's run, and
+         forgetting the message would mean it is never retried. */
+      APP_log('error', 'TPMAIL.run', 'could not report on the new SAP file - it will be retried ' +
+              'tomorrow', { ms: Date.now() - t0, subject: String(newest.getSubject() || ''),
+                            error: String(e && e.message || e) });
+      TPAUTO.setState({ ok: false, sent: 0, subject: String(newest.getSubject() || ''),
+                        error: String(e && e.message || e) });
+      return { ok: false, error: String(e && e.message || e) };
+    }
+
+    for (k = 0; k < fresh.length; k++) order.push(fresh[k].getId());
+    writeSeen_(order);
+
+    rec.ok = true;
+    rec.supersededMails = skipped;
+    TPAUTO.setState(rec);
+    APP_log('info', 'TPMAIL.run', rec.mailed ? 'reported' : 'nothing to report',
+            { ms: Date.now() - t0, reportDate: rec.reportDate, exceptions: rec.exceptions,
+              matched: rec.matched, unmatched: rec.unmatched, mailed: rec.mailed,
+              superseded: skipped });
+    return { ok: true, sent: rec.mailed ? 1 : 0, report: rec };
+  }
+
+  /* WHAT THE NEXT RUN WOULD DO, WITHOUT DOING ANY OF IT.
+
+     This is the function to run before setting the trigger, and it is the one
+     that answers the questions the code cannot answer on its own: whether the
+     subject sentence matches the mail that actually arrives, whether the
+     Aggregates sheet still spells the customer parent the way the config does,
+     which markets the rows land in, and - the only number that really matters -
+     what proportion of rows find a SAP price.
+
+     IT SENDS NOTHING, MARKS NOTHING and writes no setting. It does make and
+     trash one temporary Drive copy of the attachment, because there is no way
+     to read an .xlsx without one; pass false to skip that and get the mail and
+     sheet halves only. */
+  function status(deep) {
+    var c = cfg_(), auto = TPAUTO.get();
+    var out = { query: query(), enabled: auto.enabled, to: auto.to, cc: auto.cc,
+                sendWhenEmpty: auto.sendWhenEmpty, lastRun: TPAUTO.state(),
+                mail: [], sheet: null, join: null, wouldSend: null, notes: [] };
+    if (!out.query) { out.error = 'APP_CONFIG.TP01_MAIL.SUBJECT is empty.'; return out; }
+    if (!auto.enabled)    out.notes.push('The automated email is switched OFF, so the trigger does nothing.');
+    if (!auto.to.length)  out.notes.push('No recipients are set, so nothing could be sent.');
+
+    /* ---- the mailbox half ---- */
+    var order = readSeen_(), seen = {}, k;
+    for (k = 0; k < order.length; k++) seen[order[k]] = true;
+    out.reportedCount = order.length;
+
+    var msgs = [];
+    try { msgs = candidates_(c); }
+    catch (e) { out.error = 'The mailbox search failed: ' + String(e && e.message || e); return out; }
+
+    var newestUnseen = null;
+    for (k = 0; k < msgs.length; k++) {
+      var m = msgs[k], att = spreadsheetOn_(m), isNew = !seen[m.getId()];
+      if (isNew) newestUnseen = m;
+      out.mail.push({
+        subject: String(m.getSubject() || ''), from: String(m.getFrom() || ''),
+        sent: stamp_(m.getDate()), unreported: isNew,
+        attachment: att ? String(att.getName() || '') : 'NONE - this mail would be ignored'
+      });
+    }
+    if (!msgs.length) out.notes.push('Nothing in the mailbox matches. Check the subject sentence ' +
+      'and the FROM term in APP_CONFIG.TP01_MAIL - the query above is exactly what was run.');
+    if (msgs.length && !newestUnseen) out.notes.push('Every matching mail has already been ' +
+      'reported on, so the next run would do nothing.');
+
+    /* ---- the Aggregates half ---- */
+    try {
+      var qlk = TPE.qlikFromSheet(), meta = qlk.meta;
+      var top = Object.keys(meta.parents).sort(function (a, b) { return meta.parents[b] - meta.parents[a]; });
+      var markets = {}, samples = [];
+      for (k = 0; k < qlk.rows.length; k++) {
+        var r = qlk.rows[k];
+        markets[r[0]] = (markets[r[0]] || 0) + 1;
+        if (samples.length < 10) {
+          samples.push({ soldTo: r[2], plant: r[3], material: r[4],
+                         key: TPE.buildQlkKey(r[3], r[2], r[4]) });
+        }
+      }
+      out.sheet = {
+        year: meta.cyYear, customerParent: meta.customerParent,
+        rawRows: meta.rawRows, rowsForThatParent: meta.matchedParentRows,
+        rolledRows: meta.rolledRows, markets: markets,
+        unmappedPlants: meta.unmappedPlants,
+        /* The spellings actually in the column, commonest first. A config that
+           has drifted from the sheet shows up here as "0 rows" beside a list
+           containing the name it should have been. */
+        parentsInTheSheet: top.slice(0, 12).map(function (p) { return p + ' (' + meta.parents[p] + ')'; }),
+        sampleKeys: samples
+      };
+      if (!meta.matchedParentRows) out.notes.push('NO Aggregates rows carry the customer parent ' +
+        '"' + meta.customerParent + '". The spellings that ARE in that column are listed under ' +
+        'sheet.parentsInTheSheet.');
+      if (meta.unmappedPlants.length) out.notes.push(meta.unmappedPlants.length + ' plant(s) have ' +
+        'no REGION LOOKUP row, so their rows land under the market "Unknown".');
+    } catch (e) {
+      out.sheet = { error: String(e && e.message || e) };
+    }
+
+    /* ---- the join, which is the number that matters ---- */
+    if (deep === false) { out.notes.push('Ran shallow: the attachment was not read.'); return out; }
+    var use = newestUnseen || (msgs.length ? msgs[msgs.length - 1] : null);
+    if (!use || !out.sheet || out.sheet.error) return out;
+
+    try {
+      var sap = TPE.readSap(gridsFrom_(spreadsheetOn_(use)));
+      if (!sap.reportDate) { sap.reportDate = TPE.toDateStr(use.getDate()); sap.dateSource = 'message'; }
+      var cmp = TPE.compare(sap, TPE.qlikFromSheet());
+      var exc = TPE.grid('exc', null, cmp);
+
+      var unmatchedKeys = [], H = cmp.headers.indexOf('Concat Key');
+      for (k = 0; k < cmp.rows.length && unmatchedKeys.length < 10; k++) {
+        if (cmp.rows[k][cmp.headers.indexOf('SAP Transfer Price')] === '') unmatchedKeys.push(cmp.rows[k][H]);
+      }
+      var sapKeys = [];
+      for (k = 0; k < sap.rows.length && sapKeys.length < 10; k++) sapKeys.push(sap.rows[k]['Concat Key']);
+
+      out.join = {
+        usedMail: String(use.getSubject() || ''), alreadyReported: !newestUnseen,
+        reportDate: cmp.reportDate, dateSource: cmp.dateSource,
+        tp01Rows: cmp.tp01Count, ziprRows: cmp.ziprCount,
+        comparedRows: cmp.rows.length, matched: cmp.matched, unmatched: cmp.unmatched,
+        matchRate: cmp.rows.length ? Math.round(cmp.matched / cmp.rows.length * 100) + '%' : 'n/a',
+        exceptions: exc.count, exceptionMarkets: Object.keys(cmp.exceptions),
+        firstSapKeys: sapKeys, firstUnmatchedKeys: unmatchedKeys
+      };
+      out.wouldSend = {
+        to: auto.to.join(', '), cc: auto.cc.join(', '),
+        subject: c.outSubject + ' — All Markets (' + cmp.reportDate + ')',
+        attachment: exc.count ? (c.outFile + '_' + cmp.reportDate + '.xlsx') : '(none - no exceptions)',
+        rows: exc.count
+      };
+      if (cmp.rows.length && cmp.matched === 0) out.notes.push('NOTHING matched. The two sides ' +
+        'build their Concat Key from different things, or this SAP file covers different plants ' +
+        '- compare join.firstSapKeys against sheet.sampleKeys.');
+    } catch (e) {
+      out.join = { error: String(e && e.message || e) };
+    }
+    return out;
+  }
+
+  return { run: run, status: status, query: query };
+})();
 
 /* ---- IR_Backend.gs -----------------------------------------------------------
    The Inventory Report's source setting. The smallest backend in the file.  */
@@ -14216,6 +16089,23 @@ var IRMAIL = (function () {
  *                    what the page is showing, and every mail it has not
  *                    published yet. Reads only; run it from the editor.
  *
+ *   tp01ReportMailCheck
+ *                    THE THIRD TRIGGER TARGET, and the first DAILY one. Set ONE
+ *                    time-driven day timer on it. It finds the weekly SAP
+ *                    transfer-price mail, runs the comparison against the
+ *                    Aggregates sheet and emails the exceptions (§10's TPMAIL).
+ *                    Nothing points at it either. With no trigger set nothing
+ *                    breaks — the page still does the whole job by hand — the
+ *                    report simply never arrives, which is the failure nobody
+ *                    notices, because nobody misses an email they were not
+ *                    expecting.
+ *   tp01ReportMailStatus
+ *                    what THAT check would do right now, and the one to run
+ *                    first: the query and every mail it matches, the Aggregates
+ *                    rows behind the comparison with the customer-parent
+ *                    spellings actually in the sheet, and the match rate between
+ *                    the two sides. Sends nothing and marks nothing.
+ *
  * The other functions in this file that are run by hand rather than called are
  * signposted where they live, because they belong with the code they report on:
  * APP_verifyPermissions (§4), clearRetiredOverrides (§1), getSaskRatesStatus (§6)
@@ -14456,3 +16346,45 @@ function inventoryReportMailCheck()  { return IRMAIL.run(); }
 
 /* What the check above would do right now, without doing any of it. */
 function inventoryReportMailStatus() { return IRMAIL.status(); }
+
+
+/* ==========================================================================
+ * THE THIRD TRIGGER, AND THE FIRST DAILY ONE: the transfer-price exceptions
+ * report sends itself.
+ * --------------------------------------------------------------------------
+ * Set ONE time-driven trigger on tp01ReportMailCheck — Triggers ▸ Add trigger ▸
+ * Time-driven ▸ Day timer ▸ any hour. ADD IT FROM THE ACCOUNT THAT DEPLOYED THE
+ * WEB APP: a trigger runs as whoever created it, so it is that account's mailbox
+ * this searches, that account that is asked for gmail.readonly, and THAT ACCOUNT
+ * THE MAIL IS SENT AS — which is not the same rule the page's own Send button
+ * follows. Nothing in this repo creates the trigger and nothing calls this
+ * function; the trigger is the only caller it will ever have.
+ *
+ * DAILY FOR A WEEKLY MAIL, and that is not waste. A day with no new mail costs
+ * one Gmail search and nothing else — no sheet read, no comparison, no Drive
+ * file, no property written — so six days in seven are free. What the seventh
+ * buys is that a report re-issued mid-week goes out the next morning instead of
+ * waiting for the following Tuesday.
+ *
+ * It finds the mail whose subject carries APP_CONFIG.TP01_MAIL.SUBJECT, reads
+ * the .xlsx on it, builds the QlikView side out of the Aggregates workbook
+ * (Customer Parent = Amrize RMX, this year, rolled to the export's grain), runs
+ * the same comparison the page runs, and emails the exceptions — one mail, every
+ * market stacked in the body, one combined workbook attached. Who it goes to is
+ * the Automated email panel on the TP01 page, stored in Script Properties.
+ *
+ * ONLY THE NEWEST UNSEEN MAIL IS REPORTED ON. Older unseen ones are earlier
+ * versions of the same list and are marked done without being sent.
+ *
+ * RUN tp01ReportMailStatus() FROM THE EDITOR FIRST. It answers the things the
+ * code cannot answer on its own — whether the subject sentence matches the mail
+ * that actually arrives, whether the sheet still spells the customer parent the
+ * way the config does, and what proportion of rows find a SAP price — without
+ * sending anything or marking anything.
+ * ======================================================================== */
+function tp01ReportMailCheck()  { return TPMAIL.run(); }
+
+/* What the check above would do right now, without sending or marking any of
+   it. It does make and trash one temporary Drive copy of the attachment, because
+   there is no way to read an .xlsx without one. */
+function tp01ReportMailStatus() { return TPMAIL.status(); }

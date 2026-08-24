@@ -28,6 +28,20 @@
  * AmrHint without the click handler that opens it, and no diff would ever have
  * shown that, because the button renders perfectly either way.
  *
+ * TP01 IS NO LONGER ONE OF THESE CASES, and it retired rather than being
+ * weakened — which is this file's own rule, and tests/README.md states it. The
+ * page was deliberately changed: every number it produced moved to the server
+ * (script.gs §10's TPE), the QlikView file became an optional override of the
+ * Aggregates data, and three pieces of user-facing copy now say different
+ * things because different things are true. "app.html is a port of
+ * Page_TP01.html" stopped being something anyone wants to be true, so a gate
+ * asserting it could only have been narrowed until it passed. What holds that
+ * page up instead: tests/tp01engine.js states every rule the arithmetic has to
+ * keep, merge.js proves the ids resolve and the registration leaks no globals,
+ * and pageswitch.js proves it mounts and unmounts cleanly. What went with it,
+ * and is worth knowing: nothing now proves the eleven ex-inline handlers are
+ * still wired.
+ *
  * STUBS, AND WHY EACH ONE IS HONEST
  *   · google.script.run  — the server is not reachable off-platform. Both sides
  *     get the identical model, so any difference is the page's.
@@ -241,14 +255,6 @@ function deckModel() {
   };
 }
 
-/* TP01 does everything in the browser until Send, so a boot-time fixture is
-   the recipient map — which is also what proves the boot path ran: the two
-   "always send to" boxes are filled from it. */
-function tp01Model() {
-  return { 'ALL::mkt': 'ops@amrize.com', 'ALL::exc': 'controlling@amrize.com',
-           'GTA AGG': 'gta@amrize.com', 'EXC::GTA AGG': 'gta.exc@amrize.com' };
-}
-
 /* Server replies, by function name. A page asking for anything not listed here
    is a finding, not something to paper over — the runner reports it. */
 function serverStubs(model) {
@@ -264,9 +270,6 @@ function serverStubs(model) {
     DECK_resetPlan:    () => ({ plan: { v:1, order:[], off:[], on:[], drop:[], rows:{}, add:[] } }),
     DECK_setTables:    () => ({ scope: '', entry: null, map: { v:1, scopes:{} } }),
     DECK_resetTables:  () => ({ map: { v:1, scopes:{} } }),
-    /* TP01 */
-    TP_getRecipients:  () => model,
-    TP_saveRecipient:  () => ({ ok: true }),
     getFscData:      () => model,
     getRmxFuelData:  () => model,
     getFscDataFromUpload:     () => model,
@@ -653,43 +656,6 @@ const PAGES = [
       modules: ['AMR', 'AmrSlide', 'AmrTick', 'AmrDeckSource', 'AmrKpi',
                 'AmrCache', 'AmrPvSlide', 'AmrSegSlide', 'AmrRmxSlide',
                 'AmrFuelExec', 'AmrProgress', 'AmrBoot', 'AmrFresh'],
-    },
-  },
-  {
-    /* TP01. Everything happens in the browser until Send, so there is little
-       to diff before a workbook is dropped — and that is not what this case is
-       for. Its risk is that the page had ~90 top-level names and eleven inline
-       handlers, all of which resolved against window and none of which can. */
-    id: 'tp01',
-    legacy: 'Page_TP01.html',
-    model: tp01Model,
-    views: ['__mounted__', '__typed__'],
-    viewButton: () => '',
-    /* Type into the "always send to" box. It is the one control on this page
-       reachable without a workbook, and its handler is one of the eleven the
-       port moved off an inline on*= attribute. */
-    drive: (win, view) => {
-      if (view !== '__typed__') return;
-      const el = win.document.getElementById('alwaysto-mkt');
-      if (!el) throw new Error('no #alwaysto-mkt');
-      el.value = 'new.recipient@amrize.com';
-      el.dispatchEvent(new win.Event('change', { bubbles: true }));
-    },
-    readAsked: true,
-    payload:  { host: 'marketList' },
-    expectMarkup: 'exc-empty',
-    readHtml: { exc: 'excList', pills: 'colPills', stats: 'statsGrid', status: 'status' },
-    /* filled from the recipient map, so a boot that never ran is visible */
-    readValue: { alwaysMkt: 'alwaysto-mkt', alwaysExc: 'alwaysto-exc' },
-    chrome: {
-      guideSteps: 1,             // the seventh and last copy, now one mount
-      noGlobals: ['sapData', 'qlkBytes', 'sapWB', 'compWB', 'savedRecips',
-                  'showStatus', 'slug', 'recipKey', 'parseEmails', 'alwaysList',
-                  'onAlwaysToChange', 'recipientsFor', 'onRecipChange',
-                  'downloadSAP', 'downloadComparison', 'downloadMarket',
-                  'emailMarket', 'sendAll', 'sendAsOne', 'renderPanels',
-                  'marketDataMap', 'excDataMap', 'setupDrop'],
-      modules: ['AMR', 'AmrHint', 'AmrQlikGuide', 'AmrProgress', 'AmrBoot'],
     },
   },
   {
