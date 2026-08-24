@@ -4390,7 +4390,7 @@ var QLIKSYNC = (function () {
            band goes back either way: it is registered in `plan` and parked in a
            property. */
         if (Date.now() - EXEC_T0 > EXEC_SAFE_MS) {
-          throw retryable_('"' + spec.tab + '" ran out of execution time ' +
+          throw budgetError_('"' + spec.tab + '" ran out of execution time ' +
             off + ' rows into a ' + n + '-row write, so it was stopped before Apps Script could ' +
             'kill it mid-row. The tab is blank below row ' + (firstData + off - 1) + ' in the ' +
             'columns the sync owns; a retry has been armed and rewrites it whole.');
@@ -4921,6 +4921,19 @@ var QLIKSYNC = (function () {
     return e;
   }
 
+  /* A RETRYABLE FAILURE THAT IS NOT ABOUT THE EXPORT. Running out of execution
+     time says nothing is wrong with the file, the tab or the read — there was
+     simply more work than six minutes holds. It retries under a higher ceiling
+     than a broken export does, because each attempt is SMALLER than the one
+     before it: the pages that finished are not retried, so the work left
+     shrinks every round and the chain converges. The ceiling is there anyway,
+     so a page that genuinely cannot fit cannot retry for ever. */
+  function budgetError_(message) {
+    var e = retryable_(message);
+    e.qlikBudget = true;
+    return e;
+  }
+
 
   /* =====================================================================
    * 5c. TELLING SOMEBODY — this runs on a timer with nobody watching
@@ -4992,6 +5005,17 @@ var QLIKSYNC = (function () {
    * first, so these cannot accumulate against the per-script trigger limit.
    * ================================================================== */
   var QLIK_RETRY_KEY = 'QLIK_RETRY', QLIK_RETRY_MAX = 1, QLIK_RETRY_MINS = 5;
+
+  /* A BROKEN EXPORT IS NOT WORTH ASKING TWICE AND A CLOCK IS. One retry is the
+     right number for a file that failed its checks: a second failure means the
+     export itself is wrong, and asking again just delays saying so. Running out
+     of execution time is the other kind — nothing is wrong with anything, there
+     was more work than six minutes holds — and each attempt is strictly smaller
+     than the one before it, because the pages that finished are not retried. So
+     that chain is allowed to run to the end of the work rather than being cut
+     off one page in. The ceiling still exists: a page whose own write cannot
+     fit six minutes on its own would otherwise retry for ever. */
+  var QLIK_RETRY_MAX_BUDGET = 5;
   var QLIK_RETRY_FN = 'qlikSyncRetry';
 
   function retryLog_() {
@@ -5049,12 +5073,16 @@ var QLIKSYNC = (function () {
     if (!Object.keys(all).length) dropRetryTriggers_();
   }
 
-  function scheduleRetry_(scope, problems) {
+  function scheduleRetry_(scope, problems, budget) {
     var all = retryLog_(), rec = all[scope] || { tries: 0 };
-    if (rec.tries >= QLIK_RETRY_MAX) {
-      APP_log('error', 'QLIKSYNC.retry', 'this source has already been retried and failed its ' +
-              'checks again — it will not be retried further',
-              { scope: scope, tries: rec.tries, problems: problems });
+    var cap = budget ? QLIK_RETRY_MAX_BUDGET : QLIK_RETRY_MAX;
+    if (rec.tries >= cap) {
+      APP_log('error', 'QLIKSYNC.retry', budget
+              ? 'this page has run out of execution time on every attempt allowed — it will not ' +
+                'be retried further, and the work it has left does not fit the runtime limit'
+              : 'this source has already been retried and failed its checks again — it will not ' +
+                'be retried further',
+              { scope: scope, tries: rec.tries, cap: cap, budget: !!budget, problems: problems });
       delete all[scope];
       saveRetry_(all);
       return 'exhausted';
@@ -5088,11 +5116,37 @@ var QLIKSYNC = (function () {
   function reportFailure_(scope, failed, filesSeen, started) {
     var label = (sourceByScope_(scope) || {}).label || scope;
     var retryable = failed.filter(function (f) { return f.check; });
-    /* 'armed' | 'exhausted' | 'unarmed' — three different things to tell
-       somebody, and one boolean told two of them the same lie. */
-    var retry = retryable.length ? scheduleRetry_(scope, retryable.map(function (f) {
-      return f.tab + ': ' + f.error;
-    })) : 'none';
+
+    /* ONE RETRY PER PAGE THAT FAILED, NOT ONE FOR THE SCOPE THAT WAS ASKED FOR.
+       A run of 'all' that got Aggregates written and then ran out of time on
+       Ready-Mix used to arm a retry for 'all' — which re-converts, re-reads and
+       re-writes the 52,000 rows that already landed before it reaches the work
+       that did not, and then runs out of time in the same place, one page
+       further on at best. Retrying the PAGES THAT FAILED is what makes each
+       attempt smaller than the last, and that is what makes the chain finish
+       rather than circle.
+
+       'armed' | 'exhausted' | 'unarmed' — three different things to tell
+       somebody, and one boolean told two of them the same lie. With several
+       pages in play the mail reports the best of them, because that is what
+       actually happens next. */
+    var perPage = {}, clockOnly = {}, retry = 'none';
+    retryable.forEach(function (f) {
+      var pg = f.page || scope;
+      (perPage[pg] = perPage[pg] || []).push(f.tab + ': ' + f.error);
+      /* A PAGE gets the clock's ceiling only if every one of ITS failures is
+         the clock. One tab that failed its checks on a page makes that page a
+         one-retry page, and says nothing about the page beside it. */
+      clockOnly[pg] = (pg in clockOnly ? clockOnly[pg] : true) && !!f.budget;
+    });
+    var retryPages = Object.keys(perPage);
+    if (retryPages.length) {
+      var outs = retryPages.map(function (pg) {
+        return scheduleRetry_(pg, perPage[pg], clockOnly[pg]);
+      });
+      retry = outs.indexOf('armed') !== -1 ? 'armed'
+            : outs.indexOf('unarmed') !== -1 ? 'unarmed' : 'exhausted';
+    }
 
     var body = [];
     body.push('The QlikView sync ran at ' + started + ' and ' + failed.length +
@@ -5294,7 +5348,7 @@ var QLIKSYNC = (function () {
            whole six minutes for what is left. */
         if (Date.now() - EXEC_T0 > EXEC_SAFE_MS) {
           byPage[page].forEach(function (s) {
-            failed.push({ tab: s.tab, check: true,
+            failed.push({ tab: s.tab, page: page, check: true, budget: true,
               error: 'This execution ran out of time before "' + s.tab + '" could be started, ' +
                      'so nothing was written and the tab is exactly as it was. A retry has been ' +
                      'armed; it will have the whole of its own six minutes for what is left.' });
@@ -5309,7 +5363,7 @@ var QLIKSYNC = (function () {
           ss = openWorkbook_(page);
         } catch (e) {
           byPage[page].forEach(function (s) {
-            failed.push({ tab: s.tab, error: e.message });
+            failed.push({ tab: s.tab, page: page, error: e.message });
           });
           releaseExports_();
           return;
@@ -5322,7 +5376,7 @@ var QLIKSYNC = (function () {
             var sh = ss.getSheetByName(spec.tab);
             if (!sh) {
               (spec.optional ? skipped : failed).push({
-                tab: spec.tab,
+                tab: spec.tab, page: page,
                 error: 'No tab called "' + spec.tab + '" in ' + APP_CONFIG.PAGES[page].label + '.'
               });
               return;
@@ -5336,7 +5390,7 @@ var QLIKSYNC = (function () {
                  produce it, a file still being written among them. Without the
                  flag this kept the export's stamp and was never tried again. */
               (spec.optional ? skipped : failed).push({
-                tab: spec.tab,
+                tab: spec.tab, page: page,
                 check: !spec.optional,
                 error: 'Nothing in the ' + spec.folder + ' folder matches this tab' +
                        (spec.srcTab ? ' (looked for an export tab called "' + spec.srcTab + '")' : '') +
@@ -5366,7 +5420,8 @@ var QLIKSYNC = (function () {
             done.push(res);
             ends[norm_(spec.tab)] = sh.getMaxRows();
           } catch (e) {
-            failed.push({ tab: spec.tab, error: e.message, check: !!(e && e.qlikCheck) });
+            failed.push({ tab: spec.tab, page: page, error: e.message,
+                          check: !!(e && e.qlikCheck), budget: !!(e && e.qlikBudget) });
           }
         });
 
@@ -5385,7 +5440,7 @@ var QLIKSYNC = (function () {
               try {
                 p.sh.getRange(r + 1, start + 1, 1, len).setFormulas([seg]);
               } catch (e) {
-                failed.push({ tab: p.sh.getName(),
+                failed.push({ tab: p.sh.getName(), page: page,
                   error: 'Could not restore the formulas in ' +
                          p.sh.getRange(r + 1, start + 1, 1, len).getA1Notation() +
                          ': ' + e.message });
@@ -5432,8 +5487,16 @@ var QLIKSYNC = (function () {
          still looks like a tab — so a failed run says so out loud before it
          returns, and arms the one retry if the failure is the kind a retry can
          fix. */
+      /* PER PAGE, BOTH WAYS. A page that came through clean has its retry
+         record dropped even when a SIBLING page failed — otherwise the page
+         that worked stays on the retry list and the next attempt redoes it,
+         which is the whole thing this is trying to stop. */
+      var pagesBad = {};
+      failed.forEach(function (f) { if (f.page) pagesBad[f.page] = 1; });
+      Object.keys(byPage).forEach(function (pg) { if (!pagesBad[pg]) clearRetry_(pg); });
+      if (!failed.length) clearRetry_(want);
+
       if (failed.length) reportFailure_(want, failed, filesSeen, started);
-      else clearRetry_(want);
 
       return {
         ok: failed.length === 0,
@@ -17936,8 +17999,20 @@ function qlikSyncNow(scope) {
      the next check re-syncs sources that were fine, which is idempotent. The
      other way round — marking a file read because a different one succeeded —
      is not. */
-  var gated = (res.failed || []).filter(function (f) { return f.check; });
-  if (!res.error && !gated.length) {
+  /* PER PAGE, BECAUSE A FAILURE NOW SAYS WHICH ONE. This used to be all or
+     nothing — one gated tab anywhere withheld every stamp in the run, on the
+     reasoning that a { tab, error } record does not say which source its tab
+     came from. It does now, so a run of 'all' that wrote Aggregates whole and
+     ran out of time on Ready-Mix stamps Aggregates and withholds Ready-Mix.
+     That is not tidiness: without it the retry five minutes later re-converts,
+     re-reads and re-writes 52,000 rows that already landed, which is most of
+     the six minutes it needs for the work that did not. */
+  var badPages = {}, badUnknown = false;
+  (res.failed || []).forEach(function (f) {
+    if (!f.check) return;
+    if (f.page) badPages[f.page] = 1; else badUnknown = true;
+  });
+  if (!res.error && !badUnknown) {
     var props = PropertiesService.getScriptProperties(), seen = {};
     try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); }
     catch (e) {
@@ -17951,6 +18026,7 @@ function qlikSyncNow(scope) {
     }
     QLIKSYNC.sources().forEach(function (src) {
       if (want !== 'all' && src.scope !== want) return;
+      if (badPages[src.scope]) return;      /* this source's page did not finish */
       try { seen[src.key] = String(DriveApp.getFileById(src.id).getLastUpdated().getTime()); }
       catch (e) {
         APP_log('warn', 'QLIKSYNC.syncNow', 'no stamp for this source — it will be re-synced ' +
