@@ -15163,7 +15163,17 @@ var TPMAIL = (function () {
       });
       return out;
     } finally {
-      if (sheetId) { try { QLIKSYNC.trash(sheetId); } catch (e) {} }
+      if (sheetId) {
+        /* QLIKSYNC.trash swallows and logs its own failures, so reaching this
+           catch means something else did — and a temp Google Sheet left in
+           Drive is the leak §5's sweep exists to stop. Not silent. */
+        try { QLIKSYNC.trash(sheetId); }
+        catch (e) {
+          APP_log('warn', 'TPMAIL.grids', 'the converted copy of the SAP attachment was not ' +
+                  'trashed — the sync\u2019s sweep will clear it within the hour',
+                  { fileId: sheetId, error: String(e && e.message || e) });
+        }
+      }
       if (upId) {
         try { DriveApp.getFileById(upId).setTrashed(true); }
         catch (e) {
@@ -15185,7 +15195,7 @@ var TPMAIL = (function () {
   var STRAY_CAP = 20;
 
   function sweep_() {
-    var trashed = 0;
+    var trashed = 0, stuck = [];
     try {
       var prefix = QLIKSYNC.tempPrefix;
       var it = DriveApp.searchFiles('title contains "' + prefix + '" and trashed = false');
@@ -15196,7 +15206,10 @@ var TPMAIL = (function () {
         if (String(f.getName()).indexOf(prefix) !== 0) continue;
         if (f.getMimeType() === MimeType.GOOGLE_SHEETS) continue;
         if (f.getDateCreated().getTime() > cutoff) continue;
-        try { f.setTrashed(true); trashed++; } catch (e) {}
+        /* Collected, not logged here: a line per file would put APP_log inside
+           a loop, which §2 forbids for the reason a per-row log always turns
+           out to have. One line after the loop says the same thing. */
+        try { f.setTrashed(true); trashed++; } catch (e) { stuck.push(f.getName()); }
       }
     } catch (e) {
       APP_log('warn', 'TPMAIL.sweep', 'could not look for stranded attachment copies',
@@ -15204,6 +15217,9 @@ var TPMAIL = (function () {
     }
     if (trashed) APP_log('info', 'TPMAIL.sweep', 'trashed attachment copies a killed run left ' +
                          'behind', { trashed: trashed });
+    if (stuck.length) APP_log('warn', 'TPMAIL.sweep', 'some stranded attachment copies would not ' +
+                              'trash — they stay in Drive under the temp prefix',
+                              { files: stuck.slice(0, 5).join(', '), count: stuck.length });
     return trashed;
   }
 

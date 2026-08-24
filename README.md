@@ -120,9 +120,9 @@ six. Each of the eight scopes was traced to a real call:
 | `auth/spreadsheets` | `SpreadsheetApp.openById` — the project is not bound to a sheet, so the narrower current-document scope is no use |
 | `auth/drive` | `DriveApp` get/create **and** the Drive v3 REST `files/copy` in §5 that converts a QlikView export. Full `drive`, not `drive.file`: the files were not created by this script |
 | `auth/presentations` | `SlidesApp.openById` — the Deck Builder |
-| `auth/script.send_mail` | `MailApp.sendEmail` — TP01. Still not a Gmail scope: it is the narrow "send mail as you" grant and it cannot read a mailbox. The read side is the next row, and the two are separate grants on purpose |
-| `auth/gmail.readonly` | `GmailApp.search` / `getAttachments` — §10's Inventory Report mail watch, and nothing else. **Read-only deliberately**: the watch remembers which messages it has already published in a Script Property rather than labelling or archiving them, so `gmail.modify` is not needed and nothing ever writes to a mailbox. This is the widest grant in the list — it can read every message the deployer can — and it is here only because Gmail has no "one sender, one subject" scope to ask for instead.
-The mailbox it reads is the **trigger creator's**, not the deployer's (§1). `APP_CONFIG.INVENTORY_MAIL.FROM` is the narrowing the project *can* do |
+| `auth/script.send_mail` | `MailApp.sendEmail` — TP01, both the per-market files a person sends from the page and the weekly exceptions report the trigger sends. Still not a Gmail scope: it is the narrow "send mail as you" grant and it cannot read a mailbox. The read side is the next row, and the two are separate grants on purpose |
+| `auth/gmail.readonly` | `GmailApp.search` / `getAttachments` — §10's **two** mail watches, the Inventory Report's and TP01's, and nothing else. **Read-only deliberately**: both remember which messages they have already handled in a Script Property rather than labelling or archiving them, so `gmail.modify` is not needed and nothing ever writes to a mailbox. This is the widest grant in the list — it can read every message the deployer can — and it is here only because Gmail has no "one sender, one subject" scope to ask for instead.
+The mailbox each reads is the **trigger creator's**, not the deployer's (§1). `APP_CONFIG.INVENTORY_MAIL.FROM` and `APP_CONFIG.TP01_MAIL.FROM` are the narrowing the project *can* do |
 | `auth/script.external_request` | `UrlFetchApp` — the logo, and the Drive REST call above |
 | `auth/script.scriptapp` | `ScriptApp.getService().getUrl()`, which every page link is built from. Included deliberately even though it may be reachable without it: if that URL comes back empty every link goes **relative**, and a relative href inside the Apps Script sandbox iframe resolves against `googleusercontent.com`, navigating the user off the app. That shipped once |
 | `auth/userinfo.email` | `Session.getActiveUser().getEmail()` — who archived a KPI workbook, and the check's own report |
@@ -148,7 +148,7 @@ Ten pages, one `<template>` and one `AMR.page()` registration each.
 | `segment` | RMX Product Segment | Product Segment workbook |
 | `fuelsurcharge` | AGG Fuel Recovery | Price & Volume workbook (`readsFrom`) |
 | `rmxfuel` | RMX Fuel Recovery | Ready-Mix workbook |
-| `tp01` | Transfer Price Tool | uploaded file + mail |
+| `tp01` | Transfer Price Tool | the SAP file (uploaded, or off the mailbox) + Price & Volume workbook |
 | `inventoryreport` | Inventory Report viewer | a Drive PDF, published by the mail watch |
 | `deckbuilder` | Deck Builder | the recipe + every page's content |
 
@@ -178,7 +178,7 @@ internal file order is not something this repo controls. Entry points are prefix
 | §7 | **RMX** — Ready-Mix, its lookup suggester, RMX Fuel Recovery |
 | §8 | **OVERVIEW** — the executive Overview and the month cube |
 | §9 | **DECK** — the Slides template reader, the deck writer, the recipe checker, and the three shared stores behind the Arrange stage |
-| §10 | **SMALL PAGES** — KPI workbooks, TP01 mail, the Inventory Report and the mail watch that publishes it |
+| §10 | **SMALL PAGES** — KPI workbooks; the Inventory Report and the mail watch that publishes it; and TP01, which is no longer small: `TPE` (the comparison the page and the trigger share), `TPXLSX` (an `.xlsx` written by hand), `TPAUTO` (the weekly report's settings) and `TPMAIL` (the watch that drives it), beside the mail sender that was always there |
 | §11 | **TRIGGERS** — everything reached from outside the repo |
 
 ### Client — `app.html`, one file
@@ -367,10 +367,10 @@ which each header goes to two rows.
 
 ### Syncing: one trigger, and nothing else
 
-**The sync is trigger-only by design and has no UI.** (This is one of the suite's *two*
-time-driven triggers — the Inventory Report's mail watch, below, is the other. Neither is
-created in code; both are set by hand in the Apps Script UI, which is why `script.gs` §11
-exists.) There is no pull button and one is not
+**The sync is trigger-only by design and has no UI.** (This is one of the suite's *three*
+time-driven triggers — the Inventory Report's mail watch and TP01's are the others, both
+below. None is created in code; all three are set by hand in the Apps Script UI, which is why
+`script.gs` §11 exists.) There is no pull button and one is not
 wanted — a sync is a minutes-long Drive job, not something to put behind a control a user can
 press twice. Set **one** time-driven trigger on `qlikSyncCheck`; 15 minutes costs three Drive
 lookups when nothing has changed.
@@ -447,7 +447,7 @@ a page that no longer owns a workbook. `tests/configcheck.js` is the gate.
 
 ### The Inventory Report publishes itself
 
-**The second time-driven trigger, and the only other one.** Set one hourly trigger on
+**The second time-driven trigger.** Set one hourly trigger on
 `inventoryReportMailCheck` (`script.gs` §11); the engine it drives is `IRMAIL` in §10, next to
 the `IR` backend whose setting it writes, and everything configurable about it is
 `APP_CONFIG.INVENTORY_MAIL` in §1.
@@ -503,6 +503,88 @@ what the watch finds is published to every user of the app. `FROM` is the only n
 available — Gmail has no per-sender scope — so emptying it is a real decision.
 
 ---
+
+### The transfer-price exceptions report sends itself
+
+**The third time-driven trigger, and the first daily one.** Set one day timer on
+`tp01ReportMailCheck` (`script.gs` §11); the engine is `TPMAIL` in §10, beside the `TPE`
+comparison it drives, and everything configurable in code is `APP_CONFIG.TP01_MAIL` in §1.
+**Who it mails is not in code** — it is a Script Property the TP01 page's *Automated email*
+panel writes.
+
+The SAP transfer-price file arrives by mail every Tuesday. Each firing searches **the trigger
+creator's mailbox** (§1) for a subject carrying the whole configured sentence, reads the
+`.xlsx` on it, builds the other side of the comparison out of the Aggregates workbook, and
+mails the **exceptions** — one email, every market stacked in the body, one combined workbook
+attached. The market breakdown is computed and not sent.
+
+Six things about it are decisions, not details:
+
+- **The QlikView export is not needed at all.** That report was only ever a filtered, rolled-up
+  view of the Aggregates data this app already reads: `Customer Parent = Amrize RMX`, the
+  current year, rolled from the raw tab's grain back to the export's, with the ASP recomputed
+  as revenue ÷ volume. `TPE.qlikFromSheet` is the whole of it, and it opens nothing new. The
+  page still accepts a QlikView file and **that file wins when it is there** — two inputs, one
+  pipeline.
+- **The filter is exact equality on `Amrize RMX`, never a `contains`.** That column also
+  carries `Metrix RMX`, which is a different company.
+- **A raw row carries one year.** A 2025 row parks its figures in the PY columns and zeros the
+  CY ones. So "this year only" is *both* halves — the Year column **and** the CY columns — and
+  testing one of them silently drops or doubles rows depending which you pick.
+- **Daily, for a weekly mail.** A day with no new mail costs one Gmail search and nothing else
+  — no sheet read, no comparison, no Drive file, no property written. That is six days in
+  seven. What the seventh buys is that a report re-issued mid-week goes out the next morning
+  instead of waiting for the following Tuesday.
+- **Only the newest unseen mail is reported on**, and this is where it and the Inventory
+  Report's watch deliberately part company. `IRMAIL` publishes every unseen message because
+  each is a different month's report. A transfer-price file is a *snapshot*: three unseen mails
+  are three versions of one list, and reporting all three would be three chances to act on the
+  stale two. The older ones are marked done without being sent.
+- **The settings are a *Script* Property, not a user one.** `TP_getRecipients` uses
+  `getUserProperties()`, which resolves to the deployer on a web request and to the **trigger
+  creator** inside a trigger. Let those two accounts differ and a recipient typed on the
+  website would be invisible to the trigger, silently, while the run reported success.
+
+**Nothing is marked done when the run fails**, so a Drive hiccup or a sheet that lost its
+sharing is retried tomorrow. A new file with **no recipients configured** is an error and is
+also not marked — the fix is ten seconds on the page, and tomorrow's run picks the same message
+up. A mail with no workbook on it *is* marked, because it will never grow one.
+
+`tp01ReportMailStatus()` runs the same check from the editor and reports what it found — the
+query and every mail it matches, the Aggregates rows behind the comparison **with the
+customer-parent spellings actually in the sheet**, and the match rate between the two sides,
+with ten keys from each side when the answer is none. It sends nothing and marks nothing. Run
+it before setting the trigger; a subject that no longer matches or a spelling that has drifted
+shows up there rather than in a trigger nobody is watching. The page's *Preview* button runs
+the same thing.
+
+### TP01's numbers moved to the server, and that was the point
+
+The Transfer Price page used to do all of it in the browser: the SAP read, the Concat Key on
+both sides, the two revenue columns, the market split, the exception rule, the aging and the
+email HTML. That was fine while a person was the only way to start it. The moment a trigger had
+to produce the same figures the choice was one engine on the server or **two copies of one set
+of rules with nothing at run time ever reporting that they had drifted** — which is the failure
+this whole document is shaped around.
+
+So `TPE` (§10) owns every number and the email body, and the browser keeps the two jobs it is
+better at and which are not calculations: parsing a dropped workbook (SheetJS) and writing the
+`.xlsx` behind Download and Send. A trigger cannot do the second, which is what `TPXLSX` is
+for — **an `.xlsx` written by hand**, because an `.xlsx` is a zip of XML and `Utilities.zip`
+makes zips. The alternative it was chosen over is written into its banner: a temp Google Sheet
+exported through Drive, which costs a file created, exported and trashed on every run against
+a six-minute ceiling this codebase has been killed by before, cannot produce an Excel table,
+and — the deciding half — could not have been tested off-platform at all.
+
+**The key is the one thing on this page that cannot be guessed from either file alone.** SAP
+gives `S Plant` + `Ship-to / Partner PC` + `Material`; the Aggregates tab gives `Plant` +
+`Sold To` + `Material`. Plant and Material put their code **first** (`3P02 - DUNDAS QUARRY`)
+and Sold To puts it **last** (`BURLINGTON READY MIX - P4Q01`), which is why there are two
+extractors and not one. Both sides then drop a **one-character prefix** from the customer /
+ship-to code — `6` on the SAP side, `P` on the Aggregates side — and the four characters that
+remain are the plant space. `64Q01` and `P4Q01` both reduce to `4Q01`, and that is what makes
+the two files line up at all.
+
 
 ## 6. Caching model
 
@@ -668,6 +750,20 @@ reconciles against Qlik.
   `Jul-26` the current-year ones, off-year columns blank. Everything downstream must therefore
   **sum into its bucket before taking any ratio**. ASP, the PPI `covered_()` floors and the PPI
   weight all are. Any new per-row ratio is a bug.
+
+### A row of the Aggregates raw tab carries ONE year
+
+The tab has `CY Volume` and `PY Volume` side by side **and** a `Year` column, and the obvious
+reading of that — every row carries both years for its month — is wrong. A row whose `Year` is
+2025 has its figures in the **PY** columns and zeros in the CY ones; a 2026 row has them the
+other way round. `ovcAggRoll_`'s live branch pushes both sides of every row and gets away with
+it only because `push` returns early on an all-zero row.
+
+So **"this year only" is two conditions, not one**: `Year === cyYear` *and* the CY columns.
+Test only the Year column and you keep last year's rows carrying zeros; test only the CY
+columns and you keep this year's figures plus a stripe of zeroed 2025 rows that quietly change
+every average that divides by a row count. `TPE.qlikFromSheet` does both, and
+`tests/tp01engine.js` case 6 is what says so.
 
 ### The reporting month
 
@@ -1459,7 +1555,7 @@ elapsed ms; and no `APP_log` may sit inside a per-row loop.
 
 ### Testing
 
-28 Node harnesses in `tests/`. `npm install playwright chart.js jsdom` at the repo root gets
+30 Node harnesses in `tests/`. `npm install playwright chart.js jsdom` at the repo root gets
 everything; Chromium is already at `/opt/pw-browsers`. Start with `tests/README.md` — it says
 what each one claims and, for the comparison harnesses, exactly how much of that claim still
 holds.
@@ -1548,6 +1644,7 @@ or was forgotten.**
 | 2026-08-23 | **The sync was deleting columns it does not own, and the header now says how old the figures are.** Reported as "pulling RMX from Qlik deletes my array formulas on Main and Extras, and the Aggregates sheets keep theirs" — and the two workbooks go through **the same writer**, so the difference was never in the code, it was in how far the code got. `writeColumns_` cleared the WHOLE formula band before writing and put it back only after the LAST tab of the workbook, so the anchors were absent for the entire pass: one throw, or one execution killed at the runtime limit, and they were gone with nothing left to restore — and nothing for the next run to find either, which is why they never came back on their own. **Three tens-of-thousands-of-rows Ready-Mix tabs reach that limit far sooner than two Aggregates ones**, and that is the whole of the difference. Only a formula in a column the export FEEDS is cleared now — by construction the anchors are elsewhere, since `firstDataRow_` finds that row by looking for a formula in a column nothing is written into — and the band is registered for restore BEFORE anything destructive runs. **Rows point the other way and stay as they were**: the data ends exactly where the export ends, surplus deleted, because nothing on these tabs is filled down — every formula is a single-cell array formula on the first data row — and leaving them would have January reading a December-sized sheet for eleven months. `tests/qliksync.js` carries a column the sync has never heard of and makes a write blow up to prove the anchors are still on the sheet afterwards; the whole-band clear and a full-width block clear were both put back to watch it fail. **And the header answers the other question.** ↻ Update from source says whether anything is NEWER; it has never said how old what you are looking at IS. `AmrStamp` (§E) is its own control beside it, injected into every header that has one the way the page switcher is, showing **two clocks that must never be collapsed into one**: when the workbook last changed, and when QlikSync last wrote it (plus the date on the export it read). The second is recorded by the run, because **Drive cannot tell a sync from a hand edit** — a row typed into REGION LOOKUP moves the modified time exactly as a sync does. `freshness.js` gates precisely that: a hand edit moves the sheet clock and leaves the QlikView clock where it was. The bar had **seven pixels** of slack on Price & Volume at 1720, so the stamp gives up its date for its age below `--bp-wide` and its frame with it; four pages lose one breakpoint step and three lose nothing, measured and written into §A3. **And the Slide Builder is Product Segment now** — one line away from "Deck Builder" it read as a second deck tool, and it is not one. Renamed in prose across `script.gs`, `app.html` and both READMEs; the workbook's own TAB names (`Slide Segment MTD`, `Slide Product <Market> MTD`) and the `SB` namespace keep the old spelling on purpose, the first because the sync matches tabs by name and the second because it is a rename across every call site for no reader's benefit — both now say so where they live. One stale comment fell out of it: the SEG folder's SPEC block was headed "RMX folder" | ✅ |
 | 2026-08-23 | **The Arrange stage — slide order, per-slide tables and the KPI strip are editable from the page, and `DECK_RECIPE` is still meaningful.** Two shared Script Properties on the `PROP_LAYOUTS` pattern: `DECK_PLAN` carries order, membership and per-row edits, `DECK_TABLE_MAP` carries what each scope shows. **A scope ladder answers “change every market at once, or just this one” with no flag** — `row:<id>` → `pv|Southwest|Docks` → `pv|Southwest` → `pv`, first answer wins, tables and KPI resolved independently. `period` is in no key above the first, so a change to a market reaches its MTD and YTD slides together; rung 2 is Southwest's alone, because Land and Docks are two values of its `MB SUBMARKET` column and no other market divides below market level. **The recipe stays the default on two rules**: nothing stored is byte-identical to it (an arrangement equal to the recipe is *deleted*, or the first button press would freeze all 43 rows), and a row added to the array later is inserted beside its predecessor rather than appended. Deleting and unticking are kept apart, with a Deleted slides list and Restore, and so are their two stale-key cases — otherwise every deletion banners something nobody can clear. **The finding worth keeping is the retried-slide ordering defect, invisible until order became editable**: `addSlide` always appends and Publish skips a row already `done`, so a slide that failed at position 30 and was retried published at 44 — and `finish` stamped `{{PAGE}}` against that order confidently. Three more came out of reading the same path. `getReport` **ignores the order of the `dimensions` array it is sent**, walking `CONFIG.DIMENSIONS` instead and appending the customer-segment pivot last, so AGG table order has to be imposed client-side — into a *shallow copy*, because one payload is shared by the MTD row, its YTD twin and the unrefined report Land/Docks resolves against. The QlikView ASP card read `d.tables[0].total`, so an empty or total-less first table baked “Load market data to fill this card” into a published picture — same shape as the Southwest Land page of zeroes. And the **KPI Region was per-device while everything else here is shared**, so a colleague building from your arrangement could get different numbers with nothing saying so; the shared value is on top now and the per-row dropdown greys out and says where it comes from rather than moving and changing nothing. Six commits, each with its own gate. `tests/deckarrange.js` is new and drives the page against the **real** §9 functions rather than stubs — 103 checks, including a real render, and it found two things static checks cannot see: **an element `id` is a `window` property**, so a function sharing a name with one is indistinguishable from a leak (functions are verbs now, ids are nouns), and saving a scope redrew only the right-hand panel, leaving the other slides it reaches naming the rung they were on before. Two fixture faults fell out of it too, both of which had made a check *impossible* rather than wrong: `deckpath`'s `getReport` stub ignored the request, so it could not reproduce the ordering defect at all, and its `AmrKpi.rmx` stub answered with the AGG card's fields — the Product Segment KPI strip had never once rendered under that harness | ✅ |
 | 2026-08-24 | **The Arrange panel opened on the widest rung and asked the Region everywhere.** Three things, all in the right-hand panel and all about the same thing — *how much does this button move*. (1) **The default rung is the market's now**, not the source's. A table selection or a KPI region is nearly always "this market, both periods"; opening on `pv` meant the safe change was the one you had to go looking for and the one that moves all fourteen Price & Volume slides was the one you got by not looking. `arrDefaultScope()` is one helper used by **both** the drawer and `arrScopeKey()`, because a panel that draws one rung and saves against another is worse than either. A row with no market — Fuel Recovery, ladder `row:fsc_mtd` then `fsc` — falls back to the broadest rung it has, which for a source with one slide per period *is* the market. (2) **The Region dropdown is a question about a market, so it is only put on the market's rung.** A sheet name out of Central Canada's EBITDA workbook means nothing on `pv` — it would be handed to every other market's slides as well — and on `row:` it settles one slide while its MTD/YTD twin still asks the device. Both were reachable and both read as a choice the panel had offered. The strip's **on/off is deliberately not gated with it**: that question is meaningful at every rung. (3) **The "answering:" badge comes off the rung buttons and its CSS with it** — the `.db-ar-scope` line under each slide title already says where that row's tables and KPI come from, and two answers to one question in one panel is one too many — **as does the paragraph under the Region select**, which explained the per-device fallback at length in a panel whose every other control says what it does in its own label. `tests/deckarrange.js` is 103 checks to **113**: the badge check is replaced by its opposite, and the Region gate is asserted at all three rungs — the fixture has no workbook uploaded, so what the market rung shows is the "nothing to choose from yet" note rather than the dropdown, which is exactly the claim, that the question is *put* there and not at the other two | ✅ |
+| 2026-08-24 | **The transfer-price exceptions report sends itself, and the page stopped doing its own arithmetic.** Set one **day timer** on `tp01ReportMailCheck`, from the account that deployed the app — the third trigger in the suite and the first daily one. The SAP TP01/ZIPR file arrives by mail weekly; **the QlikView export it was compared against turned out not to be a separate report at all**, but a filtered, rolled-up view of the Aggregates data this app already reads — `Customer Parent = Amrize RMX`, current year, rolled from the raw tab's grain back to the export's with the ASP recomputed as revenue ÷ volume — so `TPE.qlikFromSheet` builds it out of `PV.rawEnriched()` and opens nothing new. The page keeps its QlikView drop zone as an **override**: two inputs, one pipeline. **The calculations moved to the server, and that is the change the rest depends on.** A trigger has no browser, so the alternative was two copies of one set of rules with nothing at run time reporting they had drifted; `TPE` (§10) owns every number and the email body, the browser keeps parsing dropped workbooks and writing the files its own buttons produce, and `TPXLSX` writes the trigger's `.xlsx` **by hand** — an `.xlsx` is a zip of XML and `Utilities.zip` makes zips. The rejected alternative is in its banner: a temp Google Sheet exported through Drive, which costs a file created, exported and trashed per run against a six-minute ceiling this repo has been killed by, cannot produce an Excel table, and could not have been tested off-platform at all. **Four things the real workbook settled that were going to be guessed wrong.** Customer Parent is `Amrize RMX` and that column also holds `Metrix RMX`, so the filter is exact equality and never a `contains`. `Sold To` puts its code **last** (`BURLINGTON READY MIX - P4Q01`) while `Plant` and `Material` put theirs first — two extractors, not one — and **both sides drop a one-character prefix** from the ship-to / sold-to, `6` on SAP's and `P` on the sheet's, leaving the four characters that make `64Q01` and `P4Q01` the same `4Q01`. And **a raw row carries ONE year**: a 2025 row parks its figures in the PY columns and zeros the CY ones, so "this year only" is the Year column **and** the CY columns, never either alone — now §7. Settings are a **Script** Property, not a user one, because `getUserProperties()` resolves to the deployer on a web request and to the **trigger creator** inside a trigger, and a recipient typed on the website would otherwise be invisible to the run that needed it. Only the **newest** unseen mail is reported on — three unseen mails are three versions of one snapshot, and this is where it and `IRMAIL` deliberately part company. A failed run marks nothing done; a new file with no recipients is an error and also marks nothing. `tp01ReportMailStatus()` answers what the code cannot — whether the subject still matches, whether the sheet still spells the parent that way (**printing the spellings that are in the column when it does not**), and the match rate with ten keys from each side when it is zero. New: `tests/tp01engine.js` (13 rules, one case each) and `tests/tp01xlsx.js`, which zips the parts and reads them back through a reader written against OOXML rather than against the writer. **`pageparity.js`'s `tp01` case retired rather than being weakened**, on `tests/README.md`'s own rule: three deliberate copy corrections were what failed, each revertible to make it pass, which is the shape of softening a gate. What went with it: nothing now proves the eleven ex-inline handlers are still wired. `logging.js` caught two empty catches in the new watch on the way past, which is what it is for | ✅ |
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |
