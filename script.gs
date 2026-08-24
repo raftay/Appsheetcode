@@ -3342,16 +3342,23 @@ var QLIKSYNC = (function () {
    * and — since the sheet ends exactly where the export ends — the other
    * 46,000 DELETED to match.
    *
-   * IT IS A SLOW FILL, NOT A RACE, AND ONE MEASUREMENT SAYS SO. Lengthening
+   * IT IS NOT A RACE, AND IT IS NOT THE CONVERSION THAT IS SLOW. Lengthening
    * the wait from about a second and a half to about six moved the Aggregates
-   * tab from 1,113 rows to 2,224: twice the wait, twice the rows, the same
-   * file. That is a conversion running at roughly 350 rows a second, which
-   * puts a 47,634-row export at over two MINUTES of filling. Nothing about it
-   * is intermittent — every wait shorter than the conversion returns a short
-   * read, and it lands on the same row every run because the wait was the same
-   * length every run. It is not about size and not about .xls against .xlsx:
-   * every one of these exports is .xlsx. It is only ever whether the
-   * conversion outlives the wait.
+   * tab from 1,113 rows to 2,224 — twice the wait, twice the rows, the same
+   * file — which reads like a fill in progress and is not one. The poll below
+   * settled that: asked over REST, the copy holds all 47,845 rows by its
+   * SECOND look, about four seconds in, and has stopped changing. The file is
+   * finished. What is still catching up is SPREADSHEETAPP'S VIEW OF IT, and it
+   * catches up far too slowly to wait out — the doubling was that view
+   * advancing, not rows landing.
+   *
+   * WHICH IS WHY THE READ HAS A SECOND HALF NOW. The wait makes sure the file
+   * is done, and readExport_ measures what SpreadsheetApp gave it against what
+   * the poll says the tab holds; a short answer is read again over the same
+   * REST calls the poll is made of, which have just been proved on that exact
+   * file in that exact execution. It is not about size and not about .xls
+   * against .xlsx — every one of these exports is .xlsx, and both of those
+   * were guessed and both were wrong.
    *
    * SO THE WAIT HAS TO WATCH A NUMBER THAT MOVES WHILE DRIVE IS FILLING, and
    * three were tried before one did:
@@ -3511,6 +3518,58 @@ var QLIKSYNC = (function () {
     return at - 1;
   }
 
+  /* THE TAB ITSELF, THROUGH THE API THAT COULD SEE IT. The poll above and the
+     read below disagree about how tall a tab is more often than either of them
+     is wrong about anything else, and only one of the two has ever been caught
+     answering short: SpreadsheetApp. So when it does, the rows are fetched over
+     the same REST calls the poll is made of, which have just been proved on
+     this exact file, in this exact execution, to see every row of it.
+
+     UNFORMATTED_VALUE, so a date arrives as an Excel serial rather than as
+     text. That is what monthText_ and monthYM_ already expect from an export —
+     both carry a serial branch — and it is the rendering closest to what
+     getValues() hands back.
+
+     A WINDOW THAT IS NOT THE LAST ONE KEEPS ITS FULL HEIGHT. values.get trims
+     the trailing empty rows out of its answer, which is exactly what makes the
+     poll work and exactly what would shift every row below a gap up by the size
+     of the gap here.
+
+     AND THE RESULT IS A RECTANGLE, because getValues() answers one and
+     everything downstream assumes it — check 1 asserts it outright. */
+  var READ_WINDOW = 10000;
+
+  function restRead_(ssId, title, upto, file) {
+    var out = [], at = 1, wide = 0, i, k;
+    while (at <= upto) {
+      var end = Math.min(upto, at + READ_WINDOW - 1);
+      var a1 = "'" + String(title).replace(/'/g, "''") + "'!" + at + ':' + end;
+      var r = driveFetch_(SHEETS_V4 + encodeURIComponent(ssId) + '/values/' +
+                          encodeURIComponent(a1) +
+                          '?valueRenderOption=UNFORMATTED_VALUE&fields=values',
+                          { method: 'get' });
+      if (r.getResponseCode() !== 200) {
+        if (sheetsFatal_(r.getResponseCode())) sheetsOff_(r, file);
+        APP_log('warn', 'QLIKSYNC.read', 'the second read of a short tab did not answer either ' +
+                '\u2014 the short read stands, and check 0 is what stops it being written',
+                { file: file, tab: title, range: a1, http: r.getResponseCode(),
+                  answer: r.getContentText().slice(0, 200) });
+        return null;
+      }
+      var vals = JSON.parse(r.getContentText()).values || [];
+      for (i = 0; i < vals.length; i++) {
+        if (vals[i].length > wide) wide = vals[i].length;
+        out.push(vals[i]);
+      }
+      if (end < upto) for (k = vals.length; k < end - at + 1; k++) out.push([]);
+      at = end + 1;
+    }
+    for (i = 0; i < out.length; i++) {
+      for (k = out[i].length; k < wide; k++) out[i].push('');
+    }
+    return out;
+  }
+
   /* WHERE THE CONVERSION HAS GOT TO: { version, modified, tabs: { title: rows }
      | null }. `was` is the previous look, so each tab's walk starts where the
      last one finished.
@@ -3662,11 +3721,15 @@ var QLIKSYNC = (function () {
          look at it, so one early call freezes a half-converted grid in front of
          every read that follows, settle_'s own included. */
       var grid = tempId ? settle_(ssId, file.name) : null;
-      var ss = SpreadsheetApp.openById(ssId), seen = {};
-      ss.getSheets().forEach(function (sh) {
-        var tab = sh.getName();
-        seen[tab] = 1;
-        var values = sh.getDataRange().getValues();
+
+      /* One tab, however its rows were come by. `holds` is what the poll says
+         the file has in that tab and 0 when there was nothing to ask (a source
+         that was already a Google Sheet, or a poll that could not run) — kept
+         beside the height the READ came back with, because this is the last
+         point at which the two numbers exist together. Everything downstream
+         sees rows that are perfectly well formed and cannot tell a truncated
+         read from a short export; check 0 compares these two. */
+      function book_(tab, values, holds) {
         if (!values.length) return;
         var h = srcHeaderRow_(values);
         books.push({
@@ -3675,31 +3738,64 @@ var QLIKSYNC = (function () {
           hdr:   values[h].map(APP_hdrNorm_),
           rows:  trimGrid_(values.slice(h + 1)),
           hdrRaw: values[h],
-          /* WHAT THE READ SAW, AND WHAT THE FILE HOLDS. Both are heights of the
-             whole tab with its header row in them, kept side by side because
-             this is the last point at which the two numbers exist together —
-             everything downstream sees rows that are perfectly well formed and
-             cannot tell a truncated read from a short export. check 0 compares
-             them. gridRows is 0 when there was nothing to ask (a source that
-             was already a Google Sheet, or a poll that could not run), and the
-             check is skipped rather than guessed at. */
           readRows: values.length,
-          gridRows: (grid && grid[tab]) || 0
+          gridRows: holds
         });
+      }
+
+      var ss = SpreadsheetApp.openById(ssId), seen = {};
+      ss.getSheets().forEach(function (sh) {
+        var tab = sh.getName();
+        seen[tab] = 1;
+        var values = sh.getDataRange().getValues();
+        var holds  = (grid && grid[tab]) || 0;
+
+        /* BOTH NUMBERS, EVERY TAB, EVERY RUN, AT info. Not only when they
+           disagree: "they agreed" is the line that says the read is sound, and
+           its absence from a log is how a run that never got this far tells
+           you where it stopped. */
+        if (holds) {
+          APP_log('info', 'QLIKSYNC.read', 'read a tab of the export',
+                  { file: file.name, tab: tab, read: values.length, holds: holds });
+        }
+
+        /* AND IF THEY DISAGREE, ASK THE OTHER ONE. The poll has just walked
+           this file over REST and found every row of it; SpreadsheetApp is the
+           half that has been caught answering short. So a short answer is not
+           accepted — the tab is read again through the API that could see it,
+           and the run carries on with whichever read is taller. Ten rows of
+           slack because the poll measures a band of columns and the read
+           measures the whole tab, and the two can differ by a hair at the
+           bottom without anything being wrong. */
+        if (holds && values.length < holds - 10) {
+          APP_log('warn', 'QLIKSYNC.read', 'SpreadsheetApp read this tab short of what the ' +
+                  'server reports for it — reading it again over the Sheets API instead',
+                  { file: file.name, tab: tab, read: values.length, holds: holds });
+          var again = restRead_(ssId, tab, holds, file.name);
+          if (again && again.length > values.length) {
+            APP_log('info', 'QLIKSYNC.read', 'the second read came back whole',
+                    { file: file.name, tab: tab, was: values.length, now: again.length });
+            values = again;
+          }
+        }
+
+        book_(tab, values, holds);
       });
 
       /* A tab the server lists that the read did not return AT ALL — the same
-         event as a short read, one step further along. It is not fatal here:
-         pickSource_ reports a tab it cannot find and flags it as a failure a
-         retry can fix, which is the right handling. It is logged because that
-         report names the SHEET tab that went unfed, and this names the export
-         tab that never arrived, and only the two together say why. */
+         event as a short read, one step further along, and answered the same
+         way: the rows are fetched over REST rather than the tab being written
+         off. It is logged either way, because pickSource_'s own report names
+         the SHEET tab that went unfed and this names the export tab that never
+         arrived, and only the two together say why. */
       if (grid) {
         Object.keys(grid).forEach(function (t) {
-          if (seen[t]) return;
-          APP_log('warn', 'QLIKSYNC.read', 'the converted copy holds a tab the read did not ' +
-                  'return — the copy was still being written when it was opened',
+          if (seen[t] || !grid[t]) return;
+          APP_log('warn', 'QLIKSYNC.read', 'the converted copy holds a tab SpreadsheetApp did ' +
+                  'not return at all — reading it over the Sheets API instead',
                   { file: file.name, tab: t, rows: grid[t] });
+          var got = restRead_(ssId, t, grid[t], file.name);
+          if (got && got.length) book_(t, got, grid[t]);
         });
       }
     } finally {
@@ -4930,37 +5026,135 @@ var QLIKSYNC = (function () {
         return { ok: false, error: 'Nothing is set up to update for "' + want + '".' };
       }
 
-      /* --- open only the export files these tabs need, once each --- */
-      var tabsByFolder = { AGG: [], RMX: [], SEG: [] };
+      /* --- ONE EXPORT AND ONE WORKBOOK AT A TIME, AND NOT ALL THREE FIRST ---
+
+         This used to read every export the run needed up front and then write
+         the pages out of what it had. That is one execution holding three whole
+         exports at once — something like a hundred and thirty thousand rows of
+         Aggregates, Ready-Mix and Product Segment together — and it is a wall
+         this pipeline never reached while the reads were coming back
+         TRUNCATED: eleven hundred rows a source costs nothing to hold. The
+         first run that read all three whole died on the workbook it was
+         writing, with SpreadsheetApp reporting the Price & Volume sheet as
+         "missing (perhaps it was deleted, or you don\u2019t have read
+         access?)" — a file its owner had opened successfully two minutes
+         earlier in the same execution, and which the permission check opens
+         every time.
+
+         So an export is read when the page that needs it is about to be
+         written, and dropped as soon as the last page that needs it is done.
+         The peak is one export instead of three.
+
+         THE PAGE IS STILL THE UNIT OF THE WRITE and it has to be: the array
+         formulas are re-pointed once per WORKBOOK, off an `ends` map that has
+         to hold every tab of it, so one page's tabs cannot be split across
+         passes — even though today each folder happens to feed exactly one
+         page.
+
+         AND A READ THAT FAILS NOW FAILS ONE PAGE INSTEAD OF THE RUN. It used
+         to throw out of the loop above into run()'s own catch, which reports an
+         error and no failed tabs: a broken Ready-Mix export took Price & Volume
+         down with it and said nothing about why. */
+      var tabsByFolder = { AGG: null, RMX: null, SEG: null };
       var filesSeen    = [];
       var fileInfo     = {};          /* folder key → { name, updated } */
-      var needed = {};
-      SPEC.forEach(function (s) { needed[s.folder] = 1; });
 
-      sources_().forEach(function (src) {
-        if (!needed[src.key]) return;
-        var f = exportFile_(src);
-        filesSeen.push(src.label + ': ' + f.name);
-        fileInfo[src.key] = { name: f.name, updated: f.updated };
-        tabsByFolder[src.key] = readExport_(f);
-      });
-
-      /* --- one workbook at a time, so its formulas can be fixed together --- */
       var byPage = {};
       SPEC.forEach(function (s) { (byPage[s.page] = byPage[s.page] || []).push(s); });
+
+      /* How many pages still to come need each export, so the last page to use
+         one is the page that lets it go. */
+      var folderPages = {};
+      Object.keys(byPage).forEach(function (page) {
+        var seen = {};
+        byPage[page].forEach(function (s) { seen[s.folder] = 1; });
+        Object.keys(seen).forEach(function (k) { folderPages[k] = (folderPages[k] || 0) + 1; });
+      });
+
+      var srcByKey = {};
+      sources_().forEach(function (src) { srcByKey[src.key] = src; });
+
+      /* The export behind one folder key, read on first use. */
+      function exportTabs_(key) {
+        if (tabsByFolder[key]) return tabsByFolder[key];
+        var src = srcByKey[key];
+        if (!src) throw new Error('No QlikView export is configured for "' + key + '".');
+        var f = exportFile_(src);
+        filesSeen.push(src.label + ': ' + f.name);
+        fileInfo[key] = { name: f.name, updated: f.updated };
+        tabsByFolder[key] = readExport_(f);
+        return tabsByFolder[key];
+      }
+
+      /* SpreadsheetApp.openById on a workbook this account OWNS can still come
+         back "Document … is missing". In the middle of a run that has already
+         opened the same file it is not a permission failure, it is the service
+         refusing one call — so it is asked again rather than reported as a
+         workbook that is not there. Three attempts, three seconds apart; the
+         third refusal is the answer. */
+      function openWorkbook_(page) {
+        var tries = 0, last = null;
+        while (tries++ < 3) {
+          try { return APP_openSpreadsheet_(page); }
+          catch (e) {
+            last = e;
+            if (tries < 3) {
+              APP_log('warn', 'QLIKSYNC.run', 'the workbook would not open — asking again',
+                      { page: page, attempt: tries, error: String(e && e.message || e) });
+              Utilities.sleep(3000);
+            }
+          }
+        }
+        throw last;
+      }
 
       Object.keys(byPage).forEach(function (page) {
         /* Where this page's entries start in the two shared lists, so the stamp
            below can count its own without matching on tab NAME — two workbooks
            are free to hold a tab called the same thing. */
         var doneAt = done.length, failedAt = failed.length;
+
+        /* The exports this page needs, and the bookkeeping that frees them. */
+        var mine = {};
+        byPage[page].forEach(function (s) { mine[s.folder] = 1; });
+        function releaseExports_() {
+          Object.keys(mine).forEach(function (k) {
+            if (--folderPages[k] <= 0) tabsByFolder[k] = null;
+          });
+        }
+
+        /* NOT STARTED IS BETTER THAN KILLED HALFWAY. A page is tens of
+           thousands of rows of writing, and Apps Script kills an execution at
+           six minutes without running a `finally` or throwing anywhere this
+           code can see — the rows simply stop arriving. The tab is then blank
+           below wherever it got to, and worse, the caller has no failure to
+           report so it stamps the export as read and nothing looks at that tab
+           again until somebody notices the numbers.
+
+           So a page that cannot be started inside the budget is refused before
+           it opens anything, and refused as RETRYABLE, which withholds the
+           stamp and arms the one-shot five minutes out. The next run has the
+           whole six minutes for what is left. */
+        if (Date.now() - EXEC_T0 > EXEC_SAFE_MS) {
+          byPage[page].forEach(function (s) {
+            failed.push({ tab: s.tab, check: true,
+              error: 'This execution ran out of time before "' + s.tab + '" could be started, ' +
+                     'so nothing was written and the tab is exactly as it was. A retry has been ' +
+                     'armed; it will have the whole of its own six minutes for what is left.' });
+          });
+          releaseExports_();
+          return;
+        }
+
         var ss;
         try {
-          ss = APP_openSpreadsheet_(page);
+          Object.keys(mine).forEach(function (k) { exportTabs_(k); });
+          ss = openWorkbook_(page);
         } catch (e) {
           byPage[page].forEach(function (s) {
             failed.push({ tab: s.tab, error: e.message });
           });
+          releaseExports_();
           return;
         }
 
@@ -5057,6 +5251,11 @@ var QLIKSYNC = (function () {
         });
         recordSync_(page, { at: Date.now(), tabs: wroteHere, failed: brokeHere,
                             exportAt: exportAt, exportName: exportName });
+
+        /* This page is finished with its exports, so they go before the next
+           page reads its own — which is the whole point of reading them here
+           rather than all at the top. */
+        releaseExports_();
       });
 
       /* --- every cached copy, everywhere, is now stale --- */
