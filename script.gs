@@ -137,6 +137,8 @@
  *     APP_CONFIG.KPI_FOLDER_ID                       where the EBITDA books live
  *     APP_CONFIG.INVENTORY_MAIL                      the mailbox the Inventory
  *                                                    Report publishes itself from
+ *     APP_CONFIG.TP01_MAIL                           the mailbox the weekly SAP
+ *                                                    transfer-price file arrives in
  *     APP_CONFIG.LOGO_URL                            the logo every export uses
  *     APP_CONFIG.LOG_LEVEL                           how much the server logs (§2)
  *     APP_CONFIG.CUBE.ERAS                           the closed-year books
@@ -175,6 +177,8 @@
  *                                  that makes editing one take effect
  *     §10  TP_RECIP_KEY            names the PROPERTY the TP01 recipient map is
  *                                  stored in — the map itself is not in this file
+ *     §10  TP_AUTO_KEY            same, for the AUTOMATED TP01 email's recipients
+ *                                  and switches. A SCRIPT property, not a user one
  *
  *   THE CLIENT HAS ITS OWN, AND THE TWO DO NOT OVERLAP. Nothing in app.html
  *   reads a constant from this file; its tunables — the slide frame, and every
@@ -280,6 +284,61 @@ var APP_CONFIG = {
        named, which is what lets a re-issue find and replace the copy it is
        replacing. */
     LABEL_PREFIX: 'Inventory Report - '
+  },
+
+
+  /* WHERE THE WEEKLY TRANSFER-PRICE FILE COMES FROM BY ITSELF.
+
+     The SAP TP01/ZIPR export is mailed every Tuesday. tp01ReportMailCheck (§11)
+     is the DAILY trigger target; the TPMAIL engine it drives is in §10, beside
+     the TP01 backend it sends through. Nothing here is read at load time.
+
+     Daily rather than weekly on purpose: a run that finds no new mail costs one
+     Gmail search and NOTHING else — no sheet read, no comparison, no property
+     written — so six days out of seven are free, and a report re-issued
+     mid-week goes out the next morning instead of waiting a week. */
+  TP01_MAIL: {
+
+    /* THE WHOLE SUBJECT SENTENCE, and the match is CONTAINS rather than
+       STARTS-WITH — which is where this differs from INVENTORY_MAIL above.
+       The mail reaches the mailbox as a forward, and a ticket system adds its
+       own furniture around the line, so anchoring at the front would miss it.
+       "Re:"/"Fwd:" markers are stripped before the test either way.
+
+       Gmail's own subject: term matches WORDS in any order, so the search is
+       only the cheap filter — this string is the real one. */
+    SUBJECT: 'TP01 - ZIPR Report ECAN Plants 3Q, 3P, 3R, 3G and 3L',
+
+    /* Who the mail is accepted from, as a Gmail `from:` term. The report is
+       raised by nabs.customermaster@amrize.com and reaches this mailbox
+       FORWARDED BY A COLLEAGUE, so the sender on the message is theirs, not the
+       robot's — which is why this is the domain and not the address. A subject
+       line is not a credential (§5); this is the only narrowing Gmail offers,
+       and '' accepts anybody. */
+    FROM: 'amrize.com',
+
+    /* How far back each check searches. Three weekly sends is plenty: a message
+       already reported on is skipped on its id, so a longer window costs
+       nothing and buys nothing. */
+    WINDOW_DAYS: 21,
+
+    /* WHICH ROWS OF THE AGGREGATES SHEET ARE THE QLIKVIEW SIDE.
+
+       Matched as an exact value once normalised, NEVER as "contains RMX": that
+       column also carries "Metrix RMX", which is a different company. */
+    CUSTOMER_PARENT: 'Amrize RMX',
+
+    /* Recipients are NOT here. They live in the TP01_AUTOMAIL Script Property,
+       typed on the page's Automated email panel, because a trigger runs as
+       whoever created it (§1) and getUserProperties() would then resolve to a
+       different store than the website writes to. TP_getAutoConfig is the
+       reader. */
+
+    /* Subject and filename of what goes out. The report date is appended, and
+       it comes off the SAP FILE'S OWN date cell — never off the calendar, for
+       the reason §7 gives about naming a period. */
+    OUT_SUBJECT: 'Transfer Price Exceptions',
+    OUT_FILENAME: 'Transfer_Price_Exceptions_All_Markets'
   },
 
 
@@ -13677,6 +13736,709 @@ function TP_sendCombinedEmail(o) {
   });
   return { ok: true };
 }
+
+/* ---- TP01_Engine.gs ----------------------------------------------------------
+   The comparison itself, moved off the page. One copy of the arithmetic, called
+   by the browser and by the trigger.  */
+
+/*****************************************************************************
+ * TP01-ZIPR - the comparison engine (namespaced TPE)
+ * ---------------------------------------------------------------------------
+ * THIS USED TO LIVE IN THE BROWSER, and the whole of it did: the SAP read, the
+ * Concat Key on both sides, the two revenue columns, the market split, the
+ * exception rule, the aging and the email HTML were all in app.html's §P tp01.
+ * That was fine while a person was the only way to start it. It stopped being
+ * fine the moment a trigger had to do the same job, because a trigger has no
+ * browser - and the alternative to moving it was a SECOND copy of the same
+ * arithmetic on this side, with nothing at runtime ever reporting that the two
+ * had drifted.
+ *
+ * So the split is now:
+ *
+ *   the browser   parses a dropped workbook (SheetJS) and writes the .xlsx the
+ *                 Download and Send buttons produce. Neither is a calculation.
+ *   this file     every number, and the email body.
+ *   TPXLSX        writes the .xlsx for the trigger, which has no SheetJS.
+ *
+ * TWO INPUTS, ONE PIPELINE. The QlikView side can come from either:
+ *
+ *   · qlikFromSheet()  - the Aggregates workbook this app already reads,
+ *     filtered to APP_CONFIG.TP01_MAIL.CUSTOMER_PARENT, restricted to the
+ *     current year, rolled back up to the export's grain. This is the default
+ *     and the only one the trigger can use.
+ *   · a QlikView export dropped on the page, passed through as a grid. It WINS
+ *     when it is there.
+ *
+ * Everything downstream of that choice is the same code, so this is two
+ * sources, not two pipelines.
+ *
+ * WHAT MUST NOT DRIFT (README.md §7):
+ *   · the period is never named back at a header. iYearCol_ finds the volume
+ *     and ASP columns by SHAPE - CY, PY or a four-digit year at either end -
+ *     and qlikFromSheet takes the year off the Year COLUMN, never off the
+ *     calendar. A near miss returns -1 and the workbook then builds perfectly
+ *     with blank revenue in it, which is the failure that shipped once.
+ *   · the report date is the SAP file's OWN date cell. A file re-issued late
+ *     must carry its own date, not the day the trigger happened to fire.
+ *****************************************************************************/
+var TPE = (function () {
+
+  /* ======================================================================
+   * PRIMITIVES - moved from the page, unchanged in meaning
+   * ==================================================================== */
+
+  function norm_(v) { return String(v == null ? '' : v).trim(); }
+
+  function round4_(n) { return Math.round(n * 10000) / 10000; }
+
+  function pad2_(n) { return (n < 10 ? '0' : '') + n; }
+
+  /* Every date this engine handles ends up as YYYY-MM-DD, because that is what
+     daysOutstanding_ subtracts: new Date('2026-01-01') is UTC midnight on both
+     sides and the difference is exact days. A cell that cannot be read as a
+     date is passed through as its own text rather than guessed at.
+
+     THE mm/dd/yyyy BRANCH IS NEW. The SAP export writes "01/01/2026" and the
+     page left that string alone - it happened to work because V8 parses US
+     order, but it meant two shapes of the same field flowing through one
+     subtraction. Normalising here costs nothing and removes the question. */
+  function toDateStr_(val) {
+    if (!val && val !== 0) return '';
+    if (Object.prototype.toString.call(val) === '[object Date]') {
+      return val.getFullYear() + '-' + pad2_(val.getMonth() + 1) + '-' + pad2_(val.getDate());
+    }
+    if (typeof val === 'number') {
+      /* An Excel serial that survived a round trip through .xls. 25569 is the
+         days between the 1900 and 1970 epochs; the range is what stops a plain
+         quantity being read as a date. */
+      if (val > 20000 && val < 80000) {
+        var d = new Date(Math.round((val - 25569) * 86400000));
+        return d.getUTCFullYear() + '-' + pad2_(d.getUTCMonth() + 1) + '-' + pad2_(d.getUTCDate());
+      }
+      return String(val);
+    }
+    var s = String(val).trim();
+    var m = s.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if (m) return m[1] + '-' + pad2_(Number(m[2])) + '-' + pad2_(Number(m[3]));
+    m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);            // 01/14/2026
+    if (m) return m[3] + '-' + pad2_(Number(m[1])) + '-' + pad2_(Number(m[2]));
+    return s;
+  }
+
+  /* THE COLUMN THAT NAMES A PERIOD, FOUND BY SHAPE AND NEVER BY NAME.
+     Verbatim from app.html's §P tp01, and its comment there is the account of
+     the day the six indexOf() calls it replaced all returned -1 at once: the
+     volume and ASP columns read as missing, every Additional Revenue to Post
+     came out of a blank cell, and the workbook still built and still
+     downloaded with nothing on the page saying anything was wrong.
+
+     Current wins: an explicit CY beats anything, a newer year beats an older
+     one, and PY is taken only when it is all there is.
+
+     NOTE it does NOT fold "ex-Works" / "exWorks" / "ex Works" together the way
+     APP_hdrNorm_ does. The remainder is compared literally, so a caller asking
+     for 'ASP ex-Works' gets nothing from a header spelling it 'ASP exWorks'.
+     That is deliberate - both sides of this comparison are files this project
+     writes or reads verbatim - but it is why qlikFromSheet spells its own
+     headers the way it does. */
+  function iYearCol_(headers, suffix) {
+    var want = String(suffix).replace(/\s+/g, ' ').trim().toLowerCase();
+    var best = -1, bestRank = -1;
+    for (var i = 0; i < headers.length; i++) {
+      var s = String(headers[i] == null ? '' : headers[i]).replace(/\s+/g, ' ').trim().toLowerCase();
+      var m = /^((?:19|20)\d{2}|cy|py)\b[\s\-]*(.+)$/.exec(s), tok, rest;
+      if (m) { tok = m[1]; rest = m[2]; }
+      else {
+        m = /^(.+?)[\s\-]*\b((?:19|20)\d{2}|cy|py)$/.exec(s);
+        if (!m) continue;
+        tok = m[2]; rest = m[1];
+      }
+      if (rest !== want) continue;
+      var rank = (tok === 'cy') ? Infinity : (tok === 'py') ? 0 : Number(tok);
+      if (rank > bestRank) { bestRank = rank; best = i; }
+    }
+    return best;
+  }
+
+  /* THE KEY, AND WHY THE TWO SIDES ARE EXTRACTED DIFFERENTLY.
+
+     SAP:  S Plant + Ship-to/Partner PC (first character dropped) + Material
+             3G00  +  64G00 -> 4G00                              +  9023
+     AGG:  Plant   + Sold To            (first character dropped) + Material
+             "3P02 - DUNDAS QUARRY"      "BURLINGTON READY MIX - P4Q01"
+             -> 3P02                   +  P4Q01 -> 4Q01          +  9160
+
+     Plant and Material put their CODE FIRST and Sold To puts it LAST, which is
+     why there are two extractors and not one. Both sides then drop a
+     one-character prefix from the customer / ship-to code - 6 on the SAP side,
+     P on the Aggregates side - and the four characters that remain are the
+     plant space, which is what makes the two line up at all. Verified against
+     the Aggregates workbook, not assumed. */
+  function buildSapKey_(plant, shipTo, material) {
+    return norm_(plant) + norm_(shipTo).slice(1) + norm_(material);
+  }
+  function code_(val)       { var s = norm_(val); return s.indexOf(' - ') >= 0 ? s.split(' - ')[0].trim() : s; }
+  function soldToCode_(val) { var s = norm_(val); return s.indexOf(' - ') >= 0 ? s.split(' - ').pop().trim() : s; }
+  function buildQlkKey_(plant, soldTo, material) {
+    return code_(plant) + soldToCode_(soldTo).slice(1) + code_(material);
+  }
+
+  /* Minimal HTML escape for the two sheet-sourced values the email prints.
+     THE PAGE DID NOT DO THIS and a customer named "G&L Group" is why it is
+     here - the ampersand is harmless, a stray angle bracket is not, and both
+     come out of a column anybody can type into. */
+  function esc_(v) {
+    return String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  /* ======================================================================
+   * THE SAP HALF
+   * ==================================================================== */
+
+  /* The eleven columns both tabs are reduced to, and what each tab calls them.
+     TP01 and ZIPR carry the same figures under different headings; this is the
+     only place that knows which is which. */
+  var SAP_COLS = ['CnTy', 'Plant', 'Material', 'Ship-To Party', 'Concat Key', 'Amount',
+                  'Currency', 'Pricing Unit', 'Unit of Measure', 'Valid From', 'Valid to'];
+  var SAP_DATE_COLS = { 'Valid From': 1, 'Valid to': 1 };
+  var SAP_MAP = {
+    TP01: { 'CnTy':'CnTy', 'Plant':'S Plant', 'Material':'Material',
+            'Ship-To Party':'Ship-to / Partner PC', 'Amount':'Amount', 'Currency':'Unit',
+            'Pricing Unit':'per', 'Unit of Measure':'UoM',
+            'Valid From':'Valid From', 'Valid to':'Valid to' },
+    ZIPR: { 'CnTy':'CnTy', 'Plant':'Plant', 'Material':'Material',
+            'Ship-To Party':'Ship-To Party', 'Amount':'Amount',
+            'Currency':'Condition currency', 'Pricing Unit':'Pricing unit',
+            'Unit of Measure':'Unit of measure',
+            'Valid From':'Valid From', 'Valid to':'Valid to' }
+  };
+
+  /* The header row is not row 1 - the export puts a title, a date and a source
+     line above it. It is the row carrying 'CnTy', and that is also what proves
+     the grid is a SAP export at all. */
+  function sapHeaderRow_(rows) {
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i] || [];
+      for (var c = 0; c < r.length; c++) if (norm_(r[c]) === 'CnTy') return i;
+    }
+    return -1;
+  }
+
+  function sapRows_(data, headers, colMap) {
+    var out = [];
+    for (var i = 0; i < data.length; i++) {
+      var row = data[i], obj = {};
+      for (var c = 0; c < SAP_COLS.length; c++) {
+        var col = SAP_COLS[c];
+        if (col === 'Concat Key') continue;
+        var idx = headers.indexOf(colMap[col]);
+        var val = idx >= 0 ? row[idx] : '';
+        if (SAP_DATE_COLS[col]) val = toDateStr_(val);
+        obj[col] = (val == null) ? '' : val;
+      }
+      obj['Concat Key'] = buildSapKey_(obj['Plant'], obj['Ship-To Party'], obj['Material']);
+      out.push(obj);
+    }
+    return out;
+  }
+
+  /* One SAP workbook, as { TP01: grid, ZIPR: grid } where a grid is an array of
+     rows. Returns the consolidated rows, the report date, and the two counts.
+
+     THE REPORT DATE COMES OFF THE FILE, three rows above its own header - the
+     export writes a title, then the date, then "Source: SAP". Never off the
+     calendar: a file re-issued a fortnight late still describes the day it was
+     run, and README.md §7 is the rule this is an instance of. A file that has
+     lost that cell is REPORTED rather than stamped with today, and the caller
+     decides - which is the difference between a wrong date and a known one.
+
+     BOTH TABS ARE REQUIRED, which is the page's rule and is kept deliberately.
+     A price list with one of its two condition types missing produces
+     confidently wrong corrections for every row the missing half priced, and
+     there is nothing downstream that could notice. */
+  function readSap(tabs) {
+    if (!tabs) throw new Error('No SAP workbook was supplied.');
+    var haveTp01 = !!(tabs.TP01 && tabs.TP01.length);
+    var haveZipr = !!(tabs.ZIPR && tabs.ZIPR.length);
+    if (!haveTp01 || !haveZipr) {
+      throw new Error('The SAP workbook must contain both a TP01 and a ZIPR tab. Found: ' +
+        (!haveTp01 && !haveZipr ? 'neither' : (haveTp01 ? 'TP01 only' : 'ZIPR only')) + '.');
+    }
+
+    var out = { rows: [], reportDate: '', dateSource: '', tp01Count: 0, ziprCount: 0 };
+    ['TP01', 'ZIPR'].forEach(function (tab) {
+      var g = tabs[tab] || [], hi = sapHeaderRow_(g);
+      if (hi < 0) throw new Error('Could not find the header row (the one carrying "CnTy") on ' +
+        'the ' + tab + ' tab of the SAP workbook.');
+      var hdr = (g[hi] || []).map(norm_);
+      var data = [], i, c;
+      for (i = hi + 1; i < g.length; i++) {
+        var r = g[i] || [], any = false;
+        for (c = 0; c < r.length; c++) if (norm_(r[c]) !== '') { any = true; break; }
+        if (any) data.push(r);
+      }
+      var rows = sapRows_(data, hdr, SAP_MAP[tab]);
+      out.rows = out.rows.concat(rows);
+      out[tab === 'TP01' ? 'tp01Count' : 'ziprCount'] = rows.length;
+
+      if (tab === 'TP01' && !out.reportDate) {
+        var cell = (g[hi - 3] && g[hi - 3][1]) || (g[2] && g[2][1]) || '';
+        var got = toDateStr_(cell);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(got)) { out.reportDate = got; out.dateSource = 'file'; }
+      }
+    });
+    return out;
+  }
+
+  /* ======================================================================
+   * THE QLIKVIEW HALF, BUILT FROM THE AGGREGATES SHEET
+   * ==================================================================== */
+
+  /* WHY THIS IS NOT A SECOND EXPORT. The QlikView transfer-pricing report is a
+     filtered, rolled-up view of the same Aggregates data this app already
+     reads - so PV.rawEnriched() is the whole source. It arrives already
+     market-enriched (REGION LOOKUP, keyed on Plant) and already carrying the
+     current year, worked out from the Year COLUMN rather than the calendar.
+     Nothing new is opened and no setting is added.
+
+     A RAW ROW CARRIES ONE YEAR. A 2025 row parks its figures in the PY columns
+     and zeros the CY ones; a 2026 row does the opposite. So "this year only" is
+     BOTH halves - the Year column AND the CY columns - and testing only one of
+     them silently drops or doubles rows depending which you pick.
+
+     THE FILTER IS EXACT EQUALITY, NEVER A CONTAINS. That column also carries
+     "Metrix RMX", which is a different company.
+
+     THE ROLL-UP. The Aggregates tab is drilled down further than the export
+     was: it also splits by Plant Type, Material Family, Product Class, Product
+     Application and Cust Segment. Summing those away leaves the export's own
+     grain, and the ASP is RECOMPUTED from the sums -
+
+         ASP ex-Works = SUM(revenue) / SUM(volume)
+
+     never averaged from the row-level ASPs. That is the revenue-weighted rule
+     every Price & Volume pivot uses (§6), and it is what makes
+     (SAP TP - ASP) x Volume come out right at this grain rather than at the one
+     the rows arrived in. */
+  var GK_ = String.fromCharCode(1);      // group-key join, as the month cube does it
+
+  function qlikFromSheet() {
+    var wantParent = String((APP_CONFIG.TP01_MAIL && APP_CONFIG.TP01_MAIL.CUSTOMER_PARENT) || '');
+    var wantKey = wantParent.replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!wantKey) throw new Error('APP_CONFIG.TP01_MAIL.CUSTOMER_PARENT is empty - there is ' +
+      'nothing to filter the Aggregates rows down to.');
+
+    var rows = PV.rawEnriched();
+    var cyYear = Number(rows.cyYear || 0);
+    if (!cyYear) throw new Error('The Aggregates sheet Year column gave no current year, so ' +
+      'there is no way to tell which of its two volume columns is this year.');
+
+    var acc = {}, order = [], parents = {}, noMarket = {}, kept = 0, seen = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var e = rows[i];
+      seen++;
+      var p = String(e.custParent == null ? '' : e.custParent).replace(/\s+/g, ' ').trim();
+      parents[p] = (parents[p] || 0) + 1;
+      if (p.toLowerCase() !== wantKey) continue;
+      if (Number(e.year || 0) && Number(e.year) !== cyYear) continue;
+
+      var vol = Number(e.cyVol) || 0, rev = Number(e.cyRev) || 0;
+      if (!vol && !rev) continue;
+
+      var market = String(e.market == null ? '' : e.market).trim();
+      if (!market) { noMarket[String(e.plant || '(blank plant)')] = 1; market = 'Unknown'; }
+
+      var soldTo   = String(e.soldTo   == null ? '' : e.soldTo).trim();
+      var plant    = String(e.plant    == null ? '' : e.plant).trim();
+      var material = String(e.material == null ? '' : e.material).trim();
+      var month    = String(e.month    == null ? '' : e.month).trim();
+
+      var k = [market, month, plant, material, soldTo].join(GK_);
+      var a = acc[k];
+      if (!a) {
+        a = acc[k] = { market: market, soldTo: soldTo, plant: plant,
+                       material: material, month: month, vol: 0, rev: 0 };
+        order.push(k);
+      }
+      a.vol += vol; a.rev += rev;
+      kept++;
+    }
+
+    /* The two headers the comparison finds by shape. They name the year the
+       DATA is, taken off the Year column - so this rolls to 2027 on its own,
+       and neither name is ever written in code. Spelled to match what
+       iYearCol_ compares literally: "ASP ex-Works", with the hyphen. */
+    var headers = ['Market', 'Customer Parent', 'Sold To', 'Plant', 'Material', 'Month',
+                   cyYear + ' Volume', cyYear + ' Rev exWorks', cyYear + ' ASP ex-Works'];
+
+    var out = [];
+    for (var n = 0; n < order.length; n++) {
+      var g = acc[order[n]];
+      out.push([g.market, wantParent, g.soldTo, g.plant, g.material, g.month,
+                round4_(g.vol), round4_(g.rev), g.vol ? round4_(g.rev / g.vol) : '']);
+    }
+
+    var strays = Object.keys(noMarket);
+    if (strays.length) {
+      /* NOT SILENT (§7). These rows are kept, under the market "Unknown", so
+         the money is still reported - but a plant missing from REGION LOOKUP is
+         a lookup that needs a row, not a rounding error. */
+      APP_log('warn', 'TPE.qlikFromSheet', 'plants with no REGION LOOKUP row - their rows are ' +
+              'grouped under the market "Unknown" rather than dropped',
+              { plants: strays.slice(0, 10).join(', '), count: strays.length });
+    }
+
+    return {
+      headers: headers, rows: out, source: 'sheet',
+      meta: { cyYear: cyYear, customerParent: wantParent, rawRows: seen,
+              matchedParentRows: kept, rolledRows: out.length,
+              unmappedPlants: strays, parents: parents }
+    };
+  }
+
+  /* ======================================================================
+   * THE COMPARISON
+   * ==================================================================== */
+
+  /* THE THREE COLUMNS THIS ADDS, and the shape of the output.
+
+     Concat Key goes in immediately after Month, exactly where the page put it,
+     because that is the column order everyone downstream has learned to read.
+     The three calculated columns go on the end:
+
+       SAP Transfer Price                 looked up by Concat Key
+       Additional Revenue to Post       = (TP - ASP) x Volume
+       Total Corrected Revenue ex-Works = that + (ASP x Volume)
+
+     A ROW WITH NO SAP PRICE GETS ALL THREE BLANK, never zero. Zero is a price;
+     blank is "there is no price for this", and the difference between them is
+     the entire meaning of the unmatched count. */
+  function compare(sap, qlk) {
+    var sapPrice = {}, sapFrom = {}, i;
+    for (i = 0; i < sap.rows.length; i++) {
+      var sr = sap.rows[i], sk = norm_(sr['Concat Key']);
+      /* FIRST ROW PER KEY WINS, and TP01 is concatenated ahead of ZIPR, so a
+         key priced on both tabs takes its TP01 price. That is the page's rule
+         and the business's. */
+      if (sk && !(sk in sapPrice)) { sapPrice[sk] = sr['Amount']; sapFrom[sk] = sr['Valid From']; }
+    }
+
+    var qH = qlk.headers.map(norm_);
+    var iSoldTo = qH.indexOf('Sold To');
+    var iPlant  = qH.indexOf('Plant');
+    var iMat    = qH.indexOf('Material');
+    var iMonth  = qH.indexOf('Month');
+    var iVolume = iYearCol_(qH, 'Volume');
+    var iASPin  = iYearCol_(qH, 'ASP ex-Works');
+    if (iSoldTo < 0 || iPlant < 0 || iMat < 0) {
+      throw new Error('The QlikView data has no Sold To / Plant / Material columns, so no ' +
+        'Concat Key can be built from it. Headers seen: ' + qlk.headers.join(' | '));
+    }
+    if (iVolume < 0 || iASPin < 0) {
+      /* NOT a silent -1. This is README.md §7 exactly: every Additional Revenue
+         to Post would come out of a blank cell and the workbook would still
+         build, still download and still send, under correct-looking headings. */
+      throw new Error('The QlikView data has no volume and/or ASP ex-Works column naming a ' +
+        'period (CY, PY or a four-digit year). Headers seen: ' + qlk.headers.join(' | '));
+    }
+
+    var at = iMonth;                              // Concat Key is inserted after Month
+    var headers = qlk.headers.slice(0, at + 1)
+      .concat(['Concat Key'])
+      .concat(qlk.headers.slice(at + 1))
+      .concat(['SAP Transfer Price', 'Additional Revenue to Post',
+               'Total Corrected Revenue ex-Works']);
+
+    var rows = [], vfrom = [], matched = 0, unmatched = 0;
+    for (var n = 0; n < qlk.rows.length; n++) {
+      var src = qlk.rows[n], clean = [], c;
+      for (c = 0; c < src.length; c++) {
+        clean.push(Object.prototype.toString.call(src[c]) === '[object Date]'
+                   ? toDateStr_(src[c]) : src[c]);
+      }
+      var key = buildQlkKey_(String(clean[iPlant]  == null ? '' : clean[iPlant]),
+                             String(clean[iSoldTo] == null ? '' : clean[iSoldTo]),
+                             String(clean[iMat]    == null ? '' : clean[iMat]));
+      var raw = (key in sapPrice) ? sapPrice[key] : null;
+      var tp = (raw !== null && raw !== '' && !isNaN(Number(raw))) ? Number(raw) : null;
+      if (tp !== null) matched++; else unmatched++;
+
+      var asp = Number(clean[iASPin]), vol = Number(clean[iVolume]);
+      var add = (tp !== null && !isNaN(asp) && !isNaN(vol)) ? round4_((tp - asp) * vol) : '';
+      var tot = (add !== '' && !isNaN(asp) && !isNaN(vol)) ? round4_(add + (asp * vol)) : '';
+
+      rows.push(clean.slice(0, at + 1).concat([key]).concat(clean.slice(at + 1))
+                     .concat([tp !== null ? tp : '', add, tot]));
+      vfrom.push((key in sapFrom) ? (sapFrom[key] || '') : '');
+    }
+
+    /* Sorted on the Concat Key, like the page's file, so the same week's files
+       produce the same workbook however many times they are run. */
+    var keyAt = at + 1, idx = [];
+    for (i = 0; i < rows.length; i++) idx.push(i);
+    idx.sort(function (a, b) { return String(rows[a][keyAt]).localeCompare(String(rows[b][keyAt])); });
+    var sRows = [], sFrom = [];
+    for (i = 0; i < idx.length; i++) { sRows.push(rows[idx[i]]); sFrom.push(vfrom[idx[i]]); }
+
+    var cmp = { headers: headers, rows: sRows, vfrom: sFrom,
+                matched: matched, unmatched: unmatched,
+                reportDate: sap.reportDate, dateSource: sap.dateSource,
+                sapRows: sap.rows.length, tp01Count: sap.tp01Count, ziprCount: sap.ziprCount,
+                source: qlk.source || 'sheet', meta: qlk.meta || {} };
+    split_(cmp);
+    return cmp;
+  }
+
+  /* Days the SAP price has been in effect while wrong: report date minus that
+     price's Valid From. null when either date is missing - which is not the
+     same as zero, and is printed as a dash rather than "0 days". */
+  function daysOutstanding_(cmp, i) {
+    var vf = cmp.vfrom[i];
+    if (!vf || !cmp.reportDate) return null;
+    var from = new Date(vf), ref = new Date(cmp.reportDate);
+    if (isNaN(from.getTime()) || isNaN(ref.getTime())) return null;
+    return Math.max(0, Math.floor((ref - from) / 86400000));
+  }
+
+  /* THE MARKET SPLIT AND THE EXCEPTION RULE.
+
+     An exception is a row that MATCHED and whose SAP price is BELOW the ASP by
+     more than a cent. Both sides are rounded to whole cents first so the test
+     agrees with what is printed. A price that is higher, equal, or off by only
+     a cent either way is not an exception - the asymmetry is the rule and not
+     an oversight: revenue is being under-posted only when SAP is the lower
+     number.
+
+     Exceptions come out longest-outstanding first, so the row that has been
+     wrong since January is at the top of the mail. */
+  function split_(cmp) {
+    var H = cmp.headers.map(norm_);
+    var iMarket = H.indexOf('Market');
+    var iSAP = H.indexOf('SAP Transfer Price');
+    var iASP = iYearCol_(H, 'ASP ex-Works');
+    var i;
+    cmp.markets = {}; cmp.exceptions = {}; cmp.days = [];
+    for (i = 0; i < cmp.rows.length; i++) cmp.days.push(daysOutstanding_(cmp, i));
+
+    if (iMarket < 0) {
+      /* NOT SILENT. The page returned early here and simply rendered nothing,
+         which looks identical to "no rows". */
+      APP_log('warn', 'TPE.split', 'the comparison has no Market column, so it cannot be split ' +
+              'by market and nothing can be mailed', { headers: cmp.headers.join(' | ') });
+      return;
+    }
+
+    function cents(n) { return Math.round(Number(n) * 100); }
+    for (i = 0; i < cmp.rows.length; i++) {
+      var row = cmp.rows[i];
+      var market = String(row[iMarket] == null ? '' : row[iMarket]).trim() || 'Unknown';
+      (cmp.markets[market] || (cmp.markets[market] = [])).push(i);
+
+      var sap = row[iSAP], asp = iASP >= 0 ? row[iASP] : '';
+      var isMatched = sap !== '' && sap !== null && !isNaN(Number(sap));
+      if (isMatched && iASP >= 0 && asp !== '' && !isNaN(Number(asp)) &&
+          (cents(sap) - cents(asp)) < -1) {
+        (cmp.exceptions[market] || (cmp.exceptions[market] = [])).push(i);
+      }
+    }
+    Object.keys(cmp.exceptions).forEach(function (m) {
+      cmp.exceptions[m].sort(function (a, b) { return byAge_(cmp, a, b); });
+    });
+  }
+
+  function byAge_(cmp, a, b) {
+    var da = cmp.days[a], db = cmp.days[b];
+    return (db == null ? -1 : db) - (da == null ? -1 : da);
+  }
+
+  /* ======================================================================
+   * THE EMAIL BODY
+   * ==================================================================== */
+
+  /* One market's block: the summary chips, then the first twenty rows. Moved
+     from the page unchanged except that Sold To and Material are ESCAPED now -
+     see esc_ - and that the row list arrives as indexes into cmp.rows rather
+     than as a second copy of the rows. */
+  function emailBody(kind, market, list, cmp) {
+    var isExc = kind === 'exc';
+    var H = cmp.headers.map(norm_);
+    var iASP = iYearCol_(H, 'ASP ex-Works'), iVol = iYearCol_(H, 'Volume');
+    var iSAP = H.indexOf('SAP Transfer Price');
+    var iAdd = H.indexOf('Additional Revenue to Post');
+    var iSold = H.indexOf('Sold To'), iMat = H.indexOf('Material');
+
+    var totalAdd = 0, totalVol = 0, oldest = null, i, r;
+    for (i = 0; i < list.length; i++) {
+      r = cmp.rows[list[i]];
+      if (!isNaN(Number(r[iAdd]))) totalAdd += Number(r[iAdd]);
+      if (!isNaN(Number(r[iVol]))) totalVol += Number(r[iVol]);
+      if (isExc) {
+        var d0 = cmp.days[list[i]];
+        if (d0 !== null && (oldest === null || d0 > oldest)) oldest = d0;
+      }
+    }
+
+    var DASH = '&mdash;';
+    function fmt(n) {
+      return isNaN(Number(n)) ? DASH : '$' + Number(n).toLocaleString('en-CA',
+             { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function fmtVol(n) { return isNaN(Number(n)) ? DASH : Math.round(Number(n)).toLocaleString(); }
+    function ageColor(d) { return d >= 60 ? '#B23A48' : d >= 30 ? '#B45309' : '#666'; }
+    function fmtDays(d) { return d === null ? DASH : d + ' day' + (d !== 1 ? 's' : ''); }
+
+    var PREVIEW_N = 20, body = '', td = 'padding:6px 10px;border-bottom:1px solid #e5e7eb;';
+    for (i = 0; i < Math.min(list.length, PREVIEW_N); i++) {
+      r = cmp.rows[list[i]];
+      var delta = Number(r[iSAP]) - Number(r[iASP]);
+      var d = isExc ? cmp.days[list[i]] : null;
+      body += '<tr>' +
+        '<td style="' + td + '">' + esc_(r[iSold]) + '</td>' +
+        '<td style="' + td + '">' + esc_(r[iMat]) + '</td>' +
+        '<td style="' + td + 'text-align:right;">' + fmtVol(r[iVol]) + '</td>' +
+        '<td style="' + td + 'text-align:right;">' + fmt(r[iASP]) + '</td>' +
+        '<td style="' + td + 'text-align:right;">' + fmt(r[iSAP]) + '</td>' +
+        (isExc ? '<td style="' + td + 'text-align:right;' +
+                 (delta < 0 ? 'color:#B23A48;' : 'color:#1F7A4D;') + '">' + fmt(delta) + '</td>' : '') +
+        '<td style="' + td + 'text-align:right;' +
+          (Number(r[iAdd]) < 0 ? 'color:#B23A48;' : 'color:#1F7A4D;') + '">' + fmt(r[iAdd]) + '</td>' +
+        (isExc ? '<td style="' + td + 'text-align:right;font-weight:700;color:' +
+                 (d === null ? '#666' : ageColor(d)) + ';">' + fmtDays(d) + '</td>' : '') +
+        '</tr>';
+    }
+    if (list.length > PREVIEW_N) {
+      body += '<tr><td colspan="' + (isExc ? 8 : 6) + '" style="padding:6px 10px;color:#999;' +
+              'font-style:italic;">... and ' + (list.length - PREVIEW_N) +
+              ' more rows (see attached)</td></tr>';
+    }
+
+    var heading = (isExc ? 'Transfer Price Exceptions &mdash; ' : 'Transfer Price Report &mdash; ')
+                + esc_(market);
+    var oldestChip = !isExc ? '' :
+      '<td style="width:12px;"></td>' +
+      '<td style="padding:8px 14px;background:' +
+        (oldest !== null && oldest >= 60 ? '#F7E7EA' : '#FFF8E1') +
+        ';border-radius:6px;text-align:center;">' +
+        '<div style="font-size:20px;font-weight:700;color:' +
+          (oldest === null ? '#666' : ageColor(oldest)) + ';">' +
+          (oldest === null ? DASH : oldest + ' days') + '</div>' +
+        '<div style="font-size:11px;color:#666;">Longest at Incorrect Price</div>' +
+      '</td>';
+
+    return '<div style="font-family:Arial,sans-serif;max-width:700px;">' +
+      '<div style="background:#011E6A;padding:20px 28px;border-radius:8px 8px 0 0;">' +
+        '<h2 style="color:white;margin:0;font-size:18px;">' + heading + '</h2>' +
+        '<p style="color:#A9C3E8;margin:4px 0 0;font-size:13px;">Report Date: ' +
+          esc_(cmp.reportDate) + ' &middot; ' + list.length + ' record' +
+          (list.length !== 1 ? 's' : '') + '</p>' +
+      '</div>' +
+      '<div style="background:#F4F7FC;padding:16px 28px;border:1px solid #DCE6F2;border-top:none;">' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12px;"><tr>' +
+          '<td style="padding:8px 14px;background:#EEF7FF;border-radius:6px;text-align:center;">' +
+            '<div style="font-size:20px;font-weight:700;color:#011E6A;">' + fmtVol(totalVol) + '</div>' +
+            '<div style="font-size:11px;color:#666;">Total Volume</div>' +
+          '</td>' +
+          '<td style="width:12px;"></td>' +
+          '<td style="padding:8px 14px;background:' + (totalAdd >= 0 ? '#E4F3EB' : '#F7E7EA') +
+            ';border-radius:6px;text-align:center;">' +
+            '<div style="font-size:20px;font-weight:700;color:' +
+              (totalAdd >= 0 ? '#1F7A4D' : '#B23A48') + ';">' + fmt(totalAdd) + '</div>' +
+            '<div style="font-size:11px;color:#666;">Total Additional Revenue to Post</div>' +
+          '</td>' + oldestChip +
+        '</tr></table>' +
+      '</div>' +
+      '<div style="padding:20px 28px;border:1px solid #DCE6F2;border-top:none;' +
+           'border-radius:0 0 8px 8px;">' +
+        '<table style="width:100%;border-collapse:collapse;font-size:12px;"><thead>' +
+          '<tr style="background:#011E6A;color:white;">' +
+            '<th style="padding:8px 10px;text-align:left;">Sold To</th>' +
+            '<th style="padding:8px 10px;text-align:left;">Material</th>' +
+            '<th style="padding:8px 10px;text-align:right;">Volume</th>' +
+            '<th style="padding:8px 10px;text-align:right;">ASP ex-Works</th>' +
+            '<th style="padding:8px 10px;text-align:right;">SAP Transfer Price</th>' +
+            (isExc ? '<th style="padding:8px 10px;text-align:right;">TP &minus; ASP</th>' : '') +
+            '<th style="padding:8px 10px;text-align:right;">Addl. Revenue to Post</th>' +
+            (isExc ? '<th style="padding:8px 10px;text-align:right;">Past Due</th>' : '') +
+          '</tr>' +
+        '</thead><tbody>' + body + '</tbody></table>' +
+      '</div>' +
+    '</div>';
+  }
+
+  /* Every market's block, stacked - the page's "Send As One" body, and the only
+     shape the automated mail uses. */
+  function stackedBody(kind, cmp) {
+    var map = (kind === 'exc') ? cmp.exceptions : cmp.markets;
+    var names = Object.keys(map).sort(), out = [];
+    for (var i = 0; i < names.length; i++) out.push(emailBody(kind, names[i], map[names[i]], cmp));
+    return out.join('<div style="height:26px;"></div>');
+  }
+
+  /* ======================================================================
+   * THE WORKBOOK GRIDS
+   * ==================================================================== */
+
+  /* One market's grid, or - with market null - EVERY market's rows in one grid,
+     which is the shape the automated mail attaches. Market is already a column,
+     so the combined file needs nothing added to say which rows belong where;
+     the two aging columns go on the end, as on the page. */
+  function grid(kind, market, cmp) {
+    var isExc = (kind === 'exc');
+    var map = isExc ? cmp.exceptions : cmp.markets;
+    var list = [], i;
+    if (market === null || market === undefined) {
+      var names = Object.keys(map).sort();
+      for (i = 0; i < names.length; i++) list = list.concat(map[names[i]]);
+      if (isExc) list.sort(function (a, b) { return byAge_(cmp, a, b); });
+    } else {
+      list = map[market] || [];
+    }
+
+    var headers = isExc ? cmp.headers.concat(['SAP Valid From', 'Days at Incorrect Price'])
+                        : cmp.headers.slice();
+    var rows = [];
+    for (i = 0; i < list.length; i++) {
+      var n = list[i];
+      rows.push(isExc
+        ? cmp.rows[n].concat([cmp.vfrom[n] || '', cmp.days[n] === null ? '' : cmp.days[n]])
+        : cmp.rows[n].slice());
+    }
+    return { headers: headers, rows: rows, count: rows.length };
+  }
+
+  /* Which columns get which number format, for whoever is writing the file -
+     the same list the page applies. A column that is not there is simply
+     absent from the map rather than present as -1. */
+  function numberFormats(headers) {
+    var H = headers.map(norm_), out = {};
+    var vol = iYearCol_(H, 'Volume');
+    if (vol >= 0) out[vol] = '0';
+    [iYearCol_(H, 'ASP ex-Works'),
+     H.indexOf('Total Standard Production Costs'),
+     H.indexOf('SAP Transfer Price'),
+     H.indexOf('Additional Revenue to Post'),
+     H.indexOf('Total Corrected Revenue ex-Works')].forEach(function (i) {
+      if (i >= 0) out[i] = '"$"#,##0.00';
+    });
+    return out;
+  }
+
+  return {
+    readSap:       readSap,
+    qlikFromSheet: qlikFromSheet,
+    compare:       compare,
+    emailBody:     emailBody,
+    stackedBody:   stackedBody,
+    grid:          grid,
+    numberFormats: numberFormats,
+    /* used by TPXLSX, by the status report and by the harnesses */
+    iYearCol:      iYearCol_,
+    toDateStr:     toDateStr_,
+    buildSapKey:   buildSapKey_,
+    buildQlkKey:   buildQlkKey_
+  };
+})();
 
 /* ---- IR_Backend.gs -----------------------------------------------------------
    The Inventory Report's source setting. The smallest backend in the file.  */
