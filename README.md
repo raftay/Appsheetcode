@@ -540,72 +540,89 @@ the anchor is re-pointed at the new height.
 
 Apps Script cannot read `.xls` / `.xlsx` — `SpreadsheetApp` opens a Google Sheet and nothing
 else — so Drive converts each export to a temporary one, which is read and then trashed.
-**QlikView delivers `.xls` and cannot deliver anything else, so this happens on every sync.**
-`readExport_` does skip the copy for an export that is already a Google Sheet, but that is not
-a route this pipeline can take.
+**QlikView delivers an Excel workbook and cannot deliver anything else, so this happens on every
+sync.** The file names in Drive end `.xls`; the content is `.xlsx`, and that mismatch is worth
+knowing only because the *format* was twice guessed at as the reason one export truncated and
+another did not. It was not the reason either time. `readExport_` does skip the copy for an
+export that is already a Google Sheet, but that is not a route this pipeline can take.
 
 **The copy is not finished when Drive hands back its id, and this is the cause of a tab that
 stops partway down.** `files/copy` returns as soon as the file *record* exists; converting tens
-of thousands of rows of `.xls` is not instant, and the sheet is **readable while it is still
+of thousands of rows of Excel is not instant, and the sheet is **readable while it is still
 filling** — `getDataRange()` answers with however much has landed, truthfully and short, with
 no error anywhere. Read straight away, a 47,000-row export comes back as a thousand-odd rows,
 is written as a thousand-odd rows, and the other 46,000 are **deleted** to match, because the
 sheet ends where the export ends.
 
-**The wait for it cannot be made of `SpreadsheetApp` calls, and the first version of it was.**
-`settle_` used to poll `SpreadsheetApp.openById(id).getSheets()[n].getLastRow()`, with a
-`SpreadsheetApp.flush()` in front of each look and a comment calling that flush load-bearing.
-It is not: `flush()` pushes *this execution's pending writes* out to the server and has nothing
-to say about a file **another process** — Drive's converter — is filling behind the script's
-back. The Spreadsheet service snapshots a spreadsheet the first time an execution opens it and
-answers every later question in that execution from the snapshot, so the second look agreed
-with the first **because it was the first**, the wait returned after one sleep, and the read
-that followed got that same frozen half-written grid. Every symptom follows from that one fact,
-which is how it was found: a temp copy that appears in Drive and is trashed a couple of seconds
-later; a tab that stops at **the same row every single run**; that row being the same whether
-the tab was full beforehand or had just been emptied by hand, because it never depended on the
-tab at all; and one export coming through whole while another does not, because a copy that
-finishes converting inside the first look has nothing left to land.
+**It is a slow fill, not a race, and one measurement is what says so.** Lengthening the wait
+from about a second and a half to about six moved the Aggregates tab from **1,113 rows to
+2,224** — twice the wait, twice the rows, the same file. That is a conversion running at
+roughly **350 rows a second**, which puts a 47,634-row export at **over two minutes** of
+filling. Nothing about it is intermittent: every wait shorter than the conversion returns a
+short read, and it lands on the same row every run because the wait was the same length every
+run. It is **not about size and not about `.xls` against `.xlsx`** — every one of these exports
+is `.xlsx`, and both of those were guessed and both were wrong. It is only ever whether the
+conversion outlives the wait.
 
-**Which export suffers is not about size**, and guessing that it was got this wrong once
-already. Aggregates truncates and Ready-Mix does not, and Ready-Mix is the *bigger* read —
-three tabs of roughly 44k, 23k and 14k rows against Aggregates' 47k and 4k. The likeliest
-difference is the **format**: Aggregates arrives as `.xlsx` and Ready-Mix as `.xls`, and Drive
-does not convert the two the same way — a copy whose conversion runs *after* `files/copy` has
-answered is the one that gets read half-written. That is a guess and it is not load-bearing:
-whichever way round it is, it decides only *whether* the copy is still filling at the moment of
-the first look, and the wait below removes that moment.
+**So the wait has to watch a number that moves while Drive is filling, and three were tried
+before one did.**
 
-So the poll is made of HTTP calls instead, on the same OAuth token the Drive calls already
-use: **`spreadsheets.get` for `gridProperties.rowCount`, and Drive's `version` beside it**.
-Every look is a fresh answer from the server, and **nothing in the wait opens the copy with
-`SpreadsheetApp`**; by the time `readExport_` does, the conversion has finished and the
-snapshot the Spreadsheet service takes is of a whole file. **Neither number is trusted alone.**
-`rowCount` is what check 0 needs afterwards, but it is the tab's *allocated* height — if Drive
-sizes the grid up front and fills the cells into it, rowCount is final from the first look while
-the data is still landing, and a wait built on it alone settles instantly on a sheet that is
-still being written. Drive's `version` is bumped by every change made to the file on the server,
-so it keeps moving for as long as anything is being written in, grid growing or not; the wait is
-over when **both** have stopped. One agreeing pair of looks is not enough either — a conversion
-pauses between tabs and a pause landing across a single gap reads exactly like a finished file —
-so it wants **two consecutive agreements**, 2 s apart, with a 90 s ceiling because this runs
-inside a six-minute execution. **Giving up waiting still does not
-throw**, and check 0 above is why. When the REST calls cannot be made the wait goes blind
-for 15 s and says so at `warn`: worse than polling, better than not waiting, and the one thing
-that must not happen is `SpreadsheetApp` opening the copy early, because that snapshot cannot be
-taken back for the rest of the run.
+- `SpreadsheetApp.getLastRow()`, flushed before each look, with a comment calling that flush
+  load-bearing. It is not: `flush()` pushes *this execution's pending writes* out to the server
+  and says nothing about a file **Drive's converter** is filling behind the script's back, and
+  the Spreadsheet service answers the second look out of the first look's snapshot. Two looks
+  that agree because nothing re-read.
+- **Drive's `version`.** It moves when a user or an API call changes the file. The converter's
+  own writing does not bump it, so it is stable from the first look — the wait agrees with
+  itself immediately and returns after six seconds. That is exactly what shipped, and exactly
+  why the row count *doubled* instead of arriving.
+- **`gridProperties.rowCount`.** The tab's *allocated* height, which Drive is free to size
+  before it fills a cell of it.
 
-**The Sheets half of the poll is optional, and on a default project it starts off.** The first
-`APP_verifyPermissions` after this shipped returned **HTTP 403 — "Google Sheets API has not been
-used in project … before or it is disabled"**. That is not OAuth and there is no consent screen
-to go looking for: the scope is granted and `SpreadsheetApp` works everywhere, the token is good
-and the Drive REST row passes on the same one. What is off is the **API itself, in the Cloud
-project behind the script** — a default Apps Script project has Drive switched on and Sheets
-switched off, which is precisely the shape of one of those two rows passing and the other not.
-Turn it on in the **Apps Script editor ▸ Services ▸ + ▸ Google Sheets API ▸ Add**, or from the
-console link inside the 403. Until then the sync runs on Drive's `version` alone: the wait still
-waits — which is what the truncation was about — and **check 0 is skipped rather than guessed
-at**, with one `warn` per execution naming the fix rather than forty-five refusals.
+What does move is **the number of rows that hold something**, and the Sheets REST API reports it
+live. So the poll asks `values.get` for the rows themselves — and only for the ones it has not
+already seen: a window of 20,000 rows starting at the frontier the last look found, walked
+forward until a window comes back short. The first look on a copy that is barely started costs
+one small call per tab, every later look costs one more, and the whole wait reads the equivalent
+of the probe columns once. The probe is **`A:E`, a band and not one column**, because
+`values.get` trims trailing empty rows out of its answer — which is what makes a window's length
+mean "the last row here with something in it" — but only for the columns asked about, and an
+export whose first column has gaps would end the walk on a hole. `rowCount` is still asked for,
+because a `values.get` whose range runs past the end of a sheet answers **HTTP 400** rather than
+with fewer rows: it bounds the probe, it does not end the wait. **The tab list is asked every
+look and never cached**, because Drive adds the tabs one at a time as well — a copy reporting one
+tab now can report four in thirty seconds, and a cached list is a way of settling happily on a
+third of a file.
+
+One agreeing pair of looks is not enough — a conversion pauses between tabs and a pause landing
+across a single gap reads exactly like a finished file — so it wants **two consecutive
+agreements**, starting 2 s apart and backing off to 10 s, because a copy that has been filling
+for two minutes is not going to be caught out by a look every second. The ceiling is **4
+minutes**, bounded by what is left of a five-minute slice of the execution (the export still has
+to be read and written afterwards) and floored at 60 s, and **the floor wins over the budget**: a
+run that has already spent its slice is a run about to be killed at the six-minute limit, and
+being killed during the *wait* costs a stranded temp copy the sweep clears, while giving up on
+the wait costs a truncated tab. **Giving up still does not throw**, and check 0 above is why.
+When the fill cannot be watched at all the wait goes blind for **45 s** and says so at `warn` —
+sized by the measurement above rather than by optimism — and a blind wait is served its full
+length rather than being allowed to finish early on Drive's `version`, which agrees with itself
+from the first look whatever the converter is doing.
+
+**And it needs the Sheets API switched on — which is a line in `appsscript.json`, not a scope.**
+The first `APP_verifyPermissions` after the poll shipped returned **HTTP 403 — "Google Sheets API
+has not been used in project … before or it is disabled"**. That is not OAuth and there is no
+consent screen to go looking for: the scope is granted and `SpreadsheetApp` works everywhere, the
+token is good and the Drive REST row passes on the same one. What is off is the **API itself, in
+the Cloud project behind the script** — a default Apps Script project has Drive switched on and
+Sheets switched off, which is precisely the shape of one of those two rows passing and the other
+not. `appsscript.json` now carries it as an advanced service —
+`dependencies.enabledAdvancedServices`, `userSymbol: "Sheets"`, `version: "v4"`,
+`serviceId: "sheets"` — and **that entry is what switches the API on**. **Nothing in the code
+calls the `Sheets` symbol**; §5 reaches the same API over `UrlFetchApp` on the script's own
+token. It looks unused. Deleting it breaks the QlikView sync, silently, in the way this whole
+section is about — §9's list has it. Without it the sync still runs and runs blind: the wait
+falls back to the fixed sleep and **check 0 cannot run at all**, with one `warn` per execution
+naming the fix.
 
 Because it happens every time, **`sweepTemps_` clears the strays**. The copy is trashed in a
 `finally`, which covers every way the read can fail except the runtime limit — Apps Script
@@ -1659,6 +1676,7 @@ the banner still stood for four chunks. **Read the code, not the label.**
 | `SB` · `getSlideData` | Live — the Overview's segment and product-category panels read them |
 | `RMX_getCrossReport` · `getRmxUnmapped` · `uploadRmxData` · `getMarkets` · `getKeys` · `getExtras` · `syncData` | The **legacy-name wrappers**. Zero callers is not the test: they exist so a stale deployment still resolves, and removing one changes what that deployment does. `getMarkets` / `getKeys` / `getExtras` are exactly the generic names the `RMX_NS` capture protects against. Treat as its own piece of work |
 | `doGet` | Apps Script itself is the caller |
+| `appsscript.json`'s `Sheets` advanced service | **Nothing calls the `Sheets` symbol** — §5 reaches the same API over `UrlFetchApp` on the script's own token. Listing it is what switches the **Sheets API on in the Cloud project**, which a default Apps Script project has off while Drive's is on. Remove it and every Sheets REST call answers 403: the sync's wait for a converted export goes blind, `check 0` stops running, and a 47,634-row export lands as 1,113 rows with nothing reporting it |
 
 **All seven debug functions are already gone**, and a repo-wide audit of every top-level
 declaration found no others: every remaining callerless name is either a deliberate keep above
@@ -1849,3 +1867,4 @@ or was forgotten.**
 | | **The sync gate has never run against a real export.** `QLIK_TAB_SHAPE` is empty until the first successful sync after this deploy, and **every check passes by default with no baseline** — so the first run records and the second is the first one actually guarded. Watch that a normal month-on-month change does not trip the shrink check | ☐ |
 | | **`QLIK_ALERT_TO` is unset**, so the failure mail goes to whoever created the trigger. Set the Script Property if it should go to somebody else | ☐ |
 | 2026-08-24 | **The row the sync stopped at was never about the export, the tab, or how full either of them was — it was one cached read.** Reported again after the gate shipped: the Aggregates tabs stop at **row 1,114** of a 47,634-row export, the same row whether the tab was full or had just been emptied by hand, while Ready-Mix comes through whole; and the `~qliksync temp` copy appears in Drive and is gone again seconds later. All three are one fact. **`settle_` polled the converting copy through `SpreadsheetApp`**, and the Spreadsheet service snapshots a spreadsheet on an execution's FIRST look at it and answers everything later in that execution from the snapshot — so the second poll agreed with the first *because it was the first*, the wait returned after one 1.5 s sleep, and `getDataRange()` then read the same frozen half-converted grid. The `SpreadsheetApp.flush()` in front of each look, which the last session called load-bearing, is not: it pushes **this execution's pending writes** out and says nothing about a file **Drive's converter** is filling behind the script's back. Same row every time because it is however much had landed when the snapshot was taken; independent of the tab because it never read the tab; one export whole and another not because a copy that finishes converting inside the first look has nothing left to land. **Not size** — that was guessed and it was wrong: Ready-Mix is the bigger read at 44k/23k/14k rows against Aggregates' 47k/4k. The likeliest difference is `.xlsx` against `.xls`, which Drive does not convert the same way, and it is not load-bearing either way: it decides only whether the copy is still filling at the moment of the first look, and the wait removes that moment. **The poll is HTTP now** — `spreadsheets.get` for `gridProperties.rowCount` **and Drive's `version` beside it**, on the same OAuth token the Drive calls use, so every look is a fresh answer, and **nothing opens the copy with `SpreadsheetApp` until the poll has settled**, which is the whole fix: the snapshot is then taken of a finished file. Both numbers, because `rowCount` is an *allocated* height and would be final from the first look if Drive sizes the grid up front and fills cells into it, while `version` moves for as long as anything is being written in. Two agreeing looks was never enough either (a conversion pauses between tabs), so it wants **two consecutive** agreements, 2 s apart, under a 90 s ceiling; a poll that cannot run at all waits blind for 15 s and says so at `warn`. **And the gate gets a check that needs no history** — `check 0`, the read's height against the height the server reports for that tab, under half above a 500-row floor. It is the only one of the five that can see this failure: the 1,113 rows that landed are perfectly well formed and defeat every check that compares against the last good export. It also closes the hole underneath them — with no baseline the first truncated read passes, writes, and **records its own 1,113 rows as the standard** the next run is judged against, which is why emptying the tab by hand and re-syncing did not clear it. `APP_verifyPermissions` gains a **Sheets REST** row, and it earned itself on the first run: **HTTP 403, "Google Sheets API has not been used in project … or it is disabled"**. That is not OAuth and no consent screen will appear for it — the scope is granted and `SpreadsheetApp` has always worked; what is off is the **API itself in the Cloud project behind the script**, which for a default Apps Script project has Drive on and Sheets off. So the poll is now built the other way up: **Drive's `version` is the half that always works** and is asked first and unconditionally, Sheets `rowCount` is asked on top of it, and one 403 turns the Sheets half off for the rest of the execution with a `warn` naming the fix rather than forty-five more refusals. Without it the sync still works — the wait still waits, which is what the truncation was about — and **check 0 is skipped rather than guessed at**. Turn it on in Apps Script ▸ Services ▸ Google Sheets API, or from the console link in the 403 itself. **`tests/qliksync.js` is red and left that way on purpose**: its two `settle_` cases drive the copy's growth through a fake `SpreadsheetApp` that re-reads honestly, which is the one thing the real service does not do — they assert the mechanism that was removed, and rewriting them means modelling the per-execution snapshot in the harness. Next session's first job | ☐ |
+| 2026-08-24 | **The wait was right in kind and wrong in what it watched, and the fix is one line of manifest plus a probe that measures rows.** Reported after the HTTP poll shipped: the Aggregates tab moved from **1,113 rows to 2,224** — twice the wait, twice the rows, the same file — which is the measurement that ends the guessing. It is a **slow fill at roughly 350 rows a second**, so a 47,634-row export is over **two minutes** of converting; nothing is intermittent, and the row it stops at is the same every run because the wait was the same length every run. **Both format guesses were wrong**: every export is `.xlsx` (the Drive names end `.xls`), and size was wrong before that. Three signals were tried and only the third moves while Drive fills: `SpreadsheetApp.getLastRow()` answers the second look from the first look's snapshot; **Drive's `version` is not bumped by the converter's own writing**, so a wait built on it agrees with itself from the first look and returns after six seconds — that is why the count doubled instead of arriving; `gridProperties.rowCount` is the *allocated* height. What moves is **how many rows hold something**, so the poll walks `values.get` over `A:E` in 20,000-row windows starting at the frontier the last look found — one small call per tab per look, the whole wait reading the probe columns once — with `rowCount` kept only to bound the range, since a `values.get` past the end of a sheet answers **400**, not fewer rows. The **tab list is re-asked every look**: Drive adds tabs one at a time too. Two consecutive agreements, 2 s backing off to 10 s, a 4-minute ceiling inside a five-minute slice of the execution, **floored at 60 s and the floor wins** — being killed during the wait costs a stranded copy the sweep clears, giving up on the wait costs a truncated tab. Blind wait raised 15 s → **45 s**, and a blind wait is served its full length rather than finishing early on `version`. **And the 403 was never an OAuth failure**: `appsscript.json` now carries the Sheets API as an advanced service (`dependencies.enabledAdvancedServices`), which is what switches that API on in the Cloud project — a default Apps Script project has Drive on and Sheets off. **Nothing in the code calls the `Sheets` symbol**, so it reads as unused and is in §9's do-not-delete list with the failure it causes spelled out. It had been added by hand in the live project and was not in the repo; that is why the same 403 came back on the next push. `tests/qliksync.js`'s two `settle_` cases are **still red and still deliberate** — they assert a mechanism now removed twice over, and rewriting them means modelling both the per-execution snapshot and a windowed HTTP probe. Not run this session: the change was pushed for a field test on the real exports, which is the only place a two-minute conversion exists | ☐ |
