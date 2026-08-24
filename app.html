@@ -6932,11 +6932,22 @@ window.AmrStamp = (function(){
     if (sh) sh.textContent = agoShort(p.sheetAt);
     btn.title = 'Last updated from the Google Sheet: ' + stamp(p.sheetAt) +
                 ' (' + ago(p.sheetAt) + ')' +
-                (p.qlikAt ? '\nThe sheet was last updated from QlikView: ' + stamp(p.qlikAt) +
-                            ' (' + ago(p.qlikAt) + ')'
-                          : '\nThis sheet is not one QlikView syncs.') +
+                (!wantQlik() ? ''
+                 : p.qlikAt ? '\nThe sheet was last updated from QlikView: ' + stamp(p.qlikAt) +
+                              ' (' + ago(p.qlikAt) + ')'
+                            : '\nThis sheet is not one QlikView syncs.') +
                 '\nClick for the detail.';
   }
+
+  /* WHETHER THIS PAGE SHOWS THE SECOND CLOCK, and the server decides it — see
+     APP_STAMP_NO_QLIK in script.gs §1. A page reading one workbook shows both;
+     the Executive Overview reads three and shows the sheet clock alone, because
+     three sync times stacked under three sheet times is not an answer to "how
+     old is this page".
+
+     Defaults TRUE, so a reply from a build that predates the field behaves
+     exactly as it did before rather than silently losing a clock. */
+  function wantQlik(){ return !(data && data.qlik === false); }
 
   function row(head, when, extra){
     return '<div class="amr-cur"><b>' + esc(head) + '</b><br>' +
@@ -6954,6 +6965,7 @@ window.AmrStamp = (function(){
                        'It works offline and in the editor preview; the stamp only answers in ' +
                        'the live Apps Script web app.</p>';
     } else {
+      var two = wantQlik();
       body.innerHTML = srcs.map(function(s){
         var qlik = s.qlikAt
           ? stamp(s.qlikAt) + ' \u00b7 ' + ago(s.qlikAt)
@@ -6968,13 +6980,21 @@ window.AmrStamp = (function(){
                row('Last updated from the Google Sheet',
                    s.sheetAt ? stamp(s.sheetAt) + ' \u00b7 ' + ago(s.sheetAt) : '',
                    'The figures on this page are that version of the sheet.') +
-               row('The Google Sheet was last updated from QlikView', qlik, from);
+               (two ? row('The Google Sheet was last updated from QlikView', qlik, from) : '');
       }).join('') +
-      '<p style="color:var(--muted);margin-bottom:0">The two are usually seconds apart. ' +
-      'They come apart when somebody edits the workbook by hand \u2014 a row typed into a ' +
-      'lookup tab moves the first and not the second \u2014 or when a sync runs off an export ' +
-      'QlikView dropped some time earlier. ' +
-      'Press \u21bb Update from source to pick up anything newer.</p>';
+      (two
+        ? '<p style="color:var(--muted);margin-bottom:0">The two are usually seconds apart. ' +
+          'They come apart when somebody edits the workbook by hand \u2014 a row typed into a ' +
+          'lookup tab moves the first and not the second \u2014 or when a sync runs off an export ' +
+          'QlikView dropped some time earlier. ' +
+          'Press \u21bb Update from source to pick up anything newer.</p>'
+        /* THE ONE-CLOCK FOOTER. The paragraph above explains why there are two
+           of them, so leaving it here would explain a row that is not on the
+           screen. This page reads several workbooks and dates each one off the
+           sheet itself, which is the clock its own figures came from. */
+        : '<p style="color:var(--muted);margin-bottom:0">This page reads several workbooks, so ' +
+          'each is dated on its own. The figures on screen are the oldest of them. ' +
+          'Press \u21bb Update from source to pick up anything newer.</p>');
     }
     document.getElementById('amrStampModal').classList.add('amr-open');
   }

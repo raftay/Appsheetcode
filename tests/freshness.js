@@ -341,10 +341,60 @@ console.log('\nthe Overview reports every workbook behind it, not one of them:')
      of. A stamp that reported one workbook would date the page off whichever
      one happened to be first while another sat two days stale. */
   checkThat('more than one row', r.sources.length >= 3, r.sources.length);
-  checkThat('Ready-Mix is one of them',
-    r.sources.some(x => x.page === 'rmx' && x.qlikAt === 700));
-  checkThat('and Price & Volume, which has never been synced here',
-    r.sources.some(x => x.page === 'pricevolume' && x.qlikAt === 0));
+  checkThat('Ready-Mix is one of them', r.sources.some(x => x.page === 'rmx'));
+  checkThat('and Price & Volume', r.sources.some(x => x.page === 'pricevolume'));
+  checkThat('each carries its own sheet clock',
+    r.sources.every(x => x.sheetAt > 0), JSON.stringify(r.sources.map(x => x.sheetAt)));
+
+  /* ONE CLOCK ON THIS PAGE, AND THE SERVER IS WHAT SAYS SO. The QlikView clock
+     is a fact about ONE workbook; the Overview reads three, and three sync
+     times stacked under three sheet times is not an answer to "how old is this
+     page". APP_STAMP_NO_QLIK is the switch and `qlik` is how the panel is told
+     — it must not have to infer it from a row of zeroes, because "not synced
+     yet" and "not shown here" are different facts. */
+  check('the answer says which clocks it carries', r.qlik, false);
+  checkThat('and no QlikView time is sent at all',
+    r.sources.every(x => x.qlikAt === 0 && x.exportName === ''),
+    JSON.stringify(r.sources.map(x => [x.page, x.qlikAt])));
+  /* Not a saving of the round trip but of the READ: the sync log is a Script
+     Property and a JSON.parse per row, paid to fill fields nothing renders. */
+  check('so the sync log is never opened for it', 'rmx' in state.synced && r.sources
+    .filter(x => x.page === 'rmx').every(x => x.qlikAt === 0), true);
+
+  /* THE PAGES THAT READ ONE WORKBOOK ARE UNCHANGED. Removing the clock where it
+     cannot mean anything is not the two clocks being collapsed into one. */
+  const pv = ctx.getSourceTimes('pricevolume');
+  check('a single-workbook page still gets both', pv.qlik, true);
+}
+
+console.log('\nthe closed-year history books are not on the bar at all:');
+{
+  const { ctx, state } = load();
+  /* They are read ONCE, by "Rebuild history", and never on the user path. A
+     2024 book is SUPPOSED to be old, so its age says nothing about the figures
+     on screen — and QlikView does not sync one, so each added a section whose
+     only content was "not known". Four of those under three real ones is what
+     made the panel unreadable.
+
+     They stay in APP_EXTRA_SOURCES: the ⚙ Data sheet panel is where they are
+     pointed at a workbook, and the data VERSION still has to move when one
+     changes or a rebuilt history would never reach a device. */
+  const props = ctx.PropertiesService.getScriptProperties();
+  ['histagg', 'histrmx', 'histagg2', 'histrmx2'].forEach((p, i) => {
+    props.setProperty(ctx.APP_propKey_(p), 'hist-' + p);
+    state.mtime['hist-' + p] = 4000 + i;
+  });
+  ctx.APP_forgetStamp_(null);
+
+  const r = ctx.getSourceTimes('overview');
+  check('none of them is a row', r.sources.filter(x => /^hist/.test(x.page)).map(x => x.page), []);
+  checkThat('the live workbooks still are',
+    r.sources.some(x => x.page === 'pricevolume') && r.sources.some(x => x.page === 'rmx'));
+  /* THE SUBTRACTION IS THE STAMP'S ALONE. Dropping a history book from the
+     data version would leave "Rebuild history" invisible to every other device. */
+  checkThat('and the data version still counts them',
+    ctx.APP_sourceIds_('overview').indexOf('hist-histagg') !== -1,
+    ctx.APP_sourceIds_('overview').join(','));
 }
 
 console.log('\nthe stamp is its own control, beside the button and not inside it:');

@@ -756,6 +756,36 @@ var APP_EXTRA_SOURCES = { pricevolume: ['saskrates'],
                              rmx and segment, fsc -> pricevolume, rfsc -> rmx. */
                           deckbuilder: ['pricevolume', 'rmx', 'segment', 'saskrates'] };
 
+/* ------------------------------------------------------------------------
+ * WHAT THE HEADER'S AGE STAMP LISTS, AND WHAT IT LEAVES OUT
+ * ------------------------------------------------------------------------
+ * The stamp answers "how old are the figures I am looking at". Two things do
+ * not belong in that answer, and both are subtractions from APP_EXTRA_SOURCES
+ * rather than a second list of sources — the ⚙ Data sheet panel still offers
+ * every workbook, because that panel answers a different question.
+ * ---------------------------------------------------------------------- */
+
+/* WORKBOOKS THE STAMP DOES NOT LIST AT ALL. The closed-year history books are
+   read ONCE, by "Rebuild history" on the Overview, and never on the user path.
+   Their age says nothing about the figures on screen — a 2024 book is supposed
+   to be old — and QlikView does not sync them, so every one of them added a
+   section to the panel whose only content was "not known". Four rows of that
+   under three real ones is what made the panel unreadable. */
+var APP_STAMP_SKIP = { histagg: 1, histrmx: 1, histagg2: 1, histrmx2: 1 };
+
+/* PAGES THAT SHOW THE GOOGLE SHEET CLOCK ONLY. The QlikView clock is a fact
+   about ONE workbook — when the sync last wrote it — so it means something on a
+   page that reads one. The Executive Overview reads three, and three sync times
+   stacked up under three sheet times is not an answer to "how old is this
+   page"; it is four clocks the reader has to reconcile themselves.
+
+   THIS IS NOT THE TWO CLOCKS BEING COLLAPSED INTO ONE. That rule forbids
+   DERIVING the QlikView time from Drive, which would call a hand edit a
+   QlikView update. Showing one clock and not the other tells no lie: what is
+   left is labelled "last updated from the Google Sheet", which is exactly what
+   it is. The pages that read a single workbook still show both. */
+var APP_STAMP_NO_QLIK = { overview: 1 };
+
 /* Validate an incoming page id. We do NOT silently default to a page here:
    a wrong/blank id used to make RMX open the Price & Volume sheet and throw a
    confusing "Sheet not found". Now it fails loudly and tells you what to fix. */
@@ -2120,9 +2150,20 @@ function updateFromSource(page, have) {
  * no sheet and reads three — reports all three rather than a single time that
  * would have to stand for the stalest of them. The Drive lookups are the same
  * memoised half-minute stamps every freshness check already pays for.
+ *
+ * TWO SUBTRACTIONS, BOTH IN §1 AND NEITHER OF THEM A SECOND SOURCE LIST.
+ * APP_STAMP_SKIP drops the closed-year history books, which are read once by
+ * "Rebuild history" and are not synced; APP_STAMP_NO_QLIK drops the QlikView
+ * clock on a page that reads several workbooks, where one sync time per
+ * workbook is not an answer to "how old is this page". The ⚙ Data sheet panel
+ * is unaffected by both — it still offers every workbook, because choosing a
+ * sheet and dating one are different questions. `qlik` on the answer says which
+ * of the two clocks the caller is being given, so the panel does not have to
+ * infer it from a row of zeroes.
  * ---------------------------------------------------------------------- */
 function getSourceTimes(page) {
   page = String(page || '');
+  var wantQlik = !(typeof APP_STAMP_NO_QLIK === 'object' && APP_STAMP_NO_QLIK[page]);
 
   /* The page's own workbook first, then anything its ⚙ panel lists for it —
      the same set APP_sourceIds_ walks, kept as PAGES so each row can be named
@@ -2132,7 +2173,9 @@ function getSourceTimes(page) {
     if (!p) return;
     var o;
     try { o = APP_sheetOwner_(p); } catch (e) { return; }
-    if (o && !seen[o]) { seen[o] = 1; want.push(o); }
+    if (!o || seen[o]) return;
+    if (typeof APP_STAMP_SKIP === 'object' && APP_STAMP_SKIP[o]) return;
+    seen[o] = 1; want.push(o);
   }
   add(page);
   ((typeof APP_EXTRA_SOURCES === 'object' && APP_EXTRA_SOURCES[page]) || []).forEach(add);
@@ -2144,8 +2187,11 @@ function getSourceTimes(page) {
     if (!id) return;
 
     var ms = parseInt(APP_oneStamp_(id), 10);
+    /* Not asked for at all when the page is not showing that clock — the sync
+       log is a Script Property and a JSON.parse per row, and reading it to
+       produce fields nothing renders is the shape of cost that hides. */
     var q  = null;
-    try { q = QLIKSYNC.lastSync(p); } catch (e) { q = null; }
+    if (wantQlik) { try { q = QLIKSYNC.lastSync(p); } catch (e) { q = null; } }
 
     rows.push({
       page:       p,
@@ -2159,7 +2205,7 @@ function getSourceTimes(page) {
     });
   });
 
-  return { ok: true, page: page, now: Date.now(), sources: rows };
+  return { ok: true, page: page, now: Date.now(), qlik: wantQlik, sources: rows };
 }
 
 
