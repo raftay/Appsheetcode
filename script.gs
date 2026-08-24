@@ -43,8 +43,11 @@
  *   §9   DECK ................. the Slides template reader, the deck writer and
  *                               the recipe checker. The template id, the folder
  *                               and the slide list are CONFIG, and live in §1.
- *   §10  SMALL PAGES .......... KPI workbooks, TP01 mail, the Inventory Report
- *                               and the mail watch that publishes it.
+ *   §10  SMALL PAGES .......... KPI workbooks, the Inventory Report and the mail
+ *                               watch that publishes it, and TP01 — its mail
+ *                               sender, the comparison engine the page and the
+ *                               trigger share, an .xlsx writer, and the mail
+ *                               watch that reports the exceptions weekly.
  *   §11  TRIGGERS ............. everything reached from outside this file.
  *
  * THE THINGS THAT WILL BITE YOU
@@ -2344,14 +2347,14 @@ function getSlideData() {
  *                                and it does not let anything read a mailbox.
  *                                The read side is the line below, and the two
  *                                are separate grants on purpose.
- *   auth/gmail.readonly          GmailApp.search and getAttachments — §10's
- *                                Inventory Report mail watch, and nothing else
- *                                in the file. READ-ONLY deliberately: the watch
- *                                remembers which messages it has already
- *                                published in a Script Property rather than
- *                                labelling or archiving them, so it never writes
- *                                to anybody's mailbox and gmail.modify is not
- *                                needed. This is the widest grant in the list —
+ *   auth/gmail.readonly          GmailApp.search and getAttachments — §10's TWO
+ *                                mail watches, the Inventory Report's and
+ *                                TP01's, and nothing else in the file.
+ *                                READ-ONLY deliberately: both remember which
+ *                                messages they have already handled in a Script
+ *                                Property rather than labelling or archiving
+ *                                them, so neither ever writes to anybody's
+ *                                mailbox and gmail.modify is not needed. This is the widest grant in the list —
  *                                it can read every message the deployer can —
  *                                and it is here only because Gmail has no
  *                                "one sender, one subject" scope to ask for
@@ -2422,21 +2425,30 @@ function APP_verifyPermissions() {
       } },
 
     { service: 'MailApp', scope: 'auth/script.send_mail',
-      usedFor: 'TP01 only — the per-market transfer-price workbooks',
+      usedFor: 'TP01 — the per-market workbooks a person sends, and the weekly ' +
+               'exceptions report the trigger sends',
       probe: function () {
         /* Reads the quota. Sends nothing. */
         return MailApp.getRemainingDailyQuota() + ' message(s) left in today’s quota';
       } },
 
     { service: 'GmailApp', scope: 'auth/gmail.readonly',
-      usedFor: "the Inventory Report's mail watch — §10's IRMAIL",
+      usedFor: "two mail watches — the Inventory Report's (§10 IRMAIL) and TP01's (§10 TPMAIL)",
       probe: function () {
-        /* Runs the watch's OWN search, so what this proves is the thing that
-           matters: the grant is live AND the query the trigger will run comes
-           back. Reads nothing else, publishes nothing, marks nothing seen. */
-        var q = (typeof IRMAIL !== 'undefined' && IRMAIL.query && IRMAIL.query()) || '';
-        if (!q) return 'no report subject configured — scope referenced, not proven';
-        return GmailApp.search(q, 0, 5).length + ' thread(s) match ' + q;
+        /* Runs BOTH watches' OWN searches, so what this proves is the thing
+           that matters: the grant is live AND the queries the triggers will run
+           come back. A probe that runs a lookalike query proves the wrong
+           thing, which is why neither is spelled out here. Reads nothing else,
+           publishes nothing, sends nothing, marks nothing seen. */
+        var out = [];
+        [['Inventory', typeof IRMAIL !== 'undefined' && IRMAIL.query && IRMAIL.query()],
+         ['TP01',      typeof TPMAIL !== 'undefined' && TPMAIL.query && TPMAIL.query()]
+        ].forEach(function (pair) {
+          var q = pair[1] || '';
+          out.push(q ? (pair[0] + ': ' + GmailApp.search(q, 0, 5).length + ' thread(s) match ' + q)
+                     : (pair[0] + ': no subject configured — scope referenced, not proven'));
+        });
+        return out.join('  |  ');
       } },
 
     { service: 'SlidesApp', scope: 'auth/presentations',
@@ -2492,7 +2504,8 @@ function APP_verifyPermissions() {
       } },
 
     { service: 'PropertiesService', scope: '(none needed)',
-      usedFor: 'per-page sheet overrides, TP01 recipients, QlikView sync stamps',
+      usedFor: 'per-page sheet overrides, TP01 recipients and its automated-email ' +
+               'settings, QlikView sync stamps, the two mail watches\u2019 seen-lists',
       probe: function () {
         var n = PropertiesService.getScriptProperties().getKeys().length;
         var u = PropertiesService.getUserProperties().getKeys().length;
@@ -3040,6 +3053,12 @@ var QLIKSYNC = (function () {
      Every sync makes a copy — the exports are .xls and there is no reading one
      in place — so a stranded file is not a one-off, it is a slow leak in the
      script account's Drive. This is the only thing that clears them.
+
+     IT IS NO LONGER THE ONLY ENGINE MAKING THEM. §10's TPMAIL converts the
+     weekly SAP attachment through convertToSheet_ as well, so a copy this
+     sweep trashes may have been made by the transfer-price trigger rather than
+     by a sync. Matching on the prefix rather than on who made it is what lets
+     that be true without this function knowing anything about TP01.
 
      THREE GUARDS, because this trashes files. The name must actually start
      with the prefix (Drive's `title contains` is looser than it looks), it
@@ -3859,7 +3878,14 @@ var QLIKSYNC = (function () {
     }
   }
 
-  return { run: run, sources: sources_, lastSync: lastSync_ };
+  /* toSheet and trash are exposed for §10's TPMAIL, which has the same problem
+     this engine has - Apps Script cannot read an .xlsx, only Drive can convert
+     one - and no reason to own a second answer to it. A copy made through
+     convertToSheet_ is born in the script account's own Drive root, has every
+     non-owner permission stripped, and wears TEMP_PREFIX, so sweepTemps_ above
+     clears one a runtime kill strands whichever engine made it. */
+  return { run: run, sources: sources_, lastSync: lastSync_,
+           toSheet: convertToSheet_, trash: trashFile_, tempPrefix: TEMP_PREFIX };
 })();
 
 
@@ -13460,13 +13486,21 @@ function DECK_getRecipe() {
 /* ============================================================================
  * §10  SMALL PAGES
  * ----------------------------------------------------------------------------
- * The three pages with a backend small enough to have no namespace of its own:
- * the shared EBITDA workbooks, TP01's mail sender, and the Inventory Report.
+ * The pages whose backends are small: the shared EBITDA workbooks, the Inventory
+ * Report and its mail watch, and TP01 — which is no longer small. TP01 now holds
+ * the comparison the page used to do in the browser (TPE), an .xlsx writer for
+ * the trigger (TPXLSX), the automated report's settings (TPAUTO) and the mail
+ * watch that drives it (TPMAIL), beside the mail sender that was always here.
  *
- * TP01 mail is sent by whoever DEPLOYED the app, because appsscript.json pins
- * "executeAs": "USER_DEPLOYING". That also makes getUserProperties() the
- * deployer's for everybody, which is why the market → email map is ONE shared
- * list.
+ * WHO SENDS TP01's MAIL DEPENDS ON WHAT STARTED IT, and the two answers differ.
+ * A person pressing Send on the page goes through a WEB REQUEST, and
+ * appsscript.json pins "executeAs": "USER_DEPLOYING" — so it is sent by whoever
+ * DEPLOYED the app. That also makes getUserProperties() the deployer's for
+ * everybody, which is why the market → email map is ONE shared list. The weekly
+ * report is sent by a TRIGGER, and a trigger runs as WHOEVER CREATED IT. Create
+ * the trigger from the deploying account and the two are the same one; the
+ * automated settings are in SCRIPT properties either way, precisely so they
+ * cannot end up in a store only one of the two can see.
  * ============================================================================ */
 
 /* ---- Kpi_Backend.gs ----------------------------------------------------------
@@ -14755,6 +14789,631 @@ var TPXLSX = (function () {
   return { build: build, parts: parts, colName: colName_, tableName: tableName_ };
 })();
 
+/* ---- TP01_MailWatch.gs -------------------------------------------------------
+   The other half of the automation: the daily mailbox check that runs the
+   comparison and sends the exceptions, so nobody has to open the page at all.  */
+
+/*****************************************************************************
+ * TP01 - THE AUTOMATED EXCEPTIONS REPORT (namespaced TPAUTO / TPMAIL)
+ * ---------------------------------------------------------------------------
+ * The weekly job used to be: wait for the SAP mail, save its attachment, export
+ * the QlikView transfer-pricing report, open the page, drop both files, type an
+ * address, press Send. This does all of it on a trigger, and the QlikView
+ * export is not needed at all - TPE.qlikFromSheet builds that side out of the
+ * Aggregates workbook the app already reads.
+ *
+ * WHOSE MAILBOX, AND WHO THE MAIL COMES FROM - because it is not the obvious
+ * answer and it is two different accounts if you set it up carelessly.
+ * appsscript.json pins executeAs: USER_DEPLOYING, and that governs WEB REQUESTS
+ * ONLY. An installable trigger runs as WHOEVER CREATED IT in the Triggers UI.
+ * So this reads the trigger creator's mail, converts in the trigger creator's
+ * Drive, and SENDS AS THE TRIGGER CREATOR - which is not who the page's own
+ * Send button sends as. Add the trigger from the account that deployed the web
+ * app and the two are the same one. §4 reports the effective user and a
+ * trigger's execution log names who each firing ran as.
+ *
+ * THAT IS ALSO WHY THE CONFIG IS A SCRIPT PROPERTY. TP_getRecipients uses
+ * getUserProperties(), which resolves to the deployer for every web user - and
+ * to the TRIGGER CREATOR inside a trigger. If those two accounts ever differ, a
+ * recipient typed on the website would be invisible here, silently, and the run
+ * would mail nobody while reporting success. TPAUTO below is Script Properties,
+ * which is one store for both.
+ *
+ * DAILY, FOR A WEEKLY MAIL. A day with no new mail costs one Gmail search and
+ * NOTHING else: no sheet read, no comparison, no Drive file, no property
+ * written. That is six days out of seven, and it buys the seventh - a report
+ * re-issued mid-week goes out the next morning instead of waiting for Tuesday.
+ *
+ * ONLY THE NEWEST UNSEEN MAIL IS PROCESSED, and this is the one place the
+ * Inventory Report's watch and this one deliberately differ. IRMAIL publishes
+ * every unseen message because each one is a different month's report and they
+ * are all wanted. A transfer-price file is a SNAPSHOT: three unseen mails are
+ * three versions of the same list, and sending three emails about them would be
+ * three chances to act on the stale two. So the older ones are marked done
+ * without being sent, and the newest is the one that goes.
+ *
+ * NOTHING IS MARKED DONE WHEN THE RUN FAILS, so a Drive hiccup, an unshared
+ * sheet or an empty recipient list is retried tomorrow rather than swallowed.
+ * A mail carrying no spreadsheet IS marked, because it will never grow one.
+ *
+ * IT NEVER WRITES TO THE MAILBOX. Which messages are done is a Script Property,
+ * not a Gmail label, which is what keeps the grant at gmail.readonly (§4).
+ *****************************************************************************/
+
+/* ------------------------------------------------------------------------
+ * THE CONFIG RECORD - what the page's Automated email panel writes.
+ * ---------------------------------------------------------------------- */
+var TP_AUTO_KEY = 'TP01_AUTOMAIL';          // JSON: the switches and the addresses
+var TP_AUTO_STATE_KEY = 'TP01_AUTOMAIL_STATE';   // JSON: what the last run did
+
+var TPAUTO = (function () {
+
+  function blank_() {
+    return { enabled: false, to: [], cc: [], sendWhenEmpty: true, updatedAt: '', updatedBy: '' };
+  }
+
+  function emails_(v) {
+    var list = (v instanceof Array) ? v : String(v == null ? '' : v).split(/[,;]/);
+    var seen = {}, out = [];
+    for (var i = 0; i < list.length; i++) {
+      var e = String(list[i] || '').trim();
+      if (e.indexOf('@') < 0) continue;
+      var k = e.toLowerCase();
+      if (seen[k]) continue;
+      seen[k] = 1; out.push(e);
+    }
+    return out;
+  }
+
+  function get() {
+    var raw = PropertiesService.getScriptProperties().getProperty(TP_AUTO_KEY) || '';
+    var rec = blank_();
+    if (raw) {
+      var got = null;
+      try { got = JSON.parse(raw); }
+      catch (e) {
+        /* NOT SILENT (§7). An unreadable record reads as "switched off", and a
+           report that quietly stopped arriving is the hardest kind of failure
+           to notice - nobody misses an email they were not expecting. */
+        APP_log('warn', 'TPAUTO.get', 'the automated-email settings are unreadable, so the ' +
+                'report is switched OFF until they are saved again', { error: String(e) });
+      }
+      if (got) {
+        rec.enabled = !!got.enabled;
+        rec.to = emails_(got.to);
+        rec.cc = emails_(got.cc);
+        rec.sendWhenEmpty = (got.sendWhenEmpty !== false);
+        rec.updatedAt = String(got.updatedAt || '');
+        rec.updatedBy = String(got.updatedBy || '');
+      }
+    }
+    return rec;
+  }
+
+  function save(input) {
+    input = input || {};
+    var rec = {
+      enabled: !!input.enabled,
+      to: emails_(input.to),
+      cc: emails_(input.cc),
+      sendWhenEmpty: (input.sendWhenEmpty !== false),
+      updatedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MMM d, yyyy HH:mm'),
+      updatedBy: ''
+    };
+    try { rec.updatedBy = Session.getActiveUser().getEmail() || ''; } catch (e) { rec.updatedBy = ''; }
+    if (rec.enabled && !rec.to.length) {
+      throw new Error('Turn the automated email on and it has to have somewhere to go - ' +
+        'add at least one recipient, or leave it switched off.');
+    }
+    PropertiesService.getScriptProperties().setProperty(TP_AUTO_KEY, JSON.stringify(rec));
+    return rec;
+  }
+
+  function state() {
+    var raw = PropertiesService.getScriptProperties().getProperty(TP_AUTO_STATE_KEY) || '';
+    if (!raw) return null;
+    try { return JSON.parse(raw); } catch (e) { return null; }
+  }
+
+  function setState(o) {
+    o = o || {};
+    o.at = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'MMM d, yyyy HH:mm');
+    try { PropertiesService.getScriptProperties().setProperty(TP_AUTO_STATE_KEY, JSON.stringify(o)); }
+    catch (e) {
+      APP_log('warn', 'TPAUTO.setState', 'the run happened but its outcome was not recorded, so ' +
+              'the page will keep showing the previous run', { error: String(e) });
+    }
+    return o;
+  }
+
+  return { get: get, save: save, state: state, setState: setState, emails: emails_ };
+})();
+
+/* ---- top-level wrappers for google.script.run ---- */
+function TP_getAutoConfig()    { return { config: TPAUTO.get(), state: TPAUTO.state() }; }
+function TP_saveAutoConfig(o)  { return { config: TPAUTO.save(o), state: TPAUTO.state() }; }
+
+
+/* ------------------------------------------------------------------------
+ * THE WATCH ITSELF.
+ * ---------------------------------------------------------------------- */
+var TPMAIL = (function () {
+
+  var SEEN_KEY = 'TP01_REPORT_MAIL_SEEN';   // JSON: [ gmail message id, ... ]
+  var SEEN_CAP = 200;                       // an order of magnitude over a window's worth
+
+  function cfg_() {
+    var c = (typeof APP_CONFIG !== 'undefined' && APP_CONFIG.TP01_MAIL) || {};
+    return {
+      subject:    String(c.SUBJECT || ''),
+      from:       String(c.FROM || ''),
+      windowDays: Number(c.WINDOW_DAYS) > 0 ? Math.round(Number(c.WINDOW_DAYS)) : 21,
+      outSubject: String(c.OUT_SUBJECT || 'Transfer Price Exceptions'),
+      outFile:    String(c.OUT_FILENAME || 'Transfer_Price_Exceptions_All_Markets')
+    };
+  }
+
+  /* The Gmail query. Exposed because §4's permission probe runs exactly this -
+     a scope check that proves a different query than the trigger uses proves
+     the wrong thing. */
+  function query() {
+    var c = cfg_();
+    if (!c.subject) return '';
+    return 'subject:"' + c.subject + '" has:attachment newer_than:' + c.windowDays + 'd' +
+           (c.from ? ' from:(' + c.from + ')' : '');
+  }
+
+  /* "Re:" and "Fwd:" come off the front first, in any combination - the report
+     reaches this mailbox forwarded, and a rule that only accepted the original
+     delivery would never fire once. */
+  function stripMarkers_(subject) {
+    var s = String(subject || '').replace(/^\s+/, ''), was;
+    do { was = s; s = s.replace(/^(?:re|fw|fwd)\s*:\s*/i, ''); } while (s !== was);
+    return s;
+  }
+
+  /* CONTAINS, not starts-with, and that is where this differs from IRMAIL.
+     Gmail's subject: term matches WORDS in any order, so the search finds far
+     more than the report; this is the real filter, and it wants the WHOLE
+     configured sentence present. The ticket system that relays the report wraps
+     its own furniture round the line, so anchoring at the front would miss it
+     while still being no stricter about what else is in there. */
+  function subjectMatches_(subject, want) {
+    return stripMarkers_(subject).toLowerCase().indexOf(String(want).toLowerCase()) >= 0;
+  }
+
+  function readSeen_() {
+    var raw = PropertiesService.getScriptProperties().getProperty(SEEN_KEY) || '';
+    if (!raw) return [];
+    var list = null;
+    try { list = JSON.parse(raw); }
+    catch (e) {
+      /* NOT SILENT (§7). Every message still inside the window looks new, so
+         the next run sends the newest one again - which is a duplicate of an
+         email that was already correct, not a wrong number. Loud because a
+         duplicate nobody can explain is worse than one that is explained. */
+      APP_log('warn', 'TPMAIL.seen', 'the reported-message list is unreadable - the newest mail ' +
+              'in the window will look new and be reported again', { error: String(e) });
+      return [];
+    }
+    return (list && list.length) ? list : [];
+  }
+
+  function writeSeen_(list) {
+    if (list.length > SEEN_CAP) list = list.slice(list.length - SEEN_CAP);
+    PropertiesService.getScriptProperties().setProperty(SEEN_KEY, JSON.stringify(list));
+  }
+
+  function spreadsheetOn_(msg) {
+    var atts = msg.getAttachments({ includeInlineImages: false, includeAttachments: true });
+    for (var i = 0; i < atts.length; i++) {
+      var a = atts[i], n = String(a.getName() || '');
+      if (/\.xlsx?$/i.test(n)) return a;
+      var t = String(a.getContentType() || '').toLowerCase();
+      if (t.indexOf('spreadsheetml') >= 0 || t.indexOf('ms-excel') >= 0) return a;
+    }
+    return null;
+  }
+
+  /* ONE .xlsx ATTACHMENT, AS { tabName: grid }.
+
+     Apps Script cannot read an .xlsx - SpreadsheetApp opens a Google Sheet and
+     nothing else - so the bytes go to Drive, Drive converts a copy, the copy is
+     read and both are trashed. §5 already owns that conversion (private parent,
+     every non-owner permission stripped, TEMP_PREFIX on the name) and this
+     calls it rather than keeping a second answer to the same problem.
+
+     Both files are trashed in a `finally`, which covers every way the read can
+     fail EXCEPT the runtime limit - Apps Script kills the execution and no
+     `finally` runs. §5's sweepTemps_ clears a stranded Google Sheet; sweep_
+     below clears the stranded upload, which is not a Sheet and so is not its
+     business. */
+  function gridsFrom_(att) {
+    var upId = null, sheetId = null;
+    try {
+      var name = QLIKSYNC.tempPrefix + ' — ' + (att.getName() || 'sap.xlsx');
+      upId = DriveApp.createFile(att.copyBlob().setName(name)).getId();
+      sheetId = QLIKSYNC.toSheet(upId, att.getName() || 'sap.xlsx');
+
+      var ss = SpreadsheetApp.openById(sheetId), out = {};
+      ss.getSheets().forEach(function (sh) {
+        var values = sh.getDataRange().getValues();
+        if (values.length) out[String(sh.getName()).trim()] = values;
+      });
+      return out;
+    } finally {
+      if (sheetId) { try { QLIKSYNC.trash(sheetId); } catch (e) {} }
+      if (upId) {
+        try { DriveApp.getFileById(upId).setTrashed(true); }
+        catch (e) {
+          APP_log('warn', 'TPMAIL.grids', 'the uploaded copy of the SAP attachment would not ' +
+                  'trash - it stays in Drive under the temp prefix',
+                  { fileId: upId, error: String(e && e.message || e) });
+        }
+      }
+    }
+  }
+
+  /* THE STRANDED UPLOADS, and this is a function that trashes files, so it
+     carries the same three guards §5's sweep does: the name must actually START
+     with the prefix (Drive's `title contains` is looser than it looks), it must
+     NOT be a Google Sheet (those are the sync's sweep to clear, and one may be
+     being read right now by a sync this knows nothing about), and it must be
+     over an hour old. Trashed, never deleted. */
+  var STRAY_MIN_AGE_MS = 60 * 60 * 1000;
+  var STRAY_CAP = 20;
+
+  function sweep_() {
+    var trashed = 0;
+    try {
+      var prefix = QLIKSYNC.tempPrefix;
+      var it = DriveApp.searchFiles('title contains "' + prefix + '" and trashed = false');
+      var cutoff = Date.now() - STRAY_MIN_AGE_MS, looked = 0;
+      while (it.hasNext() && looked < STRAY_CAP) {
+        var f = it.next();
+        looked++;
+        if (String(f.getName()).indexOf(prefix) !== 0) continue;
+        if (f.getMimeType() === MimeType.GOOGLE_SHEETS) continue;
+        if (f.getDateCreated().getTime() > cutoff) continue;
+        try { f.setTrashed(true); trashed++; } catch (e) {}
+      }
+    } catch (e) {
+      APP_log('warn', 'TPMAIL.sweep', 'could not look for stranded attachment copies',
+              { error: String(e) });
+    }
+    if (trashed) APP_log('info', 'TPMAIL.sweep', 'trashed attachment copies a killed run left ' +
+                         'behind', { trashed: trashed });
+    return trashed;
+  }
+
+  /* Every message the query finds that actually carries the sentence, newest
+     last. Read-only; used by both run() and status(). */
+  function candidates_(c) {
+    var q = query(), threads = GmailApp.search(q, 0, 50), out = [];
+    for (var t = 0; t < threads.length; t++) {
+      var msgs = threads[t].getMessages();
+      for (var i = 0; i < msgs.length; i++) {
+        if (subjectMatches_(msgs[i].getSubject(), c.subject)) out.push(msgs[i]);
+      }
+    }
+    out.sort(function (a, b) { return a.getDate().getTime() - b.getDate().getTime(); });
+    return out;
+  }
+
+  function stamp_(d) {
+    return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+  }
+
+  /* A one-line provenance strip under the report. It is the only thing in the
+     mail the page's own Send does not produce, and it is here because this one
+     arrives without anybody having asked for it: the first question about an
+     unexpected email is where it came from. */
+  function footer_(cmp, c) {
+    var m = cmp.meta || {};
+    return '<div style="font-family:Arial,sans-serif;max-width:700px;margin-top:18px;' +
+           'padding:10px 14px;background:#F4F7FC;border:1px solid #DCE6F2;border-radius:6px;' +
+           'color:#666;font-size:11px;line-height:1.5;">' +
+           'Sent automatically from the Amrize Commercial Suite. ' +
+           'SAP file dated <b>' + cmp.reportDate + '</b> (' + cmp.tp01Count + ' TP01 + ' +
+           cmp.ziprCount + ' ZIPR rows). ' +
+           'Compared against ' + (cmp.source === 'sheet'
+             ? ('the Aggregates workbook &mdash; ' + (m.customerParent || '') + ', ' +
+                (m.cyYear || '') + ', ' + (m.rolledRows || 0) + ' rows')
+             : 'an uploaded QlikView export') + '. ' +
+           cmp.matched + ' of ' + (cmp.matched + cmp.unmatched) + ' rows matched a SAP price.' +
+           '</div>';
+  }
+
+  function emptyBody_(cmp, c) {
+    return '<div style="font-family:Arial,sans-serif;max-width:700px;">' +
+      '<div style="background:#011E6A;padding:20px 28px;border-radius:8px 8px 0 0;">' +
+        '<h2 style="color:white;margin:0;font-size:18px;">Transfer Price Exceptions &mdash; none</h2>' +
+        '<p style="color:#A9C3E8;margin:4px 0 0;font-size:13px;">Report Date: ' +
+          cmp.reportDate + '</p>' +
+      '</div>' +
+      '<div style="padding:20px 28px;border:1px solid #DCE6F2;border-top:none;' +
+           'border-radius:0 0 8px 8px;font-size:13px;color:#1F7A4D;font-weight:600;">' +
+        'Every matched SAP transfer price is at or above its ASP ex-Works. ' +
+        'Nothing needs correcting this week.' +
+      '</div></div>';
+  }
+
+  /* One message, end to end: read the attachment, build the other side, compare,
+     and send. Throws on anything worth retrying tomorrow; the caller decides
+     what that means for the seen-list. */
+  function report_(msg, c, auto) {
+    var grids = gridsFrom_(spreadsheetOn_(msg));
+    var sap = TPE.readSap(grids);
+    if (!sap.reportDate) {
+      /* THE DATE IS THE FILE'S OR IT IS THE MESSAGE'S, and never today's. A
+         file re-issued a fortnight late describes the day it was run, and
+         stamping it with the day the trigger fired is README.md §7's rule
+         broken in the one place nobody would check. The send date is the
+         nearest honest thing and it is reported as a guess. */
+      sap.reportDate = TPE.toDateStr(msg.getDate());
+      sap.dateSource = 'message';
+      APP_log('warn', 'TPMAIL.report', 'the SAP file carried no readable date cell - the ' +
+              'message send date is being used instead, and it is a guess',
+              { subject: String(msg.getSubject() || ''), used: sap.reportDate });
+    }
+
+    var qlk = TPE.qlikFromSheet();
+    var cmp = TPE.compare(sap, qlk);
+    var exc = TPE.grid('exc', null, cmp);
+
+    var out = { subject: String(msg.getSubject() || ''), sent: stamp_(msg.getDate()),
+                reportDate: cmp.reportDate, dateSource: cmp.dateSource,
+                matched: cmp.matched, unmatched: cmp.unmatched,
+                exceptions: exc.count, markets: Object.keys(cmp.exceptions).length,
+                mailed: false, to: auto.to.join(', '), cc: auto.cc.join(', ') };
+
+    if (!exc.count && !auto.sendWhenEmpty) {
+      APP_log('info', 'TPMAIL.report', 'no exceptions, and the settings say not to send on a ' +
+              'clean week', { reportDate: cmp.reportDate });
+      return out;
+    }
+
+    var subject = c.outSubject + ' — All Markets (' + cmp.reportDate + ')';
+    var body = (exc.count ? TPE.stackedBody('exc', cmp) : emptyBody_(cmp, c)) + footer_(cmp, c);
+
+    var mail = { to: auto.to.join(','), subject: subject, htmlBody: body };
+    if (auto.cc.length) mail.cc = auto.cc.join(',');
+    if (exc.count) {
+      /* ONE COMBINED FILE, and this is the one place the automated output is
+         deliberately not the shape the page produces. Market is already a
+         column, so a single workbook says everything five per-market ones
+         would and arrives as one thing to open. */
+      mail.attachments = [TPXLSX.build(exc, {
+        sheetName: 'Exceptions',
+        tableName: 'Exceptions',
+        formats: TPE.numberFormats(exc.headers),
+        filename: c.outFile + '_' + cmp.reportDate + '.xlsx'
+      })];
+    }
+    MailApp.sendEmail(mail);
+    out.mailed = true;
+    return out;
+  }
+
+  /* THE TRIGGER TARGET'S BODY. */
+  function run() {
+    var t0 = Date.now(), c = cfg_(), auto = TPAUTO.get();
+
+    if (!c.subject) {
+      APP_log('error', 'TPMAIL.run', 'not configured - set APP_CONFIG.TP01_MAIL.SUBJECT',
+              { ms: Date.now() - t0 });
+      return { ok: false, error: 'APP_CONFIG.TP01_MAIL.SUBJECT is empty.' };
+    }
+    if (!auto.enabled) {
+      /* Off is a setting, not a failure, and it costs nothing to say so once a
+         day in the log rather than leaving the trigger looking broken. */
+      APP_log('info', 'TPMAIL.run', 'the automated exceptions report is switched off',
+              { ms: Date.now() - t0 });
+      return { ok: true, skipped: 'disabled' };
+    }
+
+    var threads;
+    try { threads = candidates_(c); }
+    catch (e) {
+      APP_log('error', 'TPMAIL.run', 'the mailbox search failed - nothing was sent',
+              { ms: Date.now() - t0, query: query(), error: String(e && e.message || e) });
+      return { ok: false, error: String(e && e.message || e) };
+    }
+
+    var order = readSeen_(), seen = {}, k;
+    for (k = 0; k < order.length; k++) seen[order[k]] = true;
+
+    var fresh = [];
+    for (k = 0; k < threads.length; k++) if (!seen[threads[k].getId()]) fresh.push(threads[k]);
+
+    /* THE ORDINARY DAY. Nothing new means nothing happens - no sheet read, no
+       Drive file, no property written. The Gmail search is the whole cost, and
+       that is six days in seven. */
+    if (!fresh.length) {
+      APP_log('info', 'TPMAIL.run', 'no new mail - nothing to do',
+              { ms: Date.now() - t0, matched: threads.length });
+      return { ok: true, sent: 0, alreadyDone: threads.length };
+    }
+
+    if (!auto.to.length) {
+      /* NOT marked done. The mail is here and correct; what is missing is
+         somewhere to send it, and that is fixed on the page in ten seconds -
+         at which point tomorrow's run picks this same message up. */
+      APP_log('error', 'TPMAIL.run', 'a new SAP file is here but the automated email has no ' +
+              'recipients - nothing was sent, and it will be retried tomorrow',
+              { ms: Date.now() - t0, waiting: fresh.length });
+      TPAUTO.setState({ ok: false, error: 'No recipients are configured.', sent: 0 });
+      return { ok: false, error: 'No recipients are configured.' };
+    }
+
+    sweep_();
+
+    /* ONLY THE NEWEST. The older unseen ones are earlier versions of the same
+       list; reporting them too would be three chances to act on the stale two.
+       They are marked done without being sent, and the log says how many. */
+    var newest = fresh[fresh.length - 1], skipped = fresh.length - 1;
+    var att = spreadsheetOn_(newest);
+    if (!att) {
+      /* Marked done: a mail with no workbook on it will never grow one, and
+         retrying it daily forever would log the same warning until somebody
+         deleted the message. */
+      order.push(newest.getId()); writeSeen_(order);
+      APP_log('warn', 'TPMAIL.run', 'a matching mail carried no spreadsheet - ignored from now on',
+              { subject: String(newest.getSubject() || '') });
+      return { ok: true, sent: 0, ignored: 1 };
+    }
+
+    var rec;
+    try { rec = report_(newest, c, auto); }
+    catch (e) {
+      /* NOT marked done, on purpose: a Drive hiccup, a sheet that has lost its
+         sharing or a header that moved is fixed by tomorrow's run, and
+         forgetting the message would mean it is never retried. */
+      APP_log('error', 'TPMAIL.run', 'could not report on the new SAP file - it will be retried ' +
+              'tomorrow', { ms: Date.now() - t0, subject: String(newest.getSubject() || ''),
+                            error: String(e && e.message || e) });
+      TPAUTO.setState({ ok: false, sent: 0, subject: String(newest.getSubject() || ''),
+                        error: String(e && e.message || e) });
+      return { ok: false, error: String(e && e.message || e) };
+    }
+
+    for (k = 0; k < fresh.length; k++) order.push(fresh[k].getId());
+    writeSeen_(order);
+
+    rec.ok = true;
+    rec.supersededMails = skipped;
+    TPAUTO.setState(rec);
+    APP_log('info', 'TPMAIL.run', rec.mailed ? 'reported' : 'nothing to report',
+            { ms: Date.now() - t0, reportDate: rec.reportDate, exceptions: rec.exceptions,
+              matched: rec.matched, unmatched: rec.unmatched, mailed: rec.mailed,
+              superseded: skipped });
+    return { ok: true, sent: rec.mailed ? 1 : 0, report: rec };
+  }
+
+  /* WHAT THE NEXT RUN WOULD DO, WITHOUT DOING ANY OF IT.
+
+     This is the function to run before setting the trigger, and it is the one
+     that answers the questions the code cannot answer on its own: whether the
+     subject sentence matches the mail that actually arrives, whether the
+     Aggregates sheet still spells the customer parent the way the config does,
+     which markets the rows land in, and - the only number that really matters -
+     what proportion of rows find a SAP price.
+
+     IT SENDS NOTHING, MARKS NOTHING and writes no setting. It does make and
+     trash one temporary Drive copy of the attachment, because there is no way
+     to read an .xlsx without one; pass false to skip that and get the mail and
+     sheet halves only. */
+  function status(deep) {
+    var c = cfg_(), auto = TPAUTO.get();
+    var out = { query: query(), enabled: auto.enabled, to: auto.to, cc: auto.cc,
+                sendWhenEmpty: auto.sendWhenEmpty, lastRun: TPAUTO.state(),
+                mail: [], sheet: null, join: null, wouldSend: null, notes: [] };
+    if (!out.query) { out.error = 'APP_CONFIG.TP01_MAIL.SUBJECT is empty.'; return out; }
+    if (!auto.enabled)    out.notes.push('The automated email is switched OFF, so the trigger does nothing.');
+    if (!auto.to.length)  out.notes.push('No recipients are set, so nothing could be sent.');
+
+    /* ---- the mailbox half ---- */
+    var order = readSeen_(), seen = {}, k;
+    for (k = 0; k < order.length; k++) seen[order[k]] = true;
+    out.reportedCount = order.length;
+
+    var msgs = [];
+    try { msgs = candidates_(c); }
+    catch (e) { out.error = 'The mailbox search failed: ' + String(e && e.message || e); return out; }
+
+    var newestUnseen = null;
+    for (k = 0; k < msgs.length; k++) {
+      var m = msgs[k], att = spreadsheetOn_(m), isNew = !seen[m.getId()];
+      if (isNew) newestUnseen = m;
+      out.mail.push({
+        subject: String(m.getSubject() || ''), from: String(m.getFrom() || ''),
+        sent: stamp_(m.getDate()), unreported: isNew,
+        attachment: att ? String(att.getName() || '') : 'NONE - this mail would be ignored'
+      });
+    }
+    if (!msgs.length) out.notes.push('Nothing in the mailbox matches. Check the subject sentence ' +
+      'and the FROM term in APP_CONFIG.TP01_MAIL - the query above is exactly what was run.');
+    if (msgs.length && !newestUnseen) out.notes.push('Every matching mail has already been ' +
+      'reported on, so the next run would do nothing.');
+
+    /* ---- the Aggregates half ---- */
+    try {
+      var qlk = TPE.qlikFromSheet(), meta = qlk.meta;
+      var top = Object.keys(meta.parents).sort(function (a, b) { return meta.parents[b] - meta.parents[a]; });
+      var markets = {}, samples = [];
+      for (k = 0; k < qlk.rows.length; k++) {
+        var r = qlk.rows[k];
+        markets[r[0]] = (markets[r[0]] || 0) + 1;
+        if (samples.length < 10) {
+          samples.push({ soldTo: r[2], plant: r[3], material: r[4],
+                         key: TPE.buildQlkKey(r[3], r[2], r[4]) });
+        }
+      }
+      out.sheet = {
+        year: meta.cyYear, customerParent: meta.customerParent,
+        rawRows: meta.rawRows, rowsForThatParent: meta.matchedParentRows,
+        rolledRows: meta.rolledRows, markets: markets,
+        unmappedPlants: meta.unmappedPlants,
+        /* The spellings actually in the column, commonest first. A config that
+           has drifted from the sheet shows up here as "0 rows" beside a list
+           containing the name it should have been. */
+        parentsInTheSheet: top.slice(0, 12).map(function (p) { return p + ' (' + meta.parents[p] + ')'; }),
+        sampleKeys: samples
+      };
+      if (!meta.matchedParentRows) out.notes.push('NO Aggregates rows carry the customer parent ' +
+        '"' + meta.customerParent + '". The spellings that ARE in that column are listed under ' +
+        'sheet.parentsInTheSheet.');
+      if (meta.unmappedPlants.length) out.notes.push(meta.unmappedPlants.length + ' plant(s) have ' +
+        'no REGION LOOKUP row, so their rows land under the market "Unknown".');
+    } catch (e) {
+      out.sheet = { error: String(e && e.message || e) };
+    }
+
+    /* ---- the join, which is the number that matters ---- */
+    if (deep === false) { out.notes.push('Ran shallow: the attachment was not read.'); return out; }
+    var use = newestUnseen || (msgs.length ? msgs[msgs.length - 1] : null);
+    if (!use || !out.sheet || out.sheet.error) return out;
+
+    try {
+      var sap = TPE.readSap(gridsFrom_(spreadsheetOn_(use)));
+      if (!sap.reportDate) { sap.reportDate = TPE.toDateStr(use.getDate()); sap.dateSource = 'message'; }
+      var cmp = TPE.compare(sap, TPE.qlikFromSheet());
+      var exc = TPE.grid('exc', null, cmp);
+
+      var unmatchedKeys = [], H = cmp.headers.indexOf('Concat Key');
+      for (k = 0; k < cmp.rows.length && unmatchedKeys.length < 10; k++) {
+        if (cmp.rows[k][cmp.headers.indexOf('SAP Transfer Price')] === '') unmatchedKeys.push(cmp.rows[k][H]);
+      }
+      var sapKeys = [];
+      for (k = 0; k < sap.rows.length && sapKeys.length < 10; k++) sapKeys.push(sap.rows[k]['Concat Key']);
+
+      out.join = {
+        usedMail: String(use.getSubject() || ''), alreadyReported: !newestUnseen,
+        reportDate: cmp.reportDate, dateSource: cmp.dateSource,
+        tp01Rows: cmp.tp01Count, ziprRows: cmp.ziprCount,
+        comparedRows: cmp.rows.length, matched: cmp.matched, unmatched: cmp.unmatched,
+        matchRate: cmp.rows.length ? Math.round(cmp.matched / cmp.rows.length * 100) + '%' : 'n/a',
+        exceptions: exc.count, exceptionMarkets: Object.keys(cmp.exceptions),
+        firstSapKeys: sapKeys, firstUnmatchedKeys: unmatchedKeys
+      };
+      out.wouldSend = {
+        to: auto.to.join(', '), cc: auto.cc.join(', '),
+        subject: c.outSubject + ' — All Markets (' + cmp.reportDate + ')',
+        attachment: exc.count ? (c.outFile + '_' + cmp.reportDate + '.xlsx') : '(none - no exceptions)',
+        rows: exc.count
+      };
+      if (cmp.rows.length && cmp.matched === 0) out.notes.push('NOTHING matched. The two sides ' +
+        'build their Concat Key from different things, or this SAP file covers different plants ' +
+        '- compare join.firstSapKeys against sheet.sampleKeys.');
+    } catch (e) {
+      out.join = { error: String(e && e.message || e) };
+    }
+    return out;
+  }
+
+  return { run: run, status: status, query: query };
+})();
+
 /* ---- IR_Backend.gs -----------------------------------------------------------
    The Inventory Report's source setting. The smallest backend in the file.  */
 
@@ -15293,6 +15952,23 @@ var IRMAIL = (function () {
  *                    what the page is showing, and every mail it has not
  *                    published yet. Reads only; run it from the editor.
  *
+ *   tp01ReportMailCheck
+ *                    THE THIRD TRIGGER TARGET, and the first DAILY one. Set ONE
+ *                    time-driven day timer on it. It finds the weekly SAP
+ *                    transfer-price mail, runs the comparison against the
+ *                    Aggregates sheet and emails the exceptions (§10's TPMAIL).
+ *                    Nothing points at it either. With no trigger set nothing
+ *                    breaks — the page still does the whole job by hand — the
+ *                    report simply never arrives, which is the failure nobody
+ *                    notices, because nobody misses an email they were not
+ *                    expecting.
+ *   tp01ReportMailStatus
+ *                    what THAT check would do right now, and the one to run
+ *                    first: the query and every mail it matches, the Aggregates
+ *                    rows behind the comparison with the customer-parent
+ *                    spellings actually in the sheet, and the match rate between
+ *                    the two sides. Sends nothing and marks nothing.
+ *
  * The other functions in this file that are run by hand rather than called are
  * signposted where they live, because they belong with the code they report on:
  * APP_verifyPermissions (§4), clearRetiredOverrides (§1), getSaskRatesStatus (§6)
@@ -15533,3 +16209,45 @@ function inventoryReportMailCheck()  { return IRMAIL.run(); }
 
 /* What the check above would do right now, without doing any of it. */
 function inventoryReportMailStatus() { return IRMAIL.status(); }
+
+
+/* ==========================================================================
+ * THE THIRD TRIGGER, AND THE FIRST DAILY ONE: the transfer-price exceptions
+ * report sends itself.
+ * --------------------------------------------------------------------------
+ * Set ONE time-driven trigger on tp01ReportMailCheck — Triggers ▸ Add trigger ▸
+ * Time-driven ▸ Day timer ▸ any hour. ADD IT FROM THE ACCOUNT THAT DEPLOYED THE
+ * WEB APP: a trigger runs as whoever created it, so it is that account's mailbox
+ * this searches, that account that is asked for gmail.readonly, and THAT ACCOUNT
+ * THE MAIL IS SENT AS — which is not the same rule the page's own Send button
+ * follows. Nothing in this repo creates the trigger and nothing calls this
+ * function; the trigger is the only caller it will ever have.
+ *
+ * DAILY FOR A WEEKLY MAIL, and that is not waste. A day with no new mail costs
+ * one Gmail search and nothing else — no sheet read, no comparison, no Drive
+ * file, no property written — so six days in seven are free. What the seventh
+ * buys is that a report re-issued mid-week goes out the next morning instead of
+ * waiting for the following Tuesday.
+ *
+ * It finds the mail whose subject carries APP_CONFIG.TP01_MAIL.SUBJECT, reads
+ * the .xlsx on it, builds the QlikView side out of the Aggregates workbook
+ * (Customer Parent = Amrize RMX, this year, rolled to the export's grain), runs
+ * the same comparison the page runs, and emails the exceptions — one mail, every
+ * market stacked in the body, one combined workbook attached. Who it goes to is
+ * the Automated email panel on the TP01 page, stored in Script Properties.
+ *
+ * ONLY THE NEWEST UNSEEN MAIL IS REPORTED ON. Older unseen ones are earlier
+ * versions of the same list and are marked done without being sent.
+ *
+ * RUN tp01ReportMailStatus() FROM THE EDITOR FIRST. It answers the things the
+ * code cannot answer on its own — whether the subject sentence matches the mail
+ * that actually arrives, whether the sheet still spells the customer parent the
+ * way the config does, and what proportion of rows find a SAP price — without
+ * sending anything or marking anything.
+ * ======================================================================== */
+function tp01ReportMailCheck()  { return TPMAIL.run(); }
+
+/* What the check above would do right now, without sending or marking any of
+   it. It does make and trash one temporary Drive copy of the attachment, because
+   there is no way to read an .xlsx without one. */
+function tp01ReportMailStatus() { return TPMAIL.status(); }
