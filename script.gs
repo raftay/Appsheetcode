@@ -756,6 +756,36 @@ var APP_EXTRA_SOURCES = { pricevolume: ['saskrates'],
                              rmx and segment, fsc -> pricevolume, rfsc -> rmx. */
                           deckbuilder: ['pricevolume', 'rmx', 'segment', 'saskrates'] };
 
+/* ------------------------------------------------------------------------
+ * WHAT THE HEADER'S AGE STAMP LISTS, AND WHAT IT LEAVES OUT
+ * ------------------------------------------------------------------------
+ * The stamp answers "how old are the figures I am looking at". Two things do
+ * not belong in that answer, and both are subtractions from APP_EXTRA_SOURCES
+ * rather than a second list of sources — the ⚙ Data sheet panel still offers
+ * every workbook, because that panel answers a different question.
+ * ---------------------------------------------------------------------- */
+
+/* WORKBOOKS THE STAMP DOES NOT LIST AT ALL. The closed-year history books are
+   read ONCE, by "Rebuild history" on the Overview, and never on the user path.
+   Their age says nothing about the figures on screen — a 2024 book is supposed
+   to be old — and QlikView does not sync them, so every one of them added a
+   section to the panel whose only content was "not known". Four rows of that
+   under three real ones is what made the panel unreadable. */
+var APP_STAMP_SKIP = { histagg: 1, histrmx: 1, histagg2: 1, histrmx2: 1 };
+
+/* PAGES THAT SHOW THE GOOGLE SHEET CLOCK ONLY. The QlikView clock is a fact
+   about ONE workbook — when the sync last wrote it — so it means something on a
+   page that reads one. The Executive Overview reads three, and three sync times
+   stacked up under three sheet times is not an answer to "how old is this
+   page"; it is four clocks the reader has to reconcile themselves.
+
+   THIS IS NOT THE TWO CLOCKS BEING COLLAPSED INTO ONE. That rule forbids
+   DERIVING the QlikView time from Drive, which would call a hand edit a
+   QlikView update. Showing one clock and not the other tells no lie: what is
+   left is labelled "last updated from the Google Sheet", which is exactly what
+   it is. The pages that read a single workbook still show both. */
+var APP_STAMP_NO_QLIK = { overview: 1 };
+
 /* Validate an incoming page id. We do NOT silently default to a page here:
    a wrong/blank id used to make RMX open the Price & Volume sheet and throw a
    confusing "Sheet not found". Now it fails loudly and tells you what to fix. */
@@ -1948,7 +1978,7 @@ function APP_forgetStamp_(page){
    The stamp above tracks the DATA. A code fix leaves the data untouched, so
    without this every device would keep serving figures the OLD code computed
    and the fix would look like it did nothing. */
-var APP_CODE_BUILD = '2026-08-21a';
+var APP_CODE_BUILD = '2026-08-24a';
 
 function APP_getGen_(page) {
   return (APP_sourceStamp_(page) || '0') + '.' + APP_CODE_BUILD;
@@ -2120,9 +2150,20 @@ function updateFromSource(page, have) {
  * no sheet and reads three — reports all three rather than a single time that
  * would have to stand for the stalest of them. The Drive lookups are the same
  * memoised half-minute stamps every freshness check already pays for.
+ *
+ * TWO SUBTRACTIONS, BOTH IN §1 AND NEITHER OF THEM A SECOND SOURCE LIST.
+ * APP_STAMP_SKIP drops the closed-year history books, which are read once by
+ * "Rebuild history" and are not synced; APP_STAMP_NO_QLIK drops the QlikView
+ * clock on a page that reads several workbooks, where one sync time per
+ * workbook is not an answer to "how old is this page". The ⚙ Data sheet panel
+ * is unaffected by both — it still offers every workbook, because choosing a
+ * sheet and dating one are different questions. `qlik` on the answer says which
+ * of the two clocks the caller is being given, so the panel does not have to
+ * infer it from a row of zeroes.
  * ---------------------------------------------------------------------- */
 function getSourceTimes(page) {
   page = String(page || '');
+  var wantQlik = !(typeof APP_STAMP_NO_QLIK === 'object' && APP_STAMP_NO_QLIK[page]);
 
   /* The page's own workbook first, then anything its ⚙ panel lists for it —
      the same set APP_sourceIds_ walks, kept as PAGES so each row can be named
@@ -2132,7 +2173,9 @@ function getSourceTimes(page) {
     if (!p) return;
     var o;
     try { o = APP_sheetOwner_(p); } catch (e) { return; }
-    if (o && !seen[o]) { seen[o] = 1; want.push(o); }
+    if (!o || seen[o]) return;
+    if (typeof APP_STAMP_SKIP === 'object' && APP_STAMP_SKIP[o]) return;
+    seen[o] = 1; want.push(o);
   }
   add(page);
   ((typeof APP_EXTRA_SOURCES === 'object' && APP_EXTRA_SOURCES[page]) || []).forEach(add);
@@ -2144,8 +2187,11 @@ function getSourceTimes(page) {
     if (!id) return;
 
     var ms = parseInt(APP_oneStamp_(id), 10);
+    /* Not asked for at all when the page is not showing that clock — the sync
+       log is a Script Property and a JSON.parse per row, and reading it to
+       produce fields nothing renders is the shape of cost that hides. */
     var q  = null;
-    try { q = QLIKSYNC.lastSync(p); } catch (e) { q = null; }
+    if (wantQlik) { try { q = QLIKSYNC.lastSync(p); } catch (e) { q = null; } }
 
     rows.push({
       page:       p,
@@ -2159,7 +2205,7 @@ function getSourceTimes(page) {
     });
   });
 
-  return { ok: true, page: page, now: Date.now(), sources: rows };
+  return { ok: true, page: page, now: Date.now(), qlik: wantQlik, sources: rows };
 }
 
 
@@ -2536,9 +2582,10 @@ function APP_verifyPermissions() {
         try { url = ScriptApp.getService().getUrl() || ''; } catch (e) { url = ''; }
         var tok = ScriptApp.getOAuthToken();
 
-        /* THE THREE TRIGGERS, WHICH NOTHING ELSE IN THE PROJECT CAN SEE. There
-           is not one ScriptApp.newTrigger in the file (§11), so a trigger that
-           was never added — or was deleted — leaves no trace anywhere: the sync
+        /* THE THREE TRIGGERS, WHICH NOTHING ELSE IN THE PROJECT CAN SEE. All
+           three are added BY HAND (§11) — the single newTrigger in the codebase
+           arms §5's one-shot sync retry and nothing else — so a trigger that
+           was never added, or was deleted, leaves no trace anywhere: the sync
            just stops, and the two mail watches just never arrive. Nothing
            errors, and that is the point. This line is the only report of their
            existence the project has.
@@ -3211,12 +3258,78 @@ var QLIKSYNC = (function () {
   }
 
   /* Every tab of one export, as { name, hdr:[normalised], raw:[…], rows:[…] } */
+  /* HOW LONG TO WAIT FOR A CONVERTED COPY TO STOP GROWING. Two reads of every
+     tab's last row, WAIT apart, and the copy is read once they agree. */
+  var SETTLE_TRIES = 6, SETTLE_WAIT_MS = 1500;
+
+  /* ===================================================================
+   * THE COPY IS NOT FINISHED WHEN DRIVE SAYS THE FILE EXISTS.
+   * -------------------------------------------------------------------
+   * files/copy returns as soon as the file RECORD is there, and it returns the
+   * id the moment it has one — but converting tens of thousands of rows of
+   * .xls into a Google Sheet is not instant, and the sheet is readable while it
+   * is still filling. Open it straight away and getDataRange() answers with
+   * however much has landed, truthfully and short, with no error anywhere: a
+   * 49,000-row export read as 1,100 rows, written to the tab as 1,100 rows,
+   * and — since the sheet now ends where the export ends — the other 48,000
+   * DELETED to match.
+   *
+   * So the copy is read only once it has stopped growing: every tab's last row,
+   * twice, WAIT apart. One sleep in the common case, against a job that already
+   * takes minutes.
+   *
+   * IT DOES NOT THROW WHEN IT GIVES UP. A copy still growing after nine seconds
+   * is unusual but not proof of anything, and the gate in writeColumns_ is what
+   * actually stands between a short read and a wrecked tab. This makes the
+   * short read rare; that makes it harmless.
+   * ================================================================= */
+  function settle_(ssId, name) {
+    /* flush() BEFORE EACH LOOK, and without it this whole function is a no-op.
+       The Spreadsheet service caches within an execution: ask the same file the
+       same question twice and the second answer can come from the first. Two
+       reads that agree because nothing re-read is not a copy that has settled,
+       it is a copy that was never looked at again — and it would settle
+       instantly on the short read this exists to wait out. */
+    function shape() {
+      /* NOT SILENT (§7). If the flush fails the next read can come back from
+         the cache, two identical answers mean nothing, and this settles
+         instantly on whatever the first look saw — the exact failure it exists
+         to wait out, wearing a pass. It does not throw: the gate downstream is
+         what makes a short read harmless, and failing a whole workbook's read
+         over a flush would be the worse trade. */
+      try { SpreadsheetApp.flush(); }
+      catch (e) {
+        APP_log('warn', 'QLIKSYNC.read', 'could not flush before re-reading the converted copy — ' +
+                'the wait for it to settle may be answering from cache',
+                { file: name, error: String(e) });
+      }
+      return SpreadsheetApp.openById(ssId).getSheets().map(function (sh) {
+        return sh.getName() + ':' + sh.getLastRow();
+      }).join('|');
+    }
+    var prev = shape();
+    for (var i = 0; i < SETTLE_TRIES; i++) {
+      Utilities.sleep(SETTLE_WAIT_MS);
+      var now = shape();
+      if (now === prev) return true;
+      prev = now;
+    }
+    APP_log('warn', 'QLIKSYNC.read', 'the converted copy was still growing when the wait ran out — ' +
+            'it is read as it stands, and the column checks are what stop a short read being ' +
+            'written', { file: name, after: prev,
+                         seconds: Math.round(SETTLE_TRIES * SETTLE_WAIT_MS / 1000) });
+    return false;
+  }
+
   function readExport_(file) {
     var tempId = null, books = [];
     try {
       var ssId = (file.mime === 'application/vnd.google-apps.spreadsheet')
                  ? file.id
                  : (tempId = convertToSheet_(file.id, file.name));
+      /* Only a CONVERTED copy can still be filling. A file that was already a
+         Google Sheet was not written by this run and is whatever it is. */
+      if (tempId) settle_(ssId, file.name);
       var ss = SpreadsheetApp.openById(ssId);
       ss.getSheets().forEach(function (sh) {
         var values = sh.getDataRange().getValues();
@@ -3561,6 +3674,20 @@ var QLIKSYNC = (function () {
         'Export header: ' + src.hdrRaw.join(' | '));
     }
 
+    /* THE GATE, AND ITS POSITION IN THIS FUNCTION IS THE WHOLE POINT.
+       Nothing below this line is reversible: the band comes out, rows are
+       inserted or DELETED to the export's height, and the mapped columns are
+       overwritten. A tab that fails here is left exactly as it was — last
+       week's figures, wrong by a week, which is a state a reader can recognise.
+       What it replaces is this week's hole, which is not: a column of zeroes
+       looks like a column of zeroes.
+
+       It throws rather than returning, because run() already treats a throw as
+       "this tab did not write" — it records the tab as failed, leaves the
+       formula band alone, and carries on with the workbook's other tabs. */
+    var check = checkSource_(spec, src, pairs, tabShape_(spec.page, spec.tab));
+    if (!check.ok) throw checkError_(spec, check);
+
     /* THE CHECK THE YEAR BUYS. Where the export names years, the newest one it
        names should be the newest one its rows carry. When it is not, the file
        is not the file it claims to be — a stale export, or a tab from another
@@ -3632,7 +3759,28 @@ var QLIKSYNC = (function () {
     else if (target < have) sh.deleteRows(target + 1, have - target);
     var sheetEnd = sh.getMaxRows();
 
-    /* --- clear then write, one block per contiguous run of columns --- */
+    /* --- clear then write, one block per contiguous run of columns ---
+
+       THE CLEAR LOOKS REDUNDANT AND IS NOT. runs_() merges only strictly
+       adjacent columns, so every column inside a block is a mapped one and the
+       grid below fills every cell of every block row; the resize has just made
+       the tab end exactly where the write ends. On a run that completes, the
+       clear touches nothing the write does not immediately overwrite, and
+       dropping it looks like a free saving on the pass that reaches the
+       six-minute runtime limit.
+
+       IT IS NOT FREE, AND THE RUN THAT DOES NOT COMPLETE IS THE WHOLE REASON.
+       A kill mid-write does not throw anywhere this code can see — the rows
+       simply stop arriving. Cleared first, the tail of that tab is BLANK: wrong,
+       obvious, and detectable, which is exactly what the last-row check below
+       reads. Not cleared, the tail still holds the PREVIOUS export's figures —
+       last month's numbers under this month's heading, with nothing to tell
+       them apart. That is the same failure wearing a disguise, and it is worth
+       one API call per block to keep it undisguised.
+
+       (This was tried the other way and reverted. tests/qliksync.js stages a
+       write that lands short; without the clear, the check below reads the old
+       rows as evidence the write arrived and the run reports success.) */
     var blocks = runs_(pairs.map(function (p) { return p.col; }));
     blocks.forEach(function (b) {
       var w = b.end - b.start + 1;
@@ -3665,6 +3813,55 @@ var QLIKSYNC = (function () {
       }
     });
 
+    /* --- AND IT ALL LANDED ---
+       The gate above checks the export. This checks the SHEET, and it is the
+       only thing in the pass that can see the failure that started all of
+       this: a tab that stops partway down with nothing reporting an error.
+
+       Two reads, both single-row, because the expensive version of this check
+       is not worth its own runtime — and a truncated write always shows in the
+       same place. If the last row of the block is blank where the export's last
+       row is not, the write did not reach the bottom.
+
+       VALUES ARE NOT COMPARED, ON PURPOSE. Sheets coerces on the way in — a
+       numeric string lands as a number, a date-shaped one as a date — so a
+       cell-by-cell diff would fail on writes that are perfectly correct, and a
+       check that cries wolf is worse here than no check at all. Presence is
+       what a truncation destroys and presence is what is asked. */
+    if (n > 0) {
+      var lastRow = firstData + n - 1;
+      if (sh.getMaxRows() < lastRow) {
+        throw retryable_('"' + spec.tab + '" ends at row ' + sh.getMaxRows() + ' but the export ' +
+          'needs ' + n + ' rows down to row ' + lastRow + '. The tab could not be grown to fit ' +
+          'the export — check whether the workbook is at its 10 million cell limit.');
+      }
+      var wantLast = 0;
+      for (var wq = 0; wq < pairs.length; wq++) {
+        var wv = src.rows[n - 1][pairs[wq].src];
+        if (wv !== '' && wv != null) wantLast++;
+      }
+      if (wantLast) {
+        var gotLast = 0;
+        blocks.forEach(function (b) {
+          var w = b.end - b.start + 1;
+          var back = sh.getRange(lastRow, b.start, 1, w).getValues()[0];
+          for (var k = 0; k < w; k++) if (back[k] !== '' && back[k] != null) gotLast++;
+        });
+        if (!gotLast) {
+          throw retryable_('"' + spec.tab + '" was written but stopped short: the export\'s last ' +
+            'row carries ' + wantLast + ' values and row ' + lastRow + ' of the tab is empty ' +
+            'across every column written. ' + n + ' rows were sent. This is usually the ' +
+            'six-minute runtime limit killing the run mid-write; the tab is left as it is and ' +
+            'the next run rewrites it whole.');
+        }
+      }
+    }
+
+    /* Recorded only now, past every check, so a bad run cannot become the
+       baseline the NEXT run measures itself against — which would let a fault
+       through by degrees, one export at a time. */
+    recordShape_(spec.page, spec.tab, check.shape);
+
     var stamped = null;
     if (spec.stampMonth) {
       for (var sp = 0; sp < pairs.length; sp++) {
@@ -3696,6 +3893,15 @@ var QLIKSYNC = (function () {
       while (grid[r].length < cols) grid[r].push('');
     }
 
+    /* SAME GATE, AND THIS MODE NEEDS IT MORE THAN THE OTHER ONE DOES: the very
+       next statement clears the whole tab, so there is no partial failure here
+       to recognise afterwards — a bad export takes everything. Every column is
+       checked rather than a paired subset, because in this mode the export IS
+       the tab and there is nothing else on it to pair against. */
+    var everyCol = src.hdrRaw.map(function (_, i) { return { src: i }; });
+    var check = checkSource_(spec, src, everyCol, tabShape_(spec.page, spec.tab));
+    if (!check.ok) throw checkError_(spec, check);
+
     /* THE ONLY MODE THAT OWNS ITS WHOLE TAB. These are the Product Segment tabs:
        pre-aggregated by QlikView, no formulas and no columns of anybody else's,
        so the tab IS the export and clearing it is the contract. Do not put a
@@ -3710,6 +3916,12 @@ var QLIKSYNC = (function () {
     else if (rows < have) sh.deleteRows(rows + 1, have - rows);
     if (cols > sh.getMaxColumns()) sh.insertColumnsAfter(sh.getMaxColumns(), cols - sh.getMaxColumns());
     sh.getRange(1, 1, rows, cols).setValues(grid);
+
+    if (sh.getMaxRows() < rows) {
+      throw retryable_('"' + spec.tab + '" ends at row ' + sh.getMaxRows() + ' but the export ' +
+        'needs ' + rows + '. The tab could not be grown to fit it.');
+    }
+    recordShape_(spec.page, spec.tab, check.shape);
 
     return {
       tab: spec.tab, mode: 'replace', from: src.file + ' · ' + src.name,
@@ -3737,6 +3949,16 @@ var QLIKSYNC = (function () {
         '. Add them to APP_CONFIG.QLIK_SYNC in Config.gs.');
     }
     return out;
+  }
+
+  /* The source behind a run's scope ('pricevolume' | 'rmx' | 'segment'), so a
+     failure mail can name the export a person would recognise rather than the
+     page id. null for 'all', which is every source and so names none. */
+  function sourceByScope_(scope) {
+    var all;
+    try { all = sources_(); } catch (e) { return null; }
+    for (var i = 0; i < all.length; i++) if (all[i].scope === scope) return all[i];
+    return null;
   }
 
   function sourceById_(key) {
@@ -3814,6 +4036,469 @@ var QLIKSYNC = (function () {
     return (page && syncLog_()[page]) || null;
   }
 
+
+  /* =====================================================================
+   * 5b. WHAT A GOOD PULL LOOKS LIKE — the shape of every tab, kept
+   * ---------------------------------------------------------------------
+   * THE CHECK THAT MATTERS CANNOT BE MADE FROM ONE EXPORT ALONE. "This column
+   * is empty" is not a fault on its own — plenty of columns legitimately are —
+   * and "this export has 1,100 rows" is not either. Both become faults the
+   * moment you know what the LAST good one carried. So every successful write
+   * records two numbers per tab: how many rows the export had, and how many
+   * values each paired column actually filled. The next run compares.
+   *
+   * This is the whole answer to the reported failure. An export that went out
+   * with CY Rev exWorks, PY Rev exWorks and Fuel Surcharge left off still
+   * paired every OTHER column, wrote cleanly, and landed a tab whose totals row
+   * read 0.00 across three columns with nothing anywhere reporting a problem.
+   * Against the previous shape it is not ambiguous at all: three columns that
+   * carried tens of thousands of values last week carry none this week.
+   * ================================================================== */
+  var QLIK_SHAPE_KEY = 'QLIK_TAB_SHAPE';
+
+  function shapeLog_() {
+    try { return JSON.parse(PropertiesService.getScriptProperties()
+                              .getProperty(QLIK_SHAPE_KEY) || '{}'); }
+    catch (e) {
+      /* NOT SILENT. With no shapes to compare against, every check below passes
+         by default — which is the pre-check behaviour, and is exactly the state
+         that let three empty columns through. */
+      APP_log('warn', 'QLIKSYNC.shapeLog', 'the tab-shape record is unreadable — this run has ' +
+              'nothing to compare against and its column checks will all pass',
+              { error: String(e) });
+      return {};
+    }
+  }
+
+  /* Keyed on the tab NAME and the page that owns it: two workbooks are free to
+     hold a tab called the same thing, and run() already refuses to match on
+     tab name alone for that reason. */
+  function shapeKey_(page, tab) { return page + '|' + norm_(tab); }
+
+  function tabShape_(page, tab) {
+    return shapeLog_()[shapeKey_(page, tab)] || null;
+  }
+
+  function recordShape_(page, tab, shape) {
+    var all = shapeLog_();
+    all[shapeKey_(page, tab)] = shape;
+    try { PropertiesService.getScriptProperties()
+            .setProperty(QLIK_SHAPE_KEY, JSON.stringify(all)); }
+    catch (e) {
+      /* The data landed and only the record did not. Warn rather than fail —
+         but warn, because the NEXT run is the one that pays: it compares
+         against a shape one run out of date, or against none at all. */
+      APP_log('warn', 'QLIKSYNC.recordShape', 'could not record what this tab looked like — the ' +
+              'next run has less to check against', { tab: tab, error: String(e) });
+    }
+  }
+
+  /* What one export tab looks like, in the two numbers a bad pull moves. Only
+     the PAIRED columns are counted: an unpaired one is already reported as
+     unmatched and writes nowhere, so its fill is nobody's business.
+
+     KEYED ON THE CANONICAL NAME, WHICH IS WHAT PAIRING ITSELF USES. Keyed on
+     the raw header, a cosmetic change in the export — a double space, a case
+     change, "Fuel Surchage" corrected to "Fuel Surcharge" — would read as one
+     column vanishing and another appearing, and this gate would block a sync
+     over a typo being fixed. The canonical form is stable under exactly the
+     variations the pairing is stable under, which is the property wanted here.
+     `names` keeps the raw spelling beside it, because the message this ends up
+     in is read by somebody looking at the export, not at the code. */
+  function shapeOf_(src, pairs) {
+    var cols = {}, names = {}, n = src.rows.length, ym = 0;
+    for (var q = 0; q < pairs.length; q++) {
+      var sc = pairs[q].src, fill = 0;
+      for (var i = 0; i < n; i++) {
+        var v = src.rows[i][sc];
+        if (v !== '' && v != null) fill++;
+      }
+      var key = canon_(src.hdr[sc]);
+      if (!key) continue;                       /* an unnamed column names nothing */
+      cols[key] = fill;
+      names[key] = String(src.hdrRaw[sc]);
+      if (pairs[q].isMonth && ym === 0) {
+        var mm = latestMonth_(src, sc);
+        if (mm) ym = mm.y * 12 + mm.m;
+      }
+    }
+
+    /* THE PERIOD THIS EXPORT IS FOR, and it has to be found two ways because
+       the two lines carry it differently. Ready-Mix has a Bill Month ("Apr-26")
+       and the loop above reads it. THE AGGREGATES TABS DO NOT — only "Bill
+       Month" canonicalises to monthcol, and AGG carries a bare "Month" beside a
+       separate "Year", so `monthYM_('Apr')` has no year to read and returns
+       null. Without this fallback `ym` is 0 on every AGG tab, `rolled` is never
+       true, and the shrink check refuses the January sync on the one line it
+       most needs to allow it. */
+    if (!ym) {
+      var y = srcCyYear_(src, src.hdr.map(canon_));
+      if (y) ym = y * 12;
+    }
+    return { rows: n, cols: cols, names: names, ym: ym, at: Date.now() };
+  }
+
+  /* HOW FAR AN EXPORT IS ALLOWED TO SHRINK BEFORE IT IS TREATED AS BROKEN.
+     Rows belong to the export — a shorter one has its surplus DELETED, which is
+     right and is what stops January reading a December-sized sheet. It is also
+     what makes a truncated read destructive rather than merely wrong: the sheet
+     is cut down to whatever the bad export happened to carry, and the good data
+     is gone before anybody sees a number. A real month-on-month fall is a few
+     per cent; half is not a month, it is a broken file. Below the floor the
+     ratio means nothing, so it is not applied. */
+  var SHRINK_FLOOR = 500, SHRINK_KEEP = 0.5;
+
+  /* ===================================================================
+   * THE GATE. IT RUNS BEFORE ANYTHING DESTRUCTIVE, AND THAT IS THE POINT.
+   * -------------------------------------------------------------------
+   * By the time this returns, nothing has been cleared, no row has been
+   * deleted and no formula has been lifted out. A tab that fails here is left
+   * EXACTLY as it was — last week's figures, which are wrong by a week, rather
+   * than this week's hole, which is wrong in a way no reader can see.
+   * ================================================================= */
+  function checkSource_(spec, src, pairs, prev) {
+    var bad = [], n = src.rows.length, wide = src.hdr.length;
+
+    /* 1. THE GRID IS RECTANGULAR. getValues() returns one by construction, so a
+          short row means the read came back truncated between Drive and here —
+          which is the failure that ends with a tab stopping at row 1,113 of
+          49,000 and no error anywhere. */
+    for (var i = 0; i < n; i++) {
+      if (src.rows[i].length < wide) {
+        bad.push('row ' + (i + 1) + ' of the export has ' + src.rows[i].length +
+                 ' cells where its header has ' + wide + ' — the export was read short');
+        break;
+      }
+    }
+
+    var now = shapeOf_(src, pairs);
+
+    if (prev && prev.cols) {
+      /* 2. NO COLUMN HAS GONE MISSING. A column that fed this tab on the last
+            good run and pairs with nothing now was dropped or renamed in the
+            export. Note what this does NOT catch, deliberately: a column that
+            has never paired is reported as unmatched and is not a failure,
+            because that is also what a new year's column looks like before
+            somebody adds it to the workbook. */
+      var here = {};
+      for (var h = 0; h < src.hdr.length; h++) { var k = canon_(src.hdr[h]); if (k) here[k] = 1; }
+
+      Object.keys(prev.cols).forEach(function (key) {
+        if (key in now.cols) return;
+        var was = (prev.names && prev.names[key]) || key;
+        /* WHICH OF THE TWO IT IS matters to whoever has to fix it: a column
+           the export stopped sending is a QlikView job to re-run, and one the
+           export still sends but that no longer pairs is a header renamed on
+           one side of the pairing — usually in the workbook. */
+        bad.push(here[key]
+          ? 'the column "' + was + '" is in this export but no longer pairs with any column ' +
+            'on the tab — a header has been renamed on one side or the other'
+          : 'the column "' + was + '" fed this tab on the last good run and is not in this export');
+      });
+    }
+
+    /* 3. AND NONE ARRIVED EMPTY THAT USED TO CARRY FIGURES. The reported
+          failure, exactly: revenue and fuel surcharge present in the header,
+          paired, written, and empty all the way down. */
+    Object.keys(now.cols).forEach(function (key) {
+      if (now.cols[key] === 0 && prev && prev.cols && prev.cols[key] > 0) {
+        bad.push('the column "' + (now.names[key] || key) + '" is empty in this export and ' +
+                 'carried ' + prev.cols[key] + ' values on the last good run');
+      }
+    });
+
+    /* 4. THE EXPORT HAS NOT COLLAPSED. See SHRINK_FLOOR.
+
+          AND THE ONE CASE WHERE A COLLAPSE IS REAL: the turn of the year. These
+          exports carry the year they are for, so a January file is a twelfth of
+          a December one — which is the whole reason surplus rows are deleted
+          rather than left (leaving them has January reading a December-sized
+          sheet for eleven months). Refusing that would stop the pipeline dead
+          every January, on the one day of the year nobody is expecting it.
+
+          So a shrink is allowed when the export's NEWEST MONTH has moved on,
+          and only then. It still says so: this is the gap in the check and it
+          should be visible when it is being relied on. A truncated read of a
+          January file would come through this — the settle before the read is
+          what addresses that, and the row-count check after the write is what
+          reports it if both miss. */
+    if (prev && prev.rows >= SHRINK_FLOOR && n < Math.ceil(prev.rows * SHRINK_KEEP)) {
+      var rolled = !!(now.ym && prev.ym && now.ym > prev.ym);
+      if (rolled) {
+        APP_log('warn', 'QLIKSYNC.check', 'the export is far shorter than the last good one, and ' +
+                'is allowed only because its newest month has moved on — a period roll',
+                { tab: spec.tab, rows: n, was: prev.rows });
+      } else {
+        bad.push('the export carries ' + n + ' rows where the last good one carried ' + prev.rows +
+                 ' — too few to be a month’s change, its newest month has not moved on, and ' +
+                 'writing it would delete the rest of the tab');
+      }
+    }
+
+    return { ok: !bad.length, problems: bad, shape: now };
+  }
+
+  /* A GATE FAILURE, FLAGGED AS ONE. run() records every kind of tab failure the
+     same way, and the two are not the same thing: a tab that failed its CHECKS
+     is worth trying again in five minutes, because the usual cause is a file
+     that was still being written when this run opened it. A tab that failed any
+     other way is not — see 5d. `qlikCheck` is how the difference survives being
+     turned into a { tab, error } record. */
+  function checkError_(spec, check) {
+    return retryable_('The export did not pass its checks, so "' + spec.tab + '" was left ' +
+      'exactly as it was — ' + check.problems.join('; ') + '.');
+  }
+
+  /* A FAILURE WORTH TRYING AGAIN, whatever produced it. The gate uses it, and
+     so does the post-write check — a tab that stopped short is the clearest
+     case of all: the next run rewrites it whole, and without the flag it keeps
+     the export's stamp and is never looked at again. What is NOT flagged is
+     anything a second attempt cannot change (a tab missing from the workbook, a
+     header that pairs with nothing on either side), because retrying those
+     neither fixes them nor tells anybody, which is the rule §11's check has
+     always followed. */
+  function retryable_(message) {
+    var e = new Error(message);
+    e.qlikCheck = true;
+    return e;
+  }
+
+
+  /* =====================================================================
+   * 5c. TELLING SOMEBODY — this runs on a timer with nobody watching
+   * ---------------------------------------------------------------------
+   * A throw inside a time-driven trigger reaches one place: the execution log,
+   * which nobody opens until they already suspect something. Every failure
+   * above is silent to the person who actually needs it — the tab looks
+   * healthy, the totals are just wrong — so a failed run says so by mail.
+   *
+   * TO WHOM. APP_CONFIG.SYNC_ALERT_TO if it is set, otherwise the account the
+   * execution is running as. That default is the right one here rather than a
+   * fallback: an installable trigger runs as WHOEVER CREATED IT (§11), so the
+   * effective user is by definition the person who set this pipeline up.
+   * ================================================================== */
+  function alertTo_() {
+    var to = [];
+    try {
+      var raw = PropertiesService.getScriptProperties().getProperty('QLIK_ALERT_TO') ||
+                (typeof APP_CONFIG === 'object' && APP_CONFIG.SYNC_ALERT_TO) || '';
+      to = String(raw).split(/[,;\s]+/).filter(function (x) { return x.indexOf('@') !== -1; });
+    } catch (e) { to = []; }
+    if (!to.length) {
+      try { var me = Session.getEffectiveUser().getEmail(); if (me) to = [me]; } catch (e) {}
+    }
+    return to;
+  }
+
+  function alert_(subject, lines) {
+    var to = alertTo_();
+    if (!to.length) {
+      APP_log('error', 'QLIKSYNC.alert', 'the sync failed and there is nobody to tell — set the ' +
+              'QLIK_ALERT_TO script property', { subject: subject });
+      return false;
+    }
+    var body = lines.join('\n');
+    try {
+      MailApp.sendEmail({ to: to.join(','), subject: subject, body: body });
+      return true;
+    } catch (e) {
+      /* The last thing that could have reported the failure has failed. There
+         is nothing below this to fall back to, so it is an error and it names
+         both problems — the sync's and the mail's. */
+      APP_log('error', 'QLIKSYNC.alert', 'could not send the sync failure mail, so this run is ' +
+              'reported nowhere but here', { subject: subject, error: String(e), body: body });
+      return false;
+    }
+  }
+
+
+  /* =====================================================================
+   * 5d. THE RETRY — once, five minutes out, and then it stops
+   * ---------------------------------------------------------------------
+   * The existing rule stands and is worth restating, because this is an
+   * exception to it: a run that FINISHED with a broken tab is not retried,
+   * because that tab will be just as broken in fifteen minutes and re-syncing
+   * forever neither fixes it nor tells anybody.
+   *
+   * A run that failed its CHECKS is the one case where a retry is worth
+   * something, and only because of what usually causes it: a file Drive was
+   * still writing when the sync opened it, or an export QlikView had not
+   * finished dropping. Both are gone a few minutes later. So the retry is ONE
+   * further attempt, five minutes out, and then it gives up and says so — a
+   * genuinely broken export is not fixed by asking again and the mail has
+   * already gone out either way.
+   *
+   * THIS IS THE ONLY ScriptApp.newTrigger IN THE CODEBASE, and §11's banner —
+   * which said there were none — says so now. It is a one-shot: it arms itself
+   * here and deletes itself when it fires, and arming it clears any spent one
+   * first, so these cannot accumulate against the per-script trigger limit.
+   * ================================================================== */
+  var QLIK_RETRY_KEY = 'QLIK_RETRY', QLIK_RETRY_MAX = 1, QLIK_RETRY_MINS = 5;
+  var QLIK_RETRY_FN = 'qlikSyncRetry';
+
+  function retryLog_() {
+    try { return JSON.parse(PropertiesService.getScriptProperties()
+                              .getProperty(QLIK_RETRY_KEY) || '{}'); }
+    catch (e) {
+      /* NOT SILENT (§7). An unreadable retry log reads as "nothing is waiting",
+         so a source that failed its checks is quietly never tried again — and
+         `tries` starts from zero, so it can also be retried more often than the
+         cap allows. Both are invisible from the outside. */
+      APP_log('warn', 'QLIKSYNC.retry', 'the retry record is unreadable — anything waiting to be ' +
+              'retried is forgotten, and the retry cap starts again', { error: String(e) });
+      return {};
+    }
+  }
+  function saveRetry_(all) {
+    try { PropertiesService.getScriptProperties()
+            .setProperty(QLIK_RETRY_KEY, JSON.stringify(all)); }
+    catch (e) {
+      APP_log('warn', 'QLIKSYNC.retry', 'could not record the retry state — a retry may run ' +
+              'twice or not at all', { error: String(e) });
+    }
+  }
+
+  /* Every trigger this project has ever armed for the retry handler, gone.
+     getProjectTriggers() sees only the CALLER'S OWN triggers, which is the
+     platform's rule and the same one §11 spells out — so this clears what this
+     account armed, which is the only thing it could have armed. */
+  function dropRetryTriggers_() {
+    var gone = 0;
+    try {
+      ScriptApp.getProjectTriggers().forEach(function (t) {
+        if (t.getHandlerFunction() === QLIK_RETRY_FN) { ScriptApp.deleteTrigger(t); gone++; }
+      });
+    } catch (e) {
+      APP_log('warn', 'QLIKSYNC.retry', 'could not clear the spent retry triggers',
+              { error: String(e) });
+    }
+    return gone;
+  }
+
+  /* A SCOPE THAT SUCCEEDED IS NOT WAITING FOR ANYTHING. Called on every clean
+     run, not only by the retry path, because the retry is not the only thing
+     that can fix one: the scheduled check comes round every fifteen minutes and
+     somebody can run qlikSyncNow at any point, and either may land before the
+     five-minute one-shot fires. Left behind, the entry costs twice — the retry
+     fires against a source that is already right, and `tries` stays at 1, so
+     the NEXT genuine failure is told it has already had its retry and gives up
+     immediately. */
+  function clearRetry_(scope) {
+    var all = retryLog_();
+    if (!(scope in all)) return;
+    delete all[scope];
+    saveRetry_(all);
+    if (!Object.keys(all).length) dropRetryTriggers_();
+  }
+
+  function scheduleRetry_(scope, problems) {
+    var all = retryLog_(), rec = all[scope] || { tries: 0 };
+    if (rec.tries >= QLIK_RETRY_MAX) {
+      APP_log('error', 'QLIKSYNC.retry', 'this source has already been retried and failed its ' +
+              'checks again — it will not be retried further',
+              { scope: scope, tries: rec.tries, problems: problems });
+      delete all[scope];
+      saveRetry_(all);
+      return 'exhausted';
+    }
+    rec.tries++; rec.at = Date.now(); rec.problems = problems;
+    all[scope] = rec;
+    saveRetry_(all);
+
+    dropRetryTriggers_();
+    try {
+      ScriptApp.newTrigger(QLIK_RETRY_FN).timeBased()
+        .after(QLIK_RETRY_MINS * 60 * 1000).create();
+      APP_log('info', 'QLIKSYNC.retry', 'armed a one-shot retry',
+              { scope: scope, minutes: QLIK_RETRY_MINS, attempt: rec.tries });
+      return 'armed';
+    } catch (e) {
+      /* Not fatal — the mail has already named the problem, and the ordinary
+         time-driven check will come round again. But the "five minutes" the
+         mail promises will not happen, so it is not silent either. */
+      APP_log('error', 'QLIKSYNC.retry', 'could not arm the retry — the next scheduled check is ' +
+              'the next attempt', { scope: scope, error: String(e) });
+      return 'unarmed';
+    }
+  }
+
+  /* THE MAIL A FAILED RUN SENDS, AND THE RETRY IT ARMS.
+     Written for the person who owns the EXPORT, not for whoever maintains the
+     code: every reason the gate produces already names the tab, the column and
+     what it carried last time, so the body is those reasons and the two facts
+     that make them actionable — which file was read, and what happens next. */
+  function reportFailure_(scope, failed, filesSeen, started) {
+    var label = (sourceByScope_(scope) || {}).label || scope;
+    var retryable = failed.filter(function (f) { return f.check; });
+    /* 'armed' | 'exhausted' | 'unarmed' — three different things to tell
+       somebody, and one boolean told two of them the same lie. */
+    var retry = retryable.length ? scheduleRetry_(scope, retryable.map(function (f) {
+      return f.tab + ': ' + f.error;
+    })) : 'none';
+
+    var body = [];
+    body.push('The QlikView sync ran at ' + started + ' and ' + failed.length +
+              ' tab(s) did not update.');
+    body.push('');
+    body.push('Source: ' + label + (filesSeen.length ? ' — ' + filesSeen.join(', ') : ''));
+    body.push('');
+    failed.forEach(function (f) { body.push('  • ' + f.tab + '\n      ' + f.error); });
+    body.push('');
+    if (retryable.length) {
+      body.push('WHAT THE SHEET LOOKS LIKE NOW: unchanged. A tab that fails its checks is left ' +
+                'exactly as it was, so it is showing the last good export rather than a ' +
+                'half-written one. The figures are out of date; they are not wrong in a way ' +
+                'nobody can see.');
+      body.push('');
+      body.push(
+        retry === 'armed'
+          ? 'WHAT HAPPENS NEXT: this runs again by itself in about ' + QLIK_RETRY_MINS +
+            ' minutes. The usual cause is an export that was still being written when the sync ' +
+            'opened it, and that clears on its own. If the retry fails too, nothing further is ' +
+            'scheduled and the export itself needs looking at.'
+        : retry === 'exhausted'
+          ? 'WHAT HAPPENS NEXT: nothing automatic — this has already been retried once and ' +
+            'failed again, so the export itself needs looking at. Re-export it and run ' +
+            'qlikSyncNow from the Apps Script editor, or wait for the next scheduled check.'
+          : 'WHAT HAPPENS NEXT: the automatic retry could not be scheduled, so the next ' +
+            'scheduled check is the next attempt. The export was not marked as read, so that ' +
+            'check will pick it up rather than skip it.');
+    } else {
+      body.push('WHAT HAPPENS NEXT: nothing automatic. This is not a failure a retry fixes — ' +
+                'run qlikSyncNow from the Apps Script editor once the cause above is dealt with.');
+    }
+    alert_('QlikView sync failed — ' + label + ' (' + failed.length + ' tab' +
+           (failed.length === 1 ? '' : 's') + ')', body);
+  }
+
+  /* What the one-shot trigger runs. Exposed on the namespace so §11's entry
+     point is one line and this stays beside the state it reads. */
+  function runRetries_() {
+    dropRetryTriggers_();                     /* including the one now firing */
+    var scopes = Object.keys(retryLog_());
+    if (!scopes.length) return { ok: true, retried: [] };
+
+    var out = { ok: true, retried: [], failed: [] };
+    scopes.forEach(function (scope) {
+      var res = run(scope);
+
+      /* RE-READ, NEVER HOLD. run() reaches scheduleRetry_ on its way out and
+         that writes this same property — it is what decides whether a second
+         failure arms anything and what clears the entry when it will not. A
+         copy taken before the run and written back after would undo that
+         decision and leave the scope waiting for a retry that is never coming,
+         which is the one state this whole mechanism must not produce. */
+      var all = retryLog_();
+      if (res.ok) { delete all[scope]; out.retried.push(scope); }
+      else {
+        out.ok = false;
+        out.failed.push(scope + ': ' + (res.error || JSON.stringify(res.failed)));
+      }
+      saveRetry_(all);
+    });
+    return out;
+  }
+
   /* scope: 'all', or a page id ('pricevolume' | 'rmx' | 'segment') so a tool's
      own button pulls only what that tool reads. Only the folders the chosen
      tabs actually need get opened. */
@@ -3888,10 +4573,21 @@ var QLIKSYNC = (function () {
             }
             var src = pickSource_(tabsByFolder[spec.folder], spec);
             if (!src) {
+              /* FLAGGED AS A CHECK FAILURE, and it is one: the fingerprint this
+                 tab is found by is a handful of its own column names, so
+                 "nothing matches" and "a column the tab needs is missing" are
+                 the same event seen one step earlier — and the same causes
+                 produce it, a file still being written among them. Without the
+                 flag this kept the export's stamp and was never tried again. */
               (spec.optional ? skipped : failed).push({
                 tab: spec.tab,
+                check: !spec.optional,
                 error: 'Nothing in the ' + spec.folder + ' folder matches this tab' +
-                       (spec.srcTab ? ' (looked for an export tab called "' + spec.srcTab + '")' : '') + '.'
+                       (spec.srcTab ? ' (looked for an export tab called "' + spec.srcTab + '")' : '') +
+                       '. The tab is found by the column names it must contain (' +
+                       (spec.srcTab ? 'the export tab name' : (spec.match || []).join(', ')) +
+                       '), so an export missing one of those matches nothing at all. ' +
+                       'Nothing was written and the tab is exactly as it was.'
               });
               return;
             }
@@ -3914,7 +4610,7 @@ var QLIKSYNC = (function () {
             done.push(res);
             ends[norm_(spec.tab)] = sh.getMaxRows();
           } catch (e) {
-            failed.push({ tab: spec.tab, error: e.message });
+            failed.push({ tab: spec.tab, error: e.message, check: !!(e && e.qlikCheck) });
           }
         });
 
@@ -3968,6 +4664,16 @@ var QLIKSYNC = (function () {
             { error: String(e && e.message || e) });
   }
 
+      /* NOBODY IS WATCHING THIS. run() is reached from a time-driven trigger and
+         from the editor, and its return value has one reader in each case:
+         qlikSyncCheck's log line, and whoever typed qlikSyncNow. A tab that did
+         not write is invisible to the person whose numbers are wrong — the tab
+         still looks like a tab — so a failed run says so out loud before it
+         returns, and arms the one retry if the failure is the kind a retry can
+         fix. */
+      if (failed.length) reportFailure_(want, failed, filesSeen, started);
+      else clearRetry_(want);
+
       return {
         ok: failed.length === 0,
         scope: want,
@@ -3995,6 +4701,8 @@ var QLIKSYNC = (function () {
      non-owner permission stripped, and wears TEMP_PREFIX, so sweepTemps_ above
      clears one a runtime kill strands whichever engine made it. */
   return { run: run, sources: sources_, lastSync: lastSync_,
+           retry: runRetries_, retryPending: retryLog_, dropRetries: dropRetryTriggers_,
+           shape: tabShape_,
            toSheet: convertToSheet_, trash: trashFile_, tempPrefix: TEMP_PREFIX };
 })();
 
@@ -16227,6 +16935,11 @@ var IRMAIL = (function () {
  *                    the trigger is rebuilt.
  *   qlikStamps       what the next check will compare, and what it will do.
  *   qlikSyncNow      the only manual recovery path when the trigger misfires.
+ *   qlikSyncRetry    THE ONE TARGET NOBODY SETS UP. A run whose export failed
+ *                    its checks arms a one-shot trigger on this, five minutes
+ *                    out, and this deletes it when it fires. Do NOT add a timer
+ *                    for it by hand — a repeating one would re-sync forever.
+ *   qlikRetryStatus  whether a retry is waiting, and why. Reads only.
  *
  *   inventoryReportMailCheck
  *                    THE SECOND TRIGGER TARGET. Set ONE hourly trigger on it.
@@ -16278,10 +16991,13 @@ var IRMAIL = (function () {
  * at nothing, or mails from the wrong name. Add all three from the account that
  * deployed the web app.
  *
- * THIS IS WHY THE SECTION EXISTS. There is not one ScriptApp.newTrigger in the
- * codebase — ALL THREE are configured by hand in the Apps Script UI, so nothing
- * in the repo points at any of them. Ctrl+F "§11" is the substitute for that
- * missing reference, and APP_verifyPermissions (§4) is the substitute for
+ * THIS IS WHY THE SECTION EXISTS. ALL THREE of the timers above are configured
+ * by hand in the Apps Script UI, so nothing in the repo points at any of them.
+ * (There is exactly one ScriptApp.newTrigger in the codebase and it is not one
+ * of these: §5 arms a ONE-SHOT retry five minutes out when an export fails its
+ * checks, pointed at qlikSyncRetry below, which deletes it when it fires. Do
+ * not add a trigger for that one by hand.) Ctrl+F "§11" is the substitute for
+ * that missing reference, and APP_verifyPermissions (§4) is the substitute for
  * looking: its ScriptApp row names all three and says which of them the account
  * running it has actually armed.
  * ============================================================================ */
@@ -16309,7 +17025,7 @@ var QLIK_STAMP_KEY = 'QLIK_FILE_STAMPS';
    Aggregates sync and nothing else. */
 function qlikSyncCheck() {
   /* THE TRIGGER TARGET. Nothing in the repo points at it (there is not one
-     ScriptApp.newTrigger in the codebase — see §11's banner), it runs hourly
+     ScriptApp.newTrigger arming THIS one — see §11's banner), it runs hourly
      with nobody watching, and every page's data depends on it. The log line is
      the only account of a run that will ever exist, which is why the entry is
      logged before anything can throw. */
@@ -16353,19 +17069,30 @@ function qlikSyncCheck() {
     /* Remember the stamp unless the run fell over completely (file unreadable,
        another sync holding the lock). A run that FINISHED but wrote a bad tab
        is not retried: that tab will be just as broken in fifteen minutes, and
-       re-syncing forever neither fixes it nor tells anybody. It is logged. */
+       re-syncing forever neither fixes it nor tells anybody. It is logged.
+
+       THE ONE EXCEPTION, AND IT IS NEW: a tab that failed its CHECKS wrote
+       nothing at all, and the reason is usually a file that was still being
+       written when this run opened it. Keeping the stamp there would mark the
+       export as done having never read it — so the stamp is withheld, and §5's
+       own one-shot retry (armed by the run itself, five minutes out) is what
+       actually tries again. The scheduled check is the backstop behind that,
+       not the mechanism. */
     if (res.error) {
       out.failed.push(src.label + ': ' + res.error);
       out.ok = false;
     } else {
-      seen[src.key] = stamp;
+      var gated = (res.failed || []).filter(function (f) { return f.check; });
+      if (!gated.length) seen[src.key] = stamp;
       out.changed.push(src.label);
       if (!res.ok) {
         out.failed.push(src.label + ': ' + JSON.stringify(res.failed));
-        /* A run that FINISHED but wrote a bad tab is deliberately not retried
-           (see above), so this line is the only record that it happened. */
-        APP_log('warn', 'QLIKSYNC.check', 'synced, but some tabs did not write',
-                { source: src.label, failed: res.failed });
+        /* run() has already mailed this and armed the retry if one is due, so
+           this line is the record rather than the alarm. */
+        APP_log(gated.length ? 'error' : 'warn', 'QLIKSYNC.check',
+                gated.length ? 'an export failed its checks and nothing was written to those tabs'
+                             : 'synced, but some tabs did not write',
+                { source: src.label, failed: res.failed, stampKept: !gated.length });
       }
     }
   });
@@ -16435,7 +17162,21 @@ function qlikStamps() {
 function qlikSyncNow(scope) {
   var want = (typeof scope === 'string' && scope) ? scope : 'all';
   var res  = QLIKSYNC.run(want);
-  if (!res.error) {
+  /* A tab that failed its CHECKS was not written, so stamping the export as
+     synced would mark a file as read that this run refused to read. Same rule
+     as qlikSyncCheck's, and it has to be repeated here because the two write
+     the stamp independently — the manual path deliberately ignores the
+     trigger's "has the file moved" optimisation, not its correctness.
+
+     COARSER THAN THE CHECK'S, AND DELIBERATELY SO. qlikSyncCheck runs one
+     source at a time and can withhold one stamp; a default qlikSyncNow() runs
+     'all', and a { tab, error } record does not say which source its tab came
+     from, so one gated tab withholds every stamp in the run. The cost is that
+     the next check re-syncs sources that were fine, which is idempotent. The
+     other way round — marking a file read because a different one succeeded —
+     is not. */
+  var gated = (res.failed || []).filter(function (f) { return f.check; });
+  if (!res.error && !gated.length) {
     var props = PropertiesService.getScriptProperties(), seen = {};
     try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); }
     catch (e) {
@@ -16458,6 +17199,59 @@ function qlikSyncNow(scope) {
     props.setProperty(QLIK_STAMP_KEY, JSON.stringify(seen));
   }
   return res;
+}
+
+
+/* ==========================================================================
+ * THE ONE-SHOT RETRY — armed by §5, and the only trigger this project creates.
+ * --------------------------------------------------------------------------
+ * DO NOT ADD A TRIGGER FOR THIS BY HAND. Unlike the three timers above, this
+ * one arms itself: a run whose export failed its checks calls
+ * scheduleRetry_(), which creates a single time-based trigger five minutes out
+ * and points it here. This function deletes every trigger on its own handler —
+ * including the one that is firing it — before doing anything else, so they
+ * cannot accumulate against the per-script limit.
+ *
+ * IT RETRIES ONCE. The usual cause of a check failure is an export Drive was
+ * still writing when the sync opened it, and that is gone a few minutes later.
+ * A genuinely broken export is not fixed by asking again, so a second failure
+ * arms nothing further and the mail §5 already sent says so.
+ *
+ * AND IT RUNS AS WHOEVER ARMED IT, which is whoever created the hourly check —
+ * the same rule as every other trigger here (see the banner above). That is the
+ * right account by construction: the retry is the same work the check does.
+ * ======================================================================== */
+function qlikSyncRetry() {
+  var t0 = Date.now();
+  APP_log('info', 'QLIKSYNC.retry', 'one-shot retry fired');
+  var out;
+  try { out = QLIKSYNC.retry(); }
+  catch (e) {
+    APP_log('error', 'QLIKSYNC.retry', 'the retry itself failed',
+            { ms: Date.now() - t0, error: String(e && e.message || e) });
+    return { ok: false, error: String(e && e.message || e) };
+  }
+  APP_log(out.ok ? 'info' : 'error', 'QLIKSYNC.retry', 'done',
+          { ms: Date.now() - t0, retried: (out.retried || []).join(','),
+            failed: (out.failed || []).join(' | ') });
+  return out;
+}
+
+
+/* Run from the editor when you want to know whether a retry is waiting, and
+   clear it if one is stuck. Reads the retry state; `dropRetryTriggers` is the
+   escape hatch if a one-shot ever survives its own firing. */
+function qlikRetryStatus() {
+  var pending = QLIKSYNC.retryPending();
+  var keys = Object.keys(pending);
+  return {
+    waiting: keys.map(function (k) {
+      return { source: k, attempt: pending[k].tries, since: new Date(pending[k].at),
+               problems: pending[k].problems };
+    }),
+    note: keys.length ? 'A one-shot trigger should be armed for these. qlikSyncRetry() runs it now.'
+                      : 'Nothing is waiting to be retried.'
+  };
 }
 
 

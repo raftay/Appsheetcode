@@ -111,8 +111,9 @@ that is, `APP_verifyPermissions()` prints the effective user — run it from the
 the `ran` line of a trigger's own execution log to see who a firing actually ran as.
 
 **Whether the three triggers exist at all is the other half of that**, and until recently
-nothing in the project could answer it: there is not one `ScriptApp.newTrigger` in the codebase
-(§11), so a timer that was never added — or was deleted — leaves no trace anywhere, raises no
+nothing in the project could answer it: none of the three is created in code (§11 — the single
+`ScriptApp.newTrigger` in the codebase arms the sync's one-shot retry and nothing else), so a
+timer that was never added — or was deleted — leaves no trace anywhere, raises no
 error, and writes no log line, *because nothing runs*. `APP_verifyPermissions()`'s `ScriptApp`
 row names all three targets and says which of them are armed. **It sees only the caller's own
 triggers**, which is the platform's rule and not a limitation of the check — and it is the same
@@ -385,8 +386,11 @@ which each header goes to two rows.
 
 **The sync is trigger-only by design and has no UI.** (This is one of the suite's *three*
 time-driven triggers — the Inventory Report's mail watch and TP01's are the others, both
-below. None is created in code; all three are set by hand in the Apps Script UI, which is why
-`script.gs` §11 exists.) There is no pull button and one is not
+below. None of the three is created in code; all three are set by hand in the Apps Script UI,
+which is why `script.gs` §11 exists. There is now **exactly one** `ScriptApp.newTrigger` in
+the codebase and it is none of them — a run whose export fails its checks arms a **one-shot
+retry** five minutes out, pointed at `qlikSyncRetry`, which deletes it when it fires. Do not
+add a trigger for that one by hand.) There is no pull button and one is not
 wanted — a sync is a minutes-long Drive job, not something to put behind a control a user can
 press twice. Set **one** time-driven trigger on `qlikSyncCheck`; 15 minutes costs three Drive
 lookups when nothing has changed.
@@ -402,6 +406,94 @@ so a new year's column has to exist there before anything can be written into it
 does, the export's new column is reported unmatched rather than written somewhere wrong. There
 is **no positional fallback**: one existed, and it is how PY revenue was written into the
 wrong column for a whole run.
+
+### Nothing is written until the export has been checked
+
+**A bad export used to land silently, and that is the worst shape a data bug can take.** An
+export went out with `CY Rev exWorks`, `PY Rev exWorks` and `Fuel Surcharge` left off. Every
+other column paired, wrote cleanly, and produced a tab whose totals row read `0.00` across
+three columns — no failed tab, no error, no log line, and a page that looked exactly like a
+page. **Rows made it worse rather than better**: the sheet ends where the export ends, so a
+short export does not leave the surplus behind, it *deletes* it. Right when the export is
+real; catastrophic when it is truncated, because the good data is gone before anybody sees a
+number.
+
+So there is a gate, and **its position is the whole point — it runs before anything
+destructive**. By the time it returns, nothing has been cleared, no row deleted and no formula
+lifted out. A tab that fails is left *exactly* as it was: last week's figures, wrong by a
+week, which a reader can recognise. What that replaces is this week's hole, which nobody can.
+
+Four checks, and three of them are only possible because **every successful write records what
+the tab looked like** — how many rows the export carried and how many values each paired column
+filled (`QLIK_TAB_SHAPE`). "This column is empty" is not a fault on its own; it is a fault
+against a column that was full last week.
+
+- **The grid is rectangular.** A row shorter than the header means the read came back
+  truncated between Drive and here.
+- **No column has gone missing** — one that fed this tab on the last good run and pairs with
+  nothing now. A column that has *never* paired is still only reported as unmatched, because
+  that is also what a new year's column looks like before somebody adds it to the workbook.
+- **None arrived empty that used to carry figures.** The reported failure, exactly.
+- **The export has not collapsed** — under half the last good row count, above a 500-row floor
+  where the ratio starts to mean anything. This is the one standing between a truncated read
+  and `deleteRows`.
+
+**A collapse is real once a year, and the check has to know it.** These exports carry the year
+they are for, so a **January file is a twelfth of a December one** — which is the whole reason
+surplus rows are deleted rather than left. Refusing that would stop the pipeline dead every
+January, on the one day nobody is expecting it. So a shrink is allowed when the export's
+**newest period has moved on**, and only then; it is logged at `warn` when it is being relied
+on, because this is the gap in the check. The period is read two ways and both are needed:
+Ready-Mix from its `Bill Month`, and **Aggregates from the Year column** — only `Bill Month`
+canonicalises to `monthcol`, and AGG carries a bare `Month` beside a separate `Year`, so
+without the fallback every AGG tab has no period at all and January is refused on the line that
+most needs it. A truncated read of a January file would come through this gap: `settle_` below
+is what addresses that, and the row-count check after the write is what reports it if both miss.
+
+**A refused run is never recorded as the baseline.** Recording it would move the standard down
+to the broken export, and the same broken export sent again would sail through — the gate would
+report a fault once and then adopt it. `tests/qliksync.js` gates that specifically, and it is
+the one a "does the gate still fire" check cannot see.
+
+After the write there is a second, cheaper check: **the last row of each block is read back**,
+and a block whose final row is empty where the export's is not means the write stopped short.
+Values are deliberately *not* compared — Sheets coerces on the way in, so a cell-by-cell diff
+would fail on writes that are perfectly correct, and a check that cries wolf here is worse than
+no check.
+
+**The full-block `clearContent` before the write looks redundant and must stay.** `runs_`
+merges only strictly adjacent columns, so every column inside a block is a mapped one and the
+grid fills every cell of every block row; the resize has just made the tab end exactly where
+the write ends. On a run that *completes*, the clear touches nothing the write does not
+immediately overwrite, and dropping it looks like a free saving on the pass that reaches the
+six-minute limit. **The run that does not complete is the whole reason it is not free.** A kill
+mid-write throws nowhere this code can see — the rows simply stop arriving. Cleared first, the
+tail of that tab is **blank**: wrong, obvious, and exactly what the last-row check reads. Not
+cleared, the tail still holds the **previous export's figures** — last month's numbers under
+this month's heading, with nothing to tell them apart. This was tried the other way and
+reverted; `tests/qliksync.js` stages a short write and, without the clear, the check reads the
+old rows as evidence the write arrived and the run reports success.
+
+### Nobody is watching a trigger, so a failed run says so
+
+A throw inside a time-driven trigger reaches one place: the execution log, which nobody opens
+until they already suspect something. **A failed run mails the failure** — to
+`QLIK_ALERT_TO` (a Script Property) if set, otherwise to the account the execution runs as,
+which by the trigger rule above is by definition whoever set the pipeline up.
+
+The mail names the source, the tab and the reason, and says two things the reasons alone do
+not: that **the sheet is unchanged rather than half-written**, and what happens next. Both
+matter — "the sync failed" usually means something was half-done, and here it means the
+opposite.
+
+**The retry is one attempt, five minutes out, and then it stops.** The existing rule still
+stands — a run that FINISHED with a broken tab is not retried, because that tab will be just
+as broken in fifteen minutes. A run that failed its *checks* is the exception, and only
+because of what usually causes it: a file Drive was still writing when the sync opened it.
+That is gone a few minutes later; a genuinely broken export is not fixed by asking again. A
+gate failure also **withholds the export's stamp**, in both `qlikSyncCheck` and `qlikSyncNow`
+— keeping it would mark a file as read that the run refused to read. `qlikRetryStatus()` shows
+what is waiting.
 
 ### What the sync owns
 
@@ -438,6 +530,20 @@ else — so Drive converts each export to a temporary one, which is read and the
 **QlikView delivers `.xls` and cannot deliver anything else, so this happens on every sync.**
 `readExport_` does skip the copy for an export that is already a Google Sheet, but that is not
 a route this pipeline can take.
+
+**The copy is not finished when Drive hands back its id, and this is the likeliest cause of a
+tab that stops partway down.** `files/copy` returns as soon as the file *record* exists;
+converting tens of thousands of rows of `.xls` is not instant, and the sheet is **readable
+while it is still filling** — `getDataRange()` answers with however much has landed,
+truthfully and short, with no error anywhere. Read straight away, a 49,000-row export comes
+back as a thousand-odd rows, is written as a thousand-odd rows, and the other 48,000 are
+**deleted** to match, because the sheet ends where the export ends. So `settle_` polls every
+tab's last row until two reads agree — one 1.5 s sleep in the common case, against a job that
+already takes minutes. **`SpreadsheetApp.flush()` before each look is load-bearing**: the Spreadsheet
+service caches within an execution, so without it the second poll can be answered from the first and
+the wait settles instantly on the short read it exists to wait out. **Giving up waiting does not throw**: a copy still growing after nine
+seconds is unusual but proves nothing, and the gate above is what actually stands between a
+short read and a wrecked tab. The wait makes a short read rare; the gate makes it harmless.
 
 Because it happens every time, **`sweepTemps_` clears the strays**. The copy is trashed in a
 `finally`, which covers every way the read can fail except the runtime limit — Apps Script
@@ -1452,7 +1558,8 @@ does not prove it.**
 > of caller live outside it:
 >
 > 1. **Time-driven triggers**, configured by hand in the Apps Script UI. Nothing in the repo
->    references them — there is not one `ScriptApp.newTrigger` in the codebase.
+>    references them: the single `ScriptApp.newTrigger` in the codebase arms the sync's one-shot
+>    retry (`qlikSyncRetry`) and none of the three hand-set timers.
 > 2. **Editor-run tools**, invoked by a human from the Run menu.
 > 3. **`doGet`**, called by Apps Script itself.
 >
@@ -1676,3 +1783,6 @@ or was forgotten.**
 | | **`APP_verifyPermissions()` has never been run.** Needs somebody in the Apps Script editor; nothing off-platform can exercise `SpreadsheetApp`, `DriveApp`, `SlidesApp` or `MailApp` | ☐ |
 | | **No real deck has been built against the live deployment.** Every adapter is registered and the path is exercised offline, but `DECK_create` / `addSlide` / `finish` have never run. `DECK_status` is kept until that build says whether Publish needs it | ☐ |
 | | **One look at the Price & Volume sheet:** whether it carries any parenthesised negatives decides only whether anyone notices chunk 20 — a no-op if it has none, correctly counted figures if it has some | ☐ |
+| 2026-08-24 | **Nothing is written until the export has been checked, and the header's stamp stops asking a question it cannot answer.** Four field reports. **(1) The sync landed a bad export silently** — three columns (`CY Rev exWorks`, `PY Rev exWorks`, `Fuel Surcharge`) left out of a QlikView export, every other column paired and wrote, and the tab's totals read `0.00` with no failed tab, no error and no log line. Rows made it worse: the sheet ends where the export ends, so a short read does not leave the surplus, it **deletes** it. There is a gate now and **its position is the point** — it runs before the band comes out, before the resize, before a cell is cleared, so a refused tab is left *exactly* as it was. Three of its four checks need a baseline, so every successful write records the tab's shape (`QLIK_TAB_SHAPE`): rows carried, and values filled per paired column. "This column is empty" is only a fault against a column that was full. Two false positives were designed out and both are gated: the shape is keyed on the **canonical** column name, so fixing the "Fuel Surchage" typo in an export does not read as one column vanishing and another appearing; and a **collapse is allowed when the export's newest period has moved on**, because a January file really is a twelfth of a December one and refusing it would stop the pipeline every year — the period comes from `Bill Month` on Ready-Mix and from the **Year column** on Aggregates, which carries no `Bill Month` at all. **A refused run never becomes that baseline** — recording it would move the standard down to the broken export and the same export sent again would pass, so the gate would report a fault once and adopt it; `tests/qliksync.js` gates that specifically and it is the case a "does the gate fire" check cannot see. **(2) A 49,000-row export stopping at row 1,113.** The likeliest cause is upstream of the write entirely: `files/copy` returns as soon as the file **record** exists, and a large `.xls` is still converting after that — the sheet is readable while it fills, so `getDataRange()` answers short, truthfully, with no error, and the sync then deletes the rest of the tab to match. `settle_` polls every tab's last row until two reads agree before anything is read — with a `SpreadsheetApp.flush()` before each look, without which the whole function is a no-op, since the Spreadsheet service caches within an execution and two identical answers would mean only that nothing re-read — and it **deliberately does not throw when it gives up**, because the gate is what makes a short read harmless. Two further changes on the same symptom: a **read-back of each block's last row** now reports a short write instead of leaving it silent — and it is flagged **retryable**, which is the half that matters, since without it the truncated tab keeps the export's stamp and is never looked at again; and the shrink check stands between a truncated read and `deleteRows`. **One change was tried and reverted, and the harness is why**: dropping the redundant-looking `clearContent` before the write. On a run that completes it clears nothing the write does not overwrite. On a run that is KILLED it is the difference between a blank tail — wrong, obvious, detectable — and a tail still holding last month's figures under this month's heading. The staged short-write case reported success without it. It is worth one API call per block to keep the failure undisguised. **(3) Nobody is watching a trigger**, so a failed run mails the source, the tab, the reason, that **the sheet is unchanged rather than half-written**, and what happens next — and arms **one** retry five minutes out (`qlikSyncRetry`, the codebase's only `ScriptApp.newTrigger`, which deletes itself when it fires). A gate failure also withholds the export's stamp in both `qlikSyncCheck` and `qlikSyncNow`, which would otherwise mark a file as read that the run refused to read. Two bugs the harness found in that machinery: `runRetries_` held a copy of the retry log across `run()`, which writes the same property, so a second failure's "give up" decision was undone; and a clean run did not clear a pending retry, so the one-shot fired against a source already fixed and left `tries` at 1, telling the next genuine failure it had already had its retry. **(4) The Overview's age stamp** dropped the QlikView clock and the four closed-year history books. The QlikView clock is a fact about ONE workbook; the Overview reads three, and the history books are not synced at all, so the panel stacked three sync times under three sheet times and four sections whose only content was "not known". Not the two clocks collapsed into one — that rule forbids *deriving* the QlikView time from Drive; what is left is labelled "last updated from the Google Sheet". **(5) The opening screen belonged to the whole tab rather than to a page.** `AmrBoot` is a §E singleton and nothing reset it, so a completed boot left `over` set and every page after the first loaded behind no screen at all, and a page switched away from mid-boot left steps nothing would ever report — a modal screen over a finished page until the 150s watchdog. `AmrBoot.reset()` joins teardown's list, before `AmrProgress.reset()`. The other half is not fixable here: Apps Script runs a user's calls end to end, so a tab reloaded mid-load leaves its call running and the reload is queued behind it; at 12s the screen now says so, and says reloading again only lengthens the queue. New gates: `boot-refcount` and `slow-open` in `pageswitch.js`, thirteen cases in `qliksync.js` — the destructive ones assert the tab is **byte-identical** afterwards, and all are mutation-tested — and the Overview cases in `freshness.js` rewritten to the new contract. `APP_CODE_BUILD` → `2026-08-24a` | ✅ |
+| | **The sync gate has never run against a real export.** `QLIK_TAB_SHAPE` is empty until the first successful sync after this deploy, and **every check passes by default with no baseline** — so the first run records and the second is the first one actually guarded. Watch that a normal month-on-month change does not trip the shrink check | ☐ |
+| | **`QLIK_ALERT_TO` is unset**, so the failure mail goes to whoever created the trigger. Set the Script Property if it should go to somebody else | ☐ |

@@ -461,6 +461,158 @@ const SNAPSHOT = () => ({
       'full reload.');
   } else pass('stranded-overlay', 'the loading screen comes down with the page that raised it');
 
+  /* -------------------------------------------------------------- the boot
+     THE SAME TRAP ONE LAYER UP, and it outlived the fix above. AmrProgress
+     forgets its JOBS on a switch, but AmrBoot is the refcount that raises the
+     'boot' job, and it is a §E singleton over ten pages in ONE document. Two
+     halves, and the harness has to see both:
+
+       ITS STEPS. A page switched away from mid-boot leaves its steps in
+       `pending`, and §D's stale guard drops the callbacks that would have
+       reported them — by design. The next page adds a step and answers it, the
+       count never reaches zero, and the new page sits under a MODAL screen
+       naming a step from a page that is gone, until the 150s watchdog.
+
+       ITS `over` FLAG. One-way on purpose — "boot is finished; never re-raise
+       it" is what stops a later fetch throwing the opening screen back up. Left
+       set across a switch it stops the NEXT page raising one AT ALL, so every
+       page after the first pulled from Sheets behind no screen whatsoever. That
+       is the half a job count cannot see: nothing is stuck, nothing leaks, and
+       the app simply stops telling anyone it is working. */
+  /* STAGED IN THE MOUNT'S OWN TICK. A page's boot() runs synchronously and
+     raises its steps there; what answers them are server callbacks, which the
+     stub resolves on a later turn. So this is the one moment a page is reliably
+     mid-boot — and it is the moment a real user clicks away in, which is the
+     whole reason the bug is worth a gate. Raising it AFTER the page had settled
+     found `over` already true and need() a no-op, which reads as "the probe
+     never raised" rather than as the failure it is. */
+  const bootBefore = await pg.evaluate(() => {
+    window.AMR.nav.go('overview');
+    const wasOver = window.AmrBoot.finished();
+    window.AmrBoot.need('probe-step');
+    return { wasOver: wasOver,
+             up: !!document.querySelector('#amrLoad.show'),
+             waiting: window.AmrBoot.waiting() };
+  });
+  /* Read in the NEXT mount's own tick, for the same reason it was staged in one.
+     A page's own boot() runs only once §D has loaded its libs, so nothing of the
+     new page's has happened yet here — which is exactly what makes this a clean
+     read of what the switch CARRIED over. */
+  const bootAfter = await pg.evaluate(() => {
+    window.AMR.nav.go('pricevolume');
+    return { waiting: window.AmrBoot.waiting(),
+             finished: window.AmrBoot.finished(),
+             overlay: !!document.querySelector('#amrLoad.show'),
+             /* THE WATCHDOG IS A setTimeout AND installCapture RECORDS
+                setInterval, so nothing in §D unwinds it — read here, before the
+                new page's own boot arms a fresh one. */
+             timers: window.__longTimers(120000) };
+  });
+
+  /* THE OTHER HALF, AND THE COMMON ONE: the page you leave has FINISHED
+     booting. Nothing is stuck and nothing leaks — `over` is simply still set,
+     so the next page's need() is a no-op and it pulls from Sheets behind no
+     screen at all. Let this page settle first, so the flag is set the way it is
+     set on any ordinary visit, then drive the refcount by hand on the next
+     mount: whether the SCREEN is up there depends on when §D finishes loading
+     that page's libs, and this check is about the module, not the timing. */
+  await pg.waitForTimeout(400);
+  const settled = await pg.evaluate(() => window.AmrBoot.finished());
+  const nextPage = await pg.evaluate(() => {
+    window.AMR.nav.go('rmx');
+    const o = { finished: window.AmrBoot.finished() };
+    window.AmrBoot.need('next-page-step');
+    o.raises = !!document.querySelector('#amrLoad.show');
+    o.waiting = window.AmrBoot.waiting();
+    window.AmrBoot.done('next-page-step');
+    /* Usable, not merely quiet — the check a deleted module would also pass. */
+    o.comesDown = !document.querySelector('#amrLoad.show');
+    return o;
+  });
+
+  if (bootBefore.wasOver) {
+    /* NOT A BROKEN PROBE — the bug, caught one step earlier than the checks
+       below aim at. A page has just been mounted and boot is ALREADY over,
+       carried from a page visited earlier in this lap, so need() is a no-op and
+       this page has no opening screen to raise. The staging failing is the
+       symptom. */
+    fail('boot-refcount', 'a page had only just mounted and boot was already marked over, ' +
+      'carried from an earlier page in this lap. AmrBoot.need() is a no-op from here on, so ' +
+      'every page after the first pulls from Sheets behind no screen at all. `over` is one-way ' +
+      'by design and has to be cleared with the page.');
+  } else if (!bootBefore.up || bootBefore.waiting.indexOf('probe-step') === -1) {
+    fail('boot-refcount', 'the probe never raised the opening screen, so the checks below ' +
+      'prove nothing — fix the probe rather than trusting the pass ' +
+      `(up=${bootBefore.up}, waiting=[${bootBefore.waiting}])`);
+  } else if (bootAfter.waiting.indexOf('probe-step') !== -1) {
+    fail('boot-refcount', `the previous page's boot step is still outstanding after the switch ` +
+      `(waiting=[${bootAfter.waiting}]). Nothing will ever report it — the stale guard dropped ` +
+      'its callback with the page — so the new page cannot get the count to zero and sits under ' +
+      'a modal screen naming a step it never asked for, until the watchdog trips.');
+  } else if (bootAfter.overlay) {
+    fail('boot-refcount', 'the previous page\'s opening screen is still covering the new one.');
+  } else if (bootAfter.timers.length) {
+    fail('boot-refcount', `the abandoned boot's watchdog is still pending ` +
+      `(${bootAfter.timers.join(', ')}ms) after the switch. It fires on whichever page is ` +
+      'mounted by then and paints a failure naming a step that page never asked for — the ' +
+      'reset has to clear its timers, because §D records setInterval only.');
+  } else if (!settled) {
+    fail('boot-refcount', 'the probe never let a page finish booting, so the check below ' +
+                          'proves nothing — fix the probe rather than trusting the pass');
+  } else if (nextPage.finished || !nextPage.raises || !nextPage.waiting.length ||
+             !nextPage.comesDown) {
+    fail('boot-refcount', 'the page before this one finished booting and left boot marked over, ' +
+      'so AmrBoot.need() is a no-op for the page that just mounted: it pulls from Sheets behind ' +
+      `no screen at all (finished=${nextPage.finished}, need() raised the screen=` +
+      `${nextPage.raises}, waiting=[${nextPage.waiting}], done() took it down=` +
+      `${nextPage.comesDown}). \`over\` is one-way by design and has to be cleared with the page.`);
+  } else {
+    pass('boot-refcount', 'the opening screen belongs to the page that raised it, and the next ' +
+                          'page still gets one of its own');
+  }
+
+  /* --------------------------------------------------------- the slow open
+     THE OTHER HALF OF "LOADING IS BROKEN", and the one nothing client-side can
+     actually fix. Apps Script runs one user's calls end to end, so a tab
+     reloaded MID-LOAD leaves its call RUNNING on the server — the browser let
+     go, the execution did not — and the reloaded page's first call does not
+     start until that one finishes. Reloading again only lengthens the queue.
+
+     The screen said nothing about that for 150 seconds and then printed a bug
+     report ("a step is missing its AmrBoot.done()"), which is the wrong
+     diagnosis and reads as the app being broken. It is not: the abandoned
+     execution is filling the very caches this page is about to read, which is
+     why the wait happens once. Saying so is the whole fix available here. */
+  const slowOpen = await pg.evaluate(() => new Promise(res => {
+    window.AmrBoot.reset();
+    window.AmrBoot.slow(40);
+    window.AmrBoot.need('slow-probe');
+    const note = () => ((document.querySelector('#amrLoad .amr-load-sub') || {}).textContent || '');
+    const early = note();
+    setTimeout(() => {
+      const late = note();
+      window.AmrBoot.done('slow-probe');
+      window.AmrBoot.slow(12000);
+      res({ early: early, late: late });
+    }, 200);
+  }));
+  if (!/slow-probe/.test(slowOpen.early)) {
+    fail('slow-open', 'the opening screen does not name what it is waiting for at all ' +
+                      `(note was "${slowOpen.early}") — fix the probe rather than trusting ` +
+                      'the check below');
+  } else if (!/still finishing on the server/.test(slowOpen.late)) {
+    fail('slow-open', 'an open that has run long says nothing about why. The overwhelmingly ' +
+      'common cause is a reload during a load — the previous call is still running on the ' +
+      'server and this one is queued behind it — and a screen that only ever says "Waiting for ' +
+      `data" for 150s reads as a broken app (note was "${slowOpen.late}").`);
+  } else if (/reload/i.test(slowOpen.late) && !/adds to the queue/.test(slowOpen.late)) {
+    fail('slow-open', 'the screen tells the user to reload while it is waiting on an execution ' +
+      'a reload cannot cancel. That is the one action that makes it worse.');
+  } else {
+    pass('slow-open', 'a long open explains that it is queued behind the last one, and does ' +
+                      'not tell the user to reload into it');
+  }
+
   /* An unregistered page must not silently do nothing. NOTE THE POSITION: go()
      falls back by clicking a target=_top anchor, which really does navigate the
      tab, so every check that needs this document has to have run already. */

@@ -2972,9 +2972,16 @@ window.AMR = (function(){
     MOUNTED = false;
     /* MODULES THAT OUTLIVE THE MOUNT BUT HOLD THIS PAGE'S STATE. None is
        reachable through the hooks above — one polls with a setTimeout chain, one
-       keeps a node §D is told to preserve, and one holds a callback list of its
-       own — so each exposes one method and teardown calls it. */
+       keeps a node §D is told to preserve, one counts steps behind two more
+       setTimeouts, and one holds a callback list of its own — so each exposes
+       one method and teardown calls it. installCapture records setInterval and
+       DOM listeners, which is why every one of these had to be added by hand. */
     try { if (window.AmrFresh && AmrFresh.stop) AmrFresh.stop(); } catch (e) {}
+    /* BEFORE AmrProgress, because AmrBoot drives the 'boot' job and this is the
+       order that leaves nothing behind: the refcount is dropped first, then the
+       screen it was holding up. The other way round, a done() arriving between
+       the two would put the screen straight back. */
+    try { if (window.AmrBoot && AmrBoot.reset) AmrBoot.reset(); } catch (e) {}
     try { if (window.AmrProgress && AmrProgress.reset) AmrProgress.reset(); } catch (e) {}
     /* AmrCube's listeners are neither DOM listeners nor timers, so installCapture
        never saw them: rmx -> pricevolume -> rmx left two copies of Price &
@@ -6628,24 +6635,63 @@ window.AmrProgress = (function(){
  * what it is still waiting for and offers a reload, rather than sitting
  * there saying nothing. That message is a bug report - if you ever see
  * it, some path forgot its done().
+ *
+ * AND WELL BEFORE IT, AT `SLOW`, THE SCREEN EXPLAINS ITSELF. Those two
+ * are not the same thing and must not read as if they were. The watchdog
+ * blames the code, correctly. A long open almost never IS the code: Apps
+ * Script runs a user's calls end to end, so a tab reloaded mid-load left
+ * its call running on the server and this one is queued behind it. See
+ * slowNote() - and note what it does NOT say, which is "reload".
+ *
+ * RESET. This is a §E singleton over ten pages in ONE document, so
+ * teardown clears it. See reset() for the two ways that showed.
  * ================================================================== */
 window.AmrBoot = (function(){
   var WATCHDOG = 150000;
-  var pending = {}, count = 0, over = false, started = false, wd = null;
-  var TEXT = 'Pulling from Google Sheets\u2026';
+  /* WHEN AN OPEN STOPS BEING NORMAL AND STARTS BEING WORTH EXPLAINING.
+     Well short of the watchdog: the watchdog is a bug report, this is not. See
+     slowNote() for what a wait this long usually is. */
+  var SLOW = 12000;
+  var DEFAULT_TEXT = 'Pulling from Google Sheets\u2026';
+  /* slowT, not `slow` — api.slow() is the harness's setter for SLOW, and one
+     name for the timer and the knob that starts it reads as a bug either way. */
+  var pending = {}, count = 0, over = false, started = false, wd = null, slowT = null;
+  var TEXT = DEFAULT_TEXT, late = false;
 
   function names(){
     var out = []; for (var k in pending) out.push(k); return out;
+  }
+  /* WHY AN OPEN CAN SIT HERE, AND IT IS ALMOST ALWAYS THE SAME REASON.
+     Apps Script runs one user's calls end to end. A page that was part-way
+     through loading when the tab was reloaded left its call RUNNING on the
+     server \u2014 the browser let go, the execution did not \u2014 so this page's first
+     call does not start until that one finishes. Nothing is broken and nothing
+     is lost: that execution is filling the same caches this page is about to
+     read, which is why the wait happens once and the next open is quick.
+
+     Saying so is the whole fix available here. A reload cannot cancel the
+     execution it is waiting on; it can only add another one to the queue, which
+     is what turns one slow open into several. */
+  function slowNote(){
+    return 'This is taking longer than usual. If the page was reloaded while it '
+         + 'was still loading, the first load is still finishing on the server and '
+         + 'this one starts when it does \u2014 reloading again only adds to the queue. '
+         + 'Nothing is lost; the figures are being cached as they arrive.';
   }
   function paint(){
     if (!window.AmrProgress) return;
     var n = names();
     AmrProgress.set('boot', { text: TEXT, order: 0, now: true,
-      note: n.length ? ('Waiting for ' + n.join(', ')) : '' });
+      note: late ? slowNote()
+                 : (n.length ? ('Waiting for ' + n.join(', ')) : '') });
+  }
+  function clocks(){
+    if (wd){ clearTimeout(wd); wd = null; }
+    if (slowT){ clearTimeout(slowT); slowT = null; }
   }
   function finish(){
     over = true;
-    if (wd){ clearTimeout(wd); wd = null; }
+    clocks();
     if (window.AmrProgress) AmrProgress.clear('boot');
   }
 
@@ -6657,6 +6703,10 @@ window.AmrBoot = (function(){
       if (!pending[step]){ pending[step] = 1; count++; }
       if (!started){
         started = true;
+        slowT = setTimeout(function(){
+          if (over) return;
+          late = true; paint();
+        }, SLOW);
         wd = setTimeout(function(){
           if (over || !window.AmrProgress) return;
           AmrProgress.fail('boot', 'Still waiting for ' + names().join(', '));
@@ -6680,14 +6730,45 @@ window.AmrBoot = (function(){
     fail: function(msg){
       if (over) return api;
       over = true;
-      if (wd){ clearTimeout(wd); wd = null; }
+      clocks();
       if (window.AmrProgress) AmrProgress.fail('boot', msg || 'Could not load this page');
       return api;
     },
     /* Page-specific wording, set before the first need(). */
     text: function(t){ if (t) TEXT = t; return TEXT; },
     waiting: function(){ return names(); },
-    finished: function(){ return over; }
+    finished: function(){ return over; },
+
+    /* EVERYTHING THIS PAGE WAS WAITING FOR, GONE — §D's teardown calls this on a
+       page switch, beside AmrProgress.reset(), and for the same reason: this is
+       a §E singleton and §D mounts ten pages into ONE document, so without it
+       the first page's boot is the only boot the tab ever has. Two ways that
+       showed, and the second is the one that reads as the app being broken.
+
+         A page that FINISHED leaves `over` true, and `over` is deliberately
+         one-way — "boot is finished; never re-raise it" is what stops a later
+         fetch throwing the opening screen back up. It also stopped the NEXT
+         page raising one at all, so every page after the first opened with no
+         loading screen at all while it pulled from Sheets.
+
+         A page switched away from MID-boot is worse. Its steps are still in
+         `pending`, and its callbacks are dropped by §D's stale guard, so
+         nothing will ever report them. The next page adds its own step and
+         answers it, the count never reaches zero, and what is on screen is a
+         MODAL screen over a finished page — naming a step belonging to a page
+         that is gone — until the 150-second watchdog trips. Switching pages
+         while something is loading is exactly when a user clicks away.
+
+       Both timers are setTimeout and §D's installCapture records setInterval
+       only, so they are cleared here or they fire on somebody else's page. */
+    reset: function(){
+      clocks();
+      pending = {}; count = 0; over = false; started = false; late = false;
+      TEXT = DEFAULT_TEXT;
+      return api;
+    },
+    /* for the harnesses: how long before the screen explains itself */
+    slow: function(ms){ if (ms != null) SLOW = ms; return SLOW; }
   };
   return api;
 })();
@@ -6932,11 +7013,22 @@ window.AmrStamp = (function(){
     if (sh) sh.textContent = agoShort(p.sheetAt);
     btn.title = 'Last updated from the Google Sheet: ' + stamp(p.sheetAt) +
                 ' (' + ago(p.sheetAt) + ')' +
-                (p.qlikAt ? '\nThe sheet was last updated from QlikView: ' + stamp(p.qlikAt) +
-                            ' (' + ago(p.qlikAt) + ')'
-                          : '\nThis sheet is not one QlikView syncs.') +
+                (!wantQlik() ? ''
+                 : p.qlikAt ? '\nThe sheet was last updated from QlikView: ' + stamp(p.qlikAt) +
+                              ' (' + ago(p.qlikAt) + ')'
+                            : '\nThis sheet is not one QlikView syncs.') +
                 '\nClick for the detail.';
   }
+
+  /* WHETHER THIS PAGE SHOWS THE SECOND CLOCK, and the server decides it — see
+     APP_STAMP_NO_QLIK in script.gs §1. A page reading one workbook shows both;
+     the Executive Overview reads three and shows the sheet clock alone, because
+     three sync times stacked under three sheet times is not an answer to "how
+     old is this page".
+
+     Defaults TRUE, so a reply from a build that predates the field behaves
+     exactly as it did before rather than silently losing a clock. */
+  function wantQlik(){ return !(data && data.qlik === false); }
 
   function row(head, when, extra){
     return '<div class="amr-cur"><b>' + esc(head) + '</b><br>' +
@@ -6954,6 +7046,7 @@ window.AmrStamp = (function(){
                        'It works offline and in the editor preview; the stamp only answers in ' +
                        'the live Apps Script web app.</p>';
     } else {
+      var two = wantQlik();
       body.innerHTML = srcs.map(function(s){
         var qlik = s.qlikAt
           ? stamp(s.qlikAt) + ' \u00b7 ' + ago(s.qlikAt)
@@ -6968,13 +7061,21 @@ window.AmrStamp = (function(){
                row('Last updated from the Google Sheet',
                    s.sheetAt ? stamp(s.sheetAt) + ' \u00b7 ' + ago(s.sheetAt) : '',
                    'The figures on this page are that version of the sheet.') +
-               row('The Google Sheet was last updated from QlikView', qlik, from);
+               (two ? row('The Google Sheet was last updated from QlikView', qlik, from) : '');
       }).join('') +
-      '<p style="color:var(--muted);margin-bottom:0">The two are usually seconds apart. ' +
-      'They come apart when somebody edits the workbook by hand \u2014 a row typed into a ' +
-      'lookup tab moves the first and not the second \u2014 or when a sync runs off an export ' +
-      'QlikView dropped some time earlier. ' +
-      'Press \u21bb Update from source to pick up anything newer.</p>';
+      (two
+        ? '<p style="color:var(--muted);margin-bottom:0">The two are usually seconds apart. ' +
+          'They come apart when somebody edits the workbook by hand \u2014 a row typed into a ' +
+          'lookup tab moves the first and not the second \u2014 or when a sync runs off an export ' +
+          'QlikView dropped some time earlier. ' +
+          'Press \u21bb Update from source to pick up anything newer.</p>'
+        /* THE ONE-CLOCK FOOTER. The paragraph above explains why there are two
+           of them, so leaving it here would explain a row that is not on the
+           screen. This page reads several workbooks and dates each one off the
+           sheet itself, which is the clock its own figures came from. */
+        : '<p style="color:var(--muted);margin-bottom:0">This page reads several workbooks, so ' +
+          'each is dated on its own. The figures on screen are the oldest of them. ' +
+          'Press \u21bb Update from source to pick up anything newer.</p>');
     }
     document.getElementById('amrStampModal').classList.add('amr-open');
   }
