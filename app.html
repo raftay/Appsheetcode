@@ -25427,7 +25427,18 @@ AMR.page('tp01', {
     if (!s) return 'Nothing came back.';
     const esc = AMR.esc, rows = [];
     const kv = (k, v) => `<div><b>${esc(k)}</b> ${v}</div>`;
-    if (s.error) return '<b style="color:var(--neg)">' + esc(s.error) + '</b>';
+
+    /* WHETHER ANYTHING WILL FIRE, AND WHETHER IT COULD SEND — first, and above
+       the config error below, because a half-built config is exactly when you
+       want to know the rest of the plumbing is there. Everything else in this
+       preview is about the data; these two are the ways the report goes missing
+       without anybody being told. Both describe the account that DEPLOYED the
+       app, because that is who the server side runs as. */
+    if (s.sending) {
+      rows.push(kv('Sending', `trigger ${esc(String(s.sending.trigger))} &middot; ` +
+        `quota ${esc(String(s.sending.quotaLeft))}`));
+    }
+    if (s.error) return rows.join('') + '<b style="color:var(--neg)">' + esc(s.error) + '</b>';
 
     (s.notes || []).forEach(n => rows.push(`<div style="color:#B45309">&#9888;&#65039; ${esc(n)}</div>`));
 

@@ -2341,12 +2341,19 @@ function getSlideData() {
  *                                drive.file: the files were not created by this
  *                                script.
  *   auth/presentations           SlidesApp.openById — the Deck Builder.
- *   auth/script.send_mail        MailApp.sendEmail — TP01 only. Still NOT a
- *                                Gmail scope: it is the narrow "send mail as
- *                                you" grant, it covers sending with attachments,
- *                                and it does not let anything read a mailbox.
- *                                The read side is the line below, and the two
- *                                are separate grants on purpose.
+ *   auth/script.send_mail        MailApp.sendEmail — TP01 only, in both its
+ *                                shapes: the per-market workbooks somebody sends
+ *                                from the page, and the weekly exceptions report
+ *                                the §11 day timer sends with nobody watching.
+ *                                THE TRIGGER IS THE ONE THAT NEEDS SAYING: it
+ *                                runs as whoever created it, so it is THAT
+ *                                account's grant that has to be live, not the
+ *                                deployer's by assumption and not yours.
+ *                                Still NOT a Gmail scope: it is the narrow "send
+ *                                mail as you" grant, it covers sending with
+ *                                attachments, and it does not let anything read
+ *                                a mailbox. The read side is the line below, and
+ *                                the two are separate grants on purpose.
  *   auth/gmail.readonly          GmailApp.search and getAttachments — §10's TWO
  *                                mail watches, the Inventory Report's and
  *                                TP01's, and nothing else in the file.
@@ -2364,17 +2371,22 @@ function getSlideData() {
  *   auth/script.external_request UrlFetchApp — the Amrize logo, and the Drive
  *                                REST call above.
  *   auth/script.scriptapp        ScriptApp.getService().getUrl(), which is what
- *                                getAppUrl_ in §3 builds every page link from.
- *                                Included deliberately even though it may be
- *                                reachable without it: if that URL comes back
- *                                empty, every link on the landing page goes
- *                                RELATIVE, and a relative href inside the Apps
- *                                Script sandbox iframe resolves against
- *                                googleusercontent.com — the page loads and then
- *                                navigates the user off the app. That failure
- *                                already shipped once. An
- *                                extra line on the consent screen is the cheaper
- *                                side of that trade.
+ *                                getAppUrl_ in §3 builds every page link from,
+ *                                AND ScriptApp.getProjectTriggers() — the read
+ *                                the check below uses to say whether §11's three
+ *                                trigger targets are armed. That second call
+ *                                settles a doubt this line used to carry: the
+ *                                grant was once described here as possibly
+ *                                reachable without it, and it is not.
+ *                                It would be here for the URL alone anyway. If
+ *                                that URL comes back empty, every link on the
+ *                                landing page goes RELATIVE, and a relative href
+ *                                inside the Apps Script sandbox iframe resolves
+ *                                against googleusercontent.com — the page loads
+ *                                and then navigates the user off the app. That
+ *                                failure already shipped once. An extra line on
+ *                                the consent screen is the cheaper side of that
+ *                                trade.
  *   auth/userinfo.email          Session.getActiveUser().getEmail(), which §10
  *                                stamps onto an archived KPI workbook, and the
  *                                effective-user line this check reports.
@@ -2382,7 +2394,11 @@ function getSlideData() {
  * CacheService, PropertiesService, LockService, Utilities and HtmlService need no
  * scope, which is why they carry "(none needed)" below rather than being left
  * out: a service that is checked and needs nothing is a different fact from a
- * service nobody remembered.
+ * service nobody remembered. All five have a row. Utilities and HtmlService
+ * were named in this paragraph and absent from the array for a while, which is
+ * the drift the paragraph exists to prevent — and Utilities is not a formality
+ * any more, because Utilities.zip is what writes the .xlsx the weekly report
+ * attaches.
  * ============================================================================ */
 
 /* ---- permissions.gs ----------------------------------------------------------
@@ -2513,13 +2529,56 @@ function APP_verifyPermissions() {
       } },
 
     { service: 'ScriptApp', scope: 'auth/script.scriptapp',
-      usedFor: 'the deployment URL every page link is built from, and the Drive REST token',
+      usedFor: 'the deployment URL every page link is built from, the Drive REST token, ' +
+               'and whether §11’s three trigger targets are armed',
       probe: function () {
         var url = '';
         try { url = ScriptApp.getService().getUrl() || ''; } catch (e) { url = ''; }
         var tok = ScriptApp.getOAuthToken();
+
+        /* THE THREE TRIGGERS, WHICH NOTHING ELSE IN THE PROJECT CAN SEE. There
+           is not one ScriptApp.newTrigger in the file (§11), so a trigger that
+           was never added — or was deleted — leaves no trace anywhere: the sync
+           just stops, and the two mail watches just never arrive. Nothing
+           errors, and that is the point. This line is the only report of their
+           existence the project has.
+
+           A MISSING TRIGGER IS NOT A FAILED CHECK. The probe throws only when
+           the scope is missing; an absent trigger is a configuration fact and
+           is reported in this line rather than turning the row red. */
         return (url ? 'web app URL resolved' : 'NO web app URL — every page link would be relative')
-             + ', OAuth token ' + (tok ? 'issued' : 'MISSING');
+             + ', OAuth token ' + (tok ? 'issued' : 'MISSING')
+             + ', triggers — ' + APP_permTriggers_();
+      } },
+
+    { service: 'Utilities', scope: '(none needed)',
+      usedFor: 'the TP01 exceptions .xlsx, which §10 writes by hand as a zip of XML',
+      probe: function () {
+        /* THE ONE PLATFORM CALL THE HAND-WRITTEN WORKBOOK RESTS ON. §10 builds
+           the .xlsx the weekly report attaches part by part and zips it,
+           because a trigger has no browser and therefore no SheetJS — and an
+           .xlsx IS a zip of XML. Utilities.zip is the whole of that dependency.
+           If it ever stopped producing a readable archive the report would go
+           on sending happily and the ATTACHMENT would be the broken thing,
+           which is the failure nobody reads a log to find. Zips two tiny parts
+           and reads the size back; writes nothing anywhere. */
+        var z = Utilities.zip([Utilities.newBlob('<a/>', 'application/xml', 'a.xml'),
+                               Utilities.newBlob('<b/>', 'application/xml', 'b.xml')], 'probe.zip');
+        var n = z.getBytes().length;
+        if (!n) throw new Error('Utilities.zip returned an empty archive');
+        return 'zipped two parts into ' + n + ' bytes';
+      } },
+
+    { service: 'HtmlService', scope: '(none needed)',
+      usedFor: 'serving the app — the one createTemplateFromFile in the project',
+      probe: function () {
+        /* Names the file exactly the way doGet does. It resolves or it throws,
+           and a throw here is the failure the banner at the top of this file
+           warns about: rename script.gs back to app.gs and BOTH files are
+           called "app", so this call stops being unambiguous. Builds the
+           template; does not evaluate it. */
+        HtmlService.createTemplateFromFile('app');
+        return 'app.html resolved by name';
       } },
 
     { service: 'LockService', scope: '(none needed)',
@@ -2572,9 +2631,17 @@ function APP_verifyPermissions() {
                + APP_permPad_(s.scope, 30) + s.detail);
   }
   lines.push('');
+  /* WHAT TO DO ABOUT IT, AND THE TWO CASES ARE NOT THE SAME. A row carrying a
+     scope failed for want of that grant. A row reading "(none needed)" failed
+     for some other reason entirely — Utilities.zip returning nothing, app.html
+     not resolving by name — and no scope will fix it, so saying "add the scope"
+     to somebody looking at one of those sends them to the wrong file. */
   lines.push(out.ok ? '  Every service answered. Nothing is missing.'
                     : '  MISSING OR BROKEN: ' + out.missing.join(', ')
-                      + '\n  Add the scope to appsscript.json oauthScopes, save, and re-authorise.');
+                      + '\n  A row with a SCOPE beside it: add that scope to appsscript.json'
+                      + '\n  oauthScopes, save, and re-authorise.'
+                      + '\n  A row reading "(none needed)" failed for some OTHER reason — its'
+                      + '\n  own line says which — and no scope will fix it.');
   var report = lines.join('\n');
   out.report = report;
   Logger.log(report);
@@ -2582,6 +2649,49 @@ function APP_verifyPermissions() {
   APP_log(out.ok ? 'info' : 'error', 'APP.verifyPermissions', 'done',
           { ms: Date.now() - t0, ok: out.ok, missing: out.missing.length });
   return out;
+}
+
+/* THE §11 TRIGGER TARGETS, AND THIS IS THE LIST. Nothing in the repo points at
+   any of them — they are configured by hand in the Apps Script UI — so this
+   array is the reference §11's banner says is missing, and it is what has to be
+   updated when a fourth target is added.
+
+   IT REPORTS ONLY THE TRIGGERS THE ACCOUNT RUNNING THE CHECK CREATED. That is
+   the platform's rule, not a shortcut here, and it is the same rule §11 is built
+   on: an installable trigger runs as whoever added it. So "NOT SET" means "not
+   set BY YOU" — run this as the account that deployed the web app, which is the
+   account all three are supposed to belong to, and then it means what it says.
+
+   TWO OF ONE TARGET IS WORTH SEEING TOO: a duplicated day timer sends the
+   weekly exceptions report twice, and the seen-list makes the second send
+   nothing, so the only symptom is a run that finds no new mail. */
+var APP_TRIGGER_TARGETS = ['qlikSyncCheck', 'inventoryReportMailCheck', 'tp01ReportMailCheck'];
+
+function APP_permTriggers_() {
+  var mine = ScriptApp.getProjectTriggers(), got = {}, i;
+  for (i = 0; i < mine.length; i++) {
+    var fn = mine[i].getHandlerFunction();
+    got[fn] = (got[fn] || 0) + 1;
+  }
+  var out = [];
+  for (i = 0; i < APP_TRIGGER_TARGETS.length; i++) {
+    var t = APP_TRIGGER_TARGETS[i], n = got[t] || 0;
+    out.push(t + ': ' + (n === 0 ? 'NOT SET' : n === 1 ? 'set' : n + ' SET — one too many'));
+  }
+  return out.join('; ');
+}
+
+/* Whether the account running the call has a trigger on ONE named target, for a
+   report that cares about its own trigger rather than all three. Same
+   own-triggers-only rule as above. */
+function APP_permTriggerCount_(handler) {
+  try {
+    var mine = ScriptApp.getProjectTriggers(), n = 0;
+    for (var i = 0; i < mine.length; i++) {
+      if (mine[i].getHandlerFunction() === handler) n++;
+    }
+    return n;
+  } catch (e) { return -1; }      /* -1 = could not look, which is not the same as none */
 }
 
 /* The first sheet id any page resolves to, so the SpreadsheetApp probe reads
@@ -15445,9 +15555,51 @@ var TPMAIL = (function () {
     var out = { query: query(), enabled: auto.enabled, to: auto.to, cc: auto.cc,
                 sendWhenEmpty: auto.sendWhenEmpty, lastRun: TPAUTO.state(),
                 mail: [], sheet: null, join: null, wouldSend: null, notes: [] };
-    if (!out.query) { out.error = 'APP_CONFIG.TP01_MAIL.SUBJECT is empty.'; return out; }
     if (!auto.enabled)    out.notes.push('The automated email is switched OFF, so the trigger does nothing.');
     if (!auto.to.length)  out.notes.push('No recipients are set, so nothing could be sent.');
+
+    /* ---- can it send, and is anything going to fire ----
+       EVERYTHING ELSE IN THIS REPORT IS ABOUT THE DATA: what is in the mailbox,
+       what is in the sheet, how well the two join. None of it says whether the
+       mail could leave, or whether anything will ever run — and those are the
+       two ways this feature fails in COMPLETE SILENCE. A day timer nobody added
+       writes no log line and raises no error, because nothing runs. A send that
+       is refused for want of the grant fails inside a trigger, into a log nobody
+       opens, on the one morning a week the report was due.
+
+       BOTH ANSWERS DESCRIBE WHOEVER RUNS THIS CALL. The quota is your quota and
+       the triggers are your triggers — an installable trigger runs as the
+       account that created it (§11) — so run this from the account that
+       deployed the web app and both lines describe the run that will actually
+       happen. This is deliberately before the SUBJECT check below: a half-built
+       config is exactly when you want to know the rest of the plumbing is
+       there. */
+    out.sending = { quotaLeft: null, trigger: '' };
+    try { out.sending.quotaLeft = MailApp.getRemainingDailyQuota(); }
+    catch (e) {
+      out.sending.quotaLeft = 'UNREADABLE — ' + String(e && e.message || e);
+      out.notes.push('The send grant could not be read, so nothing would go out. That is ' +
+        'auth/script.send_mail in appsscript.json, and APP_verifyPermissions (§4) is the ' +
+        'call that reports on every scope at once.');
+    }
+    if (out.sending.quotaLeft === 0) out.notes.push('The daily send quota is EXHAUSTED. The next ' +
+      'run would do all its work, find its exceptions, and fail on the last line.');
+
+    var armed = APP_permTriggerCount_('tp01ReportMailCheck');
+    out.sending.trigger = armed < 0  ? 'could not be read'
+                        : armed === 0 ? 'NOT SET — not by this account, anyway'
+                        : armed === 1 ? 'set'
+                        : armed + ' SET — one too many';
+    if (armed === 0) out.notes.push('NOTHING FIRES THIS. No trigger on tp01ReportMailCheck ' +
+      'belongs to the account running this call, so the exceptions go out only when somebody ' +
+      'presses a button on the page. §11 has the setup: one time-driven day timer, added from ' +
+      'the account that deployed the web app. A trigger somebody ELSE added is invisible here ' +
+      'and runs as them — their mailbox, their name on the email.');
+    if (armed > 1) out.notes.push('More than one trigger fires tp01ReportMailCheck. The second ' +
+      'run finds the mail already reported and sends nothing, so this is quiet rather than ' +
+      'harmful — but it is not what was set up.');
+
+    if (!out.query) { out.error = 'APP_CONFIG.TP01_MAIL.SUBJECT is empty.'; return out; }
 
     /* ---- the mailbox half ---- */
     var order = readSeen_(), seen = {}, k;
@@ -16119,16 +16271,19 @@ var IRMAIL = (function () {
  *
  * AND WHOEVER ADDS A TRIGGER IS WHO IT RUNS AS. Not the script owner and not
  * the deployer: executeAs: USER_DEPLOYING covers web requests, and an
- * installable trigger runs under the account that created it. Both triggers
- * here read another account's Drive or mail to do their job, so adding one from
- * the wrong account gives you a run that authorises cleanly and then looks at
- * the wrong data — or at nothing. Add both from the account that deployed the
- * web app.
+ * installable trigger runs under the account that created it. All three
+ * triggers here read another account's Drive or mail to do their job — and the
+ * TP01 one SENDS as its creator too — so adding one from the wrong account
+ * gives you a run that authorises cleanly and then looks at the wrong data, or
+ * at nothing, or mails from the wrong name. Add all three from the account that
+ * deployed the web app.
  *
  * THIS IS WHY THE SECTION EXISTS. There is not one ScriptApp.newTrigger in the
- * codebase — BOTH triggers are configured by hand in the Apps Script UI, so
- * nothing in the repo points at either. Ctrl+F "§11" is the substitute for that
- * missing reference.
+ * codebase — ALL THREE are configured by hand in the Apps Script UI, so nothing
+ * in the repo points at any of them. Ctrl+F "§11" is the substitute for that
+ * missing reference, and APP_verifyPermissions (§4) is the substitute for
+ * looking: its ScriptApp row names all three and says which of them the account
+ * running it has actually armed.
  * ============================================================================ */
 
 /* ---- QlikSync.gs -------------------------------------------------------------
