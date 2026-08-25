@@ -1,14 +1,13 @@
 # .claspignore — WHAT GOES UP TO APPS SCRIPT, AND NOTHING ELSE.
 #
 # The script project is THREE FILES: script.gs, app.html and appsscript.json.
-# The rest of this repo is scaffolding — the plan, the README, and a tests/
-# folder that is Node-only and has never been part of the project.
+# Everything else in this repo is scaffolding and none of it belongs in the
+# editor.
 #
-# WITHOUT THIS FILE, `clasp push` UPLOADS tests/*.js. clasp pushes every
-# .js / .gs / .html / .json it finds under rootDir, so the two dozen harnesses
-# in tests/ would each land in the editor as a script file — in the ONE GLOBAL
-# SCOPE every .gs shares, which is the hazard this whole repo is shaped around.
-# node_modules/ would follow them.
+# WITHOUT THIS FILE, `clasp push` UPLOADS ANY .js IT FINDS. clasp pushes every
+# .js / .gs / .html / .json under rootDir, and each one lands in the editor as a
+# script file — in the ONE GLOBAL SCOPE every .gs shares, which is the hazard
+# this whole repo is shaped around. node_modules/ would follow them.
 #
 # clasp reads these as ignore patterns and pushes what is left, so the safe
 # form is: ignore everything, then un-ignore the three files by name. Adding a

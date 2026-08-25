@@ -1,7 +1,6 @@
 # The repo root is a flat mirror of the Apps Script project: every .gs and .html
-# here is one file in the script editor. Nothing below is part of it — they are
-# what the harnesses in tests/ need (jsdom, playwright, chart.js) and what npm
-# leaves behind when you install them.
+# here is one file in the script editor. Nothing below is part of it — it is
+# what npm leaves behind.
 node_modules/
 package.json
 package-lock.json

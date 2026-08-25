@@ -16,9 +16,13 @@ The sections you will want first from the readme:
 ## What this repo is
 
 A flat mirror of one Google Apps Script project. **The project is three files** — `script.gs`,
-`app.html` and `appsscript.json` — with no folders, no build step and no package manager.
-`tests/` is Node-only and is **not** part of the script project; `tests/threefiles.js` proves
-that by running the whole application out of a directory holding only those three.
+`app.html` and `appsscript.json` — with no folders, no build step and no package manager. The
+repo now holds nothing else that runs: the Node harnesses that used to sit in `tests/` were
+removed on 2026-08-25 and are recoverable from git history if they are ever wanted back.
+
+**So the checks are the ones in the code.** `node --check` on a copy of `script.gs` at a `.js`
+path is the syntax gate; `APP_verifyPermissions` (§4) is the runtime one, and it is the thing
+to run in the editor after any change to the sync, the triggers or `appsscript.json`.
 
 **The server file is `script.gs`, and renaming it back to `app.gs` breaks the project.** Apps
 Script keys a file by its name *without* the extension, so `app.gs` and `app.html` would both
