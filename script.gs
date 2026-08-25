@@ -167,6 +167,9 @@
  *   need:
  *     §3   APP_PAGES               the ten route names doGet accepts
  *     §3   APP_STAMP_TTL_S         how long a freshness stamp is memoised
+ *     §3   APP_BATCH_BUDGET_MS     how long APP_batch keeps starting calls
+ *     §3   APP_BATCH_CEILING_MS    the run it must fit under (the 6-min limit)
+ *     §3   APP_BATCH_ALLOW_        which functions a batch may reach at all
  *     §6   SCHEMA_                 PV's cache-shape version — bump on a change
  *     §6   XF_TABLE_CAP / XF_CHILD_CAP / XF_DATA_CAP    cross-filter payload caps
  *     §6   LIST_CAP, RL_*          the lookup writer's column map
@@ -558,6 +561,16 @@ var APP_CONFIG = {
    * -------------------------------------------------------------------- */
   CUBE: {
     CHUNK_MONTHS:   12,
+    /* HOW MANY BLOCKS TRAVEL IN ONE CALL, and the ceiling on that reply.
+       The blocks are already built and cached by the time the browser asks, so
+       a chunk call is a CacheService read — the round trip is the whole cost,
+       and eight of them serially was the cube's loading time. CUBE_getChunks
+       takes a list; the browser asks for CHUNKS_PER_CALL at a time and the
+       server stops short of BYTES_PER_CALL, so a reply stays receivable
+       whatever CHUNK_MONTHS is set to. Raise CHUNKS_PER_CALL to open faster on
+       a fast link; lower it if a reply ever fails to arrive at all. */
+    CHUNKS_PER_CALL: 3,
+    BYTES_PER_CALL:  6000000,
     HIST_FOLDER_ID: '',                    // '' -> falls back to KPI_FOLDER_ID
     FILES: { agg: 'cube_hist_agg.json', rmx: 'cube_hist_rmx.json' },
 
@@ -1978,7 +1991,7 @@ function APP_forgetStamp_(page){
    The stamp above tracks the DATA. A code fix leaves the data untouched, so
    without this every device would keep serving figures the OLD code computed
    and the fix would look like it did nothing. */
-var APP_CODE_BUILD = '2026-08-24a';
+var APP_CODE_BUILD = '2026-08-25a';
 
 function APP_getGen_(page) {
   return (APP_sourceStamp_(page) || '0') + '.' + APP_CODE_BUILD;
@@ -2012,6 +2025,167 @@ function getDataVersions(pages) {
     try { out[p] = APP_getGen_(p); } catch (e) { out[p] = ''; }
   }
   return { ok: true, generations: out };
+}
+
+
+/* ============================================================================
+ * APP_batch — SEVERAL CALLS, ONE EXECUTION
+ * ----------------------------------------------------------------------------
+ * THE COST THIS REMOVES, AND WHY IT IS THE WHOLE OF THE LOADING TIME. Apps
+ * Script runs one user's calls END TO END: a page that issues six of them pays
+ * six queue waits, six executions and six google.script.run round trips,
+ * serially, even when five of the six are a cache read that returns in
+ * milliseconds. Opening the Executive Overview took twenty-four of them
+ * (getDataVersions, getSourceTimes, getKpiValues, two manifests, eight chunks,
+ * four getOverview, two getReport, three getCustomerReport, three getFscData),
+ * and the figures were sitting in CacheService the whole time.
+ *
+ * So the browser hands over a LIST. One execution answers all of it, each entry
+ * caught on its own so a single failure reports itself rather than taking the
+ * page down with it. Nothing here changes what any of those functions do: this
+ * is the transport, and every one of them is still callable on its own.
+ *
+ * THE ALLOW-LIST IS THE POINT, NOT A FORMALITY. Dispatching by name off a
+ * client-supplied string is exactly how a web app hands the browser the whole
+ * server file, so APP_BATCH_ALLOW_ names every function that may be reached
+ * this way and nothing else can be. It holds READS only. A write — a sync, an
+ * upload, a lookup row, an email — stays a call of its own: those are the ones
+ * where "which of the six actually ran before the budget stopped it" is a
+ * question nobody should have to ask.
+ *
+ * THE BUDGET IS WHY A BATCH CANNOT TIME OUT WORSE THAN THE CALLS IT REPLACED,
+ * AND WHY IT TAKES TWO NUMBERS TO SAY SO. Six separate calls get six six-minute
+ * ceilings; one batch gets one, so a batch of two calls that each take four
+ * minutes is a batch that gets killed where the two on their own would both
+ * have finished. That is a real way to make a page hang and it is the one thing
+ * this transport could do that the calls it replaced could not.
+ *
+ * So the dispatcher looks BACKWARDS before starting anything:
+ *
+ *   · APP_BATCH_BUDGET_MS  — a plain "we have been at this long enough".
+ *   · APP_BATCH_CEILING_MS — the run must fit under the platform's limit, and
+ *     the estimate for the next call is the LONGEST one so far. A batch whose
+ *     first call took four minutes will not start a second, because the best
+ *     evidence available says it would not finish.
+ *
+ * Everything it does not reach is marked `skipped`, which is not an error: the
+ * browser re-issues those on their own — see AMR.batch in app.html — and each
+ * then gets a full ceiling of its own, exactly as before the batch existed.
+ * ========================================================================== */
+/* How long the dispatcher may keep starting new calls. §1's tunable list points
+   here. Four minutes leaves a slow last call most of two before the ceiling. */
+var APP_BATCH_BUDGET_MS = 240000;
+/* The platform kills an execution at six minutes. Five is where this stops
+   starting work that its own evidence says would run into that. */
+var APP_BATCH_CEILING_MS = 300000;
+
+/* EVERY FUNCTION THE BROWSER MAY REACH THROUGH APP_batch, and no others.
+   Reads only — see the banner above. Adding a name here makes it callable by
+   any browser that can open the web app, which is the same set of people who
+   can call it directly, and that is the test to apply before adding one. */
+var APP_BATCH_ALLOW_ = {
+  /* plumbing (§3) */
+  getDataVersion:1, getDataVersions:1, getSourceTimes:1, getLogo:1,
+  getSettingsFor:1, getAllSettings:1,
+  /* the shared KPI workbooks (§10) */
+  getKpiValues:1,
+  /* Aggregates — Price & Volume (§6) */
+  getReport:1, getCustomerReport:1, getCrossData:1, getPvMonths:1,
+  getPvUnmapped:1, getPvLookupForm:1, getFscData:1, getSaskRatesStatus:1,
+  /* Ready-Mix (§7) */
+  RMX_getStamp:1, RMX_getKeys:1, RMX_getExtras:1, RMX_getSlideTables:1,
+  RMX_getUnmapped:1, RMX_prepare:1, getRmxSuggestions:1, getRmxCrossReport:1,
+  getRmxFscFacts:1, getRmxFuelData:1, getCrossReport:1,
+  /* the Overview and its month cube (§8) */
+  getOverview:1, CUBE_getManifest:1, CUBE_getChunk:1, CUBE_getChunks:1
+};
+
+/* calls: [{ fn:'getOverview', arg:{…} }, …]  ->  { ok, results:[…] }
+   results[i] is one of
+     { ok:true,  value:… }              the call returned
+     { ok:false, error:'…' }            it threw; the others still answered
+     { ok:false, skipped:true }         the budget ran out before it started */
+function APP_batch(req) {
+  var t0 = Date.now();
+  var calls = (req && req.calls) || [];
+  if (!calls.length) return { ok: true, results: [], ms: 0 };
+
+  var results = [], ran = 0, failed = 0, skipped = 0, worst = 0;
+  for (var i = 0; i < calls.length; i++) {
+    var c = calls[i] || {};
+    var name = String(c.fn || '');
+
+    /* hasOwnProperty, NOT a plain lookup, and this is the difference between an
+       allow-list and the appearance of one: APP_BATCH_ALLOW_[name] is truthy
+       for every name on Object.prototype, so `constructor`, `valueOf` and
+       `toString` would all pass a plain test and then be dispatched off
+       globalThis. Nothing reachable that way is dangerous today, which is
+       exactly the kind of "today" this line is for. */
+    if (!Object.prototype.hasOwnProperty.call(APP_BATCH_ALLOW_, name)) {
+      /* NOT SILENT. A name that is not on the list is either a typo in a call
+         site — which would otherwise look like a call that simply never
+         answered — or somebody probing what else this dispatches. Both are
+         worth a line. */
+      APP_log('warn', 'APP.batch', 'refused a function that is not on the allow-list',
+              { fn: name, at: i });
+      results.push({ ok: false, error: 'Not available in a batch: ' + name });
+      failed++;
+      continue;
+    }
+    /* THE BUDGET BOUNDS WHEN A CALL STARTS, never how long it runs. Checked
+       before the first one too: a batch queued behind a long execution can
+       arrive with its budget already spent, and starting anyway is how one
+       slow open becomes a timeout.
+
+       And the ceiling check underneath it is the one that matters when the
+       calls are big. `worst` is the longest call this batch has run, which is
+       the only evidence there is about the next one — a cold getOverview after
+       a cold getOverview is the case, and two of those in one execution is
+       exactly the timeout worth refusing. */
+    var gone = Date.now() - t0;
+    if (gone > APP_BATCH_BUDGET_MS || (ran && gone + worst > APP_BATCH_CEILING_MS)) {
+      results.push({ ok: false, skipped: true });
+      skipped++;
+      continue;
+    }
+    /* globalThis, not `this`: these are top-level declarations in the V8
+       runtime, so that is where they live — and `this` inside a plain call is
+       a thing two runtimes disagree about, which is not a question worth
+       leaving in the one place that dispatches by name. */
+    var fn = globalThis[name];
+    if (typeof fn !== 'function') {
+      /* On the list and not in the file: a rename that took the allow-list's
+         entry with it and left a call site behind, or the other way round. */
+      APP_log('error', 'APP.batch', 'allow-listed but not defined', { fn: name });
+      results.push({ ok: false, error: 'Not defined: ' + name });
+      failed++;
+      continue;
+    }
+    var t1 = Date.now();
+    try {
+      results.push({ ok: true, value: fn(c.arg) });
+      ran++;
+      var took = Date.now() - t1;
+      if (took > worst) worst = took;
+      APP_log('debug', 'APP.batch', 'ran', { fn: name, at: i, ms: took });
+    } catch (e) {
+      /* ONE ENTRY'S FAILURE IS ONE ENTRY'S FAILURE. The whole point of the
+         batch is that the other five still answer — the browser reads the
+         slots it got and handles this one exactly as it handles a failed
+         call of its own. */
+      results.push({ ok: false, error: (e && e.message) ? e.message : String(e) });
+      failed++;
+      APP_log('warn', 'APP.batch', 'a call threw; the rest still answered',
+              { fn: name, at: i, ms: Date.now() - t1, error: String(e) });
+    }
+  }
+  /* warn when anything was skipped: from the browser it is invisible (the slots
+     are simply re-issued and everything works), and a batch that keeps running
+     out of room is a batch that should have been two. */
+  APP_log(skipped ? 'warn' : 'info', 'APP.batch', skipped ? 'ran out of room' : 'done',
+          { calls: calls.length, ran: ran, failed: failed, skipped: skipped,
+            worstMs: worst, ms: Date.now() - t0 });
+  return { ok: true, results: results, ms: Date.now() - t0 };
 }
 
 /* chunked CacheService helpers (6 h TTL) used by the Slide data below */
@@ -2086,6 +2260,21 @@ function APP_cacheGet_(key) {
             { cache: 'miss', ms: Date.now() - t0, key: key, error: String(e) });
     return null;
   }
+}
+
+/* HOW BIG THAT ENTRY IS, WITHOUT READING IT. The meta key already says how
+   many 90 KB chunks were written, so one tiny CacheService.get answers "would
+   pulling this back blow the reply budget" — which is the question
+   CUBE_getChunks has to ask about the NEXT block before it decides to fetch it.
+   Reading the entry to find out how big it is would be the whole cost of the
+   thing being avoided. 0 when nothing is stored under that key. */
+function APP_cacheBytes_(key) {
+  try {
+    var meta = CacheService.getScriptCache().get(key + '__meta');
+    if (!meta) return 0;
+    var n = parseInt(meta, 10);
+    return (n > 0) ? n * 90000 : 0;          // 90 KB is APP_cachePut_'s chunk
+  } catch (e) { return 0; }
 }
 
 
@@ -13953,6 +14142,11 @@ function ovcBuild_(line){
     })(),
     skipped: cube.skipped || 0,
     history: !!hist,
+    /* HOW MANY BLOCKS THE BROWSER SHOULD ASK FOR AT A TIME. Sent with the
+       manifest so CUBE.CHUNKS_PER_CALL (§1) is the one place it is set —
+       putting the number in app.html as well is two copies of one tunable,
+       which is the mistake §6 writes up about cache keys. */
+    perCall: ovcCfg_().CHUNKS_PER_CALL || 3,
     /* which closed-year books exist, which are linked, which are built - the
        browser drives the background reads off this and needs no second call */
     eras: ovcEraStat_(line, hist),
@@ -13999,6 +14193,67 @@ function CUBE_getChunk(opts){
   if (hit) return hit;
   ovcBuild_(line);                                  // cache lapsed — rebuild, then read back
   return APP_cacheGet_(key) || { ok:false, line:line, i:i, error:'Chunk ' + i + ' is not available.' };
+}
+
+/* SEVERAL MONTH-BLOCKS, ONE EXECUTION — what the browser actually asks for.
+   -----------------------------------------------------------------------
+   A chunk is a CacheService read. The build already happened, the bytes are
+   already sitting there, and answering one takes milliseconds — so eight of
+   them was eight queue waits and eight round trips to hand over data that was
+   ready before the page opened. Apps Script runs a user's calls end to end, so
+   those eight were serial: the per-call overhead WAS the cube's loading time,
+   which is the same thing CHUNK_MONTHS's comment says about the block size.
+
+   The list is honoured IN ORDER and may be mixed across lines, because the
+   order is the browser's whole streaming plan — newest block first, the line
+   you are looking at leading (AmrCube.jobList). Reordering it here would send
+   the Ready-Mix tab the Aggregates cube first.
+
+   IT STOPS EARLY ON PURPOSE. Each block is near a megabyte and one reply has
+   to survive being serialised whole, so the budget is checked BEFORE each read
+   using the cache's own meta (APP_cacheBytes_ — no transfer), and the first
+   block is always returned however big it is. Fewer than asked for is a normal
+   answer, not an error: AmrCube rebuilds its job list at every step and asks
+   again for whatever it still does not hold. */
+function CUBE_getChunks(opts){
+  opts = opts || {};
+  var want = (opts.want && opts.want.length) ? opts.want : null;
+  if (!want) {
+    /* one {line,i} in the old shape still works, so this can replace the
+       singular call site without a second code path on the browser side */
+    var one = CUBE_getChunk(opts);
+    return { ok: !!(one && one.ok), gen: ovcGen_(), chunks: one ? [one] : [], asked: 1 };
+  }
+  var cap = ovcCfg_().BYTES_PER_CALL || 6000000;
+  var gen = ovcGen_(), out = [], bytes = 0, built = {};
+
+  for (var k = 0; k < want.length; k++) {
+    var w = want[k] || {};
+    var line = (w.line === 'rmx') ? 'rmx' : 'agg';
+    var i = Math.max(0, parseInt(w.i, 10) || 0);
+    var key = 'ovc|' + gen + '|' + line + '|c' + i;
+
+    var size = APP_cacheBytes_(key);
+    /* Over budget, and something already in hand to send: stop. The browser
+       asks again for the rest, which is one more round trip instead of a reply
+       nobody can receive. */
+    if (out.length && bytes + (size || 1000000) > cap) break;
+
+    var hit = APP_cacheGet_(key);
+    if (!hit) {
+      /* Cache lapsed. Rebuilding is the expensive path and it produces EVERY
+         block of that line at once, so it is done once per line per call and
+         the entries after it are then ordinary reads. */
+      if (!built[line]) { built[line] = 1; try { ovcBuild_(line); } catch (e) {} }
+      hit = APP_cacheGet_(key);
+    }
+    if (!hit) { out.push({ ok:false, line:line, i:i, error:'Chunk ' + i + ' is not available.' }); continue; }
+    out.push(hit);
+    bytes += size || 1000000;
+  }
+  APP_log('debug', 'CUBE.getChunks', 'served',
+          { asked: want.length, sent: out.length, bytes: bytes });
+  return { ok: true, gen: gen, chunks: out, asked: want.length };
 }
 
 /* Read ONE history workbook and park it in Drive. One line of one era per

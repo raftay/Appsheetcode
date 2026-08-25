@@ -192,7 +192,7 @@ internal file order is not something this repo controls. Entry points are prefix
 |---|---|
 | §1 | **CONFIG** — `APP_CONFIG`, `OVERVIEW`, `DECK_CONFIG`, `DECK_RECIPE`, `APP_EXTRA_SOURCES`, the Settings API. First on purpose; its banner is the map of every constant worth changing |
 | §2 | **LOGGING** — `APP_log`, the `LOG_LEVEL` switch, and the silent-catch census |
-| §3 | **ROUTER + PLUMBING** — `doGet`, `getLogo`, the data-generation stamps, the chunked cache, the SB reader, and the **period helpers** (`APP_period_`, `APP_yearCols_`, `APP_periodMap_`) every header read goes through |
+| §3 | **ROUTER + PLUMBING** — `doGet`, `getLogo`, the data-generation stamps, the chunked cache, **`APP_batch`** (several calls in one execution, dispatched through `APP_BATCH_ALLOW_`), the SB reader, and the **period helpers** (`APP_period_`, `APP_yearCols_`, `APP_periodMap_`) every header read goes through |
 | §4 | **PERMISSIONS** — `APP_verifyPermissions()`. Read before adding a service |
 | §5 | **SYNC** — the QlikView → Sheets engine |
 | §6 | **AGG** — Price & Volume, its mapping check, AGG Fuel Recovery, Saskatchewan rates |
@@ -284,7 +284,9 @@ knowing before touching a page:
 - **`AmrKpi`** — the shared EBITDA workbooks and the KPI strip.
 - **`AmrDeckSource`** — the registry a page uses to offer its content to the Deck Builder.
 - **`AmrProgress` / `AmrBoot` / `AmrFresh`** — one loading screen, one boot gate, one "these
-  figures are out of date" poll.
+  figures are out of date" poll. The screen covers the page for exactly one situation — an
+  opening with nothing behind it yet — and is a bottom-right card for everything else; see
+  §6's *One screen, and only while the page is empty*.
 - **`AmrTick`** — a timer a background tab cannot throttle. A plain `setTimeout` is clamped
   to one a second when the tab is hidden and one a *minute* after five minutes of it, which
   is exactly how deck rendering is normally used.
@@ -1082,6 +1084,98 @@ every device is stranded at once, with nothing to enumerate.
 user's calls end to end, so the Overview's three separate calls cost most of a second of dead
 time before the page starts loading.
 
+### One round trip, not six — and what may travel in it
+
+**Apps Script runs one user's `google.script.run` calls END TO END.** Nothing a page issues
+overlaps: six calls are six queue waits, six executions and six round trips, in order, even
+when five of them are a `CacheService` read that returns in milliseconds. That is not a
+detail of the transport, it is where a page's loading time actually goes — the Executive
+Overview opened with **twenty-four** of them and the figures were in cache the whole time.
+
+`APP_batch({calls:[…]})` (§3) runs a list in one execution. Each entry is caught on its own,
+so one failure reports itself in its own slot rather than taking the page down, and
+`AMR.batch(list)` (§D) is the browser side: same length, same order, `{ok:true,value}` or
+`{ok:false,error}` per slot. Three rules make it safe to reach for:
+
+- **The allow-list is the boundary, not a formality.** Dispatching by name off a
+  client-supplied string is how a web app hands the browser the whole server file.
+  `APP_BATCH_ALLOW_` names the thirty functions that may be reached this way and it holds
+  **reads only**. A write — a sync, an upload, a lookup row, an email — stays a call of its
+  own, because *"which of the six actually ran before the budget stopped it"* must never be
+  a question anybody has to ask about one of those.
+- **The budget bounds when a call STARTS, never how long it runs, and it takes two numbers
+  to say so.** Six separate calls get six six-minute ceilings; one batch gets one — so a
+  batch of two four-minute calls is a batch that gets killed where the two on their own
+  would both have finished, and that is the one way this transport could hang a page that
+  the calls it replaced could not. `APP_BATCH_BUDGET_MS` is the plain "long enough";
+  `APP_BATCH_CEILING_MS` is the one that matters when the calls are big, and the estimate
+  for the next call is the **longest one so far** — a batch whose first call took four
+  minutes will not start a second. Everything it does not reach is `skipped`, which is not
+  an error: `AMR.batch` re-issues those slots on their own and each then gets a full
+  ceiling of its own.
+- **It never leaves a caller without an answer.** A failed batch, a skipped slot, or a
+  deployment that has no `APP_batch` in it at all: all three fall back to one call each,
+  which is exactly what the page did before. The worst case is the number of round trips it
+  already had, so pushing `app.html` ahead of `script.gs` degrades rather than breaks.
+
+**What decides membership is what the page is WAITING on, never what it will eventually
+want.** A batch is one reply, so everything in it arrives at the speed of its slowest entry.
+The Overview's opening batch is three calls — the three versions, the cube manifest, the KPI
+values — because the first paint cannot happen until the overview payload is in and that
+cannot be *asked for* until the manifest names the month. The customer merge, the
+cross-report and the older month blocks arrive behind the paint and must not be allowed in
+front of it.
+
+### A call that never answers
+
+**`google.script.run` has no timeout and no way to ask for one.** If the server execution
+dies without reporting — the platform kills it at six minutes, the connection to the frame
+is lost, a quota bites — **neither handler runs**. Nothing anywhere is watching, so the page
+sits under its loading screen for ever. Every "it just got stuck" is a candidate for this and
+none of them leaves a trace: no error, no failed call, nothing in any log. A caller cannot
+defend against it either, because the defence is a timer and there is nowhere sensible to put
+114 of them.
+
+There is one sensible place, and it is §D's call guard — the same interception that already
+drops a stale answer from a page that has gone. Every call is stamped, put on `INFLIGHT` and
+given a watchdog; whichever of the three fires first — success, failure, watchdog — settles
+it and the other two are ignored (a late answer is dropped and logged, never applied on top
+of a page that has moved on). When the watchdog wins it runs **the caller's own failure
+handler**, so a hang becomes the error path the page already has: the banner it already
+writes, the `hideLoader()` it already calls, the boot step it already answers.
+
+- **Seven minutes, and it is not a guess.** Apps Script kills an execution at six, so
+  anything still outstanding past that is dead rather than slow. A shorter timer would mean
+  telling somebody their cold cube build failed while the server is still building it.
+- **What makes the wait bearable is not that number.** `AMR.inflight()` lists what is
+  outstanding, longest first, so `AmrBoot`'s own 150-second watchdog now names the call —
+  *"the server has not answered getOverview for 143 seconds"* — instead of printing
+  "a step is missing its `AmrBoot.done()`" for a fault that is not the page's. It still says
+  that, but only when nothing is outstanding, which is when it is true.
+- **`withUserObject` is named explicitly in the guard.** It returns a runner like the two
+  handler methods, so falling through to the "this is the server call" branch armed a
+  watchdog against a function that never went anywhere *and* handed back an unwrapped runner,
+  losing the guard for the rest of the chain. It did the second of those before this was
+  written down.
+
+### One screen, and only while the page is empty
+
+The full-screen loading card exists for a good reason: a marker off in the corner was too
+easy to miss and people were reading half-loaded tables without realising. **That reason
+expires the moment the page has something real on it.** After that the modal is not
+protecting anybody from a half-loaded table — the table is loaded and the screen is sitting
+on top of it saying so — and every later fetch threw it back up, so an open read as: screen,
+page, screen again, page.
+
+`AmrProgress` now has two forms of the same card, and `AmrBoot` chooses between them.
+`need()` raises the modal because the page behind it is empty; **`painted()` gives it back**,
+and `done('data')` calls `painted()` — `'data'` is the step every page names for "the tables
+are on the page", so this is one rule rather than six `hideLoader()`s, the sixth of which
+would be forgotten. Nothing about the refcount changes: the steps still stand, the same
+wording and percentage and list of what is outstanding are still shown, and the month blocks
+still stream — over a page you can now read and click. `finish()` and `reset()` both drop
+back to the corner, so no page inherits the last one's answer.
+
 ### The 14 MB bundle, and the shape of the bug it caused
 
 **Never read the whole Ready-Mix bundle to answer one question.** This is the single most
@@ -1489,7 +1583,11 @@ there with the input that moved.
   to the base tools' caches, and never blends AGG and RMX lines.
 - Customer data calls `getCustomerReport` **directly per selected market** and merges parent
   rows client-side. A dedicated `getOverviewCustomers` server function hung; the direct PV
-  pattern fixed it.
+  pattern fixed it. The fan-out it left behind — one round trip per selected market, serially,
+  so the panel took as long as the number of markets somebody happened to click — travels as
+  one `AMR.batch` now. The merge is unchanged and still in the browser; only the transport
+  moved. **One market short is not a customer panel**: the merge ADDS markets, so a slot that
+  failed is an error message, never a quietly smaller total under the same heading.
 - PPI accuracy: RMX rows expose `rfiBase`/`facBase` for exact subset PPI. AGG all-markets
   returns the exact `aggAll.ppi`; a single market is exact; **2+ market subsets** use a
   CY-revenue-weighted blend labelled ⓘ *"Estimate for a mix of markets"*.
@@ -1527,15 +1625,31 @@ there with the input that moved.
   and max it is handed, so a headroom of `9.1318562625202050` was the axis label. `headroom()`
   snaps both ends outward to a round step first — 9.13 becomes 10, −3.45 becomes −4 — and
   `fAxisPct()` rounds the label, because 3 × 0.2 is `0.6000000000000001` in binary.
+- **The fuel-surcharge panel rides in with the overview payload.** That sheet carries no
+  version token, so `loadFsc()` painted from the device and re-checked itself in the
+  background — two executions on every open, for a panel this page's first paint draws
+  anyway. It is a slot in the same batch as the `getOverview` pair now, on the first `load()`
+  only, and `FSC_CHECKED` is what stops a Period switch or a re-anchor asking again. A failed
+  slot puts `FSC_CHECKED` back and the panel takes `loadFsc()`'s own path, which has the
+  message and the link.
 - **The month window anchors on the NEWEST month, and the server is asked for it.** "This
   month" means the latest month there is data for and "Prev month" the one before it. The
   server reports would otherwise land on the reporting month (last calendar month), so the
   page reported two months at once — on an August visit a server KPI strip read 2,266,577 t
   above a cube-fed table reading 1,067,541 t for the same selection, every market at −50% or
   worse. `getOverview` takes a `month` (in its cache key), the Overview passes
-  `anchorMonth()`, and both halves answer for the same month. The first fetch runs before the
-  cube exists and so asks for month 0 — the server's own default; when the cube lands and the
-  anchor is known, a cache-first re-fetch brings the two into line.
+  `anchorMonth()`, and both halves answer for the same month.
+  **The MANIFEST is what the first fetch anchors on, and that is a different question from
+  the slider's.** The first fetch used to run before the cube existed and so asked for month
+  0 — the server's own default — and when a block landed the anchor moved and the whole thing
+  was fetched again; each of those two fetches also prefetched the other Period, so one page
+  open was four `getOverview` calls. The manifest already names every month the cube covers
+  and it is the first thing the page receives, so `SEED_YM` takes the newest month off it and
+  the first fetch is already right. `winMonths()` is untouched and still reads what has
+  LANDED, deliberately — that rule is about not letting somebody drag into a month whose block
+  is still in flight, and it can only ever be narrower than the manifest, never wider. The
+  cache-first re-fetch stays as a safety net for the same reason it was written: two halves of
+  the page reporting different months is a fault nobody can see from the outside.
 - **The EBITDA workbook is a CLOSED-month statement, so its cards read `kpiMonth()`** — the
   month *before* the anchor — and say which month that is. It arrives during the month after
   the one it covers, so it can never answer for "this month"; moving the whole page back to
@@ -1553,6 +1667,46 @@ there with the input that moved.
   pill says "Nothing else on the page is waiting on this". `histBootReady()` releases it once
   the cube can answer the month the page opens on (that month and the same month a year
   earlier — two blocks); the rest keeps arriving behind the pill, which is not modal.
+  **And the pill says the one line, not the paragraph.** `histState().long` — four sentences
+  about calendar years landing newest first and the slider growing as they do — was printed
+  under the line that already reads *"Loading months… 62% · back to Jan 23"*, for the whole of
+  every open, on a page whose figures were behind it. The card carries the short line and the
+  two buttons (⚙ Data sheet, Reload history — the only route to either); `long` is still
+  written and still shown for a **fault**, which is the one case where the wording is the
+  point, because it names the reason and carries the link.
+- **The month blocks travel several to a call.** A block is already built and cached by the
+  time the browser asks, so eight of them was eight queue waits for data that was sitting
+  there. `CUBE_getChunks` takes the browser's ORDERED list — that order is the streaming plan,
+  and re-ordering it server-side would send the Ready-Mix tab the Aggregates cube first — and
+  `CUBE.CHUNKS_PER_CALL` (§1, and it rides in on the manifest so there is one copy of it) says
+  how many to ask for. It may answer with fewer: the reply has to survive being serialised, so
+  it stops short of `CUBE.BYTES_PER_CALL`, measured off the cache's own chunk count rather
+  than by reading the entry to find out how big it is. Fewer than asked is normal and the rest
+  are re-asked — **gated on that reply having carried at least one usable block**, which is
+  what makes a block that can never be served get tried once instead of for ever.
+- **The data-quality panel offers EVERY row, and the reason it used to offer 200 is fixed
+  rather than capped.** The arithmetic behind the cap was right: the Ready-Mix mix section
+  lists well over a thousand mixes, each proposed row is five controls, and three of those
+  are selects carrying the whole PRODUCT MASTER vocabulary. Measured in Chromium, 1,200 rows
+  rendered that way is **91,200 nodes and 5.8 seconds** of frozen main thread — on a fast
+  machine with nothing else running, so inside the Apps Script frame it is a page that has
+  hung. `LK_BATCH = 200` made that about 1.6s and left the real cost in place: fixing 1,116
+  mixes meant six rounds of fill → save → **wait for the cube to rebuild**, and the rebuild
+  is the slow half. Two changes remove the cost instead of the rows:
+  **`lkSelect` renders one option** — the selected one, which is what a save reads, so a
+  select nobody touches still writes the right value — and `lkFill()` puts the rest in on the
+  first focus or mousedown, both of which fire before the dropdown opens; and **`.lk-row`
+  carries `content-visibility:auto`**, so the 340px scroll box lays out the rows you can see
+  rather than the thousand you cannot. Same 1,200 rows: **25,200 nodes and 325 ms**, eighteen
+  times faster than what the cap was protecting against and quicker than the old form managed
+  with 200. The one trap, and it is checked: with no value the old select rendered nothing
+  selected and the browser took the FIRST option, so that is what a save has always written —
+  `lkSelect` therefore selects `list[0]`, not blank.
+- **The listing shows every row too, and only for the section that is OPEN.** It used to stop
+  at the 60 biggest by revenue and say so, which on 1,116 mixes is a footnote where the answer
+  should be. The 60 was there because `renderDq()` builds every section at once, open or shut;
+  building the table only for an open one removes the reason and the cap with it. The section
+  toggle therefore re-renders rather than just flipping a class.
 - **A panel with nothing in it is not shown.** One rule, no exceptions: no rows, no data, not
   computable for this window → `hidePanel(bodyId)`. `resetPanels()` runs at the top of
   `renderTab()`. Only genuine *faults* still speak — a sheet that has not been set, a call that
@@ -2136,3 +2290,5 @@ or was forgotten.**
 | 2026-08-25 | **The sync failure mail is a switch now, and it is off by default.** `MailApp` is reached only when `QLIK_ALERT_MAIL` says `on`; `qlikAlertsOn()` / `qlikAlertsOff()` (§11) are the two editor tools that set it, and neither touches `QLIK_ALERT_TO`, so the address survives a mute. The mail was written for a pipeline nobody was watching and is right for one — but a sync that has *started* failing sends the same mail every fifteen minutes to somebody already dealing with it, and that is how the one mail that matters ends up looking like the twenty before it. **Muted is not silent**, which is why this is a switch and not a deletion: `run()` returns its failures to a time-driven trigger, which reads them nowhere, so a muted run writes the **entire** report it would have mailed to the execution log at `error`, and `qlikRetryStatus()` names the mute every time it is asked — a mute set for one bad afternoon cannot quietly outlive the afternoon | ✅ |
 | 2026-08-25 | **Most of the Ready-Mix write was `Utilities.formatDate`, called once a row.** `monthText_` crosses out of V8 into Apps Script's services twice per row to format a Bill Month, and the *crossing* is the cost — 82,200 rows is ~165,000 service calls, which is to within noise the whole of the ~165 s that write was measured at. A month column holds about a dozen distinct values, so the answers are memoised on the value: 29,100 `formatDate` calls become 97 on a 34,200-row harness, identical output on every one. Two more of the same shape went with it — the formula band was going home **twice** per tab (the second pass now skips a run whose re-pointed formulas are identical to the ones already there, which is the 140,000-string-operation recalculation the band is taken *off* the tab to avoid), and the month column was walked twice for one answer. **And the settle now reserves the write's three minutes**: the ceiling was "five minutes minus what this run has spent", so a 4-minute wait left 60 s to write 82,200 rows — which is exactly the run that refused `Associate Raw Data` 5,000 rows in | ✅ |
 | 2026-08-25 | **The retry does the tabs that failed, not the page they are on.** One Ready-Mix tab failing retried all three — 82,200 rows rewritten to fix 14,157, which is the work that used the budget up in the first place — and that is a **risk** taken for no gain, not merely waste: a retry killed mid-write on a tab that was already right takes a *good* tab apart and leaves it blank below the boundary. The failure record names its tabs and `run(page, only)` takes the list; the timers and the editor tools pass nothing and get the whole page. **"The page cannot be split further" was the wrong reading of a true constraint** — what has to hold is that no formula is left pointing at a height that has moved, so the re-point pass now covers every `'columns'` tab of the page rather than only the ones in `plan`: a tab this run did not write has its band read off the tab and re-pointed only if it names a tab this run did. That **closes a hole the full-run path had all along** — a run whose second tab failed its gate left the first tab's cross-references pointing at the second tab's old height, with nothing to notice | ✅ |
+| 2026-08-25 | **The opening is a batch now, and the loading screen gets out of the way once there are figures behind it.** The Executive Overview opened with **24 `google.script.run` calls** — 4 `getOverview`, 8 `CUBE_getChunk`, 2 `CUBE_getManifest`, 3 `getFscData`, 3 `getCustomerReport`, plus versions, source times and KPI values — and Apps Script runs a user's calls END TO END, so none of it overlapped and almost all of it was handing over something `CacheService` already held. Four mechanisms, in the order they matter. **`APP_batch(calls)` (§3)** runs a list in ONE execution, each entry caught on its own, dispatching only through `APP_BATCH_ALLOW_` — 30 READS, no writes, because "which of the six ran before the budget stopped it" must never be a question about a sync or an email — and stops STARTING work at `APP_BATCH_BUDGET_MS`, marking the rest `skipped` for the browser to re-issue. `AMR.batch` (§D) is the transport and falls back to one call each on ANY failure, including a deployment with no `APP_batch` in it. **`CUBE_getChunks` (§8)** takes a mixed, ORDERED list — the order is the streaming plan, newest block of the line you are looking at first — and stops short of `CUBE.BYTES_PER_CALL` using the cache's own meta rather than reading to find out; a reply shorter than the ask is normal and the browser re-asks, gated on that reply having carried at least one usable block so a dead chunk is tried once and not for ever. **The month anchor comes off the manifest** (`SEED_YM`): the first `getOverview` used to ask for month 0, then the first block landed, moved the anchor and the whole thing was fetched again — twice over, because each fetch prefetched the other Period. `winMonths()` is untouched and still reads what has LANDED; this is a different question and only the server fetch asks it. **And `AmrBoot.painted()`**: the full-screen screen is now modal for exactly one situation — an opening with nothing behind it — and becomes a bottom-right card the moment `done('data')` says there are figures on the page, which is also what stops every later fetch throwing a second full-screen screen over a finished one. Overview 24 → **7**; Price & Volume 4 opening calls → 1 and its chunk calls 4 → 2; Ready-Mix `RMX_prepare` + `getLogo` → 1; both fuel pages' version + logo → 1. **Left undone on purpose:** Product Segment still opens with two (`getKpiValues`, then `RMX_getStamp`/`RMX_prepare`) — folding them in means teaching `bootLoad` to carry passengers on the page with the write-only-store history, for one round trip; and `AmrStamp` still fetches `getSourceTimes` on its own because §D mounts it before the page's `boot()` runs, so there is no batch to put it in yet | ✅ |
+| 2026-08-25 | **The data-quality cap is gone, and a call that never answers no longer hangs the page.** Two things, and the second is the answer to "it gets stuck randomly". **The 200-row cap on the lookup editor** was protecting against a real cost measured in Chromium: 1,200 proposed rows rendered eagerly is 91,200 nodes and **5.8 seconds** of frozen main thread, because three of the five controls per row carry the whole PRODUCT MASTER vocabulary. Capping made that 1.6s and left the expensive half in place — six rounds of fill/save/wait-for-the-cube-to-rebuild to fix 1,116 mixes. `lkSelect` now renders ONE option (the selected one, which is what a save reads) and `lkFill()` adds the rest on first focus or mousedown; `.lk-row` carries `content-visibility:auto` so the 340px scroll box lays out what is visible. Same 1,200 rows: **25,200 nodes and 325ms** — eighteen times faster than what the cap protected against, and quicker than the old form was at 200. The trap, checked in Chromium against the shipped functions: an empty value used to render no selected option and the browser took the FIRST one, so `lkSelect` selects `list[0]` rather than blank or a save writes something different from what it always did. The 60-row listing cap went the same way — the table is built only for the section that is OPEN, so the reason for it is gone. **And the hang.** `google.script.run` has no timeout and no way to ask for one: when an execution dies without reporting, NEITHER handler runs, nothing is watching, and the page sits under its screen for ever leaving no trace anywhere — no error, no failed call, nothing in any log. §D's call guard (the same interception that drops a stale answer) now stamps every call, tracks it on `INFLIGHT` and gives it a 7-minute watchdog — past the platform's own 6-minute kill, so a cold cube build is never failed while it is still building — and whichever of success/failure/watchdog fires first settles it, the losers ignored. A watchdog win runs the CALLER'S OWN failure handler, so a hang becomes the error path each page already has. `AMR.inflight()` is what makes the wait diagnosable: `AmrBoot`'s 150s watchdog names the call that has not answered instead of blaming the page's code, which it now only does when nothing is outstanding. Two related fixes found on the way: `withUserObject` was falling through the guard's dispatch branch and handing back an UNWRAPPED runner (losing the guard for the rest of the chain), and `APP_batch` gained `APP_BATCH_CEILING_MS` — it estimates the next call from the longest one so far and refuses to start work that would run into the 6-minute limit, which is the one way batching could hang a page that separate calls could not | ✅ |
