@@ -168,6 +168,7 @@
  *     §3   APP_PAGES               the ten route names doGet accepts
  *     §3   APP_STAMP_TTL_S         how long a freshness stamp is memoised
  *     §3   APP_BATCH_BUDGET_MS     how long APP_batch keeps starting calls
+ *     §3   APP_BATCH_CEILING_MS    the run it must fit under (the 6-min limit)
  *     §3   APP_BATCH_ALLOW_        which functions a batch may reach at all
  *     §6   SCHEMA_                 PV's cache-shape version — bump on a change
  *     §6   XF_TABLE_CAP / XF_CHILD_CAP / XF_DATA_CAP    cross-filter payload caps
@@ -2052,17 +2053,31 @@ function getDataVersions(pages) {
  * where "which of the six actually ran before the budget stopped it" is a
  * question nobody should have to ask.
  *
- * THE BUDGET IS WHY A BATCH CANNOT TIME OUT WORSE THAN THE CALLS IT REPLACED.
- * Six separate calls get six six-minute ceilings; one batch gets one. So the
- * dispatcher stops STARTING work once APP_BATCH_BUDGET_MS has gone, and marks
- * everything it did not reach `skipped`. A skipped entry is not an error and
- * the browser re-issues it on its own — see AMR.batch in app.html, which does
- * exactly that. The budget is well under the ceiling deliberately: it bounds
- * the moment a call STARTS, and the call itself may still be a cold cube build.
+ * THE BUDGET IS WHY A BATCH CANNOT TIME OUT WORSE THAN THE CALLS IT REPLACED,
+ * AND WHY IT TAKES TWO NUMBERS TO SAY SO. Six separate calls get six six-minute
+ * ceilings; one batch gets one, so a batch of two calls that each take four
+ * minutes is a batch that gets killed where the two on their own would both
+ * have finished. That is a real way to make a page hang and it is the one thing
+ * this transport could do that the calls it replaced could not.
+ *
+ * So the dispatcher looks BACKWARDS before starting anything:
+ *
+ *   · APP_BATCH_BUDGET_MS  — a plain "we have been at this long enough".
+ *   · APP_BATCH_CEILING_MS — the run must fit under the platform's limit, and
+ *     the estimate for the next call is the LONGEST one so far. A batch whose
+ *     first call took four minutes will not start a second, because the best
+ *     evidence available says it would not finish.
+ *
+ * Everything it does not reach is marked `skipped`, which is not an error: the
+ * browser re-issues those on their own — see AMR.batch in app.html — and each
+ * then gets a full ceiling of its own, exactly as before the batch existed.
  * ========================================================================== */
 /* How long the dispatcher may keep starting new calls. §1's tunable list points
    here. Four minutes leaves a slow last call most of two before the ceiling. */
 var APP_BATCH_BUDGET_MS = 240000;
+/* The platform kills an execution at six minutes. Five is where this stops
+   starting work that its own evidence says would run into that. */
+var APP_BATCH_CEILING_MS = 300000;
 
 /* EVERY FUNCTION THE BROWSER MAY REACH THROUGH APP_batch, and no others.
    Reads only — see the banner above. Adding a name here makes it callable by
@@ -2095,7 +2110,7 @@ function APP_batch(req) {
   var calls = (req && req.calls) || [];
   if (!calls.length) return { ok: true, results: [], ms: 0 };
 
-  var results = [], ran = 0, failed = 0, skipped = 0;
+  var results = [], ran = 0, failed = 0, skipped = 0, worst = 0;
   for (var i = 0; i < calls.length; i++) {
     var c = calls[i] || {};
     var name = String(c.fn || '');
@@ -2120,8 +2135,15 @@ function APP_batch(req) {
     /* THE BUDGET BOUNDS WHEN A CALL STARTS, never how long it runs. Checked
        before the first one too: a batch queued behind a long execution can
        arrive with its budget already spent, and starting anyway is how one
-       slow open becomes a timeout. */
-    if (Date.now() - t0 > APP_BATCH_BUDGET_MS) {
+       slow open becomes a timeout.
+
+       And the ceiling check underneath it is the one that matters when the
+       calls are big. `worst` is the longest call this batch has run, which is
+       the only evidence there is about the next one — a cold getOverview after
+       a cold getOverview is the case, and two of those in one execution is
+       exactly the timeout worth refusing. */
+    var gone = Date.now() - t0;
+    if (gone > APP_BATCH_BUDGET_MS || (ran && gone + worst > APP_BATCH_CEILING_MS)) {
       results.push({ ok: false, skipped: true });
       skipped++;
       continue;
@@ -2143,7 +2165,9 @@ function APP_batch(req) {
     try {
       results.push({ ok: true, value: fn(c.arg) });
       ran++;
-      APP_log('debug', 'APP.batch', 'ran', { fn: name, at: i, ms: Date.now() - t1 });
+      var took = Date.now() - t1;
+      if (took > worst) worst = took;
+      APP_log('debug', 'APP.batch', 'ran', { fn: name, at: i, ms: took });
     } catch (e) {
       /* ONE ENTRY'S FAILURE IS ONE ENTRY'S FAILURE. The whole point of the
          batch is that the other five still answer — the browser reads the
@@ -2155,9 +2179,12 @@ function APP_batch(req) {
               { fn: name, at: i, ms: Date.now() - t1, error: String(e) });
     }
   }
-  APP_log('info', 'APP.batch', 'done',
+  /* warn when anything was skipped: from the browser it is invisible (the slots
+     are simply re-issued and everything works), and a batch that keeps running
+     out of room is a batch that should have been two. */
+  APP_log(skipped ? 'warn' : 'info', 'APP.batch', skipped ? 'ran out of room' : 'done',
           { calls: calls.length, ran: ran, failed: failed, skipped: skipped,
-            ms: Date.now() - t0 });
+            worstMs: worst, ms: Date.now() - t0 });
   return { ok: true, results: results, ms: Date.now() - t0 };
 }
 

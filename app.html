@@ -1486,7 +1486,17 @@ body[data-page="overview"] .lk-head{display:flex; align-items:center; gap:10px; 
 body[data-page="overview"] .lk-head .t{font:700 12px Archivo; color:var(--blue-100)}
 body[data-page="overview"] .lk-head .sp{flex:1}
 body[data-page="overview"] .lk-body{padding:11px 13px 13px; max-height:340px; overflow:auto}
-body[data-page="overview"] .lk-row{display:flex; flex-wrap:wrap; gap:7px; align-items:center; padding:7px 0; border-bottom:1px solid var(--line)}
+/* content-visibility, and it is the other half of removing the 200-row cap.
+   .lk-body above is a 340px scroll box, so on a form of a thousand rows the
+   browser was laying out and painting a thousand of them to show five. This
+   lets it skip the ones nobody can see and do them when they scroll into view;
+   contain-intrinsic-size keeps the scrollbar honest until it has (auto, so the
+   real height replaces the estimate once a row has been rendered once).
+   It changes nothing about the DOM — lkHarvest still reads every row's value,
+   rendered or not — and a browser that does not support it simply lays them all
+   out as before. */
+body[data-page="overview"] .lk-row{display:flex; flex-wrap:wrap; gap:7px; align-items:center; padding:7px 0; border-bottom:1px solid var(--line);
+  content-visibility:auto; contain-intrinsic-size:auto 44px}
 body[data-page="overview"] .lk-row:last-child{border-bottom:0}
 body[data-page="overview"] .lk-row .k{flex:1 1 170px; font:700 11.5px Inter; color:var(--blue-100); min-width:0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
@@ -2970,41 +2980,135 @@ window.AMR = (function(){
     };
   }
 
-  /* A page's in-flight google.script.run callbacks cannot be cancelled, and
-     they land on whatever page is mounted when they do. Left alone they run the
-     old page's render against the new page's DOM, which throws somewhere deep
-     and looks like the NEW page is broken. So every handler is stamped with the
-     generation that registered it and silently dropped if it has moved on. */
+  /* ==========================================================================
+     THE CALL GUARD — a stale answer, and an answer that never comes
+     --------------------------------------------------------------------------
+     Two failures live here because they are the same interception.
+
+     STALE. A page's in-flight google.script.run callbacks cannot be cancelled,
+     and they land on whatever page is mounted when they do. Left alone they run
+     the old page's render against the new page's DOM, which throws somewhere
+     deep and looks like the NEW page is broken. So every handler is stamped
+     with the generation that registered it and silently dropped if it has moved
+     on.
+
+     NEVER. google.script.run has NO TIMEOUT and no way to ask for one: if the
+     server execution dies without reporting — the platform kills it, the
+     connection to the frame is lost, a quota bites — NEITHER handler runs.
+     Nothing anywhere is watching, so the page sits under a loading screen for
+     ever. Every "it just got stuck" is a candidate for this, and none of them
+     leaves a trace: no error, no failed call, nothing in the log. A caller
+     cannot defend against it either, because the defence has to be a timer and
+     there is nowhere sensible to put 114 of them.
+
+     There is one sensible place, and it is here. Every call is stamped, put on
+     INFLIGHT, and given a watchdog; whichever of the three fires first — the
+     success handler, the failure handler, the watchdog — settles it and the
+     other two are ignored. When the watchdog wins, the caller's own failure
+     handler is run, so a hang becomes the error path the page already has.
+
+     SEVEN MINUTES, and it is not a guess. Apps Script kills an execution at
+     six, so anything still outstanding past that is dead rather than slow, and
+     a shorter timer would mean telling somebody their cold cube build failed
+     while the server is still happily building it. What makes the wait bearable
+     is not this number: it is that AmrBoot's own 150-second watchdog can now
+     say WHICH call has not answered (see inflight()), instead of blaming the
+     page's code for a step it never got the chance to report.
+     ========================================================================== */
+  var CALL_WATCHDOG = 420000;
+  var INFLIGHT = [];
+
+  /* What is outstanding right now, longest wait first. Read by AmrBoot's
+     watchdog so its message names a call rather than accusing the page. */
+  function inflight(){
+    var now = Date.now();
+    return INFLIGHT.map(function(c){ return { fn: c.fn, ms: now - c.at }; })
+                   .sort(function(a, b){ return b.ms - a.ms; });
+  }
+
   function installStaleGuard(){
     if (!LIVE || !window.google || !google.script || !google.script.run) return;
     var desc = Object.getOwnPropertyDescriptor(google.script, 'run');
     var get = desc && desc.get;
-    function wrap(runner){
-      var gen = GENERATION;
+
+    /* First one home wins; the other two are no-ops. */
+    function settle(st){
+      if (st.done) return false;
+      st.done = true;
+      if (st.timer){ clearTimeout(st.timer); st.timer = null; }
+      var i = INFLIGHT.indexOf(st);
+      if (i !== -1) INFLIGHT.splice(i, 1);
+      return true;
+    }
+    function giveUp(st){
+      if (!settle(st)) return;
+      /* error, not warn: this is a call that vanished, and it is the single
+         hardest thing in this app to diagnose after the fact. */
+      log('error', 'AMR.call', 'the server never answered — failing the call',
+          { fn: st.fn, ms: Date.now() - st.at, waited: CALL_WATCHDOG });
+      if (st.gen !== GENERATION) return;             // its page is gone anyway
+      if (!st.onFail) return;                        // no handler: nothing to run
+      try { st.onFail(new Error('The server did not answer. It may still be working — '
+              + 'wait a moment and try again rather than reloading, which only adds to the queue.')); }
+      catch (e){ log('error', 'AMR.call', 'the failure handler threw', { fn: st.fn, error: String(e) }); }
+    }
+
+    function wrap(runner, st){
       return new Proxy(runner, {
         get: function(t, prop){
           var v = t[prop];
           if (typeof v !== 'function') return v;
           if (prop === 'withSuccessHandler' || prop === 'withFailureHandler'){
+            var isFail = (prop === 'withFailureHandler');
             return function(f){
+              /* kept RAW: giveUp runs it directly and does the generation
+                 check itself, because the wrapper below has already settled */
+              if (isFail) st.onFail = f;
               return wrap(v.call(t, function(){
-                if (gen !== GENERATION){
+                if (!settle(st)){
+                  log('warn', 'AMR.call', 'an answer arrived after the call was given up on',
+                      { fn: st.fn });
+                  return;
+                }
+                if (st.gen !== GENERATION){
                   log('debug', 'AMR.nav', 'dropped a callback from a page that is gone',
-                      { was: gen, now: GENERATION });
+                      { was: st.gen, now: GENERATION });
                   return;
                 }
                 return f.apply(this, arguments);
-              }));
+              }), st);
             };
           }
-          return v.bind(t);
+          /* THE OTHER CHAINING METHOD, and it has to be named. withUserObject
+             returns a runner like the two above; falling through to the branch
+             below would treat it as the server call — arming the watchdog
+             against a function that never went anywhere, and handing back an
+             unwrapped runner so the rest of the chain lost the guard entirely.
+             (It did the second of those before this comment existed.) */
+          if (prop === 'withUserObject'){
+            return function(){ return wrap(v.apply(t, arguments), st); };
+          }
+          /* anything else on the runner IS the server function */
+          return function(){
+            st.fn = String(prop);
+            st.at = Date.now();
+            INFLIGHT.push(st);
+            st.timer = setTimeout(function(){ giveUp(st); }, CALL_WATCHDOG);
+            return v.apply(t, arguments);
+          };
         }
       });
     }
     try {
       Object.defineProperty(google.script, 'run', {
         configurable: true,
-        get: function(){ return wrap(get ? get.call(google.script) : desc.value); }
+        /* ONE STATE PER CHAIN, made here. Every call site starts from
+           google.script.run, so this getter is exactly once per call and the
+           handlers chained off it share the object that tracks it. */
+        get: function(){
+          return wrap(get ? get.call(google.script) : desc.value,
+                      { gen: GENERATION, done: false, timer: null, onFail: null, fn: '?', at: 0 });
+        }
       });
     } catch (e) {
       log('warn', 'AMR.nav', 'could not guard stale callbacks', { error: String(e) });
@@ -3383,6 +3487,8 @@ window.AMR = (function(){
     run: runOne,
     batch: batch,
     slot: val,
+    /* Which server calls have not answered yet, longest wait first. */
+    inflight: inflight,
     lib: { need: need },
     nav: { top: navTop, home: goHome, reload: reloadThisPage, hrefFor: hrefFor, go: go,
            /* What the mounted page is currently holding. The counts are the
@@ -6963,6 +7069,34 @@ window.AmrBoot = (function(){
          + 'this one starts when it does \u2014 reloading again only adds to the queue. '
          + 'Nothing is lost; the figures are being cached as they arrive.';
   }
+  /* WHAT THE WATCHDOG SAYS, AND WHY IT STOPPED SAYING ONE THING.
+     "Something did not report back... a step is missing its AmrBoot.done()" is
+     one of two possible faults and it was printed for both. The other one is
+     far more common and is not the page's fault at all: a google.script.run
+     call that never answered, which happens when the platform kills an
+     execution or the frame loses it, and which leaves no trace anywhere —
+     no error, no failed call, nothing in the log. Told "some path forgot its
+     done()", nobody looks at the server, which is where the answer is.
+
+     §D tracks every outstanding call now (AMR.inflight), so this can tell them
+     apart: a call still in the air names the call, and only a screen with
+     nothing outstanding blames the code. Both still say reload — but see
+     slowNote() for why that is the last resort and not the first. */
+  function stuckNote(){
+    var out = [];
+    try { out = (window.AMR && AMR.inflight) ? AMR.inflight() : []; } catch (e) { out = []; }
+    if (out.length){
+      var w = out[0];
+      return 'The server has not answered ' + w.fn + ' for '
+           + Math.round(w.ms / 1000) + ' seconds'
+           + (out.length > 1 ? ' (' + out.length + ' calls are outstanding)' : '') + '. '
+           + 'Nothing is lost and it may still be working. Give it a moment before '
+           + 'reloading \u2014 a reload cannot cancel it and only adds to the queue.';
+    }
+    return 'Something did not report back, and no server call is outstanding \u2014 so this '
+         + 'is the page\u2019s own code. Reload, and tell whoever maintains this: a step is '
+         + 'missing its AmrBoot.done().';
+  }
   function paint(){
     if (!window.AmrProgress) return;
     var n = names();
@@ -7022,9 +7156,7 @@ window.AmrBoot = (function(){
         wd = setTimeout(function(){
           if (over || !window.AmrProgress) return;
           AmrProgress.fail('boot', 'Still waiting for ' + names().join(', '));
-          AmrProgress.set('boot', { cls:'bad', order:0, now:true,
-            note:'Something did not report back. Reload the page - and tell whoever '
-               + 'maintains this, because a step is missing its AmrBoot.done().' });
+          AmrProgress.set('boot', { cls:'bad', order:0, now:true, note: stuckNote() });
         }, WATCHDOG);
       }
       paint();
@@ -12184,7 +12316,17 @@ MB Submarket, plus Region&rarr;Country.<br>
          on each one would make the page flicker for no extra information. */
       pvCubeRepaint();
     });
-    try{ AmrCube.configure({ lines:['agg'], priority:'agg' }).init(); }catch(e){}
+    /* Same reason as the Overview's wireCube: a cube that never emits leaves
+       'month history' outstanding and the opening screen up. The listener above
+       answers the step on 'error', so route a throw or a rejection into it. */
+    function pvCubeFailed(){
+      if(window.AmrBoot) AmrBoot.done('month history');
+      if(window.AmrProgress) AmrProgress.clear('cube');
+    }
+    try{
+      var pvp = AmrCube.configure({ lines:['agg'], priority:'agg' }).init();
+      if(pvp && pvp['catch']) pvp['catch'](pvCubeFailed);
+    }catch(e){ pvCubeFailed(); }
   }
   var pvCubeTimer = null;
   function pvCubeRepaint(){
@@ -22175,6 +22317,30 @@ AMR.page('overview', {
         out.push({ t:'Product Segment markets not mapped on this page', vals:d.seg.unmatched });
       return out;
     }
+    /* One section's table. Built only for an open section — see renderDq. */
+    function dqTable(s){
+      if(s.simple){
+        return '<table><thead><tr><th>Value</th><th>Rows</th><th>Markets</th><th>'
+          +esc(s.sugLab||'Proposal')+'</th><th>Confidence</th></tr></thead><tbody>'
+          +s.rows.map(function(r){
+              return '<tr><td>'+esc(r.value||'(blank)')+'</td><td>'+fInt(r.rows)+'</td>'
+                +'<td style="text-align:left">'+esc(r.markets||'\u2014')+'</td>'
+                +'<td style="text-align:left">'+esc(r.sug||'\u2014')+'</td>'
+                +'<td>'+esc(r.band||'\u2014')+'</td></tr>';
+            }).join('')
+          +'</tbody></table>';
+      }
+      return '<table><thead><tr><th>Value</th><th>Rows</th><th>Volume ('+s.unit+')</th>'
+        +'<th>Revenue</th><th>Months</th></tr></thead><tbody>'
+        +s.rows.map(function(r){
+            var mo=(r.firstMonth&&r.lastMonth)
+              ? (r.firstMonth===r.lastMonth?ymShort(r.firstMonth):ymShort(r.firstMonth)+' \u2013 '+ymShort(r.lastMonth))
+              : '\u2014';
+            return '<tr><td>'+esc(r.value||'(blank)')+'</td><td>'+fInt(r.rows)+'</td>'
+              +'<td>'+fInt(r.vol)+'</td><td>'+fMoneyFull(r.rev)+'</td><td>'+esc(mo)+'</td></tr>';
+          }).join('')
+        +'</tbody></table>';
+    }
     function renderDq(){
       var host=$('dqBody'); if(!host) return;
       var C0=cube();
@@ -22203,6 +22369,17 @@ AMR.page('overview', {
           if(s.ok) return '<div class="dq-sec ok"><span class="dq-t">'+esc(s.title)+'</span>'
             +'<span class="dq-okmark">\u2713 all matched</span></div>';
           var open=!!DQ_OPEN[s.id];
+          /* EVERY ROW, AND ONLY WHEN THE SECTION IS OPEN.
+             The listing used to stop at the 60 biggest by revenue and say so,
+             which on a section of 1,116 mixes is a footnote where the answer
+             should be — you cannot see what you are fixing, and the list is the
+             thing you check the fix against. The 60 was there because renderDq()
+             builds every section at once, open or shut, so five closed sections
+             of a thousand rows each was thirty thousand cells nobody had asked
+             to see. Building the table only for the section that is OPEN removes
+             the reason and the cap with it: one open section of 1,116 rows is
+             about 7,000 cells, which is nothing, and a closed one is a header. */
+          var body = open ? dqTable(s) : '';
           return '<div class="dq-sec'+(open?' open':'')+'" data-dq="'+esc(s.id)+'">'
             +'<button class="dq-head" type="button"><span class="chev">\u203A</span>'
             +'<span class="dq-t">'+esc(s.title)+'</span><span class="dq-n2">'+s.rows.length+'</span></button>'
@@ -22218,25 +22395,7 @@ AMR.page('overview', {
             +(s.fix?'':('<p class="hint" style="margin-top:0">No add-rows form for this tab yet \u2014 '
                +'fix it on the <b>'+(s.where||'source')+'</b> page, or in the sheet directly.</p>'))
             +'<div id="lk_'+esc(s.id.replace("|","_"))+'"></div>'
-            +(s.simple
-              ? ('<table><thead><tr><th>Value</th><th>Rows</th><th>Markets</th><th>'+esc(s.sugLab||'Proposal')+'</th><th>Confidence</th></tr></thead><tbody>'
-                 +s.rows.slice(0,60).map(function(r){
-                     return '<tr><td>'+esc(r.value||'(blank)')+'</td><td>'+fInt(r.rows)+'</td>'
-                       +'<td style="text-align:left">'+esc(r.markets||'\u2014')+'</td>'
-                       +'<td style="text-align:left">'+esc(r.sug||'\u2014')+'</td>'
-                       +'<td>'+esc(r.band||'\u2014')+'</td></tr>';
-                   }).join('')
-                 +'</tbody></table>')
-              : '<table><thead><tr><th>Value</th><th>Rows</th><th>Volume ('+s.unit+')</th><th>Revenue</th><th>Months</th></tr></thead><tbody>'
-            +s.rows.slice(0,60).map(function(r){
-              var mo=(r.firstMonth&&r.lastMonth)
-                ? (r.firstMonth===r.lastMonth?ymShort(r.firstMonth):ymShort(r.firstMonth)+' \u2013 '+ymShort(r.lastMonth))
-                : '\u2014';
-              return '<tr><td>'+esc(r.value||'(blank)')+'</td><td>'+fInt(r.rows)+'</td>'
-                +'<td>'+fInt(r.vol)+'</td><td>'+fMoneyFull(r.rev)+'</td><td>'+esc(mo)+'</td></tr>';
-            }).join('')
-            +'</tbody></table>')
-            +(s.rows.length>60?('<p class="hint">Showing the 60 biggest by revenue of '+s.rows.length+'.</p>'):'')
+            +body
             +'</div></div>';
         }).join('');
       }
@@ -22263,14 +22422,30 @@ AMR.page('overview', {
        the server yet, so those sections offer the tab link only.              */
     var LK = {};                    // section id -> { busy, err, msg, form, rows, done }
 
-    /* HOW MANY ROWS ONE FORM OFFERS. The Ready-Mix mix section can list well
-       over a thousand mixes, and each proposed row is five controls, three of
-       them selects carrying the whole PRODUCT MASTER vocabulary — so the whole
-       list at once is tens of thousands of nodes to build inside the Apps
-       Script frame before anything appears. The section is sorted by revenue,
-       so a batch is the biggest ones: save it, and the next click brings the
-       next batch (the count above it drops as the cube rebuilds). */
-    var LK_BATCH = 200;
+    /* THE FORM OFFERS EVERY ROW, AND THE REASON IT USED TO OFFER 200 IS FIXED
+       RATHER THAN CAPPED.
+       -----------------------------------------------------------------------
+       The cap was real and the arithmetic behind it was right: the Ready-Mix
+       mix section lists well over a thousand mixes, each proposed row is five
+       controls, and three of those are selects carrying the whole PRODUCT
+       MASTER vocabulary. Measured in Chromium: 1,200 rows rendered that way is
+       91,200 nodes and 5.8 SECONDS of frozen main thread — on a fast machine
+       with nothing else running, so inside the Apps Script frame on a laptop it
+       is a page that has hung. Capping at 200 made that 1.6s, which is bad
+       rather than fatal, and left the real cost in place: fixing 1,116 mixes
+       meant six rounds of fill-save-WAIT-FOR-THE-CUBE-TO-REBUILD, and the
+       rebuild is the slow half.
+
+       The nodes were never the rows — they were the option lists, repeated per
+       row. lkSelect() renders each select holding only the option that is
+       SELECTED, and lkFill() puts the rest in the first time it is touched.
+       Same measurement, same 1,200 rows: 25,200 nodes and 446ms, thirteen times
+       faster, with every value and every save path identical. So there is
+       nothing left for a cap to protect and the whole list is offered.
+
+       If a section ever does get big enough to be slow again, the thing to
+       reach for is rendering the ROWS lazily too — not a cap, which trades a
+       slow form for six slow rebuilds. */
 
     function lkHost(secId){ return $('lk_'+secId.replace('|','_')); }
     function lkSet(secId, patch){
@@ -22314,13 +22489,13 @@ AMR.page('overview', {
          year and has since been dropped from PRODUCT MASTER is only ever on
          this one, and asking for the other one is what opened this form with
          nothing in it while the section behind it listed 1,116 mixes. */
-      var send=(values||[]).slice(0, LK_BATCH);
+      var send=(values||[]);
       google.script.run
         .withSuccessHandler(function(r){
           if(!r || !r.ok){ lkSet(secId,{busy:false,err:'Could not work out any suggestions.'}); return; }
           var list=r.product||[];
           lkSet(secId,{ busy:false, opts:(r.options||{}),
-            total:(values||[]).length, more:(values||[]).length-send.length,
+            total:(values||[]).length, more:0,
             /* the one empty case worth explaining: the codes are in the tab
                already and it is the cube that has not caught up */
             note:(!list.length && r.already)
@@ -22336,13 +22511,53 @@ AMR.page('overview', {
     function lkField(label, html){
       return '<div class="f"><span class="fl">'+esc(label)+'</span>'+html+'</div>';
     }
-    function lkSelect(name, val, options){
-      var opts=(options||[]).slice();
-      if(val && opts.indexOf(val)===-1) opts.unshift(val);
-      if(!opts.length) return '<input type="text" data-f="'+esc(name)+'" value="'+esc(val||'')+'">';
-      return '<select data-f="'+esc(name)+'">'+opts.map(function(o){
-        return '<option value="'+esc(o)+'"'+(o===val?' selected':'')+'>'+esc(o)+'</option>';
-      }).join('')+'</select>';
+
+    /* ---- the option lists, ONCE, and put into a select when it is touched ----
+       This is what makes the cap above unnecessary. A vocabulary rendered into
+       every row is the same twenty strings a thousand times over, and it is the
+       whole of the cost: the form is a handful of controls per row and tens of
+       thousands of <option>s.
+
+       So the list is registered here under a key and the select is rendered
+       holding ONE option — the selected one, which is what a harvest reads, so
+       a select nobody ever touches still saves the right value. lkFill() puts
+       the rest in on the first focus or mousedown, both of which fire before
+       the dropdown opens.
+
+       Keys are shared where the list is (strength, class, application, and the
+       whole of a pvplant column); a per-row list — extras' hier3All, which is
+       the handful of hierarchies THAT row appears under — gets its own. */
+    var LK_OPTS = {}, LK_OPTS_N = 0;
+    function lkSelect(name, val, options, key){
+      var list=options||[];
+      if(!list.length) return '<input type="text" data-f="'+esc(name)+'" value="'+esc(val||'')+'">';
+      /* WHAT THE BROWSER WOULD HAVE SELECTED. With no value the old form
+         rendered no selected option and the browser took the first one, so that
+         is the value a save has always written — not blank. */
+      var cur = val || list[0];
+      var k = key || ('o'+(++LK_OPTS_N));
+      LK_OPTS[k] = list;
+      return '<select data-f="'+esc(name)+'" data-opts="'+esc(k)+'">'
+        +'<option value="'+esc(cur)+'" selected>'+esc(cur)+'</option></select>';
+    }
+    /* One select, filled. Idempotent, and safe on a select whose list has gone
+       (a re-render between the touch and this) — it keeps what it has. */
+    function lkFill(sel){
+      if(!sel || sel.tagName!=='SELECT' || sel.getAttribute('data-filled')) return;
+      sel.setAttribute('data-filled','1');
+      var list=LK_OPTS[sel.getAttribute('data-opts')];
+      if(!list || !list.length) return;
+      var cur=sel.value, seen=false, html='';
+      for(var i=0;i<list.length;i++){
+        var o=list[i];
+        if(o===cur) seen=true;
+        html+='<option value="'+esc(o)+'"'+(o===cur?' selected':'')+'>'+esc(o)+'</option>';
+      }
+      /* a value the vocabulary does not have goes to the front, exactly as the
+         eager form put it there */
+      if(!seen) html='<option value="'+esc(cur)+'" selected>'+esc(cur)+'</option>'+html;
+      sel.innerHTML=html;
+      sel.value=cur;
     }
     function lkRender(secId){
       var h=lkHost(secId), st=LK[secId]; if(!h) return;
@@ -22362,7 +22577,7 @@ AMR.page('overview', {
           return '<div class="lk-row" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
             +cols.map(function(c){
               return lkField(c.label, c.kind==='select'
-                ? lkSelect(String(c.i), r.cells[c.i]||'', c.options)
+                ? lkSelect(String(c.i), r.cells[c.i]||'', c.options, 'c_'+secId+'_'+c.i)
                 : '<input type="text" data-f="'+c.i+'" value="'+esc(r.cells[c.i]||'')+'">');
             }).join('')
             +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
@@ -22375,7 +22590,8 @@ AMR.page('overview', {
           if(r.skip) return '';
           var p=r.sug||{};
           return '<div class="lk-row" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
-            +lkField('Category', lkSelect('category', p.category||'', OE.category))
+            +lkField('Category', lkSelect('category', p.category||'', OE.category, 'v_cat'))
+            /* no shared key: hier3All is this row's own handful of hierarchies */
             +lkField('mat_prod_hier_3', lkSelect('hier3', p.hier3||'', (p.hier3All&&p.hier3All.length)?p.hier3All:OE.hier3))
             +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
         }).join('')+'</div>';
@@ -22385,7 +22601,7 @@ AMR.page('overview', {
           if(r.skip) return '';
           var p=r.sug||{};
           return '<div class="lk-row" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
-            +lkField('Custom flag', lkSelect('flag', p.flag||'', OF.flag))
+            +lkField('Custom flag', lkSelect('flag', p.flag||'', OF.flag, 'v_flag'))
             +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
         }).join('')+'</div>';
       }else{
@@ -22396,9 +22612,9 @@ AMR.page('overview', {
           return '<div class="lk-row" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
             +lkField('Code','<input type="text" data-f="code" value="'+esc(p.code||'')+'">')
             +lkField('New description','<input type="text" data-f="newD" value="'+esc(p.newD||'')+'">')
-            +lkField('Strength', lkSelect('strength', p.strength||'Others', O.strength))
-            +lkField('Product class', lkSelect('cls', p.cls||'Others', O.cls||O.category))
-            +lkField('Application', lkSelect('app', p.app||'Others', O.app))
+            +lkField('Strength', lkSelect('strength', p.strength||'Others', O.strength, 'v_strength'))
+            +lkField('Product class', lkSelect('cls', p.cls||'Others', O.cls||O.category, 'v_cls'))
+            +lkField('Application', lkSelect('app', p.app||'Others', O.app, 'v_app'))
             +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
         }).join('')+'</div>';
       }
@@ -22409,6 +22625,7 @@ AMR.page('overview', {
         +'<button class="lk-btn primary" data-lk="save"'+(live.length?'':' disabled')+'>Save to the sheet</button>'
         +'</div>'+body
         +(st.more>0&&live.length
+           /* kept for a caller that still hands in a slice; nothing does today */
            ? ('<div class="lk-msg">'+esc('The '+live.length+' biggest by revenue, of '+st.total
               +'. Save these, then open it again for the next batch.')+'</div>')
            : '')
@@ -22589,6 +22806,17 @@ AMR.page('overview', {
       });
       $('dqBack').addEventListener('click', function(){ dqOpen(false); });
       document.addEventListener('keydown', function(e){ if(e.key==='Escape') dqOpen(false); });
+      /* A SELECT IS FILLED THE MOMENT IT IS TOUCHED. Both events fire before
+         the dropdown opens — focusin covers the keyboard and mousedown covers
+         a click that has not moved focus yet — and lkFill is idempotent, so
+         binding both costs nothing and neither can be the one that was
+         missing. Delegated, so a re-render never leaves a listener behind. */
+      ['focusin','mousedown'].forEach(function(ev){
+        $('dqBody').addEventListener(ev, function(e){
+          var sel=e.target.closest ? e.target.closest('select[data-opts]') : null;
+          if(sel) lkFill(sel);
+        }, true);
+      });
       $('dqBody').addEventListener('click', function(e){
         var fix=e.target.closest('[data-fix]');
         if(fix){
@@ -22619,7 +22847,16 @@ AMR.page('overview', {
         var h=e.target.closest('.dq-head'); if(!h) return;
         var sec=h.closest('.dq-sec'); if(!sec || !sec.dataset.dq) return;
         DQ_OPEN[sec.dataset.dq]=!DQ_OPEN[sec.dataset.dq];
-        sec.classList.toggle('open', !!DQ_OPEN[sec.dataset.dq]);
+        /* A CLOSED SECTION NO LONGER CARRIES ITS TABLE, so the class alone is
+           not enough any more — opening one has to build it.
+           HARVEST FIRST, and this is not optional: renderDq() replaces the whole
+           body, so an open lookup form is rebuilt from LK[].rows. Anything typed
+           into a control and not read back into that state is gone — and on a
+           form of a thousand rows, losing it because somebody clicked a
+           different section's header is the worst thing this panel could do.
+           lkHarvest reads every control back; lkRender then re-renders from it. */
+        Object.keys(LK).forEach(lkHarvest);
+        renderDq();
       });
     })();
 
@@ -23198,9 +23435,22 @@ AMR.page('overview', {
         if(LOADED_KEY && LOADED_KEY!==loadKey()){ load(); return; }
         if(winMode()) renderActiveTab(); else renderTrendSoon();
       });
+      /* A CUBE THAT NEVER SPEAKS IS A LOADING SCREEN THAT NEVER LIFTS. The step
+         'month history' is answered by the listener above, so anything that
+         stops the cube emitting at all — init() throwing, or its promise
+         rejecting past its own catch — leaves the opening screen up until the
+         150-second watchdog. Both ways in are answered here: HIST.err makes
+         histState() a fault, and renderPill() releases the step on a fault.
+         Cheap, and it is the difference between "the page did not load" and
+         "the page never came back". */
+      function cubeFailed(e){
+        HIST.err = String((e && e.message) || e || 'the month cube did not start');
+        renderPill();
+      }
       try{
-        AmrCube.configure({ lines:['agg','rmx'], priority:(STATE.tab==='agg'?'agg':'rmx') }).init();
-      }catch(e){}
+        var p = AmrCube.configure({ lines:['agg','rmx'], priority:(STATE.tab==='agg'?'agg':'rmx') }).init();
+        if(p && p['catch']) p['catch'](cubeFailed);
+      }catch(e){ cubeFailed(e); }
       syncWindow(); renderPill(); dqBadge(); renderTrendSoon();
     }
 
