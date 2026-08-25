@@ -1549,6 +1549,42 @@ fact that it moves every PPI on that page in the same commit, which is the oppos
 
 - **Applied-to m³ is not addable across extra types** — the same physical pour is counted under
   each hierarchy group it belongs to.
+- **These rows carry their year, on Bill Month, and always have.** "Jan-25" is what decides
+  which of the tab's two money columns a row fills, on the live book and on every closed one.
+  The pair is headed `- CY` / `- PY` on the live export and `- 2024` / `- 2025` on the history
+  ones, and **that difference costs nothing**: `APP_yearCols_` turns both into the same
+  year → column map, which is the reason that helper exists. Anything claiming these rows have
+  "no year of their own" is describing §7's `loadStream_`, not the sheet — see the next bullet.
+- **The extra TYPE is not in the month fact table.** The cube's Ready-Mix rows are keyed plant ×
+  mix × segment and an extras row has no mix at all, so the split by type cannot be rebuilt from
+  them. It comes from the **extras facts** (§8 `ovcXRead_`): the live Extra / Associate Raw Data
+  tabs plus every closed book whose extras tabs have been read, merged on one `ym` axis.
+  `RMX_getExtrasByMonths` answers the Overview's panel off them for any month list.
+- **`ex` / `va` are in `CUBE.SHAPE` and were structurally zero until 2026-08-25.** They have
+  been in the rmx line since shape v2 and **nothing ever wrote to them** — the live roll read
+  `e.cyExRev` off Main Raw Data rows that never had such a field, and the history roll read
+  `col.ex` out of a `byYear` map built from the volume and net-sales headers alone. So every
+  Extras and VAP row of the Overview's window-mode ASP build-up read `$0.00` and All-in equalled
+  Base, under a correct-looking heading, for as long as that panel existed. `ovcRmxFoldExtras_`
+  fills both from the same extras facts the by-type table reads, which is what makes the two
+  agree by construction.
+- **The fold lands on the BLANK mix, and that is what makes it safe.** Extras carry no product
+  mix (the charge is per load), so they fold onto `mix = ''`, which `dimsForProduct_` already
+  buckets as *Others*. They bring no volume and no base revenue: a plant × mix pair of zeroes
+  fails the browser's `> 0` coverage test so **no PPI or CPI moves**, and every grouped view
+  filters on `cyVol / pyVol / cyRev / pyRev` before it renders, so an extras-only group cannot
+  appear as a row of zeroes in a breakdown or a dimension table.
+- **What was actually restricted was the live workbook's two book years, never the month.** One
+  export holds `cyYear` and `pyYear` and nothing older, and until 2026-08-25 nothing had ever
+  read the closed books' extras tabs — `ovcHistRmx_` takes Main Raw Data and stops. A window in
+  a closed year therefore had no by-type answer, and the panel was dropped. It is not dropped
+  now: the closed books' extras tabs are a second read (`CUBE_rebuildHistory {part:'extras'}`),
+  parked per era beside the month cube's own history.
+- **A month nobody has read an extras tab for is not a month with no extras**, and the panel
+  says which. `ovcXAcc_` records a source's span from every readable row, worth nothing or not;
+  `RMX_getExtrasByMonths` returns `uncovered` / `uncoveredPy` for the window months no source
+  covers, and the panel prints a note under the table rather than publishing a total that stops
+  at the oldest era anybody has built.
 - By-extra-type **summary** tables use total concrete m³ as the ASP denominator (additive);
   **detail** tables use applied m³ (per-applied-unit, explicitly labelled).
 - Revenue-weighted apportionment *within* a single extra type is correct. The double-count
@@ -1737,18 +1773,100 @@ there with the input that moved.
   BEFORE `xfActive()`: the cube applies the page's cross-filters itself.
 - **What the cube can answer is not a short list.** In window mode the browser builds the plant
   & material explorer, the customer table, both fuel-surcharge panels, the revenue and ASP-mix
-  waterfalls and the Ready-Mix ASP build-up. Genuinely absent: the SAP / USGAAP cards, extras
-  BY TYPE, Ready-Mix fuel recovery (the type and per-load surcharge are not columns), and the
+  waterfalls and the Ready-Mix ASP build-up. Genuinely absent: the SAP / USGAAP cards,
+  Ready-Mix fuel recovery (the type and per-load surcharge are not columns), and the
   surcharge panels outside the current book year (`winFscOk()`).
+- **Extras & VAP is on the page for every Period pick and every window, and it is the one panel
+  a window fetches from the SERVER.** It was hidden for both Prev-month picks and every dragged
+  span, on the correct observation that the cube cannot split extras by type — but *the cube
+  cannot answer it* is not the same question as *the page cannot show it*. It is fetched by
+  `wextSig()` / `loadWext()` from **`RMX_getExtrasByMonths`**, asked for `winCy('rmx')` — the
+  same month list every other panel on that tab is computed over — so the revenue and the m³ it
+  is divided by cover exactly the same months. **That is not the server painting over a
+  window**: the rule it looks like it breaks is *"a report fetched for `STATE.period` must not
+  paint a window"*, and this was not fetched for `STATE.period`. `getRmxCrossReport` is still
+  fetched in window mode, because its per-field option lists feed the filter drop-downs, and it
+  paints **nothing** there.
+  **The server returns revenue, never `$/m³`.** The denominator is total concrete m³ and the
+  browser already holds it; a second copy from the server would be two answers to one question,
+  and they would part company the moment a filter reached one and not the other.
+  **There is no book-year gate left.** A short-lived `monthFrom` / `monthTo` span on
+  `getCrossReport` had one, because that report reads the live workbook and one workbook holds
+  two years; the extras facts reach every closed book that has been read, so the panel answers
+  for any span the slider can offer and names the months no book covers instead of dropping
+  itself. So **Product Category is the only panel on this page gated on WHICH period is
+  picked.**
+- **The data-quality badge has to ask for half its own count.** Four of its six sections come
+  off the cube manifest the page already holds; EXTRAS LOOKUP and CUSTOM FLAG cannot — the RMX
+  fact table carries plant, mix and segment and no extras or material *description* to match
+  on — so they come from `getRmxSuggestions`. That call was made only by `dqOpen()`, so the ⚠
+  count in the header was the four cube sections and the extras misses did not exist until
+  somebody happened to open the panel. **And an unmatched extras row is exactly the one that
+  drops a type out of the Extras & VAP table**, so the panel that would have explained a
+  missing row was the panel not counting it. `boot()` asks once, 1.2s behind the first paint;
+  `dqLoadRmx` is a no-op after the first call and `invalidateAll()` puts it back to idle so a
+  lookup write re-asks. Nothing about it is period-scoped, on either side — `getUnmapped` walks
+  the whole bundle.
 - History cube: era files are registered in `APP_EXTRA_SOURCES.overview`; `ERAS` is
   newest-first. History JSON is stamped with shape/dims/vals so stale files auto-rebuild. A
   **dictionary remap** is required when merging per-era files built with independent
   dictionaries.
+- **A Ready-Mix book is TWO reads and they are separately built.** `part:'main'` is Main Raw
+  Data — the months, the volumes, the PPI grain, ~58,000 rows. `part:'extras'` is that book's
+  Extra Raw Data and Associate Raw Data tabs, parked in a file of its own
+  (`CUBE.FILES.rmxExtras`) so neither part ever costs the other's time and a book can carry its
+  months before it carries its extras. The manifest reports both (`eras[].built`,
+  `eras[].extras.built`) and `histPending()` queues the extras half **behind** the months of the
+  same book, because the slider cannot reach a year until its volumes are in and the extras
+  panel divides by those volumes. `OVX_SHAPE_VER_` is deliberately separate from
+  `OVCUBE_SHAPE_VER_`: an extras layout change must not make the month files stale, or the other
+  way round. Same **dictionary remap** rule, for the same reason (`ovcXRead_`).
 - `cyMonths` and `pyMonths` passed to `AmrCube.query` must be **index-aligned**, and
   `groupBy:'ym'` must map prior-year rows onto their CY slot — otherwise the series returns
   twice as many points with PPI 0.
 - Numeric reconciliation tolerance is 1e-5 relative (measures are rounded to 2 dp on the wire);
   the un-rounded path achieves 1e-15.
+
+#### Every restriction on the Overview, and the gate that enforces it
+
+The bullets above say *why* each of these is the way it is and are the thing to read before
+changing one. This table is the **index**: what the rule is, and the one function to `Ctrl+F`
+for. If a panel is missing from a screenshot, start here — a panel that is simply not on the
+page is almost always one of these deciding correctly.
+
+| # | Restriction | Gate |
+|---|---|---|
+| 1 | Read-only aggregator: never recomputes, always defers to the base tools' caches, never blends an AGG line with an RMX one | the page has no arithmetic of its own outside the cube painters |
+| 2 | A market has to be in `OVERVIEW.MARKETS` or it is on no panel; what is in the sheets and not in that list is named in the footer and in Data quality | `dqUnmapped()`, `out.unmatched` |
+| 3 | Market selection is **one market or All markets** — the chips are single-select, so there is no 2+ subset to reach any more | `renderChips()` (`next = [mk]`), `selectedKeys()` |
+| 4 | Period has four picks and **only two exist on the server**; `PMTD` / `PYTD` are the same two shapes one month back, computed in the browser | `PICK_SERVER`, `STATE.pick` vs `STATE.period` |
+| 5 | The anchor is the **newest month the cube holds**, not the reporting month; `getOverview` is passed it so both halves answer for one month | `anchorMonth()`, `loadMonth()`, `SEED_YM` |
+| 6 | The Prev-month buttons stay **disabled** until the cube holds the month they need | `syncPeriodSeg()` / `periodSpan()` |
+| 7 | The slider offers only months that have **landed**, never the manifest's full range | `winMonths()` (reads `AmrCube.months`, not `manifest.ym`) |
+| 8 | Prev-month spans are tested **before** MTD/YTD, because one month can be both when the lines run a month apart | `windowPeriod()` |
+| 9 | Past twelve months the page reports **volume and revenue and nothing else** — no ASP % inc, PPI, VOL %, neither bridge, no RMX ASP build-up | `pyStale()` → `volRev()`, columns via `measHead()` / `measCells()` |
+| 10 | **Product Category** is shown for the two Prev-month picks only, AND only when the month it lands on is the Slide tabs' own month. **The only WHICH-PERIOD gate left on the page** | `pcatFits()`, decided first in the RMX branch |
+| 11 | **Extras & VAP by type** is on every Period pick AND every window — the one panel a window fetches from the server. What it cannot answer is a month **no book has been read for**, and it names those rather than dropping itself | `wextSig()` / `loadWext()` → `renderWinExtras()`; `uncovered` from `RMX_getExtrasByMonths` |
+| 12 | **Ready-Mix fuel recovery** is absent in window mode — the extra type and the per-load surcharge are on rows the fact table does not carry | `hidePanel('rmxFuelBody')` in `renderWinRmx()` |
+| 13 | Both **fuel-surcharge** panels answer only for windows inside the current book year | `winFscOk()` |
+| 14 | The **SAP / USGAAP cards** are hidden outright in window mode; they are statement figures and exist per month or per year only. Out of window mode they read the month BEFORE the anchor and say which | `syncWinPanels()`, `kpiMonth()` |
+| 15 | **A panel with nothing in it is not shown** — no rows, no data, not computable → the card goes. Only genuine faults speak, because those are fixable and carry a link | `hidePanel()` / `resetPanels()` at the top of `renderTab()` |
+| 16 | In window mode the **server reports must not paint**, with no exception: `loadDims` / `loadPM` / `paintRxfPanels` still run to keep the filter lists and shared caches warm and paint nothing. Row 11 is not an exception — it is a different call, asked for the window's own months | `srvOwnsAgg()`, `winMode()` early returns |
+| 17 | `renderTab()` tests `winMode()` **before** `xfActive()` — the cube applies the page's cross-filters itself | `renderTab()` |
+| 18 | An in-panel toggle repaints from whatever is **driving** the page, never from the server | `repaintPanel(win, xf, srv)` |
+| 19 | A **late** server answer re-tests the same three-way answer; a request key catches a changed market but not a changed owner | `winMode()` in the customer merge and `renderFsc()` |
+| 20 | PPI is never averaged or summed: re-pooled on the span, exact for all-markets and for a single market | `AmrCube` coverage recompute; `rfiBase` / `facBase` |
+| 21 | Applied-to m³ is not additive across extra types; every $/m³ in the by-type table sits on **total concrete m³**, which is what makes the rows addable | `rxfAspBlock_`, `sumRows()` |
+| 22 | Extras and VAP carry **no product mix**, so a Strength or Product Class filter is REFUSED — `asp.ok:false` on the cross-report, `ok:false, reason:'mix'` on the extras endpoint — and the by-type table is not shown. Refused, never silently ignored | `RXF_MIX_ONLY` / `mixFiltered` and `RMX_getExtrasByMonths`'s own `list('STRENGTH')` test, `rxfMixFiltered()` in the page |
+| 23 | Customers are fetched **per selected market** and merged in the browser; a slot that failed is an error, never a quietly smaller total | `loadCustomers()` + `AMR.batch` |
+| 24 | Revenue reaches the page under **three names** and every payload has it | `revCY()` / `revPY()` |
+| 25 | The cube keys a plant-derived field by the **field** name (`submarket1`), not by the plantMap (`sm1`); a `groupBy` it cannot resolve returns one bucket, not an error | `AmrCube.dict()` accepts either |
+| 26 | Chart instances live in **per-section registries**, never one global list | `CH` in §P `overview` (fifteen arrays) |
+| 27 | Data quality is deliberately **not** filtered by market, period or window — it is about fixing the lookup tabs, not reading a slice | `dqSections()` |
+| 28 | Two of Data quality's six sections are not in the cube and have to be **asked for**, once, behind the first paint | `dqLoadRmx()` from `boot()` |
+| 29 | One loading screen, one `AmrProgress` key; the boot screen releases on the opening WINDOW, not the whole history | `histBootReady()`, `AmrBoot.painted()` |
+| 30 | `invalidateAll()` is the **single** invalidation path — a cache added later has exactly one function to be added to (`WEXT_CACHE` is the most recent) | `invalidateAll()` |
+| 31 | `ex` / `va` on the rmx cube line are written by the **fold**, not by either roll; a month whose extras source has not been read contributes nothing to the ASP build-up, and the note under the by-type panel is where that is said | `ovcRmxFoldExtras_`, `wextGapNote()` |
 
 ### Rendering traps
 
@@ -2292,3 +2410,5 @@ or was forgotten.**
 | 2026-08-25 | **The retry does the tabs that failed, not the page they are on.** One Ready-Mix tab failing retried all three — 82,200 rows rewritten to fix 14,157, which is the work that used the budget up in the first place — and that is a **risk** taken for no gain, not merely waste: a retry killed mid-write on a tab that was already right takes a *good* tab apart and leaves it blank below the boundary. The failure record names its tabs and `run(page, only)` takes the list; the timers and the editor tools pass nothing and get the whole page. **"The page cannot be split further" was the wrong reading of a true constraint** — what has to hold is that no formula is left pointing at a height that has moved, so the re-point pass now covers every `'columns'` tab of the page rather than only the ones in `plan`: a tab this run did not write has its band read off the tab and re-pointed only if it names a tab this run did. That **closes a hole the full-run path had all along** — a run whose second tab failed its gate left the first tab's cross-references pointing at the second tab's old height, with nothing to notice | ✅ |
 | 2026-08-25 | **The opening is a batch now, and the loading screen gets out of the way once there are figures behind it.** The Executive Overview opened with **24 `google.script.run` calls** — 4 `getOverview`, 8 `CUBE_getChunk`, 2 `CUBE_getManifest`, 3 `getFscData`, 3 `getCustomerReport`, plus versions, source times and KPI values — and Apps Script runs a user's calls END TO END, so none of it overlapped and almost all of it was handing over something `CacheService` already held. Four mechanisms, in the order they matter. **`APP_batch(calls)` (§3)** runs a list in ONE execution, each entry caught on its own, dispatching only through `APP_BATCH_ALLOW_` — 30 READS, no writes, because "which of the six ran before the budget stopped it" must never be a question about a sync or an email — and stops STARTING work at `APP_BATCH_BUDGET_MS`, marking the rest `skipped` for the browser to re-issue. `AMR.batch` (§D) is the transport and falls back to one call each on ANY failure, including a deployment with no `APP_batch` in it. **`CUBE_getChunks` (§8)** takes a mixed, ORDERED list — the order is the streaming plan, newest block of the line you are looking at first — and stops short of `CUBE.BYTES_PER_CALL` using the cache's own meta rather than reading to find out; a reply shorter than the ask is normal and the browser re-asks, gated on that reply having carried at least one usable block so a dead chunk is tried once and not for ever. **The month anchor comes off the manifest** (`SEED_YM`): the first `getOverview` used to ask for month 0, then the first block landed, moved the anchor and the whole thing was fetched again — twice over, because each fetch prefetched the other Period. `winMonths()` is untouched and still reads what has LANDED; this is a different question and only the server fetch asks it. **And `AmrBoot.painted()`**: the full-screen screen is now modal for exactly one situation — an opening with nothing behind it — and becomes a bottom-right card the moment `done('data')` says there are figures on the page, which is also what stops every later fetch throwing a second full-screen screen over a finished one. Overview 24 → **7**; Price & Volume 4 opening calls → 1 and its chunk calls 4 → 2; Ready-Mix `RMX_prepare` + `getLogo` → 1; both fuel pages' version + logo → 1. **Left undone on purpose:** Product Segment still opens with two (`getKpiValues`, then `RMX_getStamp`/`RMX_prepare`) — folding them in means teaching `bootLoad` to carry passengers on the page with the write-only-store history, for one round trip; and `AmrStamp` still fetches `getSourceTimes` on its own because §D mounts it before the page's `boot()` runs, so there is no batch to put it in yet | ✅ |
 | 2026-08-25 | **The data-quality cap is gone, and a call that never answers no longer hangs the page.** Two things, and the second is the answer to "it gets stuck randomly". **The 200-row cap on the lookup editor** was protecting against a real cost measured in Chromium: 1,200 proposed rows rendered eagerly is 91,200 nodes and **5.8 seconds** of frozen main thread, because three of the five controls per row carry the whole PRODUCT MASTER vocabulary. Capping made that 1.6s and left the expensive half in place — six rounds of fill/save/wait-for-the-cube-to-rebuild to fix 1,116 mixes. `lkSelect` now renders ONE option (the selected one, which is what a save reads) and `lkFill()` adds the rest on first focus or mousedown; `.lk-row` carries `content-visibility:auto` so the 340px scroll box lays out what is visible. Same 1,200 rows: **25,200 nodes and 325ms** — eighteen times faster than what the cap protected against, and quicker than the old form was at 200. The trap, checked in Chromium against the shipped functions: an empty value used to render no selected option and the browser took the FIRST one, so `lkSelect` selects `list[0]` rather than blank or a save writes something different from what it always did. The 60-row listing cap went the same way — the table is built only for the section that is OPEN, so the reason for it is gone. **And the hang.** `google.script.run` has no timeout and no way to ask for one: when an execution dies without reporting, NEITHER handler runs, nothing is watching, and the page sits under its screen for ever leaving no trace anywhere — no error, no failed call, nothing in any log. §D's call guard (the same interception that drops a stale answer) now stamps every call, tracks it on `INFLIGHT` and gives it a 7-minute watchdog — past the platform's own 6-minute kill, so a cold cube build is never failed while it is still building — and whichever of success/failure/watchdog fires first settles it, the losers ignored. A watchdog win runs the CALLER'S OWN failure handler, so a hang becomes the error path each page already has. `AMR.inflight()` is what makes the wait diagnosable: `AmrBoot`'s 150s watchdog names the call that has not answered instead of blaming the page's code, which it now only does when nothing is outstanding. Two related fixes found on the way: `withUserObject` was falling through the guard's dispatch branch and handing back an UNWRAPPED runner (losing the guard for the rest of the chain), and `APP_batch` gained `APP_BATCH_CEILING_MS` — it estimates the next call from the longest one so far and refuses to start work that would run into the 6-minute limit, which is the one way batching could hang a page that separate calls could not | ✅ |
+| 2026-08-25 | **Extras & VAP is on the Overview for every Period pick, and the data-quality badge now counts the section that explains it.** The by-type table was hidden for both Prev-month picks and every dragged span on a correct observation — the month cube carries the extras MONEY (`ex` / `va`, which is what the ASP build-up above it sums) and not the extra TYPE — but *the cube cannot answer it* is a different question from *the page cannot show it*. `RMX_NS.getCrossReport` can, once it is asked for the right months: it takes a **month span** (`monthFrom` / `monthTo`, 1-12 inclusive) beside its original `period` + `month` pair, both scoped through one `inScope_` so the two halves of an answer cannot disagree, and the span is in the cache key and echoed back as `monthSpan`. In the page `rxfWinScope()` is the single decision: null on the MTD / YTD path — **nothing on that path moves, the server still answers for its own reporting month** — and the window's own two months otherwise, carried in `rxfSig()` so a stale reply cannot paint and in `rxfArg()` so the signature and the call cannot describe two different reports. **This is not the server painting over a window**: the rule it looks like it breaks is *a report fetched for `STATE.period` must not paint a window*, and this one was not fetched for `STATE.period`; every other Ready-Mix panel still belongs to the cube, so no figure on the tab has two sources. **The real restriction is the book year, not the period.** These rows carry a month and a cy/py pair and no year of their own, so month 3 is March of `cyYear` against March of `pyYear` — ask for a span in a closed year and the report would answer for the book year's months without saying so. The caller refuses (same shape as `winFscOk`), the server does not, and the panel is not shown there. **Product Category is now the only which-period gate left on the page.** **And the ⚠ badge was counting four of its six sections.** EXTRAS LOOKUP and CUSTOM FLAG misses are not in the cube — the RMX fact table has plant, mix and segment and no extras or material *description* to match on — so they come from `getRmxSuggestions`, which only `dqOpen()` ever called: the extras misses did not exist until somebody opened the panel, and **an unmatched extras row is exactly the one that drops a type out of the table above**. `boot()` asks once, 1.2s behind the first paint. Nothing about it was ever period-scoped on the server; `getUnmapped` walks the whole bundle. **Found and NOT changed** (both would move numbers that are right today): `getRmxCrossReport` and `getOverview`'s RMX half send no month at all, so they answer for RMX's *reporting* month while `getOverview`'s PV half is passed the cube anchor — two months on one page whenever the running month has RMX rows; and pressing YTD on the Ready-Mix tab always costs a round trip, because `rxfSig()` is keyed on `STATE.period` and nothing prefetches the other period's cross-report the way `load()` prefetches the other `getOverview`. `node --check` clean on `script.gs` and on all 28 of `app.html`'s script blocks | ✅ |
+| 2026-08-25 | **The extras tabs always carried their year; nobody had ever read the closed books', and `ex` / `va` had never been written at all.** The previous row's account of *why* Extras & VAP stopped at the book year was wrong and is corrected here. **Bill Month carries the year on every one of these rows**, live book and closed alike, and the `- CY` / `- PY` versus `- 2024` / `- 2025` heading is a difference `APP_yearCols_` erases — that helper exists for this. What discards the year is §7's `loadStream_` (`monthOrd_` reads three letters), and what actually bounded the panel is that **one workbook holds two book years and `ovcHistRmx_` reads Main Raw Data and stops**. So the restriction was never about months. **§8 now has extras FACTS**: `ovcHistRmxExtras_` reads a closed book's Extra Raw Data and Associate Raw Data tabs, `ovcXWrite_` parks them per era (`part:'extras'`, its own file and its own `OVX_SHAPE_VER_`, so an extras change never makes the month files stale or the other way round), and `ovcXRead_` merges them with the live tabs on one `ym` axis under one master dictionary — history first, newest book wins a shared month, live wins over the lot, the same one line `ovcMerge_` follows. Facts only: plant, segment, mat_descr, with market and the extra TYPE resolved from the LIVE lookups at read time, so an EXTRAS LOOKUP edit re-labels every closed year at once. `RMX_getExtrasByMonths` answers the panel for an explicit `ym` list and **returns revenue, not `$/m³`** — the denominator is the browser's own, and a second copy would be two answers to one question. **The second bug is the one nobody could see.** `ex` / `va` have been in `CUBE.SHAPE` since v2 and **nothing has ever written to them**: the live roll read `e.cyExRev` off Main Raw Data rows that never had such a field, the history roll read `col.ex` from a `byYear` map built out of the volume and net-sales headers alone. Every Extras and VAP row of the window-mode ASP build-up was `$0.00` and All-in equalled Base, under a correct heading, for the life of the panel. `ovcRmxFoldExtras_` fills both from the same facts the by-type table reads — onto the BLANK mix, which `dimsForProduct_` buckets as *Others*, carrying no volume and no base revenue, so a pair of zeroes fails the browser's `> 0` coverage test (no PPI, no CPI moves) and every grouped view filters on volume/revenue before rendering (no extras-only row of zeroes). **And a month nobody has read is not a month with no extras**: `ovcXAcc_` records a source's span from every readable row, and the panel prints which window months are uncovered instead of totalling the ones that are. The `monthFrom` / `monthTo` span added earlier the same day is **gone** — it could only ever answer inside the live book year while the other eight blocks of that report were scoped to a period, which is one payload with one correct block. `getCrossReport` is a period report again (its single `inScope_` is what the attempt left behind and is kept). A throwaway Node harness over the extracted pure functions covered the dictionary remap across eras, the CY-wins-a-shared-month rule on a 24-month window, the market/segment/mix filters, a closed-year answer, the uncovered lists and the fold; `node --check` clean on `script.gs` and on all 28 of `app.html`'s script blocks | ✅ |
