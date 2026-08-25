@@ -18968,11 +18968,13 @@ AMR.page('overview', {
          draws it either way, and the all-in overlay (extras per month) is left
          off because that comes from the server report, for the server's period */
       renderTrendPanel('rmx', null, null);
-      /* Extras BY TYPE and fuel recovery are the two Ready-Mix panels a window
-         cannot rebuild: the extra type and the per-load surcharge live on rows
-         the fact table does not carry (it carries their money, not their name).
-         They are not shown rather than explained. */
-      hidePanel('extBody');
+      /* Extras BY TYPE comes off the cross-report, fetched for THIS window
+         (rxfWinScope) rather than for the server period - the extra type lives
+         on rows the fact table does not carry, it carries their money, so the
+         cube can sum the streams (the build-up above) and cannot split them.
+         Ready-Mix fuel recovery has no such route: the per-load surcharge is
+         not a column anywhere the window can reach, so it stays off. */
+      renderWinExtras(rxfData(), RXF_ERR[rxfSig()]);
       hidePanel('rmxFuelBody');
       $('footRmx').innerHTML=esc(winScopeWord())
         +' · computed in your browser from the month fact table, not the server report.';
@@ -19036,6 +19038,16 @@ AMR.page('overview', {
                  row('VAP', g.cyVa||0, g.pyVa||0) ];
       var total=row('All-in', g.cyRev+(g.cyEx||0)+(g.cyVa||0), g.pyRev+(g.pyEx||0)+(g.pyVa||0));
       renderAspBuildUp({ rows:rows, total:total, volCY:g.cyVol, volPY:g.pyVol });
+    }
+    /* ---- Extras & VAP by type, in window mode ------------------------------
+       One decision, taken in one place, so the paint that runs before the fetch
+       and the paint that runs when it lands cannot disagree. A window the server
+       cannot answer for - a closed book year, or one straddling two - has no
+       by-type answer at all, so the panel goes rather than showing the book
+       year's months under the window's heading. */
+    function renderWinExtras(d, err){
+      if(!rxfWinScope()){ clearCH('ext'); hidePanel('extBody'); return; }
+      renderExtrasPanel(d, err);
     }
     /* the Ready-Mix dimension table is a plain table (its painter is bound to the
        cross-report's own row shape), so window mode renders it directly */
@@ -19735,8 +19747,41 @@ AMR.page('overview', {
     function rxfActive(){ for(var f in RXF){ if(RXF[f].length) return true; } return false; }
     function rxfFilters(){ var o={}; RXF_FIELDS.forEach(function(f){ o[f]=RXF[f].slice(); }); return o; }
     function rxfMarket(){ return isAll() ? '__ALL__' : (selRmxName()||'__ALL__'); }
+    /* ---- THE MONTH SCOPE THE CROSS-REPORT IS ASKED FOR --------------------
+       null on the MTD / YTD path: the server answers for its own reporting
+       month exactly as it always has, and nothing on that path moves.
+
+       In WINDOW MODE it returns the span the slider is showing, as two 1-12
+       month numbers, and the report is fetched FOR THAT SPAN. That is what lets
+       Extras & VAP stay on the page for the two Prev-month picks and for a
+       dragged window - it is the one Ready-Mix panel the month cube cannot
+       rebuild, because the fact table carries the extras MONEY (ex / va, which
+       is what the ASP build-up sums) and not the extra TYPE.
+
+       IT IS NULL AGAIN FOR A WINDOW OUTSIDE THE LIVE BOOK YEAR, and that is the
+       whole of the restriction. These rows carry a month and a cy/py pair with
+       no year of their own, so "March" means March of the live export's current
+       year against March of its prior year - ask it for March 2024 and it would
+       answer for March of the book year without saying so. A window in a closed
+       year, or one straddling two, therefore has no by-type answer and the panel
+       is not shown, the same rule the surcharge panels follow (winFscOk).
+
+       THE BOOK YEAR IS THE READY-MIX LINE'S OWN, not the slider's last month.
+       The slider spans the UNION of the two lines, so its newest month can be
+       the Aggregates line's - and when Aggregates has rolled into a new year and
+       Ready-Mix has not, the union says 2027 while this report still answers for
+       2026. Asking cube().months('rmx') asks the line the report is about. */
+    function rxfWinScope(){
+      if(!winMode() || !winReady()) return null;
+      var C0=cube(), ms=(C0 && C0.months) ? (C0.months('rmx')||[]) : [];
+      if(!ms.length) return null;
+      var bookY=Math.floor(ms[ms.length-1]/100);
+      if(Math.floor(WIN.from/100)!==bookY || Math.floor(WIN.to/100)!==bookY) return null;
+      return { from: WIN.from%100, to: WIN.to%100 };
+    }
     function rxfSig(){
-      var parts=[STATE.period, rxfMarket()];
+      var sc=rxfWinScope();
+      var parts=[STATE.period, sc?('w'+sc.from+'-'+sc.to):'m0', rxfMarket()];
       RXF_FIELDS.forEach(function(f){ if(RXF[f].length) parts.push(f+'='+RXF[f].slice().sort().join('\u2016')); });
       return parts.join('|');
     }
@@ -19896,6 +19941,15 @@ AMR.page('overview', {
 
     /* ---- loader: one call feeds every Ready-Mix panel ---- */
     function scheduleRxf(){ if(rxfTimer) clearTimeout(rxfTimer); rxfTimer=setTimeout(loadRxf, 200); }
+    /* The request, in one place, so the signature above and the call below
+       cannot describe two different reports. monthFrom/monthTo are only ever
+       sent for a window the server can answer - see rxfWinScope. */
+    function rxfArg(){
+      var a={ period:STATE.period, market:rxfMarket(), filters:rxfFilters() };
+      var sc=rxfWinScope();
+      if(sc){ a.monthFrom=sc.from; a.monthTo=sc.to; }
+      return a;
+    }
     function loadRxf(){
       if(!STATE.data || (STATE.data.errors && STATE.data.errors.rmx)) return;
       var sig=rxfSig();
@@ -19923,16 +19977,23 @@ AMR.page('overview', {
             RXF_ERR[sig]=(err&&err.message)||String(err);
             if(sig===rxfSig() && STATE.tab!=='agg') paintRxfPanels();
           })
-          .getRmxCrossReport({ period:STATE.period, market:rxfMarket(), filters:rxfFilters() });
+          .getRmxCrossReport(rxfArg());
       }catch(e){ RXF_PEND[sig]=false; RXF_ERR[sig]=String(e&&e.message||e); paintRxfPanels(); }
     }
     function paintRxfPanels(){
-      /* Same rule as the Aggregates side: in window mode every panel below
-         belongs to the cube. The cross-report is still fetched - it is what fills
-         the Ready-Mix filter dropdowns - but it is fetched for the SERVER period
-         and must not paint over a window with it. */
-      if(winMode()) return;
       var sig=rxfSig(), d=RXF_CACHE[sig], err=RXF_ERR[sig];
+      /* Same rule as the Aggregates side: in window mode every panel below
+         belongs to the cube, and the cross-report must not paint over a window
+         with a period's numbers.
+
+         EXTRAS & VAP IS THE ONE EXCEPTION, and it is one because the report is
+         no longer answering for the wrong thing: rxfWinScope sends the window's
+         own months, so this panel is fetched for exactly the span the heading
+         names. It is here rather than in the cube because the extra TYPE is not
+         a column in the month fact table - only its money is, which is what the
+         ASP build-up above it sums. renderWinExtras takes the same decision on
+         the paint that runs before this fetch lands. */
+      if(winMode()){ renderWinExtras(d, err); return; }
       renderRmxKpiStrip(d);
       renderRmxBreakdown(d, err);
       renderRmxDims(d, err);
@@ -20375,7 +20436,11 @@ AMR.page('overview', {
     function renderExtrasPanel(d, err){
       var body=$('extBody');
       clearCH('ext');
-      rxfSubSet('extSub','By extra type \u00b7 ',' \u00b7 '+periodLabel()+' \u00b7 $/m\u00b3 on total concrete.');
+      /* the heading names the span the numbers are for, and in window mode that
+         is the window - the report was fetched for it, so saying "month to date"
+         here would be the one line on the panel that is untrue */
+      rxfSubSet('extSub','By extra type \u00b7 ',
+        ' \u00b7 '+(winMode()?winScopeWord():periodLabel())+' \u00b7 $/m\u00b3 on total concrete.');
       if(!d){ body.innerHTML=rxfWait(err,'extras'); return; }
       if(!d.byType){ hidePanel('extBody'); return; }
       var rows=d.byType;
@@ -22233,6 +22298,11 @@ AMR.page('overview', {
        classified proposal for every row, and the vocabulary each column already
        uses, so the listing and the add-form are fed by the same fetch. */
     var DQX = { state:'idle', product:[], extras:[], flag:[], options:{}, err:'' };
+    /* LOOKED UP, NOT ASSUMED. This call is now made from boot() as well as from
+       dqOpen(), so its answer can land after the switcher has emptied #appRoot -
+       and an unguarded $('dqModal').classList throws out of a callback nothing
+       is catching. Absent modal = nothing to repaint. */
+    function dqShown(){ var m=$('dqModal'); return !!(m && m.classList.contains('show')); }
     function dqLoadRmx(force){
       if(!IS_LIVE) return;
       if(!force && (DQX.state==='loading' || DQX.state==='done')) return;
@@ -22242,11 +22312,11 @@ AMR.page('overview', {
           if(!r || !r.ok){ DQX.state='error'; DQX.err='The RMX report could not be read.'; }
           else { DQX.state='done'; DQX.product=r.product||[]; DQX.extras=r.extras||[];
                  DQX.flag=r.flag||[]; DQX.options=r.options||{}; }
-          dqBadge(); if($('dqModal').classList.contains('show')) renderDq();
+          dqBadge(); if(dqShown()) renderDq();
         })
         .withFailureHandler(function(e){
           DQX.state='error'; DQX.err=(e&&e.message)||String(e);
-          if($('dqModal').classList.contains('show')) renderDq();
+          if(dqShown()) renderDq();
         })
         .getRmxSuggestions({});
     }
@@ -22719,7 +22789,7 @@ AMR.page('overview', {
       var C0=cube();
       function finish(){
         syncWindow(); dqBadge();
-        if($('dqModal').classList.contains('show')) renderDq();
+        if(dqShown()) renderDq();
         try{ boot(); }catch(e){ load(); }
         done && done();
       }
@@ -23405,6 +23475,21 @@ AMR.page('overview', {
 
       wireCube();
       load();
+      /* ---- THE DATA-QUALITY BADGE HAS TO ASK FOR HALF ITS COUNT -------------
+         Four of the six sections come from the month cube's manifest, which the
+         page already holds. The other two - EXTRAS LOOKUP and CUSTOM FLAG - are
+         not in the cube at all: the RMX fact table carries plant, mix and
+         segment, and no extras or material DESCRIPTION to match on, so they come
+         from getRmxSuggestions instead. That call used to be made only by
+         dqOpen(), which meant the badge in the header counted four sections and
+         the extras misses were invisible until somebody happened to open the
+         panel - and an extras row that matches nothing is exactly the one that
+         drops a type out of the Extras & VAP table above.
+         Asked once, behind the first paint (the same shape as prefetchXData) so
+         it costs the opening screen nothing; dqLoadRmx is a no-op on every call
+         after the first, and invalidateAll() puts it back to idle so a lookup
+         write re-asks. */
+      setTimeout(function(){ try{ dqLoadRmx(false); }catch(e){} }, 1200);
     }
     /* AmrCube is §E, above §P, so it exists by construction now — the poll
        resolves on its first call and is left alone rather than rewritten

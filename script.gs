@@ -10807,12 +10807,41 @@ function getCrossReport(opts){
     if (filters[f].length) sigParts.push(f + '=' + filters[f].slice().sort().join('\u2016'));
   });
 
-  var ck = cacheKey_(['xf', period, 'm' + (Number(opts.month) || 0), market,
-                      sigParts.join('&') || 'none']);
+  /* THE MONTH SCOPE. `period` + `month` is the original pair and is unchanged:
+     MTD is that one month, YTD is January through it, and an absent month means
+     the bundle's own reporting month.
+
+     `monthFrom` / `monthTo` (1-12, inclusive) name an explicit SPAN instead, and
+     when both are present they win. That is the Overview's Months slider talking:
+     its two Prev-month picks and any dragged window are spans the period pair
+     cannot express, and Extras / VAP BY TYPE is the one panel on that page the
+     month cube cannot rebuild — the extra TYPE is not a column in the fact table,
+     only the money is. So the span comes here instead of the panel being dropped.
+
+     A span is only meaningful INSIDE THE LIVE BOOK YEAR, because these rows carry
+     a month and a cy/py pair and no year of their own: month 3 means March of
+     cyYear against March of pyYear, whichever years those are. The caller is what
+     enforces that (app.html rxfWinScope) — a span reaching into a closed year has
+     no rows here to be wrong about, it would simply re-answer the current one. */
+  var mFrom = Number(opts.monthFrom) || 0, mTo = Number(opts.monthTo) || 0;
+  var span  = (mFrom >= 1 && mFrom <= 12 && mTo >= 1 && mTo <= 12 && mFrom <= mTo)
+            ? { from: mFrom, to: mTo } : null;
+
+  var ck = cacheKey_(['xf', period,
+                      span ? ('s' + span.from + '-' + span.to)
+                           : ('m' + (Number(opts.month) || 0)),
+                      market, sigParts.join('&') || 'none']);
   var hit = cacheGet_(ck); if (hit) return hit;
 
   var bundle = loadDataCached_(false);
-  var month  = monthFor_(bundle, period, opts.month);
+  var month  = span ? 0 : monthFor_(bundle, period, opts.month);
+  /* The ONE place a row's month is tested in this report. Everything below goes
+     through it, so the span and the period pair cannot scope two halves of the
+     same answer differently. */
+  function inScope_(rowMonth){
+    if (span) return rowMonth >= span.from && rowMonth <= span.to;
+    return inMonth_(rowMonth, month);
+  }
 
   var fSet = {};
   RXF_ORDER.forEach(function(f){
@@ -10836,7 +10865,7 @@ function getCrossReport(opts){
     });
     recs.push(rc);
   });
-  function inPeriod(rc){ return inMonth_(rc.r.month, month); }
+  function inPeriod(rc){ return inScope_(rc.r.month); }
 
   var full = [];
   recs.forEach(function(rc){ if (rc.nFail===0 && inPeriod(rc)) full.push(rc.r); });
@@ -10875,7 +10904,7 @@ function getCrossReport(opts){
   RXF_MIX_ONLY.forEach(function(f){ if (filters[f].length) mixFiltered = true; });
   function extraPass(e, useMonth){
     if (!mktOk_(e.market, market)) return false;
-    if (useMonth && !inMonth_(e.month, month)) return false;
+    if (useMonth && !inScope_(e.month)) return false;
     for (var i=0; i<RXF_ORDER.length; i++){
       var f = RXF_ORDER[i];
       if (!fSet[f] || !RXF_EXTRA_OK[f]) continue;
@@ -10995,6 +11024,10 @@ function getCrossReport(opts){
        trend charts read, and a second `months:` here silently overwrote it.
        The picker's option list travels as monthOptions. */
     month: monthSel_(bundle, opts.month), monthOptions: bundleMonths_(bundle),
+    /* THE SPAN THIS ANSWER IS FOR, echoed so the caller can prove the reply it
+       is painting matches the window it is showing. Null on the period path,
+       which is every caller that did not ask for one. */
+    monthSpan: span ? { from: span.from, to: span.to } : null,
     generation: generation_()
   };
   cachePut_(ck, report);
