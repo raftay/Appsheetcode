@@ -552,14 +552,29 @@ the write arrived and the run reports success.
 ### Nobody is watching a trigger, so a failed run says so
 
 A throw inside a time-driven trigger reaches one place: the execution log, which nobody opens
-until they already suspect something. **A failed run mails the failure** — to
-`QLIK_ALERT_TO` (a Script Property) if set, otherwise to the account the execution runs as,
-which by the trigger rule above is by definition whoever set the pipeline up.
+until they already suspect something. **A failed run reports the failure in full** — the
+source, the tab, every reason the gate produced, and two things the reasons alone do not: that
+**the sheet is unchanged rather than half-written**, and what happens next. Both matter — "the
+sync failed" usually means something was half-done, and here it means the opposite.
 
-The mail names the source, the tab and the reason, and says two things the reasons alone do
-not: that **the sheet is unchanged rather than half-written**, and what happens next. Both
-matter — "the sync failed" usually means something was half-done, and here it means the
-opposite.
+**Whether that report is also MAILED is a switch, and it is off by default.** `qlikAlertsOn()`
+turns it on and `qlikAlertsOff()` turns it back off — two editor tools over one Script
+Property, `QLIK_ALERT_MAIL`, which has to say `on` before `MailApp` is reached. The recipient
+is a separate property, `QLIK_ALERT_TO`, falling back to the account the execution runs as,
+which by the trigger rule above is by definition whoever set the pipeline up; the address
+survives a mute, so turning the mail back on does not need it typed in again.
+
+**Off by default, because the mail's failure mode is volume.** It was written for a pipeline
+nobody was watching and it is the right thing for one — but a sync that has started failing
+sends the same mail every fifteen minutes to somebody who is already dealing with it, and
+that is how the one mail that matters ends up looking exactly like the twenty before it.
+
+**Muted is not silent, and that is why this is a switch rather than a deletion.** A muted run
+writes the *entire* report it would have sent to the execution log at `error` — the same text,
+in the one place a trigger does reach — and `qlikRetryStatus()` says the mail is off every time
+it is asked, so a mute set for one bad afternoon cannot quietly outlive the afternoon. Nothing
+else changes: the gate still refuses a bad export, the tab is still left exactly as it was, the
+stamp is still withheld and the one-shot retry is still armed.
 
 **The retry is one attempt, five minutes out, and then it stops.** The existing rule still
 stands — a run that FINISHED with a broken tab is not retried, because that tab will be just
@@ -1840,6 +1855,7 @@ the banner still stood for four chunks. **Read the code, not the label.**
 | `qlikAggNow` / `qlikRmxNow` / `qlikSegmentNow` | **Editor tools, and the whole of the manual recovery path** when a timer misfires or a sync has to be forced. The Run menu passes no arguments, so a function taking a source key cannot be run from it — these three carry the key, which is why they exist and why they take nothing. Zero callers is what they are for |
 | `qlikSyncNowOne_` | The one export behind those three. Private, and it stays private: it is what makes "one at a time" a property of the code rather than advice. `qlikSyncNow(scope)` and `qlikSyncCheck` — the two ways of asking for all three at once — were removed on 2026-08-25 |
 | `qlikStamps` | What each timer will compare on its next firing, and what it will do. With five hand-set triggers and no harness left, the diagnostics are how this pipeline is inspected at all |
+| `qlikAlertsOn` / `qlikAlertsOff` | The failure mail's switch, and the only way to reach it without editing Project Settings by hand. Editor tools, and the mute they set is reported by `qlikRetryStatus` precisely so it cannot be forgotten |
 | `clearRetiredOverrides` | Its own comment says "run from the Apps Script editor", and it is idempotent. An editor tool, not dead code |
 | `getSaskRatesStatus` | Its comment says "so the Settings screen **(and a quick manual run)** can check the sheet" — that parenthetical is the editor-tool criterion. The Settings screen never calls it; wiring it would be a behaviour change, not a cleanup |
 | `DECK_status` | A real deck build has still never run against the live deployment, and that is what decides whether the Publish stage needs it. **Do not delete before then** |

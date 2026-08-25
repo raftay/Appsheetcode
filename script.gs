@@ -5058,7 +5058,68 @@ var QLIKSYNC = (function () {
    * execution is running as. That default is the right one here rather than a
    * fallback: an installable trigger runs as WHOEVER CREATED IT (§11), so the
    * effective user is by definition the person who set this pipeline up.
+   *
+   * AND WHETHER TO MAIL ANYBODY AT ALL IS A SWITCH, DEFAULTING TO NO. The mail
+   * was written for a pipeline nobody was watching, and it is the right thing
+   * for one — but a sync that is failing for a reason somebody is already
+   * working on sends the same mail every fifteen minutes to a person who
+   * already knows, and a mail nobody reads is worse than no mail, because the
+   * one that matters arrives looking exactly like the twenty before it. So it
+   * is opt-in: QLIK_ALERT_MAIL must say `on` before MailApp is reached, and
+   * qlikAlertsOn() / qlikAlertsOff() (§11) are the two editor tools that set
+   * it. Neither touches QLIK_ALERT_TO — the address survives being muted, so
+   * turning the mail back on does not need it typed in again.
+   *
+   * MUTED IS NOT SILENT, AND THAT IS THE WHOLE OF WHY THIS IS A SWITCH RATHER
+   * THAN A DELETION. §7's rule is that nothing fails quietly, and the mail was
+   * the only thing standing behind it here: run() returns its failures to a
+   * time-driven trigger, which reads them nowhere. So a muted run writes the
+   * ENTIRE report it would have sent to the execution log at `error` — the same
+   * text, the same reasons, in the one place a trigger does reach — and
+   * qlikRetryStatus() says out loud that the mail is off whenever it is.
    * ================================================================== */
+
+  /* The switch, and it is a Script Property rather than a constant so that
+     turning the mail back on is a Run-menu click and not a deployment. */
+  var QLIK_ALERT_MAIL_KEY = 'QLIK_ALERT_MAIL';
+
+  /* ANYTHING BUT AN EXPLICIT YES IS NO — an unset property, a typo, a
+     PropertiesService that will not answer. The failure still reaches the log
+     either way, so the safe direction here is the quiet one: a run that cannot
+     read the switch mails nobody rather than mailing everybody. */
+  function alertMailOn_() {
+    try {
+      var v = String(PropertiesService.getScriptProperties()
+                       .getProperty(QLIK_ALERT_MAIL_KEY) || '').trim().toLowerCase();
+      return v === 'on' || v === 'yes' || v === 'true' || v === '1';
+    } catch (e) { return false; }
+  }
+
+  /* What §11's two entry points do. Returns the state it left behind, so the
+     Run menu's execution log shows what happened without a second call. */
+  function setAlertMail_(on) {
+    var to = alertTo_();
+    try {
+      if (on) PropertiesService.getScriptProperties().setProperty(QLIK_ALERT_MAIL_KEY, 'on');
+      else    PropertiesService.getScriptProperties().deleteProperty(QLIK_ALERT_MAIL_KEY);
+    } catch (e) {
+      return { mail: alertMailOn_() ? 'on' : 'off', to: to,
+               error: 'The switch could not be written: ' + String(e && e.message || e) };
+    }
+    APP_log('info', 'QLIKSYNC.alert', 'the sync failure mail was switched ' + (on ? 'on' : 'off'),
+            { to: to.join(',') });
+    return {
+      mail: alertMailOn_() ? 'on' : 'off',
+      to: to,
+      note: on
+        ? (to.length ? 'A failed sync will mail ' + to.join(', ') + '.'
+                     : 'The mail is on but there is nobody to send it to — set the ' +
+                       'QLIK_ALERT_TO script property.')
+        : 'A failed sync will write its whole report to the execution log at error level and ' +
+          'mail nobody. qlikAlertsOn() puts the mail back.'
+    };
+  }
+
   function alertTo_() {
     var to = [];
     try {
@@ -5073,13 +5134,25 @@ var QLIKSYNC = (function () {
   }
 
   function alert_(subject, lines) {
+    var body = lines.join('\n');
+
+    /* SWITCHED OFF IS STILL REPORTED, IN FULL. The body is the report — every
+       reason the gate produced, which tab, and what happens next — so it goes
+       to the log verbatim rather than being summarised into a line that would
+       send somebody looking for the mail that is not coming. */
+    if (!alertMailOn_()) {
+      APP_log('error', 'QLIKSYNC.alert', 'the sync failed and the failure mail is switched off, ' +
+              'so this line is the whole report — qlikAlertsOn() puts the mail back',
+              { subject: subject, report: body });
+      return false;
+    }
+
     var to = alertTo_();
     if (!to.length) {
       APP_log('error', 'QLIKSYNC.alert', 'the sync failed and there is nobody to tell — set the ' +
-              'QLIK_ALERT_TO script property', { subject: subject });
+              'QLIK_ALERT_TO script property', { subject: subject, report: body });
       return false;
     }
-    var body = lines.join('\n');
     try {
       MailApp.sendEmail({ to: to.join(','), subject: subject, body: body });
       return true;
@@ -5616,6 +5689,7 @@ var QLIKSYNC = (function () {
   return { run: run, sources: sources_, lastSync: lastSync_,
            retry: runRetries_, retryPending: retryLog_, dropRetries: dropRetryTriggers_,
            shape: tabShape_,
+           alertMail: alertMailOn_, setAlertMail: setAlertMail_, alertTo: alertTo_,
            toSheet: convertToSheet_, trash: trashFile_, tempPrefix: TEMP_PREFIX };
 })();
 
@@ -17969,6 +18043,11 @@ var IRMAIL = (function () {
  *                    rows behind the comparison with the customer-parent
  *                    spellings actually in the sheet, and the match rate between
  *                    the two sides. Sends nothing and marks nothing.
+ *   qlikAlertsOn / qlikAlertsOff
+ *                    whether a failed sync MAILS anybody. Off is the default and
+ *                    off is not silent — the whole report goes to the execution
+ *                    log at `error` either way, and qlikRetryStatus() names the
+ *                    mute. §5c is the argument for the switch.
  *
  * The other functions in this file that are run by hand rather than called are
  * signposted where they live, because they belong with the code they report on:
@@ -18356,19 +18435,53 @@ function qlikSyncRetry() {
 
 /* Run from the editor when you want to know whether a retry is waiting, and
    clear it if one is stuck. Reads the retry state; `dropRetryTriggers` is the
-   escape hatch if a one-shot ever survives its own firing. */
+   escape hatch if a one-shot ever survives its own firing.
+
+   IT REPORTS THE MAIL SWITCH TOO, and that is not a convenience. With the mail
+   off, a failing sync says so in one place only — the execution log — and this
+   is the diagnostic somebody reaches for when they suspect a sync is failing.
+   Not saying "and by the way you asked not to be told" here is how a mute set
+   for one bad afternoon outlives the afternoon. */
 function qlikRetryStatus() {
   var pending = QLIKSYNC.retryPending();
   var keys = Object.keys(pending);
+  var mailOn = QLIKSYNC.alertMail(), to = QLIKSYNC.alertTo();
   return {
     waiting: keys.map(function (k) {
       return { source: k, attempt: pending[k].tries, since: new Date(pending[k].at),
                problems: pending[k].problems };
     }),
+    mail: mailOn ? 'on \u2014 a failed sync mails ' + (to.join(', ') || 'nobody (set QLIK_ALERT_TO)')
+                 : 'OFF \u2014 a failed sync writes its whole report to the execution log at ' +
+                   'error level and mails nobody. qlikAlertsOn() puts the mail back.',
     note: keys.length ? 'A one-shot trigger should be armed for these. qlikSyncRetry() runs it now.'
                       : 'Nothing is waiting to be retried.'
   };
 }
+
+
+/* ==========================================================================
+ * THE FAILURE MAIL, ON AND OFF. Two editor tools, run from the Run menu.
+ * --------------------------------------------------------------------------
+ * §5c is the argument; this is the switch. THE MAIL IS OFF BY DEFAULT — a
+ * pipeline that has started failing sends the same mail every fifteen minutes
+ * to somebody who already knows, and that is how the one mail that matters
+ * ends up looking like the twenty before it.
+ *
+ * WHAT IS NOT SWITCHED OFF IS THE FAILURE. A muted run writes the entire
+ * report it would have mailed to the execution log at `error`, and
+ * qlikRetryStatus() names the mute every time it is asked. Nothing about the
+ * gate, the retry or the withheld stamp changes: a tab that fails its checks
+ * is still left exactly as it was and still rewritten whole five minutes
+ * later.
+ *
+ * NEITHER TOUCHES QLIK_ALERT_TO. The address is a separate property and it
+ * survives a mute, so turning the mail back on does not need it typed in
+ * again. Both return the state they left behind, so the Run menu's own log
+ * line is the confirmation.
+ * ======================================================================== */
+function qlikAlertsOn()  { return QLIKSYNC.setAlertMail(true); }
+function qlikAlertsOff() { return QLIKSYNC.setAlertMail(false); }
 
 
 /* ---- IR_MailWatch.gs ---------------------------------------------------------
