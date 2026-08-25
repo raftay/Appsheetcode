@@ -10554,7 +10554,7 @@ var RMXSUGGEST = (function () {
 /* =================== config =================== */
 function sgSheets_(){ return APP_CONFIG.PAGES.rmx.SHEETS; }
 
-var SG_CACHE_VER = 'sg2';          // bumped: model shape + strength rule changed
+var SG_CACHE_VER = 'sg3';          // bumped: model shape (codes) + strength rule changed
 var SG_LOCK_MS   = 30000;
 
 /* Retired -> current brand names (PRODUCT MASTER only).
@@ -10726,12 +10726,18 @@ function sgBuildModel_(){
   /* ---- PRODUCT MASTER : only its existing vocabulary is needed, because the
      suggestion itself is parsed from the text, not matched to a neighbour ---- */
   var pm = sgTable_(S.PRODUCT, ['product code','strength class']);
-  var pmS = sgCol_(pm, 'strength class'),
+  var pmK = sgCol_(pm, 'product code'),
+      pmS = sgCol_(pm, 'strength class'),
       pmC = sgCol_(pm, 'new product class'),
       pmA = sgCol_(pm, 'new product application');
-  var strengthSet = {}, clsSet = {}, appSet = {};
+  var strengthSet = {}, clsSet = {}, appSet = {}, codes = {};
   for (var p = pm.hdr + 1; p < pm.values.length; p++){
     var rw = pm.values[p];
+    /* THE CODES THEMSELVES, keyed exactly as applyRows keys them. A caller
+       that hands in its own list (the Overview does) can be minutes older
+       than this tab, so a code already here is dropped rather than proposed
+       a second time. */
+    if (pmK !== -1 && rw[pmK]) codes[String(rw[pmK]).trim().toUpperCase()] = 1;
     if (pmS !== -1 && rw[pmS]) strengthSet[String(rw[pmS]).trim()] = 1;
     if (pmC !== -1 && rw[pmC]) clsSet[String(rw[pmC]).trim()] = 1;
     if (pmA !== -1 && rw[pmA]) appSet[String(rw[pmA]).trim()] = 1;
@@ -10740,6 +10746,7 @@ function sgBuildModel_(){
   return {
     flag:   { rows: flagRows,  idx: sgIndexRows_(flagRows)  },
     extras: { rows: extraRows, idx: sgIndexRows_(extraRows) },
+    codes:  codes,
     options: {
       flag:     sgDistinct_(flagRows),
       category: sgDistinct_(extraRows),
@@ -10923,11 +10930,66 @@ function sgProductRow_(productMix){
            band: band, note: notes.join('; ') };
 }
 
-/* =================== public: suggestions =================== */
+/* The caller's own list of Product Mix values, classified.
+ *
+ * Deduped by PRODUCT CODE, because that is the column applyRows keys on: two
+ * descriptions sharing one code are one row in the tab, and offering both
+ * would promise an add that the writer then reports as "already there".
+ * A code the tab already carries is dropped for the same reason, and counted
+ * as `already` so the caller can say WHY a section with rows on screen has
+ * nothing left to add — which is the honest answer when the cube is older
+ * than the lookup, and is not the same answer as "nothing matched".
+ *
+ * The order the caller sent is kept: the Overview sends biggest revenue
+ * first, and that is the order the form should propose them in. */
+function sgFromValues_(values, M){
+  var seen = {}, product = [], asked = 0, already = 0, codes = (M && M.codes) || {};
+  for (var i = 0; i < values.length; i++){
+    var v = String(values[i] == null ? '' : values[i]).trim();
+    if (!v) continue;
+    asked++;
+    var s = sgProductRow_(v), k = String(s.code || '').trim().toUpperCase();
+    if (!k || seen[k]) continue;
+    seen[k] = 1;
+    if (codes[k]){ already++; continue; }
+    product.push({ value: v, rows: 0, markets: [],
+                   code: s.code, oldD: s.oldD, newD: s.newD,
+                   strength: s.strength, cls: s.cls, app: s.app,
+                   band: s.band, note: s.note, why: [] });
+  }
+  return { ok: true, product: product, extras: [], flag: [],
+           options: M.options, asked: asked, already: already,
+           total: product.length };
+}
+
+/* =================== public: suggestions ===================
+ * TWO CALLERS, TWO SOURCES FOR THE MISS LIST.
+ *
+ *   · The Ready-Mix page asks with no `values`. Its Mapping check and this
+ *     call read the SAME live report, so the list on screen and the list the
+ *     dialog offers are the same list, and all three tabs are answered at once.
+ *
+ *   · The Overview asks with `values` — the mixes ITS mapping check listed.
+ *     Those come from the month cube, which is the live report PLUS the
+ *     closed-year books resolved against the LIVE PRODUCT MASTER. A mix that
+ *     traded in a closed year and has since been dropped from the master is on
+ *     that list and on no live one, so answering the Overview from the live
+ *     report handed back rows it had not asked about — and, when the live
+ *     report was clean, handed back nothing at all while 1,116 mixes sat on
+ *     screen. Classifying the values it hands in is the whole fix, and it
+ *     costs no report read: sgProductRow_ parses the text and nothing else.
+ *
+ * Only PRODUCT MASTER can be answered this way. EXTRAS and CUSTOM FLAG are
+ * matched on a description the cube does not carry, so their miss lists still
+ * come from the report, and a `values` call returns them empty rather than
+ * pretending otherwise.
+ */
 function getSuggestions(opts){
   opts = opts || {};
+  var M = sgModelCached_(!!opts.force);
+  if (opts.values && opts.values.length) return sgFromValues_(opts.values, M);
+
   var un = RMX_NS.getUnmapped({ upload: opts.upload, force: !!opts.force });
-  var M  = sgModelCached_(!!opts.force);
 
   var fbFlag = sgFallback_(M.options.flag);
   var fbCat  = sgFallback_(M.options.category);
@@ -10957,7 +11019,7 @@ function getSuggestions(opts){
   });
 
   return { ok: true, product: product, extras: extras, flag: flag,
-           options: M.options,
+           options: M.options, asked: product.length, already: 0,
            total: product.length + extras.length + flag.length };
 }
 
