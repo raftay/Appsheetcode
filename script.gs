@@ -375,9 +375,14 @@ var APP_CONFIG = {
     /* ---------------- Price & Volume ---------------- */
     pricevolume: {
       label: 'Price & Volume Analysis',
-      defaultSpreadsheetId: '1mneM33Ej5gOGfXsbVyVOV0wQoLVVLmB-okupVUQ5TwQ',
+      defaultSpreadsheetId: '1fO7cwvW6Cp7QKu27RlWGNOmf4D2OXsuaidYcIL3_et8',
       SHEETS: {
         SHEET:          'Combined Data CPI Raw',
+        /* The second AGG tab. The page never reads it directly - the surcharge
+           reaches Combined Data CPI Raw through that tab's own ARRAYFORMULA -
+           but the SYNC writes it, and the tab name belongs in the one place
+           every other tab name lives. §6's buildSpec_ reads it from here. */
+        OTHER_REV:      'Combined Data CPI Other Revenue',
         REGION_LOOKUP:  'REGION LOOKUP',
         TOPLINE_LOOKUP: 'TOPLINE REV LOOKUP2'
       }
@@ -386,7 +391,7 @@ var APP_CONFIG = {
     /* ---------------- Amrize RMX ---------------- */
     rmx: {
       label: 'Amrize RMX',
-      defaultSpreadsheetId: '1rC-YErwPAuk9v4ELBrl6IH7VB8Hhr0vlcZUDGMXZVH8',
+      defaultSpreadsheetId: '14qrwF3gED-x-TNND-AvHl2EeIYX-41yiggn-5FRSE80',
       SHEETS: {
         MAIN:      'Main Raw Data',
         EXTRA:     'Extra Raw Data',
@@ -401,7 +406,7 @@ var APP_CONFIG = {
     /* ---------------- Product Segment ---------------- */
     segment: {
       label: 'Commercial Product Segment',
-      defaultSpreadsheetId: '1ED6caThzPlyP76w6eNIdjbriz7CVRySo2qzRmTGDiDk',   // ← set your Product Segment sheet here, or via Settings
+      defaultSpreadsheetId: '1j4qPVaCkVNSPzJjebbe4O8PgAVeKiMCUcOz-traUQ4k',   // ← set your Product Segment sheet here, or via Settings
       SHEETS: {
         /* Major Project Segment, already summed to Segment x Market by
            QlikView and already split by period — so there is no Bill Month
@@ -487,8 +492,17 @@ var APP_CONFIG = {
       defaultSpreadsheetId: '',      // \u2190 paste the sheet id here, or set it in \u2699 Settings
       SHEETS: {
         SHEET:          'Combined Data CPI Raw',
-        REGION_LOOKUP:  'REGION LOOKUP',
-        TOPLINE_LOOKUP: 'TOPLINE REV LOOKUP2'
+        /* The closed books carry this tab too - it is the same export template.
+           Declared for the same reason as on the live page: so the name is in
+           one place. ovcHistAgg_ reads Combined Data CPI Raw and stops. */
+        OTHER_REV:      'Combined Data CPI Other Revenue'
+        /* NO LOOKUP TABS. A closed book ships its own frozen REGION LOOKUP and
+           TOPLINE REV LOOKUP2, and NOTHING HERE READS THEM - ovcLookupsAgg_
+           opens the LIVE Price & Volume workbook for both, every time, so a
+           plant re-mapped or a revenue type re-typed today re-labels every
+           closed year at once with no re-export and no rebuild. They were
+           declared here for years and never read; naming them invited exactly
+           the wrong repair. The history builders are FACTS ONLY. */
       }
     },
 
@@ -501,10 +515,16 @@ var APP_CONFIG = {
       defaultSpreadsheetId: '',      // \u2190 paste the sheet id here, or set it in \u2699 Settings
       SHEETS: {
         MAIN:    'Main Raw Data',
+        /* The two extras tabs. part:'extras' reads them (ovcHistRmxExtras_) and
+           part:'main' does not, which is why they are parked in a file of their
+           own - see CUBE.FILES.rmxExtras. */
         EXTRA:   'Extra Raw Data',
-        ASSOC:   'Associate Raw Data',
-        PLANT:   'PLANT LOOKUP',
-        PRODUCT: 'PRODUCT MASTER'
+        ASSOC:   'Associate Raw Data'
+        /* NO LOOKUP TABS, for the reason spelled out on histagg above:
+           ovcLookupsRmx_ reads PLANT LOOKUP and PRODUCT MASTER from the LIVE
+           Ready-Mix workbook, and RMX_NS.extraResolver() supplies EXTRAS LOOKUP
+           and CUSTOM FLAG for the extras tabs below. A closed book's own copies
+           are never opened. */
       }
     },
 
@@ -523,8 +543,14 @@ var APP_CONFIG = {
       defaultSpreadsheetId: '',      // paste the sheet id here, or set it in the Data sheet panel
       SHEETS: {
         SHEET:          'Combined Data CPI Raw',
-        REGION_LOOKUP:  'REGION LOOKUP',
-        TOPLINE_LOOKUP: 'TOPLINE REV LOOKUP2'
+        OTHER_REV:      'Combined Data CPI Other Revenue'
+        /* NO LOOKUP TABS. A closed book ships its own frozen REGION LOOKUP and
+           TOPLINE REV LOOKUP2, and NOTHING HERE READS THEM - ovcLookupsAgg_
+           opens the LIVE Price & Volume workbook for both, every time, so a
+           plant re-mapped or a revenue type re-typed today re-labels every
+           closed year at once with no re-export and no rebuild. They were
+           declared here for years and never read; naming them invited exactly
+           the wrong repair. The history builders are FACTS ONLY. */
       }
     },
 
@@ -536,9 +562,12 @@ var APP_CONFIG = {
       SHEETS: {
         MAIN:    'Main Raw Data',
         EXTRA:   'Extra Raw Data',
-        ASSOC:   'Associate Raw Data',
-        PLANT:   'PLANT LOOKUP',
-        PRODUCT: 'PRODUCT MASTER'
+        ASSOC:   'Associate Raw Data'
+        /* NO LOOKUP TABS, for the reason spelled out on histagg above:
+           ovcLookupsRmx_ reads PLANT LOOKUP and PRODUCT MASTER from the LIVE
+           Ready-Mix workbook, and RMX_NS.extraResolver() supplies EXTRAS LOOKUP
+           and CUSTOM FLAG for the extras tabs below. A closed book's own copies
+           are never opened. */
       }
     }
   },
@@ -976,6 +1005,53 @@ function clearRetiredOverrides(){
     if (props.getProperty(key) != null){ props.deleteProperty(key); gone.push(key); }
   });
   return { cleared: gone };
+}
+
+/* ------------------------------------------------------------------------
+ * PUT THE CODE DEFAULTS BACK IN CHARGE. Run once from the Apps Script editor.
+ * ------------------------------------------------------------------------
+ * getSpreadsheetIdForPage_ is `override || default`, so an id pasted into
+ * \u2699 Settings months ago OUTRANKS anything written in this file. Change a
+ * defaultSpreadsheetId above and a project carrying an override keeps reading
+ * the old workbook, silently and for ever - the \u2699 badge says "override" and
+ * that is the only place it shows.
+ *
+ * This deletes the override for every page that HAS a code default, and only
+ * those, so the file wins again. The history books are the reason for that
+ * condition: their default is '' by design and their link lives nowhere but the
+ * property store, so clearing theirs would unlink the closed years and throw
+ * away the built cubes' reason to exist. Returns what it cleared and what each
+ * page now resolves to, so the answer is checkable rather than assumed.
+ *
+ * Pointing a page somewhere else afterwards is the same \u2699 panel it always
+ * was; this only removes a STALE one. Safe to run any number of times.
+ * --------------------------------------------------------------------- */
+function useCodeSheets(){
+  var props = PropertiesService.getScriptProperties();
+  var cleared = [], kept = [], now = {};
+  Object.keys(APP_CONFIG.PAGES).forEach(function(p){
+    var cfg = APP_CONFIG.PAGES[p];
+    if (cfg.readsFrom) return;                       // owns no sheet - clearRetiredOverrides
+    var key = APP_CONFIG.PROP_PREFIX + p, was = props.getProperty(key);
+    if (!cfg.defaultSpreadsheetId){
+      if (was) kept.push({ page: p, id: was, why: 'no code default - this link is the only one' });
+      return;
+    }
+    if (was == null) return;                         // already on the code default
+    /* Deleted even when it matches the default: an override that agrees today
+       is still an override tomorrow, and the next edit to this file would be
+       overruled by it exactly as this one was. */
+    props.deleteProperty(key);
+    cleared.push({ page: p, was: was, now: cfg.defaultSpreadsheetId,
+                   changed: was !== cfg.defaultSpreadsheetId });
+  });
+  if (cleared.length) syncAll();                     // a source change must invalidate caches
+  Object.keys(APP_CONFIG.PAGES).forEach(function(p){
+    if (APP_CONFIG.PAGES[p].readsFrom) return;
+    now[p] = { id: getSpreadsheetIdForPage_(p), from: spreadsheetSourceForPage_(p) };
+  });
+  APP_log('info', 'APP.useCodeSheets', 'cleared ' + cleared.length + ' override(s)');
+  return { cleared: cleared, kept: kept, resolvesTo: now };
 }
 
 /* Accepts ".../spreadsheets/d/<ID>/edit", or a bare ID, and returns the ID. */
@@ -3305,7 +3381,12 @@ var QLIKSYNC = (function () {
         mode: 'columns', alias: ALIAS_NONE,
         match: ['year', 'month', 'plant type', 'material family', 'fuel surcharge'] },
 
-      { folder: 'AGG', page: 'pricevolume', tab: 'Combined Data CPI Other Revenue',
+      /* Named from §1 rather than spelled again here. buildSpec_ runs on every
+         sync, so the getter is read at call time and the tab has ONE name in the
+         project. The `||` keeps a project whose Config predates OTHER_REV
+         syncing rather than writing to a tab called "undefined". */
+      { folder: 'AGG', page: 'pricevolume',
+        tab: (APP_CONFIG.PAGES.pricevolume.SHEETS.OTHER_REV || 'Combined Data CPI Other Revenue'),
         mode: 'columns', alias: ALIAS_NONE,
         match: ['year', 'month', 'other revenue'] },
 
@@ -13303,12 +13384,23 @@ function ovNorm_(s){
  *   Qlik expression rather than a guessed number.
  *****************************************************************************/
 
-/* Bump whenever OVCUBE_SHAPE_ changes. It goes into ovcGen_(), so every cached
-   chunk built against the OLD column set becomes unreachable instead of being
-   served with the wrong columns. v2 = soldTo + fv on agg, ex + va on rmx.
+/* Bump whenever OVCUBE_SHAPE_ changes — AND whenever what is WRITTEN INTO a
+   column changes, which is the half this comment used to leave out and which
+   cost a whole release. It goes into ovcGen_(), so every cached chunk built
+   against the old columns becomes unreachable instead of being served as if it
+   were current. v2 = soldTo + fv on agg, ex + va on rmx.
    v3 = calendar-year chunk blocks and the era list in the manifest, neither of
-   which an already-cached v2 manifest carries. */
-var OVCUBE_SHAPE_VER_ = 'v3';
+   which an already-cached v2 manifest carries.
+   v4 = ex / va are FILLED (ovcRmxFoldExtras_). The columns did not move, so the
+   layout was unchanged and this constant was left alone — and that is exactly
+   why the fix never appeared. A chunk is cached server-side under ovcGen_() and
+   again in the browser's IndexedDB under the same token, and the browser only
+   wipes when the token MOVES; every client therefore went on replaying the
+   pre-fold blocks, in which ex and va are zero, and the ASP build-up kept
+   reporting $0.00 Extras against a correct Base with the corrected code
+   deployed and running underneath it. A behaviour change that cannot be seen
+   is not shipped. */
+var OVCUBE_SHAPE_VER_ = 'v4';
 
 var OVCUBE_TOK_PROP_ = 'cube_hist_tok';   // bumped by CUBE_rebuildHistory()
 
@@ -14659,9 +14751,22 @@ function ovcCovTok_(){
   for (var i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
   return h.toString(36);
 }
+/* THE CUBE'S GENERATION. Everything a cached chunk was built from has to be in
+   this string, because it is the ONLY thing either cache compares: CacheService
+   on the server, and IndexedDB in the browser, which wipes when and only when
+   this token changes.
+   `-x` IS THE ONE THAT WAS MISSING. The rmx line's ex / va columns are folded in
+   from the extras facts (ovcRmxFoldExtras_), so the cube now DEPENDS on the
+   extras layout — and OVX_SHAPE_VER_ was deliberately kept out of here on the
+   grounds that an extras change must not make the month files stale. That is
+   still true of the PARKED HISTORY FILES, which is what that rule is about and
+   which key on OVX_SHAPE_VER_ separately (ovcXFile_). It is not true of the
+   CHUNKS, which now carry extras money in two of their columns. Leaving it out
+   is what let a rebuilt extras layout be served through cube blocks built
+   before it existed. */
 function ovcGen_(){
   return APP_getGen_('pricevolume') + '-' + APP_getGen_('rmx') + '-h' + ovcHistTok_()
-       + '-s' + OVCUBE_SHAPE_VER_ + '-c' + ovcCovTok_();
+       + '-s' + OVCUBE_SHAPE_VER_ + '-x' + OVX_SHAPE_VER_ + '-c' + ovcCovTok_();
 }
 
 
