@@ -3660,8 +3660,33 @@ var QLIKSYNC = (function () {
      falling out of the loop reporting a copy that is "still growing". A run
      that has already spent its slice is a run about to be killed at the
      six-minute limit; being killed during the WAIT costs a stranded temp copy
-     the sweep clears, while giving up on the wait costs a truncated tab. */
+     the sweep clears, while giving up on the wait costs a truncated tab.
+
+     AND THE WRITE IS RESERVED FOR OUT OF THAT SLICE, WHICH IT USED NOT TO BE.
+     The arithmetic was `EXEC_SAFE_MS minus what this run has already spent`,
+     which on a fresh execution is the whole five minutes — so a wait allowed to
+     run to its 240-second ceiling left SIXTY seconds for the conversion to be
+     read and 82,200 rows of Ready-Mix to be written, and there is no version of
+     that which finishes. The failure it produced is the one this reserve is
+     named after: two tabs written, the third refused 5,000 rows in, a retry
+     armed and the same four minutes spent waiting all over again.
+
+     WHAT THE TWO OUTCOMES COST IS NOT SYMMETRICAL, and that is the whole
+     argument for taking the time off the wait rather than off the write. A wait
+     cut short reads a copy that may still be filling — and check 0 catches
+     exactly that, refuses the tab, leaves it as it was and arms the retry. A
+     write cut short is the failure with no floor under it: the rows stop
+     arriving mid-flush, nothing throws, and only the per-tab budget check
+     stands between that and a tab stamped as synced. So the wait gives way.
+
+     THREE MINUTES, WHICH IS THE HEAVIEST PAGE'S WRITE WITH ROOM OVER IT.
+     Ready-Mix was measured at about 165 seconds for its 82,200 rows, and the
+     month-column caching above takes a large bite out of that. It leaves the
+     wait 120 seconds on a fresh execution, against the four seconds the poll
+     has ever actually needed to watch a copy stop filling — this is a ceiling
+     on a pathological conversion, not a budget the normal case spends. */
   var SETTLE_CEIL_MS = 240000, SETTLE_FLOOR_MS = 60000, EXEC_SAFE_MS = 300000;
+  var WRITE_RESERVE_MS = 180000;
 
   /* This execution's own start. The module body runs once, when the script
      loads, which is near enough to it for a budget. */
@@ -3676,7 +3701,8 @@ var QLIKSYNC = (function () {
   function settle_(ssId, name) {
     var t0 = Date.now(), prev = null, last = null, stable = 0, looks = 0, gap = SETTLE_GAP_MS;
     var ceiling = Math.max(SETTLE_FLOOR_MS,
-                           Math.min(SETTLE_CEIL_MS, EXEC_SAFE_MS - (Date.now() - EXEC_T0)));
+                           Math.min(SETTLE_CEIL_MS,
+                                    EXEC_SAFE_MS - WRITE_RESERVE_MS - (Date.now() - EXEC_T0)));
 
     while (Date.now() - t0 < ceiling) {
       var now;
@@ -4151,12 +4177,78 @@ var QLIKSYNC = (function () {
     return out;
   }
 
+  /* =====================================================================
+   * THE MONTH COLUMN, AND THE TWO CACHES IN FRONT OF IT
+   * ---------------------------------------------------------------------
+   * BOTH FUNCTIONS BELOW ARE CALLED ONCE PER ROW OF AN EXPORT, and that is the
+   * only thing about them that matters for the runtime. Ready-Mix writes 82,200
+   * rows across its three tabs and every one of them carries a Bill Month, so
+   * monthText_ runs 82,200 times a sync and latestMonth_ walks the column again
+   * on top of that.
+   *
+   * A COLUMN OF 82,200 ROWS HOLDS ABOUT A DOZEN DISTINCT VALUES. It is a month
+   * column: "Apr-26" repeats for every row of April. So the answer for a value
+   * that has already been seen is the answer it gave last time — the mapping is
+   * deterministic inside one execution, because the only thing it depends on
+   * that is not the value itself is the script's time zone, which does not move
+   * — and a cache in front of it turns tens of thousands of calls into a dozen.
+   *
+   * WHICH MATTERS BECAUSE OF WHAT monthText_ CALLS. Utilities.formatDate and
+   * Session.getScriptTimeZone are not JavaScript: each one crosses out of the
+   * V8 runtime into Apps Script's own services and back, and that crossing is
+   * the expensive part, not the formatting. Two of them per row, 82,200 rows,
+   * is on the order of a minute and a half of a six-minute execution spent
+   * formatting the same twelve strings over and over — which is most of the
+   * gap between a Ready-Mix sync that finishes and one that runs out of time
+   * with its last tab half written.
+   *
+   * THE CACHE MEMOISES, IT DOES NOT REIMPLEMENT. Every branch below is the one
+   * that was there before and Utilities.formatDate still produces every string
+   * this returns; what changed is how many times it is asked. Rewriting
+   * "MMM-yy" by hand in JavaScript would be faster still and would also be a
+   * second implementation of a time zone, which is not a trade worth making
+   * for a column nobody looks at twice.
+   *
+   * AND IT IS BOUNDED. A month column cannot grow one, but nothing here
+   * enforces that the column IS a month column, so the cache empties itself
+   * rather than assuming: a run that somehow puts 5,000 distinct values through
+   * it starts again from empty and is merely as slow as it used to be.
+   * =================================================================== */
+  var MONTH_NAMES = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
+                      jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+
+  var MONTH_CACHE_MAX = 5000;
+  var monthTextCache_ = {}, monthTextN_ = 0, monthTz_ = null;
+  var monthYMCache_   = {}, monthYMN_   = 0;
+
+  /* One export value as a cache key, or null for something not worth keying.
+     A Date and the Excel serial for the same instant are different keys on
+     purpose: the two branches below format them against different time zones,
+     so they are not interchangeable and must not share an entry. */
+  function monthKey_(v) {
+    if (Object.prototype.toString.call(v) === '[object Date]') return 'd' + v.getTime();
+    if (typeof v === 'number') return 'n' + v;
+    return 's' + String(v == null ? '' : v);
+  }
+
   /* The Bill Month cell as { y, m } (m is 0-based) — used to work out which
      month the exports are for, so the Product Segment's month picker can default
-     to it. A value carrying no year is not readable and returns null. */
+     to it. A value carrying no year is not readable and returns null.
+
+     A FRESH OBJECT EVERY TIME, even on a cache hit. latestMonth_ hands what
+     this returns straight out to a caller that keeps it, and handing out the
+     cached object would let one caller's edit reach the next row's answer. */
   function monthYM_(v) {
-    var MON = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
-                jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+    var ck = monthKey_(v), hit = monthYMCache_[ck];
+    if (hit !== undefined) return hit ? { y: hit.y, m: hit.m } : null;
+
+    var got = monthYMRead_(v);
+    if (monthYMN_ >= MONTH_CACHE_MAX) { monthYMCache_ = {}; monthYMN_ = 0; }
+    monthYMCache_[ck] = got; monthYMN_++;
+    return got ? { y: got.y, m: got.m } : null;
+  }
+
+  function monthYMRead_(v) {
     var d = null, m;
     if (Object.prototype.toString.call(v) === '[object Date]') d = v;
     else if (typeof v === 'number') d = new Date(Math.round((v - 25569) * 86400000));
@@ -4166,7 +4258,7 @@ var QLIKSYNC = (function () {
 
     var mt = s.match(/^([A-Za-z]{3,})[\s\-\/.]*(\d{2,4})$/);
     if (!mt) return null;
-    m = MON[mt[1].slice(0, 3).toLowerCase()];
+    m = MONTH_NAMES[mt[1].slice(0, 3).toLowerCase()];
     if (m === undefined) return null;
     var y = parseInt(mt[2], 10); if (y < 100) y += 2000;
     return { y: y, m: m };
@@ -4202,15 +4294,29 @@ var QLIKSYNC = (function () {
      formatted back into "MMM-yy". */
   function monthText_(v) {
     if (v === '' || v == null) return '';
-    var fmt = 'MMM-yy';
-    if (Object.prototype.toString.call(v) === '[object Date]') {
-      return Utilities.formatDate(v, Session.getScriptTimeZone(), fmt);
+
+    /* A STRING IS ALREADY THE ANSWER and costs nothing to hand back, so it
+       never reaches the cache — which is also what keeps the cache small when
+       an export sends its months as text. */
+    var isDate = Object.prototype.toString.call(v) === '[object Date]';
+    if (!isDate && typeof v !== 'number') return String(v);
+
+    var ck = monthKey_(v), hit = monthTextCache_[ck];
+    if (hit !== undefined) return hit;
+
+    var fmt = 'MMM-yy', out;
+    if (isDate) {
+      /* Asked once per execution rather than once per row. The script's time
+         zone is a project setting; it cannot change under a running script. */
+      if (monthTz_ === null) monthTz_ = Session.getScriptTimeZone();
+      out = Utilities.formatDate(v, monthTz_, fmt);
+    } else {                                            // Excel serial
+      out = Utilities.formatDate(new Date(Math.round((v - 25569) * 86400000)), 'UTC', fmt);
     }
-    if (typeof v === 'number') {                        // Excel serial
-      var d = new Date(Math.round((v - 25569) * 86400000));
-      return Utilities.formatDate(d, 'UTC', fmt);
-    }
-    return String(v);
+
+    if (monthTextN_ >= MONTH_CACHE_MAX) { monthTextCache_ = {}; monthTextN_ = 0; }
+    monthTextCache_[ck] = out; monthTextN_++;
+    return out;
   }
 
   /* Which year the EXPORT is current for, read off its ROWS. The Aggregates
@@ -4379,7 +4485,12 @@ var QLIKSYNC = (function () {
        throws, run() records the tab as failed and carries on — and the restore
        pass still has this entry, so the band goes back re-pointed instead of
        staying as the write left it. */
-    plan.push({ sh: sh, spec: spec, firstData: firstData, band: band, nCols: nCols });
+    var entry = { sh: sh, spec: spec, firstData: firstData, band: band, nCols: nCols,
+                  /* the height the band was last put back against, and 0 while it
+                     is still off the tab — see the restore pass at the end of
+                     run(), which uses it to tell "already home" from "still out". */
+                  homeEnd: 0 };
+    plan.push(entry);
 
     /* A band already in the property does not need putting there again.
 
@@ -4578,19 +4689,23 @@ var QLIKSYNC = (function () {
        been written yet; the pass at the end of run() re-points the whole band
        again once every height is final, and it re-points from the same `band`
        this took out. */
-    if (parked && putBand_(sh, band, sh.getMaxRows(), {}, null)) dropPark_(spec);
+    if (parked) {
+      var homeEnd = sh.getMaxRows();
+      if (putBand_(sh, band, homeEnd, {}, null)) { entry.homeEnd = homeEnd; dropPark_(spec); }
+    }
 
     /* Recorded only now, past every check, so a bad run cannot become the
        baseline the NEXT run measures itself against — which would let a fault
        through by degrees, one export at a time. */
     recordShape_(spec.page, spec.tab, check.shape);
 
-    var stamped = null;
-    if (spec.stampMonth) {
-      for (var sp = 0; sp < pairs.length; sp++) {
-        if (pairs[sp].isMonth) { stamped = latestMonth_(src, pairs[sp].src); break; }
-      }
-    }
+    /* THE REPORT MONTH, OFF THE WALK THE GATE HAS ALREADY DONE. This used to
+       call latestMonth_ again, which is a second pass over every row of the
+       export — 40,000 of them on Main Raw Data, each one a regex or a Date —
+       to answer a question shapeOf_ answered before the gate ran. It is the
+       same column read the same way; the only thing that changed is that it is
+       read once. */
+    var stamped = (spec.stampMonth && check.shape.month) ? check.shape.month : null;
 
     return {
       tab: spec.tab, mode: 'columns', from: src.file + ' · ' + src.name,
@@ -4843,7 +4958,7 @@ var QLIKSYNC = (function () {
      `names` keeps the raw spelling beside it, because the message this ends up
      in is read by somebody looking at the export, not at the code. */
   function shapeOf_(src, pairs) {
-    var cols = {}, names = {}, n = src.rows.length, ym = 0;
+    var cols = {}, names = {}, n = src.rows.length, ym = 0, month = null, monthAsked = false;
     for (var q = 0; q < pairs.length; q++) {
       var sc = pairs[q].src, fill = 0;
       for (var i = 0; i < n; i++) {
@@ -4856,6 +4971,12 @@ var QLIKSYNC = (function () {
       names[key] = String(src.hdrRaw[sc]);
       if (pairs[q].isMonth && ym === 0) {
         var mm = latestMonth_(src, sc);
+        /* THE FIRST MONTH COLUMN'S ANSWER, KEPT WHATEVER IT IS — including
+           null. It is the same column, chosen the same way, that writeColumns_
+           used to walk the export a second time for; keeping it here is what
+           lets that walk go. Later month columns can still supply `ym`, which
+           is the behaviour that was here, but they do not become the stamp. */
+        if (!monthAsked) { monthAsked = true; month = mm; }
         if (mm) ym = mm.y * 12 + mm.m;
       }
     }
@@ -4872,7 +4993,7 @@ var QLIKSYNC = (function () {
       var y = srcCyYear_(src, src.hdr.map(canon_));
       if (y) ym = y * 12;
     }
-    return { rows: n, cols: cols, names: names, ym: ym, at: Date.now() };
+    return { rows: n, cols: cols, names: names, ym: ym, month: month, at: Date.now() };
   }
 
   /* HOW FAR AN EXPORT IS ALLOWED TO SHRINK BEFORE IT IS TREATED AS BROKEN.
@@ -5589,9 +5710,38 @@ var QLIKSYNC = (function () {
           var fRuns = cellRuns_(p.band[r]);
           for (var q = 0; q < fRuns.length; q++) {
             var start = fRuns[q].start, len = fRuns[q].len, seg = new Array(len);
+
+            /* A RUN THIS PASS WOULD WRITE UNCHANGED IS NOT WRITTEN AGAIN, AND
+               THAT IS NOT A MICRO-SAVING. writeColumns_ already put this band
+               back the moment its own tab was written, with an empty `ends` —
+               so every formula that does NOT reach into a sibling tab came out
+               of that call exactly as it comes out of this one. Writing it a
+               second time changes nothing on the tab and costs the thing §5b
+               takes the band off the tab to avoid in the first place: six
+               ARRAYFORMULAs landing on a 47,845-row column is 140,000 string
+               operations and six full-column sums, and the sheet does all of it
+               before the next call is served. Doing that twice per tab, once
+               for nothing, is where a page's last minutes were going.
+
+               `homeEnd` is the height that earlier restore was pointed at, and
+               it is 0 unless the restore ran AND every run of it wrote. So a tab
+               that threw mid-write, a band that could not be parked, and a
+               restore that half failed all fall through to the write below —
+               which is the safe direction, because in each of those the band
+               really is still off the tab.
+
+               THE COMPARISON IS THE FORMULA, NOT THE ASSUMPTION. Nothing here
+               relies on believing the heights match: each cell is re-pointed
+               both ways and skipped only if the two strings are identical, so a
+               sibling reference that this pass can now resolve, or a height that
+               moved since, writes exactly as it did before. */
+            var same = !!p.homeEnd;
             for (var k = 0; k < len; k++) {
               seg[k] = reanchor_(p.band[r][start + k], ownEnd, ends);
+              if (same && seg[k] !== reanchor_(p.band[r][start + k], p.homeEnd, {})) same = false;
             }
+            if (same) continue;
+
             try {
               p.sh.getRange(r + 1, start + 1, 1, len).setFormulas([seg]);
             } catch (e) {
