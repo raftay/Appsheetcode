@@ -583,7 +583,17 @@ because of what usually causes it: a file Drive was still writing when the sync 
 That is gone a few minutes later; a genuinely broken export is not fixed by asking again. A
 gate failure also **withholds the export's stamp**, on the timer path and the manual one alike
 — keeping it would mark a file as read that the run refused to read. `qlikRetryStatus()` shows
-what is waiting.
+what is waiting, and which tabs it is waiting on.
+
+**And the retry rewrites the tabs that failed, not the page they are on.** The failure record
+names them; `run(page, only)` takes that list, and the retry is its only caller — the three
+timers and the three editor tools pass nothing and get the whole page, exactly as before. One
+Ready-Mix tab failing used to retry all three: 82,200 rows rewritten to fix 14,157, which is
+the work that used the budget up in the first place, done again. **And it is a risk taken for
+no gain, not merely waste** — a retry killed mid-write on a tab that was already right takes a
+*good* tab apart and leaves it blank below the boundary. A record that cannot name its tabs
+(a read that failed before any tab was reached, or one written before the field existed) still
+retries the whole page, because doing nothing would silently drop the failure that armed it.
 
 ### What the sync owns
 
@@ -751,11 +761,21 @@ don't have read access?)" is the service refusing one call rather than a permiss
 there — that happened to a file its owner had opened successfully two minutes earlier in the same
 execution.
 
-**The page is the unit and cannot be split further**, because the array formulas are re-pointed
-once per workbook off an `ends` map that must hold every tab of it. A read that fails fails **one
-page**, by tab name, instead of throwing into `run()`'s own catch, which reports an error and no
-failed tabs — and it is flagged retryable, so an export nothing could read is never stamped as
-read.
+**The page is the unit of the WORKBOOK**, because the array formulas are re-pointed once per
+workbook off an `ends` map holding the final height of every tab this run changed, and a formula
+on one tab can name a range on another. A read that fails fails **one page**, by tab name,
+instead of throwing into `run()`'s own catch, which reports an error and no failed tabs — and it
+is flagged retryable, so an export nothing could read is never stamped as read.
+
+**Which is not the same as every tab having to be written, and it was read that way for a
+while.** What actually has to hold is that no formula is left pointing at a height that has
+moved — so the re-point pass covers **every `'columns'` tab of the page**, not only the ones in
+`plan`. A tab this run did not write has its band read off the tab (a dozen rows, one call) and
+re-pointed only if it names a tab this run *did* write; a tab naming nobody is read and not
+written. **That closes a hole the full-run path had all along**: a run whose second tab failed
+its gate left the first tab's cross-references pointing at the second tab's old height, with
+nothing to notice. The Product Segment tabs are not asked — they *are* their export, carry no
+band by rule, and a page of them is forty tabs.
 
 **What went with the split is most of what used to be here.** `run()` took `'all'`, walked a
 `byPage` map, read each export on first use and dropped it when the last page needing it was
@@ -774,9 +794,11 @@ is written, the stamp is withheld and the one-shot is armed with a whole six min
 **And the retry is one attempt for both kinds of failure now.** It used to be one for a broken
 export and up to five for the clock, and the reason for the second number was convergence: a run
 of `'all'` retried only the *pages* that failed, so every attempt was strictly smaller than the
-one before it. A run is one page now, so there is nothing left to shrink — a page that ran out of
-time retries by doing the same page again, and five identical attempts are five ways of not saying
-that the page does not fit. With one export to an execution it should not happen at all.
+one before it. **The shrinking is back, one level down** — a retry does the *tabs* that failed,
+so a Ready-Mix retry for one tab is 14,157 rows rather than 82,200 — but one attempt is still
+the right number: what is left after that is an export that is genuinely wrong, and asking a
+third time neither fixes it nor tells anybody. With one export to an execution and the write
+no longer spending its time on `Utilities.formatDate`, it should not be reached at all.
 
 **A retry that works records the export as read.** The failure that armed it withheld the stamp
 on purpose; without this the stamp stays withheld, the next firing of that export's timer sees a
@@ -2113,3 +2135,4 @@ or was forgotten.**
 | 2026-08-25 | **Both ways of starting all three exports at once are gone, and "one at a time" is now a property of the code rather than advice.** `qlikSyncCheck` ran the three exports in one execution and was kept, after the 08-25 split, only so that a trigger still pointed at it would not fail silently; `qlikSyncNow(scope)` took `'all'` and **defaulted to it** for the no-argument call the Run menu makes. Both were the same seven minutes against a six-minute execution that every timeout since 08-23 has been, and keeping either kept a way to ask for it. **Both are deleted.** What is behind `qlikAggNow` / `qlikRmxNow` / `qlikSegmentNow` is now the private `qlikSyncNowOne_`, which takes ONE source and refuses anything naming more or naming nothing — `'all'` arrives as a name no source answers to, so the refusal is a `pick.length !== 1` check rather than a comment asking nicely, and there is no branch left that could walk more than one source. Everything else is unchanged and deliberately so: the unconditional pull (the manual path exists BECAUSE the file did not move), the stamp read before the run, the stamp withheld on a gated export, one result object. **The operational half is the trigger list, not the code**: a timer still set on `qlikSyncCheck` now fails on every firing, and a timer nobody watches fails quietly — delete it, set one on each of `qlikSyncAggregates`, `qlikSyncReadyMix` and `qlikSyncSegment`, and run `APP_verifyPermissions` to see which are armed. `APP_TRIGGER_TARGETS` is unchanged, because `qlikSyncCheck` was never in it. Six prose references followed the code: the two places in §5 that told a reader to run `qlikSyncNow` are **in the failure email a human reads**, so they name the three wrappers now. `node --check` clean | ☐ |
 | 2026-08-25 | **The sync failure mail is a switch now, and it is off by default.** `MailApp` is reached only when `QLIK_ALERT_MAIL` says `on`; `qlikAlertsOn()` / `qlikAlertsOff()` (§11) are the two editor tools that set it, and neither touches `QLIK_ALERT_TO`, so the address survives a mute. The mail was written for a pipeline nobody was watching and is right for one — but a sync that has *started* failing sends the same mail every fifteen minutes to somebody already dealing with it, and that is how the one mail that matters ends up looking like the twenty before it. **Muted is not silent**, which is why this is a switch and not a deletion: `run()` returns its failures to a time-driven trigger, which reads them nowhere, so a muted run writes the **entire** report it would have mailed to the execution log at `error`, and `qlikRetryStatus()` names the mute every time it is asked — a mute set for one bad afternoon cannot quietly outlive the afternoon | ✅ |
 | 2026-08-25 | **Most of the Ready-Mix write was `Utilities.formatDate`, called once a row.** `monthText_` crosses out of V8 into Apps Script's services twice per row to format a Bill Month, and the *crossing* is the cost — 82,200 rows is ~165,000 service calls, which is to within noise the whole of the ~165 s that write was measured at. A month column holds about a dozen distinct values, so the answers are memoised on the value: 29,100 `formatDate` calls become 97 on a 34,200-row harness, identical output on every one. Two more of the same shape went with it — the formula band was going home **twice** per tab (the second pass now skips a run whose re-pointed formulas are identical to the ones already there, which is the 140,000-string-operation recalculation the band is taken *off* the tab to avoid), and the month column was walked twice for one answer. **And the settle now reserves the write's three minutes**: the ceiling was "five minutes minus what this run has spent", so a 4-minute wait left 60 s to write 82,200 rows — which is exactly the run that refused `Associate Raw Data` 5,000 rows in | ✅ |
+| 2026-08-25 | **The retry does the tabs that failed, not the page they are on.** One Ready-Mix tab failing retried all three — 82,200 rows rewritten to fix 14,157, which is the work that used the budget up in the first place — and that is a **risk** taken for no gain, not merely waste: a retry killed mid-write on a tab that was already right takes a *good* tab apart and leaves it blank below the boundary. The failure record names its tabs and `run(page, only)` takes the list; the timers and the editor tools pass nothing and get the whole page. **"The page cannot be split further" was the wrong reading of a true constraint** — what has to hold is that no formula is left pointing at a height that has moved, so the re-point pass now covers every `'columns'` tab of the page rather than only the ones in `plan`: a tab this run did not write has its band read off the tab and re-pointed only if it names a tab this run did. That **closes a hole the full-run path had all along** — a run whose second tab failed its gate left the first tab's cross-references pointing at the second tab's old height, with nothing to notice | ✅ |

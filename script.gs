@@ -5382,7 +5382,13 @@ var QLIKSYNC = (function () {
     if (!Object.keys(all).length) dropRetryTriggers_();
   }
 
-  function scheduleRetry_(scope, problems) {
+  /* `tabs` IS THE HALF THAT MAKES THE RETRY SMALLER THAN THE RUN. A page is
+     three tabs and 82,200 rows on Ready-Mix; when one of them fails, re-writing
+     the other two is not just the work that used the budget up in the first
+     place, it is a risk taken for nothing — a retry killed mid-write on a tab
+     that was already right leaves a good tab blank below the boundary. So the
+     failure names its tabs and the retry does those. */
+  function scheduleRetry_(scope, problems, tabs) {
     var all = retryLog_(), rec = all[scope] || { tries: 0 };
     if (rec.tries >= QLIK_RETRY_MAX) {
       APP_log('error', 'QLIKSYNC.retry', 'this page has already been retried and failed again — ' +
@@ -5393,6 +5399,11 @@ var QLIKSYNC = (function () {
       return 'exhausted';
     }
     rec.tries++; rec.at = Date.now(); rec.problems = problems;
+    /* EMPTY MEANS THE WHOLE PAGE, and that is the safe direction: a failure
+       that could not say which tabs it was about — a read that failed before
+       any tab was reached, an older record written before this field existed —
+       retries everything rather than nothing. */
+    rec.tabs = (tabs || []).slice();
     all[scope] = rec;
     saveRetry_(all);
 
@@ -5440,9 +5451,9 @@ var QLIKSYNC = (function () {
        tell somebody, and one boolean told two of them the same lie. */
     var retry = 'none';
     if (retryable.length) {
-      retry = scheduleRetry_(scope, retryable.map(function (f) {
-        return f.tab + ': ' + f.error;
-      }));
+      retry = scheduleRetry_(scope,
+        retryable.map(function (f) { return f.tab + ': ' + f.error; }),
+        retryable.map(function (f) { return f.tab; }));
     }
 
     var body = [];
@@ -5462,9 +5473,12 @@ var QLIKSYNC = (function () {
       body.push(
         retry === 'armed'
           ? 'WHAT HAPPENS NEXT: this runs again by itself in about ' + QLIK_RETRY_MINS +
-            ' minutes. The usual cause is an export that was still being written when the sync ' +
-            'opened it, and that clears on its own. If the retry fails too, nothing further is ' +
-            'scheduled and the export itself needs looking at.'
+            ' minutes, and it rewrites only the tab(s) named above — ' +
+            retryable.map(function (f) { return '"' + f.tab + '"'; }).join(', ') +
+            '. Every other tab of this workbook wrote cleanly and is left alone. The usual ' +
+            'cause is an export that was still being written when the sync opened it, and that ' +
+            'clears on its own. If the retry fails too, nothing further is scheduled and the ' +
+            'export itself needs looking at.'
         : retry === 'exhausted'
           ? 'WHAT HAPPENS NEXT: nothing automatic — this has already been retried once and ' +
             'failed again, so the export itself needs looking at. Re-export it and run this ' +
@@ -5486,12 +5500,16 @@ var QLIKSYNC = (function () {
      point is one line and this stays beside the state it reads. */
   function runRetries_() {
     dropRetryTriggers_();                     /* including the one now firing */
-    var scopes = Object.keys(retryLog_());
+    var waiting = retryLog_(), scopes = Object.keys(waiting);
     if (!scopes.length) return { ok: true, retried: [] };
 
     var out = { ok: true, retried: [], failed: [] };
     scopes.forEach(function (scope) {
-      var res = run(scope);
+      /* THE TABS ARE READ HERE AND THE LOG IS NOT HELD. This is the one thing
+         the copy above is for — which tabs this scope is waiting on — and it is
+         read before run() rather than after, because run() rewrites the record
+         on its way out. Everything else about the record is re-read below. */
+      var res = run(scope, (waiting[scope] || {}).tabs);
 
       /* RE-READ, NEVER HOLD. run() reaches scheduleRetry_ on its way out and
          that writes this same property — it is what decides whether a second
@@ -5563,11 +5581,27 @@ var QLIKSYNC = (function () {
      up — which is why §11 sets the three a few minutes apart. All three exports
      rarely move at once, so this is a cost that is almost never paid.
 
-     WHAT THE PAGE IS THE UNIT OF, and why a page cannot be split further: the
-     array formulas are re-pointed once per WORKBOOK, off an `ends` map that has
-     to hold every tab of it, so one page's tabs have to be written in one
-     execution. */
-  function run(page) {
+     WHAT THE PAGE IS THE UNIT OF: the array formulas are re-pointed once per
+     WORKBOOK, off an `ends` map holding the final height of every tab this run
+     changed, and a formula on one tab can name a range on another.
+
+     WHICH IS NOT THE SAME AS SAYING EVERY TAB HAS TO BE WRITTEN. It used to be
+     read that way, and the retry paid for it: a Ready-Mix run where one tab of
+     three failed retried all three — 82,200 rows to rewrite 14,157 — which is
+     the work that used the budget up in the first place, done again, with the
+     two good tabs taken apart and put back for nothing. A retry killed
+     mid-write on a tab that was already right leaves a GOOD tab blank below the
+     boundary, so this is a risk taken for no gain and not merely waste.
+
+     `only` IS THE TAB LIST A RUN IS RESTRICTED TO, and the retry is the only
+     caller that passes one. Omitted — the three timers, the three editor tools
+     — is the whole page, exactly as before. What makes it safe is the second
+     half, at the re-point pass below: a tab this run did NOT write still has
+     its band read and re-pointed if it names a tab this run DID write, so a
+     sibling reference cannot be left pointing at a height that has moved. That
+     pass now covers the tabs a full run failed or skipped as well, which is a
+     hole it had all along. */
+  function run(page, only) {
     var want = String(page || '').toLowerCase();
 
     var lock = LockService.getScriptLock();
@@ -5587,10 +5621,35 @@ var QLIKSYNC = (function () {
     sweepTemps_();
 
     try {
-      var SPEC = buildSpec_().filter(function (s) { return s.page === want; });
-      if (!SPEC.length) {
+      var PAGE = buildSpec_().filter(function (s) { return s.page === want; });
+      if (!PAGE.length) {
         return { ok: false, scope: want, files: [], done: [], skipped: [], failed: [],
                  error: 'Nothing is set up to update for "' + want + '".' };
+      }
+
+      /* THE TABS THIS RUN IS FOR. `PAGE` stays the whole workbook either way,
+         because the re-point pass needs it; `SPEC` is what gets written.
+
+         A LIST THAT MATCHES NOTHING RUNS THE WHOLE PAGE. A retry record can
+         name a tab that has since been renamed in the workbook or taken out of
+         the spec, and the two ways of being wrong here are not equal: doing the
+         whole page costs an execution, and doing nothing silently drops the
+         failure that armed the retry. */
+      var pick = {};
+      (only || []).forEach(function (t) { if (t) pick[norm_(t)] = 1; });
+      var SPEC = PAGE;
+      if (Object.keys(pick).length) {
+        SPEC = PAGE.filter(function (s) { return pick[norm_(s.tab)]; });
+        if (!SPEC.length) {
+          APP_log('warn', 'QLIKSYNC.run', 'this run was asked for tabs that are not in this ' +
+                  'page any more, so the whole page is being done instead',
+                  { page: want, asked: (only || []).join(', ') });
+          SPEC = PAGE;
+        } else if (SPEC.length < PAGE.length) {
+          APP_log('info', 'QLIKSYNC.run', 'writing only the tabs this run was asked for',
+                  { page: want, tabs: SPEC.map(function (s) { return s.tab; }).join(', '),
+                    of: PAGE.length });
+        }
       }
 
       /* Every tab of a page comes out of one export folder. */
@@ -5701,6 +5760,56 @@ var QLIKSYNC = (function () {
         });
       }
 
+      /* --- THE TABS THIS RUN DID NOT WRITE, AND WHY THEY ARE IN THIS PASS ---
+         A formula on one tab can name a range on another, and the height it
+         names has just moved on every tab in `ends`. `plan` holds the tabs this
+         run WROTE; a tab it did not — one the retry left alone, one that failed
+         its gate, one skipped as optional — is not in it, and its band is
+         sitting on the tab still pointing at yesterday's height of a sibling
+         that has just been rewritten.
+
+         THAT WAS TRUE BEFORE THE RETRY WAS NARROWED, and is the hole the
+         narrowing would have widened: a full run whose second tab failed its
+         checks left the first tab's cross-references stale in exactly the same
+         way, with nothing to notice. So the pass covers the whole page.
+
+         THE BAND HERE IS READ OFF THE TAB, not out of `plan` — this run never
+         lifted it, so what is on the tab is the real thing. `onTab` tells the
+         loop below to compare against that rather than against a restore it
+         made itself, so a tab with no sibling reference is READ and not
+         written, and costs one getFormulas of a dozen rows.
+
+         'replace' TABS ARE NOT ASKED. The Product Segment tabs ARE their
+         export, they carry no band by rule, and a page of them is forty tabs —
+         forty reads to find forty blanks. */
+      if (done.length && ss) {
+        PAGE.forEach(function (spec) {
+          if (spec.mode === 'replace') return;
+          if (plan.some(function (p) { return p.spec && p.spec.tab === spec.tab; })) return;
+          try {
+            var sh2 = ss.getSheetByName(spec.tab);
+            if (!sh2) return;
+            /* The band lives between row 1 and the first data row, and that row
+               is at most a handful below a header that is itself inside the
+               first few rows — tgtHeaderRow_ probes 8 and firstDataRow_ looks 4
+               past it. Sixteen covers both with room, and reading past the band
+               only adds rows with no formulas on them. */
+            var top = Math.min(16, sh2.getMaxRows());
+            if (top < 1) return;
+            plan.push({ sh: sh2, spec: null, band: sh2.getRange(1, 1, top, sh2.getMaxColumns())
+                                                  .getFormulas(),
+                        onTab: true, homeEnd: 0 });
+          } catch (e) {
+            /* Not fatal and not silent: the tabs that were written are correct,
+               and what may be stale is a cross-reference on a tab this run was
+               not asked to touch. */
+            APP_log('warn', 'QLIKSYNC.run', 'could not check whether this tab\u2019s formulas ' +
+                    'point at a tab that was just rewritten', { page: want, tab: spec.tab,
+                    error: String(e && e.message || e) });
+          }
+        });
+      }
+
       /* Every tab in this workbook has its final height now, so the array
          formulas can be re-pointed — including the ones that reach across into
          another tab of the same workbook. */
@@ -5735,10 +5844,14 @@ var QLIKSYNC = (function () {
                both ways and skipped only if the two strings are identical, so a
                sibling reference that this pass can now resolve, or a height that
                moved since, writes exactly as it did before. */
-            var same = !!p.homeEnd;
+            /* `onTab` — a tab this run did not write — compares against the
+               formula AS IT IS, because that is what is on the tab. Anything
+               else compares against the restore writeColumns_ already made. */
+            var same = p.onTab || !!p.homeEnd;
             for (var k = 0; k < len; k++) {
-              seg[k] = reanchor_(p.band[r][start + k], ownEnd, ends);
-              if (same && seg[k] !== reanchor_(p.band[r][start + k], p.homeEnd, {})) same = false;
+              var was = p.band[r][start + k];
+              seg[k] = reanchor_(was, ownEnd, ends);
+              if (same && seg[k] !== (p.onTab ? was : reanchor_(was, p.homeEnd, {}))) same = false;
             }
             if (same) continue;
 
@@ -18598,7 +18711,12 @@ function qlikRetryStatus() {
   var mailOn = QLIKSYNC.alertMail(), to = QLIKSYNC.alertTo();
   return {
     waiting: keys.map(function (k) {
+      var tabs = pending[k].tabs || [];
       return { source: k, attempt: pending[k].tries, since: new Date(pending[k].at),
+               /* WHAT THE RETRY WILL ACTUALLY REWRITE. An empty list is the
+                  whole page, which is what a failure that could not name its
+                  tabs — a read that never reached one — falls back to. */
+               tabs: tabs.length ? tabs.join(', ') : '(the whole page)',
                problems: pending[k].problems };
     }),
     mail: mailOn ? 'on \u2014 a failed sync mails ' + (to.join(', ') || 'nobody (set QLIK_ALERT_TO)')
