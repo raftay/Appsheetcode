@@ -21702,6 +21702,15 @@ AMR.page('overview', {
        the server yet, so those sections offer the tab link only.              */
     var LK = {};                    // section id -> { busy, err, msg, form, rows, done }
 
+    /* HOW MANY ROWS ONE FORM OFFERS. The Ready-Mix mix section can list well
+       over a thousand mixes, and each proposed row is five controls, three of
+       them selects carrying the whole PRODUCT MASTER vocabulary — so the whole
+       list at once is tens of thousands of nodes to build inside the Apps
+       Script frame before anything appears. The section is sorted by revenue,
+       so a batch is the biggest ones: save it, and the next click brings the
+       next batch (the count above it drops as the cube rebuilds). */
+    var LK_BATCH = 200;
+
     function lkHost(secId){ return $('lk_'+secId.replace('|','_')); }
     function lkSet(secId, patch){
       LK[secId]=Object.assign(LK[secId]||{}, patch);
@@ -21737,18 +21746,30 @@ AMR.page('overview', {
                                     return { key:r.value, sug:c, skip:false }; }) });
         return;
       }
-      /* RMX product: the server already proposes a full classified row per mix */
+      /* RMX product: the mixes on screen are the CUBE's — the live report plus
+         the closed-year books — so the server is asked to classify exactly
+         those, rather than answering from the live report's own miss list.
+         Those two lists are not the same list: a mix that traded in a closed
+         year and has since been dropped from PRODUCT MASTER is only ever on
+         this one, and asking for the other one is what opened this form with
+         nothing in it while the section behind it listed 1,116 mixes. */
+      var send=(values||[]).slice(0, LK_BATCH);
       google.script.run
         .withSuccessHandler(function(r){
           if(!r || !r.ok){ lkSet(secId,{busy:false,err:'Could not work out any suggestions.'}); return; }
-          var want={}; values.forEach(function(v){ want[String(v).trim().toUpperCase()]=1; });
-          var list=(r.product||[]).filter(function(p){ return want[String(p.value).trim().toUpperCase()]; });
-          if(!list.length) list=(r.product||[]);
+          var list=r.product||[];
           lkSet(secId,{ busy:false, opts:(r.options||{}),
+            total:(values||[]).length, more:(values||[]).length-send.length,
+            /* the one empty case worth explaining: the codes are in the tab
+               already and it is the cube that has not caught up */
+            note:(!list.length && r.already)
+              ? ('All '+r.already+' of these are in PRODUCT MASTER already \u2014 the count above it '
+                +'is the month cube\u2019s, and updates when the cube next rebuilds.')
+              : '',
             rows:list.map(function(p){ return { key:p.value, sug:p, skip:false }; }) });
         })
         .withFailureHandler(function(e){ lkSet(secId,{busy:false,err:(e&&e.message)||String(e)}); })
-        .getRmxSuggestions({});
+        .getRmxSuggestions({ values: send });
     }
 
     function lkField(label, html){
@@ -21770,7 +21791,7 @@ AMR.page('overview', {
       var rows=st.rows||[], live=rows.filter(function(r){ return !r.skip; });
       var body;
       if(!live.length){
-        body='<div class="lk-body"><p class="hint">Nothing left to add here.</p></div>';
+        body='<div class="lk-body"><p class="hint">'+esc(st.note||'Nothing left to add here.')+'</p></div>';
       }else if(st.kind==='pvplant'){
         /* one control per TYPED column the server described; the key column is
            the unmapped plant itself and is never editable */
@@ -21826,6 +21847,10 @@ AMR.page('overview', {
         +'<button class="lk-btn" data-lk="cancel">Cancel</button>'
         +'<button class="lk-btn primary" data-lk="save"'+(live.length?'':' disabled')+'>Save to the sheet</button>'
         +'</div>'+body
+        +(st.more>0&&live.length
+           ? ('<div class="lk-msg">'+esc('The '+live.length+' biggest by revenue, of '+st.total
+              +'. Save these, then open it again for the next batch.')+'</div>')
+           : '')
         +(st.msg?('<div class="lk-msg ok">'+esc(st.msg)+'</div>'):'')
         +(st.err?('<div class="lk-msg bad">'+esc(st.err)+'</div>'):'')
         +'</div>';

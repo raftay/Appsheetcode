@@ -906,6 +906,41 @@ header row there would silently drop the first mapping and report a mapped plant
 And it checks the two files still share one cache entry per tab, which is the only reason
 the mapping check does not re-read 40k rows the page has already read.
 
+## `lookupadd.js` — the Overview adds the rows it is showing
+
+Runs `RMX_Suggest.gs` under Node over the three lookup tabs, and drives the Overview's own
+`lkOpen` — sliced out of `app.html` by brace count — against a stubbed `google.script.run`.
+
+```bash
+node tests/lookupadd.js          # no dependencies
+```
+
+**Why it exists.** The Ready-Mix mix section listed **1,116** mixes with no `PRODUCT MASTER`
+row and the form its *"+ Add these rows"* opened said **"Add 0 rows to the lookup · Nothing
+left to add here."** Two lists, and the form was reading the wrong one. The section's comes
+from the **month cube** — the live report plus the closed-year books, all of it resolved
+against the **live** `PRODUCT MASTER` — so a mix that traded in a closed year and has since
+been dropped from the master is on it and is on no live list at all. The form called
+`getRmxSuggestions({})`, whose miss list is the **live report's**.
+
+That could go wrong two ways and had no third way to be right: when the live report was clean
+the form offered nothing, and when it was not, the client's `if(!list.length) list=r.product`
+fallback offered rows from a list nobody had asked about. So the values ARE the question now —
+`getSuggestions({values})` classifies exactly what it is handed, reads no report, and drops
+the codes the tab already carries.
+
+| case | what it pins |
+|---|---|
+| a clean report | the values on screen still each get a proposed row — the reported failure, and the one a live-only miss list cannot pass |
+| no report read | `RMX_NS.getUnmapped` is not called at all on the values path; classification is a text parse, and the 14 MB bundle is not part of it |
+| one row per **code** | two descriptions sharing a product code are one row, because that is the column `applyRows` keys on — and the first one asked for wins, so the order the section sorted by revenue survives |
+| `already` | a code `PRODUCT MASTER` already carries is not proposed a second time, and is counted, so "nothing to add" can say *which* empty it is when the cube is simply behind the tab |
+| the report path | with **no** `values` the Ready-Mix page's own call still reads the report and still answers all three tabs |
+| the payload | the Overview's `lkOpen` sends its section's values — `{}` is the whole bug — capped at `LK_BATCH`, and reports how many are still waiting |
+
+Mutation-tested by reverting each half on its own: the server alone fails 14 cases, the
+client alone 8.
+
 ## `qliksync.js` — the sync, and the hourly check
 
 Runs `QlikSync.gs` against a fake Spreadsheet + Drive service.
