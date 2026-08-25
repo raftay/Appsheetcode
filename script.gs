@@ -17915,7 +17915,14 @@ var IRMAIL = (function () {
  *                    again whenever they are rebuilt.
  *   qlikStamps       what the next firing of each will compare, and what it
  *                    will do.
- *   qlikSyncNow      the only manual recovery path when a timer misfires.
+ *   qlikSyncNow      the only manual recovery path when a timer misfires. It
+ *                    takes a page id, a source key or 'all', and the Run menu
+ *                    cannot pass one — so run it through the three below.
+ *   qlikAggNow
+ *   qlikRmxNow
+ *   qlikSegmentNow   THE RUN MENU'S VERSION OF THAT, one export each and no
+ *                    argument to pass. NOT trigger targets: they skip nothing,
+ *                    so a timer on one would re-sync forever.
  *   qlikSyncRetry    THE ONE TARGET NOBODY SETS UP. A run whose export failed
  *                    its checks — or ran out of execution time — arms a one-shot
  *                    trigger on this, five minutes out, and this deletes it when
@@ -18216,7 +18223,13 @@ function qlikStamps() {
    ('AGG' | 'RMX' | 'SEG'), or 'all' for the three in turn. PREFER ONE AT A
    TIME: 'all' is three exports in one execution, which is the seven minutes
    that does not fit six, and the third of them will usually be refused on the
-   budget and retried. */
+   budget and retried.
+
+   AND 'all' IS WHAT THE EDITOR GIVES YOU IF YOU RUN THIS ONE DIRECTLY, because
+   the Run menu passes no arguments and that is this function's default for
+   none. qlikAggNow / qlikRmxNow / qlikSegmentNow below are the same call with
+   the key already in it — use those from the editor, and reach this one only
+   from code that has a scope to pass. */
 function qlikSyncNow(scope) {
   var want = (typeof scope === 'string' && scope) ? scope.toLowerCase() : 'all';
 
@@ -18249,6 +18262,30 @@ function qlikSyncNow(scope) {
   /* One source asked for, one result to look at. */
   return out.ran.length === 1 ? out.ran[0].result : out;
 }
+
+/* ONE EXPORT, BY NAME, FOR THE EDITOR'S RUN MENU.
+
+   THE RUN MENU CALLS A FUNCTION WITH NO ARGUMENTS, and qlikSyncNow's own
+   default for that is 'all' — so picking qlikSyncNow out of the dropdown and
+   pressing Run does not do the thing its comment tells you to prefer, it does
+   the opposite: three exports in one execution, which is the seven minutes that
+   does not fit six, with the third of them usually refused on the budget and
+   retried. There is no way to pass 'AGG' from that dropdown. Passing it from
+   here is the way, which is why these three exist and why they take nothing.
+
+   THEY ARE NOT TRIGGER TARGETS AND MUST NOT BE ADDED TO APP_TRIGGER_TARGETS
+   (§4). A timer belongs on qlikSyncAggregates / qlikSyncReadyMix /
+   qlikSyncSegment, which skip an export whose file has not moved; these
+   deliberately do not skip — see qlikSyncNow above — so a timer on one would
+   re-sync minutes of Drive work every interval, forever, for nothing.
+
+   Each is qlikSyncNow with its own source key, so all of it is qlikSyncNow's:
+   the unconditional pull, the stamp read before the run, the stamp withheld
+   when the export fails its checks, and one result object to look at rather
+   than a wrapper round one. */
+function qlikAggNow()     { return qlikSyncNow('AGG'); }
+function qlikRmxNow()     { return qlikSyncNow('RMX'); }
+function qlikSegmentNow() { return qlikSyncNow('SEG'); }
 
 
 /* ==========================================================================
