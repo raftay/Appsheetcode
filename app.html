@@ -564,6 +564,49 @@ tfoot td:first-child{text-align:left}
 .amr-load-jobs{margin:14px 0 0; padding:12px 0 0; list-style:none; border-top:1px solid var(--line)}
 .amr-load-jobs li{display:flex; justify-content:space-between; gap:10px;
   font:600 11.5px Inter; color:var(--muted); padding:3px 0}
+/* ---- the SAME screen, moved into the corner --------------------------------
+   The block above is full-screen for one reason and it is a good one: an
+   indicator off to the side is easy to miss, and people were reading
+   half-loaded tables without realising. That reason expires the moment the
+   page has something REAL on it. After that the modal is no longer protecting
+   anybody from a half-loaded table — the table is loaded, and the screen is
+   sitting on top of it saying so — and every later fetch threw it back up, so
+   an open read as: screen, page, screen again, page.
+
+   So `corner` is the same card, the same wording and the same job list, laid
+   out small in the bottom-right with nothing behind it. §E's AmrProgress
+   chooses between the two: modal only while AmrBoot is holding an EMPTY page,
+   corner from the first paint onwards and for every ordinary background job.
+   pointer-events are handed back so the page underneath stays clickable —
+   which is the whole claim the corner form makes.                          */
+.amr-load.corner{inset:auto 0 0 auto; padding:16px 18px; background:none;
+  backdrop-filter:none; -webkit-backdrop-filter:none;
+  align-items:flex-end; justify-content:flex-end; pointer-events:none}
+.amr-load.corner .amr-load-card{width:auto; min-width:0; max-width:330px;
+  padding:12px 15px; text-align:left; border-radius:12px;
+  box-shadow:var(--shadow-lift); pointer-events:auto}
+.amr-load.corner .amr-load-body{display:grid; grid-template-columns:17px 1fr;
+  gap:0 10px; align-items:center}
+.amr-load.corner .amr-load-mark{width:16px; height:16px; border-width:2px; margin:0}
+.amr-load.corner .amr-load-mark.done::after{font:700 11px/16px Inter}
+.amr-load.corner .amr-load-mark.bad::after{font:700 12px/16px Inter}
+.amr-load.corner .amr-load-text{font-size:12.5px; line-height:1.35}
+.amr-load.corner .amr-load-sub,
+.amr-load.corner .amr-load-detail,
+.amr-load.corner .amr-load-bar,
+.amr-load.corner .amr-load-jobs{grid-column:2}
+.amr-load.corner .amr-load-sub{margin-top:4px; font-size:11.5px}
+.amr-load.corner .amr-load-detail{margin-top:8px; font-size:11.5px}
+.amr-load.corner .amr-load-detail .acts{margin-top:8px}
+.amr-load.corner .amr-load-detail .acts button{font-size:11px; padding:6px 8px}
+.amr-load.corner .amr-load-bar{margin-top:8px}
+.amr-load.corner .amr-load-jobs{margin-top:8px; padding-top:8px}
+/* On a phone the corner card would sit on top of whatever is in the bottom
+   right; full width with a margin is the same card and nothing is under it. */
+@media (max-width:560px){
+  .amr-load.corner{inset:auto 0 0 0; padding:10px}
+  .amr-load.corner .amr-load-card{max-width:none; width:100%}
+}
 @media (prefers-reduced-motion:reduce){ .amr-load-mark{animation-duration:2.4s} }
 
 /* ---- the slide surface (AmrSlide in §E), captured to PNG ----
@@ -3232,10 +3275,114 @@ window.AMR = (function(){
     go(key);
   });
 
+  /* ==========================================================================
+     AMR.run / AMR.batch — SEVERAL SERVER CALLS, ONE ROUND TRIP
+     --------------------------------------------------------------------------
+     Apps Script runs one user's calls END TO END. Six google.script.run calls
+     issued together do not overlap: they queue, and the page pays six queue
+     waits and six executions for six answers that were all sitting in
+     CacheService. Opening the Executive Overview cost twenty-four of them, and
+     the wait was almost entirely that — not the work.
+
+     AMR.batch(list) sends the list to APP_batch (script.gs §3), which runs it
+     in one execution and answers every slot. AMR.run(fn, arg) is the same
+     transport for one call, as a promise, so a call site does not have to
+     choose between shapes.
+
+     THREE THINGS THIS DELIBERATELY DOES NOT DO.
+
+       · IT DOES NOT COALESCE BY ITSELF. A hidden 10ms window that silently
+         merges whatever calls happen to be in flight is the kind of transport
+         that works until the day two calls with different urgencies land in
+         one batch and the fast one waits out the slow one. A batch is one
+         reply, so everything in it arrives at the speed of its slowest entry —
+         which is a decision about the page, and the page makes it here.
+
+       · IT DOES NOT BATCH WRITES. APP_BATCH_ALLOW_ holds reads only, for the
+         reason written there: "which of the six ran before the budget stopped
+         it" must never be a question about a sync or an email.
+
+       · IT NEVER LEAVES A CALLER WITHOUT AN ANSWER. Three ways a slot can come
+         back short — the whole batch failed, the server skipped it on its time
+         budget, or APP_batch is not in the deployment at all (an older build,
+         which answers with an error rather than a result) — and all three fall
+         back to issuing that call on its own, exactly as the page used to. So
+         the worst case is the number of round trips it had before.
+
+     The stale guard installed above wraps google.script.run itself, so a batch
+     issued by a page that has since been switched away from is dropped with
+     every other callback belonging to it, and none of these promises settle.
+     That is the same contract every call site here already has.
+     ======================================================================== */
+  function runOne(fn, arg){
+    return new Promise(function(res, rej){
+      if (!LIVE || !window.google || !google.script || !google.script.run){
+        rej(new Error('not live')); return;
+      }
+      try { google.script.run.withSuccessHandler(res).withFailureHandler(rej)[fn](arg); }
+      catch (e){ rej(e); }
+    });
+  }
+
+  /* list: [{ fn:'getOverview', arg:{…} }, …]
+     Resolves to an array the SAME LENGTH and in the same order, each entry
+     { ok:true, value } or { ok:false, error } — never a rejection for one
+     entry's failure, because the point of the batch is that the others
+     answered. Rejects only when nothing came back at all. */
+  function batch(list){
+    list = (list || []).filter(function(c){ return c && c.fn; });
+    if (!list.length) return Promise.resolve([]);
+
+    function apart(why){
+      /* One call each, as before this existed. Logged: a page silently paying
+         six round trips again is exactly the regression this is here to make
+         visible. */
+      log('warn', 'AMR.batch', 'falling back to one call each',
+          { calls: list.length, why: String(why) });
+      return Promise.all(list.map(function(c){
+        return runOne(c.fn, c.arg)
+          .then(function(v){ return { ok:true, value:v }; },
+                function(e){ return { ok:false, error:(e && e.message) || String(e) }; });
+      }));
+    }
+
+    return runOne('APP_batch', { calls: list.map(function(c){
+        return { fn: c.fn, arg: c.arg };
+      }) })
+      .then(function(r){
+        if (!r || !r.ok || !r.results) return apart('no results');
+        var out = r.results, redo = [], at = [];
+        for (var i = 0; i < out.length; i++){
+          /* SKIPPED IS NOT FAILED. The server stopped starting calls on its own
+             time budget; these have not run and are owed an answer. */
+          if (out[i] && out[i].skipped){ redo.push(list[i]); at.push(i); }
+        }
+        if (!redo.length) return out;
+        log('info', 'AMR.batch', 'the server ran out of budget; re-issuing the rest',
+            { of: list.length, again: redo.length });
+        return Promise.all(redo.map(function(c){
+          return runOne(c.fn, c.arg)
+            .then(function(v){ return { ok:true, value:v }; },
+                  function(e){ return { ok:false, error:(e && e.message) || String(e) }; });
+        })).then(function(got){
+          for (var j = 0; j < at.length; j++) out[at[j]] = got[j];
+          return out;
+        });
+      }, apart);
+  }
+
+  /* The value of one slot, or null. Saves every call site the same three lines
+     of unwrapping, and makes "it failed" and "it answered null" read the same
+     way — which is what almost all of them already do with a failure handler. */
+  function val(slot){ return (slot && slot.ok) ? slot.value : null; }
+
   /* ---- the public surface ---- */
   var api = {
     log: log,
     live: LIVE,
+    run: runOne,
+    batch: batch,
+    slot: val,
     lib: { need: need },
     nav: { top: navTop, home: goHome, reload: reloadThisPage, hrefFor: hrefFor, go: go,
            /* What the mounted page is currently holding. The counts are the
@@ -3474,14 +3621,23 @@ window.AmrCache = (function(){
     boot: function(done){
       if (!(typeof google !== 'undefined' && google.script && google.script.run)){ done && done(false); return; }
       google.script.run
-        .withSuccessHandler(function(r){
-          var kept = api.check(r && r.generation);
-          /* boot already asked for the version, so watching it is free */
-          try { if (window.AmrFresh) AmrFresh.start(r && r.generation); } catch (e){}
-          done && done(kept);
-        })
+        .withSuccessHandler(function(r){ api.adopt(r, done); })
         .withFailureHandler(function(){ done && done(false); })
         .getDataVersion(page());
+    },
+    /* THE SAME REPLY, FETCHED BY THE PAGE ITSELF. boot() is one small call and
+       it is the FIRST thing a page does, so on a page that is already sending
+       an opening batch (AMR.batch in §D) it is a whole extra execution spent in
+       front of the batch — and Apps Script runs them end to end, so that is
+       dead time, not overlap. A page puts { fn:'getDataVersion', arg:<page> }
+       in its batch and hands the slot here instead. Everything below is what
+       boot()'s own handler did, in one place so the two cannot drift. */
+    adopt: function(r, done){
+      var kept = api.check(r && r.generation);
+      /* the version has been asked for either way, so watching it is free */
+      try { if (window.AmrFresh) AmrFresh.start(r && r.generation); } catch (e){}
+      done && done(kept);
+      return kept;
     },
     get: function(key){
       if (!open_()) return null;
@@ -3775,6 +3931,31 @@ window.AmrKpi = (function(){
     q.forEach(function(cb){ try{ cb(VALUES); }catch(e){} });
   }
 
+  /* What to do with a getKpiValues reply, whoever fetched it — load() below or
+     a page that put the call in its own opening batch and handed the slot to
+     seed(). One copy, because the `cached` branch is the interesting one: the
+     server says "unchanged since the token you sent" and NOTHING is downloaded,
+     so the values come off this device. The second call underneath it is the
+     rare case where the token matched but the device copy has gone (a cleared
+     browser, a second machine) — then and only then is the payload pulled. */
+  function take(r){
+    GEN = r && r.generation;
+    if(r && r.cached){
+      var dev = devGet(GEN);
+      if(dev){ settle(dev); return; }
+      google.script.run
+        .withSuccessHandler(function(r2){
+          if(r2 && r2.values){ devSet(r2.generation, r2.values); settle(r2.values); }
+          else settle(null);
+        })
+        .withFailureHandler(function(){ settle(null); })
+        .getKpiValues('');
+      return;
+    }
+    if(r && r.values){ devSet(GEN, r.values); settle(r.values); return; }
+    settle(null);                          // nothing uploaded yet
+  }
+
   /* ---------- the API pages use ---------- */
   var api = {
     MARKETS: RMX_MARKETS,
@@ -3787,27 +3968,28 @@ window.AmrKpi = (function(){
       if(LOADING) return;
       LOADING = true;
       if(!live()){ settle(null); return; }
-      var known = localGen();
       google.script.run
-        .withSuccessHandler(function(r){
-          GEN = r && r.generation;
-          if(r && r.cached){                    // unchanged since our last visit
-            var dev = devGet(GEN);
-            if(dev){ settle(dev); return; }     // normal path: nothing downloaded at all
-            google.script.run
-              .withSuccessHandler(function(r2){
-                if(r2 && r2.values){ devSet(r2.generation, r2.values); settle(r2.values); }
-                else settle(null);
-              })
-              .withFailureHandler(function(){ settle(null); })
-              .getKpiValues('');
-            return;
-          }
-          if(r && r.values){ devSet(GEN, r.values); settle(r.values); return; }
-          settle(null);                          // nothing uploaded yet
-        })
+        .withSuccessHandler(take)
         .withFailureHandler(function(){ settle(devGet(localGen())); })
-        .getKpiValues(String(known||''));
+        .getKpiValues(api.known());
+    },
+
+    /* THE SAME REPLY, FETCHED BY SOMEBODY ELSE. Three pages open with a batch
+       of their own (AMR.batch in §D), and getKpiValues belongs in it: on the
+       normal path — the version has not moved and this device already holds
+       the values — the reply is a few bytes and the whole call was a round
+       trip spent finding that out. A page puts { fn:'getKpiValues',
+       arg:AmrKpi.known() } in its batch and hands the slot here.
+
+       known() is not optional and not a detail: getKpiValues answers `cached`
+       against the token it is SENT, so a batch that sends '' gets the whole
+       workbook back every time and the device copy never gets used. */
+    known: function(){ return String(localGen() || ''); },
+    seed: function(r){
+      if(VALUES !== null || LOADING) return api;   // already answered, or asking
+      LOADING = true;
+      if(r) take(r); else settle(devGet(localGen()));
+      return api;
     },
 
     /* Parse a workbook in this browser and share it with everyone.
@@ -4042,6 +4224,14 @@ window.AmrCube = (function(){
     rmx: { man:null, chunks:{}, cols:null, n:0, ready:false }
   };
   var gen = null, db = null, listeners = [], booting = false, refetching = false;
+  /* A MANIFEST THE PAGE ALREADY HAS. The manifest is the first thing this
+     module asks for and it is the one call a page cannot start without — so a
+     page that is already sending a batch on open (AMR.batch in §D) puts
+     CUBE_getManifest in it and hands the reply over here, and the cube's own
+     opening round trip disappears into a call that was happening anyway.
+     Consumed once, by whichever of coldStart / revalidate gets there first;
+     after that this module asks for itself as it always did. */
+  var PRESET = null;
   /* Which lines this page actually cares about, and which one to fetch first.
      Overview wants both; Price & Volume only agg; Ready-Mix only rmx. */
   var LINES = STORES.slice(), PRIORITY = null, warm = false;
@@ -4571,9 +4761,18 @@ window.AmrCube = (function(){
     });
   }
 
-  /* No usable copy on the device: manifest, then blocks. */
-  function coldStart(){
-    return call('CUBE_getManifest', { lines: LINES }).then(function(man){
+  /* The manifest, from the page's own batch if it brought one, otherwise from
+     the server. Cleared on use: a seeded manifest answers ONE fetch, and a
+     later refetch (a page widening the line set) must go and ask. */
+  function manifest_(){
+    if (PRESET){ var m = PRESET; PRESET = null; return Promise.resolve(m); }
+    return call('CUBE_getManifest', { lines: LINES });
+  }
+
+  /* No usable copy on the device: manifest, then blocks.
+     `have` is a manifest already in hand — see reload() below. */
+  function coldStart(have){
+    return (have ? Promise.resolve(have) : manifest_()).then(function(man){
       if (!man || !man.ok) throw new Error((man && man.errors) ? JSON.stringify(man.errors) : 'no manifest');
       return adoptGen(man).then(function(){
         install(man);
@@ -4585,7 +4784,7 @@ window.AmrCube = (function(){
   /* Warm path: confirm the generation once the screen is already populated.
      Unchanged is the common case and costs one call; changed wipes and rebuilds. */
   function revalidate(){
-    return call('CUBE_getManifest', { lines: LINES }).then(function(man){
+    return manifest_().then(function(man){
       if (!man || !man.ok) return true;                 // keep the warm copy
       if (man.gen === gen){
         install(man);
@@ -4599,7 +4798,13 @@ window.AmrCube = (function(){
         return replayThenFetch();                       // fill any block still missing
       }
       emit('stale', man.gen);
-      return reload();
+      /* AND THE MANIFEST GOES WITH IT. reload() used to start from nothing and
+         fetch the manifest again — the one that had just come back, for the
+         generation that had just been established, describing the blocks about
+         to be requested. Two identical manifest calls, back to back, is what
+         a stale warm start cost every time somebody pressed "Update from
+         source": one to find out, one to act on it. */
+      return reload(man);
     }).catch(function(){ return true; });               // offline: the warm copy stands
   }
 
@@ -4639,34 +4844,89 @@ window.AmrCube = (function(){
 
   /* Replay whatever IndexedDB already holds (instant, no transfer), then pull
      only what is missing — newest month-block first, priority line leading,
-     one call at a time. The job list is rebuilt at every step so switching tab
-     mid-load re-orders what has not been fetched yet. */
+     SEVERAL BLOCKS PER CALL. The job list is rebuilt at every step so switching
+     tab mid-load re-orders whatever has not been asked for yet.
+
+     WHY SEVERAL. A block is a CacheService read on the server: it was built
+     before the page opened and answering one takes milliseconds. Eight of them
+     was therefore eight queue waits and eight round trips for data that was
+     already sitting there, and Apps Script runs a user's calls end to end so
+     none of it overlapped — the per-call overhead WAS the cube's loading time.
+     CUBE_getChunks (§8) takes the list; how many to ask for is the server's
+     own tunable and rides in on the manifest, so raising it is a config change
+     and not a code one.
+
+     THE LIST IS STILL ORDERED, and that is the whole streaming plan: the
+     newest block of the line you are looking at is what releases the opening
+     screen, and it is first in the first call. The granularity that changes is
+     re-ordering — a tab switch now re-orders at the next call rather than the
+     next block — which is a few hundred milliseconds against several seconds
+     saved.
+
+     THE SERVER MAY SEND FEWER THAN IT WAS ASKED FOR. It stops short of a reply
+     size that would not survive being serialised, and that is a normal answer:
+     anything it did not mention is un-seen and asked for again next round.
+     Un-seeing is gated on the reply having carried at least one usable block,
+     so a chunk that genuinely cannot be served is tried once and then left
+     alone — which is what the single-block loop did, and it is what stops this
+     turning into a loop that never ends. */
+  function perCall(){
+    for (var i = 0; i < LINES.length; i++){
+      var m = S[LINES[i]].man;
+      if (m && m.perCall > 0) return Math.max(1, Math.min(8, m.perCall));
+    }
+    return 3;
+  }
   function replayThenFetch(){
     var seen = {};
-    function nextJob(){
-      var jobs = jobList();
-      for (var i = 0; i < jobs.length; i++){
+    function nextJobs(n){
+      var jobs = jobList(), out = [];
+      for (var i = 0; i < jobs.length && out.length < n; i++){
         var j = jobs[i], k = j.line + '|' + j.i;
         if (S[j.line].chunks[j.i] || seen[k]) continue;
         seen[k] = 1;
-        return j;
+        out.push(j);
       }
-      return null;
+      return out;
     }
     function step(){
-      var j = nextJob();
-      if (!j){
+      var want = nextJobs(perCall());
+      if (!want.length){
         LINES.forEach(function(l){ S[l].ready = !!S[l].cols; });
         emit('ready', progress());
         return Promise.resolve(true);
       }
-      return idbGet(j.line, gen + '|' + j.i).then(function(hit){
-        if (hit){ ingest(j.line, hit); emit('progress', progress()); return; }
-        return call('CUBE_getChunk', { line:j.line, i:j.i }).then(function(ch){
-          if (!ch || !ch.ok || ch.gen !== gen) return;
-          ingest(j.line, ch);
-          emit('progress', progress());
-          return idbPut(j.line, gen + '|' + j.i, ch);
+      /* The device's own copies first — instant, no transfer — so a call is
+         made only for what is genuinely missing. */
+      var miss = [], seq = Promise.resolve();
+      want.forEach(function(j){
+        seq = seq.then(function(){
+          return idbGet(j.line, gen + '|' + j.i).then(function(hit){
+            if (hit){ ingest(j.line, hit); emit('progress', progress()); return; }
+            miss.push(j);
+          });
+        });
+      });
+      return seq.then(function(){
+        if (!miss.length) return;
+        return call('CUBE_getChunks', { want: miss.map(function(j){
+          return { line: j.line, i: j.i };
+        }) }).then(function(r){
+          var list = (r && r.chunks) || [], got = {}, any = false;
+          list.forEach(function(ch){
+            if (!ch) return;
+            got[ch.line + '|' + ch.i] = 1;
+            if (!ch.ok || ch.gen !== gen) return;
+            ingest(ch.line, ch);
+            emit('progress', progress());
+            any = true;
+            idbPut(ch.line, gen + '|' + ch.i, ch);
+          });
+          if (!any) return;               // nothing usable came back: don't re-ask
+          miss.forEach(function(j){
+            var k = j.line + '|' + j.i;
+            if (!got[k]) delete seen[k];  // the reply stopped short of this one
+          });
         });
       }).then(step, step);
     }
@@ -4676,14 +4936,14 @@ window.AmrCube = (function(){
   /* Called after "Load history": the generation token has moved, so every
      manifest, chunk and IndexedDB copy in hand is stale. Drop the lot and boot
      again from scratch. init()'s own gen check wipes the store. */
-  function reload(){
+  function reload(have){
     booting = false; gen = null; warm = false; SETTLED = null;
     STORES.forEach(function(l){ S[l] = { man:null, chunks:{}, cols:null, n:0, ready:false }; });
     /* Straight to the server: the point of a reload is that the device copy is
        known to be wrong, so the warm path would only paint stale numbers. */
     booting = true;
     return idbOpen().then(function(d){ db = d; return idbWipe(); })
-      .then(coldStart)
+      .then(function(){ return coldStart(have); })
       .catch(function(e){ emit('error', e && e.message ? e.message : String(e)); return false; });
   }
 
@@ -4693,6 +4953,19 @@ window.AmrCube = (function(){
     reload: reload,
     configure: configure,
     prioritise: prioritise,
+    /* A MANIFEST THE PAGE ALREADY FETCHED, handed over before init(). Only
+       taken when it covers every line this page configured: a manifest built
+       for Aggregates alone would otherwise install as if it were the answer
+       for both, and the Ready-Mix half of the page would go quietly empty.
+       Refused after the cube has already started, for the same reason —
+       whatever it holds is under a generation this manifest knows nothing
+       about. */
+    seed: function(man){
+      if (booting || !man || !man.ok || !man.lines) return api;
+      for (var i = 0; i < LINES.length; i++) if (!man.lines[LINES[i]]) return api;
+      PRESET = man;
+      return api;
+    },
     lines: function(){ return LINES.slice(); },
     warm: function(){ return warm; },
     /* REGISTER, AND BE TOLD WHERE THE CUBE ALREADY IS. A listener that arrives
@@ -6411,6 +6684,13 @@ var AmrPvSlide = (function(){
  * ================================================================== */
 window.AmrProgress = (function(){
   var jobs = {}, seq = 0, detail = null, details = {}, host = null, mounted = false;
+  /* MODAL, OR THE CORNER — and modal is the exception now. It covers the page
+     for exactly one situation: AmrBoot holding an opening that has nothing on
+     it yet. AmrBoot.need() turns it on, AmrBoot.painted() and the end of boot
+     turn it off, and everything else — a market switch, a customer fetch, the
+     month blocks still streaming — has always been work you can carry on
+     reading through. See the `corner` block in §A3. */
+  var MODAL = false;
 
   /* ---- THE GRACE PERIOD -------------------------------------------------
      A screen that appears and disappears inside half a second is worse than no
@@ -6524,7 +6804,7 @@ window.AmrProgress = (function(){
       }).join('') + '</ul>';
     }
     body.innerHTML = h;
-    host.className = 'amr-load show' + (j.cls ? (' ' + j.cls) : '');
+    host.className = 'amr-load show' + (MODAL ? '' : ' corner') + (j.cls ? (' ' + j.cls) : '');
   }
 
   var api = {
@@ -6557,6 +6837,10 @@ window.AmrProgress = (function(){
       armed = true;                        // a failure is never delayed
       api.set(key, { text: text || 'Something went wrong', cls: 'bad', pct: null, order: 0 });
     },
+    /* Whether the screen COVERS the page or sits in the corner. Called by
+       AmrBoot only: a page that wants to decide this for itself is a page
+       about to disagree with the page mounted next to it. */
+    modal: function(on){ if (on != null && !!on !== MODAL){ MODAL = !!on; render(); } return MODAL; },
     /* for the harnesses: how long a job waits before it is painted */
     grace: function(ms){ if (ms != null) GRACE = ms; return GRACE; },
     has:  function(key){ return !!jobs[key]; },
@@ -6582,6 +6866,7 @@ window.AmrProgress = (function(){
        something is loading is exactly when a user clicks away. */
     reset: function(){
       jobs = {}; details = {}; detail = null;
+      MODAL = false;                 // the next page's AmrBoot decides again
       disarm();
       /* Only if the screen was ever built: render() would otherwise mount it
          here, on a page that never showed one, and put a node on <body> that
@@ -6656,7 +6941,7 @@ window.AmrBoot = (function(){
   /* slowT, not `slow` — api.slow() is the harness's setter for SLOW, and one
      name for the timer and the knob that starts it reads as a bug either way. */
   var pending = {}, count = 0, over = false, started = false, wd = null, slowT = null;
-  var TEXT = DEFAULT_TEXT, late = false;
+  var TEXT = DEFAULT_TEXT, late = false, shown = false;
 
   function names(){
     var out = []; for (var k in pending) out.push(k); return out;
@@ -6685,6 +6970,27 @@ window.AmrBoot = (function(){
       note: late ? slowNote()
                  : (n.length ? ('Waiting for ' + n.join(', ')) : '') });
   }
+  /* THE OPENING SCREEN COVERS AN EMPTY PAGE, AND STOPS THE MOMENT IT IS NOT
+     ONE. Everything below `over` — the refcount, the watchdog, the wording —
+     is about when the last step lands. This is about something else, and
+     conflating the two is what made the opening read the way it did: the page
+     is worth looking at well before every step has reported, and once there
+     are figures on it a modal over the top is no longer protecting anyone from
+     a half-loaded table. It is standing in front of one.
+
+     So a page calls painted() the first time it has drawn something real, and
+     the screen becomes the bottom-right card without letting go of a single
+     step: the same wording, the same percentage, the same list of what is
+     still outstanding, over a page you can now read and click. done() still
+     ends boot; painted() only decides where the saying-so happens.
+
+     One way, deliberately, and idempotent: a page that repaints ten times
+     while it fills in must not put the modal back up between them. */
+  function painted(){
+    if (shown) return;
+    shown = true;
+    if (window.AmrProgress) AmrProgress.modal(false);
+  }
   function clocks(){
     if (wd){ clearTimeout(wd); wd = null; }
     if (slowT){ clearTimeout(slowT); slowT = null; }
@@ -6692,7 +6998,10 @@ window.AmrBoot = (function(){
   function finish(){
     over = true;
     clocks();
-    if (window.AmrProgress) AmrProgress.clear('boot');
+    /* Boot is done, so whatever AmrProgress shows next is ordinary background
+       work — and that is the corner's. Dropped BEFORE the clear so a job
+       already queued behind this one never flashes full-screen. */
+    if (window.AmrProgress){ AmrProgress.modal(false); AmrProgress.clear('boot'); }
   }
 
   var api = {
@@ -6703,6 +7012,9 @@ window.AmrBoot = (function(){
       if (!pending[step]){ pending[step] = 1; count++; }
       if (!started){
         started = true;
+        /* The page behind this is empty — that, and only that, is what earns a
+           screen over the top of it. painted() gives it back. */
+        if (!shown && window.AmrProgress) AmrProgress.modal(true);
         slowT = setTimeout(function(){
           if (over) return;
           late = true; paint();
@@ -6722,6 +7034,15 @@ window.AmrBoot = (function(){
     done: function(step){
       if (over) return api;
       if (!step) step = 'data';
+      /* 'DATA' IS THE STEP THAT MEANS "THERE ARE FIGURES ON THE PAGE".
+         Every page names it, every page answers it from the one function it
+         documents as "the tables are on the page: THIS is ready", and it is
+         the default when a caller names nothing. So it is also the honest
+         answer to painted()'s question — and putting it here rather than in
+         six hideLoader()s is what stops the sixth being forgotten. Anything
+         still outstanding (the month blocks, a customer merge) carries on in
+         the corner over a page you can now read. */
+      if (step === 'data') painted();
       if (pending[step]){ delete pending[step]; count--; }
       if (count <= 0) finish(); else paint();
       return api;
@@ -6731,11 +7052,18 @@ window.AmrBoot = (function(){
       if (over) return api;
       over = true;
       clocks();
+      /* A failure on a page that has already painted belongs BESIDE what it
+         painted — the message names a source and usually carries a link, and
+         covering the figures to say so helps nobody. A page that has painted
+         nothing keeps the full screen: there is nothing behind it to read. */
       if (window.AmrProgress) AmrProgress.fail('boot', msg || 'Could not load this page');
       return api;
     },
     /* Page-specific wording, set before the first need(). */
     text: function(t){ if (t) TEXT = t; return TEXT; },
+    /* "There are figures on the page now." See painted() above. */
+    painted: painted,
+    showing: function(){ return shown; },
     waiting: function(){ return names(); },
     finished: function(){ return over; },
 
@@ -6764,6 +7092,10 @@ window.AmrBoot = (function(){
     reset: function(){
       clocks();
       pending = {}; count = 0; over = false; started = false; late = false;
+      /* `shown` goes with them: the next page's opening is over its OWN empty
+         page, and inheriting "already painted" from the page just left would
+         hand it the corner card and no opening screen at all. */
+      shown = false;
       TEXT = DEFAULT_TEXT;
       return api;
     },
@@ -10044,12 +10376,17 @@ AMR.page('fuelsurcharge', {
     renderAll();
   }
 
+  /* The logo, however it arrived — this page's own call, or the slot it now
+     usually rides in on. Split so the opening batch and the standalone fetch
+     cannot end up doing two different things with the same reply. */
+  function takeLogo(uri){
+    if(STATE.logo || STATE.logoSVG) return;
+    if(!uri) return;
+    STATE.logo=uri; document.getElementById('logoName').textContent='Amrize logo loaded.'; renderPreview();
+  }
   function fetchAmrizeLogo(){
     if(!AMR.live) return;
-    google.script.run.withSuccessHandler(function(uri){
-      if(STATE.logo || STATE.logoSVG) return;
-      if(uri){ STATE.logo=uri; document.getElementById('logoName').textContent='Amrize logo loaded.'; renderPreview(); }
-    }).withFailureHandler(function(){}).getLogo();
+    google.script.run.withSuccessHandler(takeLogo).withFailureHandler(function(){}).getLogo();
   }
 
   /* ---------- run on uploaded QlikView files (session only) ---------- */
@@ -10210,7 +10547,9 @@ AMR.page('fuelsurcharge', {
       STATE.logo=''; STATE.logoSVG=''; lf.value='';
       document.getElementById('logoName').textContent='No logo — top-right corner stays blank.'; renderPreview();
     });
-    fetchAmrizeLogo();
+    /* fetchAmrizeLogo() stood here. It is in the opening batch at the bottom of
+       this function now — same reply, same takeLogo(), one fewer execution
+       queued in front of the sheet read. */
 
     document.getElementById('exportBtn').addEventListener('click', exportPNG);
     document.getElementById('viewBtn').addEventListener('click', viewFullScreen);
@@ -10288,11 +10627,27 @@ AMR.page('fuelsurcharge', {
        payload before the generation it belongs under is known, or check() would
        wipe it a moment later as an orphan. Sending the read first is how a cold
        open ended up storing nothing at all. Only the PAINT has moved off the
-       round trip; the write still waits for the version, exactly as it did. */
+       round trip; the write still waits for the version, exactly as it did.
+
+       THE LOGO RIDES WITH IT. It is a header image nobody waits for, but it
+       was a whole execution of its own and Apps Script runs them end to end,
+       so it sat in the queue in front of the data read. In this batch it costs
+       nothing at all — and the ordering above is not just preserved but made
+       stricter: one reply, and the version is applied out of it first. */
     var painted = false;
-    AmrCache.boot(function(kept){ if(painted && !kept) loadData(); });
+    function afterVersion(kept){ if(painted && !kept) loadData(); }
+    if(window.AMR && AMR.batch){
+      AMR.batch([{ fn:'getDataVersion', arg:(window.APP_PAGE||'') }, { fn:'getLogo' }])
+        .then(function(res){
+          AmrCache.adopt(AMR.slot(res[0]), afterVersion);
+          takeLogo(AMR.slot(res[1]));
+        }, function(){ AmrCache.boot(afterVersion); fetchAmrizeLogo(); });
+    } else {
+      AmrCache.boot(afterVersion);
+      fetchAmrizeLogo();
+    }
     painted = loadData();
-  } else loadData();
+  } else { loadData(); fetchAmrizeLogo(); }
   }
 });
 </script>
@@ -10982,12 +11337,17 @@ AMR.page('rmxfuel', {
     renderAll();
   }
 
+  /* The logo, however it arrived — this page's own call, or the slot it now
+     usually rides in on. Split so the opening batch and the standalone fetch
+     cannot end up doing two different things with the same reply. */
+  function takeLogo(uri){
+    if(STATE.logo || STATE.logoSVG) return;
+    if(!uri) return;
+    STATE.logo=uri; document.getElementById('logoName').textContent='Amrize logo loaded.'; renderPreview();
+  }
   function fetchAmrizeLogo(){
     if(!AMR.live) return;
-    google.script.run.withSuccessHandler(function(uri){
-      if(STATE.logo || STATE.logoSVG) return;
-      if(uri){ STATE.logo=uri; document.getElementById('logoName').textContent='Amrize logo loaded.'; renderPreview(); }
-    }).withFailureHandler(function(){}).getLogo();
+    google.script.run.withSuccessHandler(takeLogo).withFailureHandler(function(){}).getLogo();
   }
 
   /* ---------- run on uploaded QlikView files (session only) ---------- */
@@ -11148,7 +11508,9 @@ AMR.page('rmxfuel', {
       STATE.logo=''; STATE.logoSVG=''; lf.value='';
       document.getElementById('logoName').textContent='No logo — top-right corner stays blank.'; renderPreview();
     });
-    fetchAmrizeLogo();
+    /* fetchAmrizeLogo() stood here. It is in the opening batch at the bottom of
+       this function now — same reply, same takeLogo(), one fewer execution
+       queued in front of the sheet read. */
 
     document.getElementById('exportBtn').addEventListener('click', exportPNG);
     document.getElementById('viewBtn').addEventListener('click', viewFullScreen);
@@ -11228,11 +11590,27 @@ AMR.page('rmxfuel', {
        payload before the generation it belongs under is known, or check() would
        wipe it a moment later as an orphan. Sending the read first is how a cold
        open ended up storing nothing at all. Only the PAINT has moved off the
-       round trip; the write still waits for the version, exactly as it did. */
+       round trip; the write still waits for the version, exactly as it did.
+
+       THE LOGO RIDES WITH IT. It is a header image nobody waits for, but it
+       was a whole execution of its own and Apps Script runs them end to end,
+       so it sat in the queue in front of the data read. In this batch it costs
+       nothing at all — and the ordering above is not just preserved but made
+       stricter: one reply, and the version is applied out of it first. */
     var painted = false;
-    AmrCache.boot(function(kept){ if(painted && !kept) loadData(); });
+    function afterVersion(kept){ if(painted && !kept) loadData(); }
+    if(window.AMR && AMR.batch){
+      AMR.batch([{ fn:'getDataVersion', arg:(window.APP_PAGE||'') }, { fn:'getLogo' }])
+        .then(function(res){
+          AmrCache.adopt(AMR.slot(res[0]), afterVersion);
+          takeLogo(AMR.slot(res[1]));
+        }, function(){ AmrCache.boot(afterVersion); fetchAmrizeLogo(); });
+    } else {
+      AmrCache.boot(afterVersion);
+      fetchAmrizeLogo();
+    }
     painted = loadData();
-  } else loadData();
+  } else { loadData(); fetchAmrizeLogo(); }
   }
 });
 </script>
@@ -11698,37 +12076,85 @@ MB Submarket, plus Region&rarr;Country.<br>
       renderCustomers();
     });
 
-    if(IS_LIVE){
-      try { google.script.run.withSuccessHandler(function(uri){ STATE.logo = uri || ''; }).getLogo(); } catch(e){}
+    /* ---- the opening, in ONE round trip ---------------------------------
+       Four calls used to go out here — the logo, the month list, the device
+       cache's version check and the cube's manifest — and Apps Script runs a
+       user's calls END TO END, so they did not overlap: the page paid four
+       queue waits and four executions before load() had even been allowed to
+       start. Three of the four answer out of a cache in milliseconds.
+
+       The cube is still first in the list, and for the reason it was moved
+       here in the first place: pvBuildLocal() can answer any market, period or
+       dimension WITHOUT the server once the blocks are in, so the sooner it
+       starts the sooner the rest of the session stops making round trips. Only
+       the Aggregates line is fetched — this page never asks a Ready-Mix
+       question, so building and shipping that half was pure waiting.
+
+       Nothing here is load-bearing on the batch working: without it every one
+       of these falls through to the call it made before. */
+    if(!IS_LIVE || !window.AMR || !AMR.batch){
+      wirePvCube();
+      loadMonths();
+      AmrCache.boot(function(){ load(); loadUnmapped(); });
+      return;
     }
-    /* ---- the month cube, first thing ------------------------------------
-       pvBuildLocal() can already answer any market, period or dimension from
-       the cube without touching the server — the catch was always that the cube
-       did not start until well into the session, so the first minute of clicking
-       around still went to getReport() one round trip at a time.
+    /* configure() BEFORE the batch, so AmrCube.seed() knows which lines a
+       manifest has to cover before it will take one. wirePvCube() calls it
+       again with the same argument and that is idempotent. */
+    try{ if(window.AmrCube) AmrCube.configure({ lines:['agg'], priority:'agg' }); }catch(e){}
+    /* THE SCREEN GOES UP BEFORE THE CALL, not after it comes back. wirePvCube()
+       is what used to raise it and it now runs in the callback, which would
+       leave the whole opening round trip behind a blank page saying nothing.
+       Same step, same answer: the cube's own listener takes it down. */
+    if(window.AmrBoot) AmrBoot.need('month history');
+    if(window.AmrProgress) AmrProgress.set('cube', { text:'Preparing months…', order:30 });
+    AMR.batch([
+      { fn:'CUBE_getManifest', arg:{ lines:['agg'] } },
+      { fn:'getDataVersion',   arg:(window.APP_PAGE||'pricevolume') },
+      { fn:'getPvMonths',      arg:{ upload: STATE.upload } },
+      { fn:'getLogo' }
+    ]).then(function(res){
+      var man=AMR.slot(res[0]);
+      if(man && man.ok){ try{ if(window.AmrCube) AmrCube.seed(man); }catch(e){} }
+      wirePvCube();
 
-       It now starts here, alongside the first load, and only the Aggregates line
-       is fetched: this page never asks a Ready-Mix question, so building and
-       shipping that half was pure waiting. Once the blocks are in, changing
-       market or MTD/YTD is a local scan. */
-    wirePvCube();
+      if(!res[2] || !res[2].ok) noMonths(); else takeMonths(res[2].value);
+      STATE.logo = AMR.slot(res[3]) || '';
 
-    loadMonths();
-    AmrCache.boot(function(){ load(); loadUnmapped(); });
+      /* LAST, and after the cube is wired: check() decides whether this
+         device's saved tables survive, and load() reads them. */
+      AmrCache.adopt(AMR.slot(res[1]), function(){ load(); loadUnmapped(); });
+    }, function(){
+      /* the batch never came back at all — the page opens exactly as it did */
+      wirePvCube();
+      loadMonths();
+      AmrCache.boot(function(){ load(); loadUnmapped(); });
+    });
   }
 
   /* Poll briefly — Cube.html is included below this script — then start it and
      re-render from the cube as each month-block lands. */
   function wirePvCube(tries){
     tries = tries || 0;
-    if(!window.AmrCube){ if(tries < 40) setTimeout(function(){ wirePvCube(tries+1); }, 150); return; }
+    if(!window.AmrCube){
+      if(tries < 40){ setTimeout(function(){ wirePvCube(tries+1); }, 150); return; }
+      /* GIVING UP HAS TO ANSWER THE STEP. The step is raised before the opening
+         batch now, so the one path that leaves it unanswered is this one — and
+         an unanswered step is a modal loading screen over a finished page until
+         the 150-second watchdog trips. §E puts AmrCube above §P so this cannot
+         actually happen; it is here because "cannot happen" is what that
+         failure always looks like beforehand. */
+      if(window.AmrBoot) AmrBoot.done('month history');
+      if(window.AmrProgress) AmrProgress.clear('cube');
+      return;
+    }
     if(wirePvCube.done) return;
     wirePvCube.done = true;
     /* The month history is part of "ready": its charts are on the page, so letting
        it finish after the boot screen came down is exactly the second screen this
-       is meant to remove. It is named as a boot step HERE rather than at
-       DOMContentLoaded - above this line AmrCube may not exist yet, and a step
-       that never reports is a loading screen that never lifts. */
+       is meant to remove. Named again here — the opening raises it before the
+       batch goes out, and need() is idempotent — because this is the function
+       that registers the listener which ANSWERS it, and the two belong together. */
     if(window.AmrBoot) AmrBoot.need('month history');
     if(window.AmrProgress) AmrProgress.set('cube', { text:'Preparing months…', order:30 });
     AmrCube.on(function(ev, payload){
@@ -12101,17 +12527,27 @@ MB Submarket, plus Region&rarr;Country.<br>
 
   /* Asked for once, on boot. The report path can be served entirely from the
      cube, so this cannot wait for a getReport to come back. */
+  /* What to do with a getPvMonths reply, whoever fetched it — loadMonths()
+     below, or the opening batch it usually rides in. One copy of the four
+     lines, because "the month picker is empty on this page and not that one"
+     is the shape of bug two copies produce. */
+  function takeMonths(m){
+    if (!m) return false;
+    STATE.build = m.build || STATE.build;
+    STATE.monthList = (m.months && m.months.cy) || [];
+    STATE.latestMonth = m.latestMonth || 0;
+    fillMonths(null);
+    return true;
+  }
+  /* The reply never came. Separate from takeMonths returning early on an empty
+     one: an empty reply leaves whatever the picker has, a FAILED one empties
+     it, and that difference is the original two handlers. */
+  function noMonths(){ STATE.monthList = []; fillMonths(null); }
   function loadMonths(){
     if(!IS_LIVE) return;
     google.script.run
-      .withSuccessHandler(function(m){
-        if (!m) return;
-        STATE.build = m.build || STATE.build;
-        STATE.monthList = (m.months && m.months.cy) || [];
-        STATE.latestMonth = m.latestMonth || 0;
-        fillMonths(null);
-      })
-      .withFailureHandler(function(){ STATE.monthList = []; fillMonths(null); })
+      .withSuccessHandler(takeMonths)
+      .withFailureHandler(noMonths)
       .getPvMonths({ upload: STATE.upload });
   }
 
@@ -13700,27 +14136,43 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
          anything could be drawn. prepare returns the same market list, breakdown
          list and month options.
 
-         The logo waits its turn on purpose. Apps Script runs one user's
-         google.script.run calls END TO END, so firing getLogo() first put a whole
-         round trip in front of the data. */
+         THE LOGO NO LONGER WAITS ITS TURN — IT TRAVELS WITH THE DATA. Apps
+         Script runs one user's google.script.run calls END TO END, which is why
+         it used to be fired from prepare's callback rather than beside it:
+         sending it first put a whole round trip in front of the data. In the
+         same batch it costs nothing and arrives a full execution earlier than
+         it did, because there is no second call to queue at all. */
       /* ONE screen for the whole opening. It comes down in renderReport, when the
          tables are actually on the page - not when the first call returns. */
       if(window.AmrBoot) AmrBoot.need('data');
-      google.script.run
-        .withSuccessHandler(function(res){
-          initOptions(res);
-          seedKeyCache(res);        // every market, in the browser, from this one reply
-          refresh({}); loadExtras();
-          /* after the report: the data-quality panel and the logo, neither of
-             which anybody is waiting on */
-          setTimeout(loadUnmapped, 0);
-          try{ google.script.run.withSuccessHandler(function(u){STATE.logo=u||'';}).getLogo(); }catch(e){}
-        })
-        .withFailureHandler(function(e){
-          if(window.AmrBoot) AmrBoot.fail('Could not read the Ready-Mix workbook');
-          hideLoader(); showBanner('Could not read sheet: '+(e&&e.message||e));
-        })
-        .RMX_prepare({ want:'keys', market:STATE.market, period:STATE.period, month:STATE.month });
+      var prep={ want:'keys', market:STATE.market, period:STATE.period, month:STATE.month };
+      function opened(res){
+        initOptions(res);
+        seedKeyCache(res);        // every market, in the browser, from this one reply
+        refresh({}); loadExtras();
+        /* after the report: the data-quality panel, which nobody is waiting on */
+        setTimeout(loadUnmapped, 0);
+      }
+      function openFailed(e){
+        if(window.AmrBoot) AmrBoot.fail('Could not read the Ready-Mix workbook');
+        hideLoader(); showBanner('Could not read sheet: '+(e&&e.message||e));
+      }
+      if(window.AMR && AMR.batch){
+        AMR.batch([{ fn:'RMX_prepare', arg:prep }, { fn:'getLogo' }])
+          .then(function(res){
+            STATE.logo = AMR.slot(res[1]) || '';
+            var d = AMR.slot(res[0]);
+            if(d) opened(d); else openFailed(new Error((res[0] && res[0].error) || 'no reply'));
+          }, openFailed);
+      } else {
+        google.script.run
+          .withSuccessHandler(function(res){
+            opened(res);
+            try{ google.script.run.withSuccessHandler(function(u){STATE.logo=u||'';}).getLogo(); }catch(e){}
+          })
+          .withFailureHandler(openFailed)
+          .RMX_prepare(prep);
+      }
     } else {
       showBanner('Run this inside the Apps Script web app (bound to your spreadsheet) to load data.');
     }
@@ -16122,6 +16574,18 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
        appear before the strip above them. */
     if(window.AmrBoot){ AmrBoot.need('data'); AmrBoot.need('KPI figures'); }
     renderPreview();
+
+    /* TWO CALLS OPEN THIS PAGE AND THAT IS WHERE IT STAYS FOR NOW.
+       segKpiInit() fires getKpiValues just above, then bootLoad() fires one of
+       RMX_getStamp (this device already holds the tables) or RMX_prepare (it
+       does not) — and Apps Script runs them end to end, so it is two
+       executions. They are NOT batched together, deliberately: which of the two
+       bootLoad sends is decided inside bootLoad from the device cache, and a
+       batch is one reply, so folding the KPI call in would make the strip wait
+       out RMX_prepare — the most expensive call in the suite — on a cold open.
+       Getting to one means teaching bootLoad to carry passengers, which is
+       surgery on the page with the write-only-store history, for one round
+       trip. Left as it is, on purpose. */
     bootLoad();        // ONE call: this market's tables + every other market warmed
   }
 
@@ -18030,6 +18494,12 @@ AMR.page('overview', {
       $('panelAgg').hidden=!agg;
       $('panelRmx').hidden=agg;
       renderTab();
+      /* THERE ARE FIGURES ON THE PAGE NOW, so the opening screen becomes the
+         bottom-right card and everything still outstanding — the older month
+         blocks, the customer merge, the surcharge panels — keeps arriving
+         behind a page you can read. Not AmrBoot.done(): the steps are still
+         outstanding and still named, and this says nothing about them. */
+      if(window.AmrBoot && STATE.data) AmrBoot.painted();
     }
     function renderTab(){
       if(!STATE.data) return;
@@ -20588,13 +21058,25 @@ AMR.page('overview', {
     }
     function wirePill(){
       if(!window.AmrProgress) return;
-      /* The Overview owns the popover body: the month span, what is still being
-         read, and the two buttons that act on it. */
+      /* THE TWO BUTTONS, AND THE PROSE ONLY WHEN SOMETHING IS WRONG.
+         histState().long is four sentences explaining that calendar years land
+         newest first, that the slider grows as the older ones arrive, and that
+         nothing else on the page is waiting on this. Every word of it is true
+         and it was printed UNDER the one line that already says
+         "Loading months... 62% · back to Jan 23" — a paragraph of explanation
+         attached to a progress bar, on screen for the whole of every open, on a
+         page whose actual figures were behind it.
+
+         The short line is the answer. `long` is kept and still written, because
+         a FAULT is the one case where the wording is the point: "History
+         unavailable" needs the reason and the reason carries a link. Everything
+         else is the two buttons — which are the only route to Reload history
+         and to the ⚙ panel, so they stay whatever the state. */
       AmrProgress.detail({
         html: function(job){
           if(job.key!=='cube') return '';
           var s=histState();
-          return (s.long||'')
+          return ((s.cls==='bad') ? (s.long||'') : '')
             +'<div class="acts">'
             +'<button type="button" data-act="settings">\u2699 Data sheet</button>'
             +'<button type="button" data-act="build"'+(HIST.busy?' disabled':'')+'>Reload history</button>'
@@ -21424,14 +21906,43 @@ AMR.page('overview', {
        month is part of the cache key on both sides, so the two periods stay
        independently cached. 0 until the cube has landed, which is the server's
        own default and the right answer while there is nothing better. */
-    function loadMonth(){
-      var a=(WIN.months.length>1) ? anchorMonth() : null;
-      return a ? (a%100) : 0;
+    /* WHICH MONTH, AND WHY THE MANIFEST GETS A SAY. The slider's own month list
+       is deliberately what has LANDED and not what the manifest promises — see
+       winMonths(), which is about not letting somebody drag into a month whose
+       block is still in flight. This is a different question: which month the
+       SERVER should be asked for, before anything has landed at all.
+
+       Left to the slider that answer was "0" — the server's own default, the
+       reporting month — and it was usually wrong, so the first block to arrive
+       moved the anchor and the whole thing was fetched again under the right
+       month. Two getOverview calls, plus two more because each one prefetched
+       the other period, for one page open. The manifest already names every
+       month the cube covers and it is the FIRST thing this page receives, so
+       the anchor is known before the first fetch and there is nothing to redo.
+
+       SEED_YM is that answer, off the manifest the boot batch carried. Once
+       blocks have landed the slider is the authority again, exactly as before:
+       it can only be narrower, never wider. */
+    var SEED_YM = null;
+    function anchorYm(){
+      if(WIN.months.length>1){ var a=anchorMonth(); if(a) return a; }
+      if(SEED_YM) return SEED_YM;
+      var C0=cube(), hi=null;
+      if(C0 && C0.manifest){
+        ['agg','rmx'].forEach(function(l){
+          var m=C0.manifest(l), ys=(m && m.ym) || [];
+          if(!ys.length) return;
+          var b=ys[ys.length-1];
+          if(hi===null || b>hi) hi=b;
+        });
+      }
+      return hi;
     }
+    function loadMonth(){ var a=anchorYm(); return a ? (a%100) : 0; }
     function loadKey(){ return STATE.period+'|m'+loadMonth(); }
     var LOADED_KEY='';
     function load(){
-      var key=loadKey();
+      var key=loadKey(), mo=loadMonth();
       LOADED_KEY=key;
       if(!CACHE[key] && window.AmrCache){          // per-device copy, wiped when a base table updates
         var dev=AmrCache.get('ov:'+key);
@@ -21441,7 +21952,9 @@ AMR.page('overview', {
         hideLoader();                       // the pill is running from boot(); this path is done
         STATE.data=CACHE[key];
         syncWindow();
-        renderChips(); renderActiveTab(); return;
+        renderChips(); renderActiveTab();
+        prefetchPeriod();                   // free when the device already holds it
+        return;
       }
       if(!IS_LIVE){
         banner('Open this inside the Apps Script web app to load live data. (Preview mode shows no numbers.)');
@@ -21449,21 +21962,69 @@ AMR.page('overview', {
       }
       showLoader('Loading the latest numbers…');
       banner('');
-      google.script.run
-        .withSuccessHandler(function(d){
-          hideLoader();
-          if(!d || !d.ok){ banner('Could not load the overview data.'); return; }
-          if(window.AmrCache && d.generation!=null){ AmrCache.check(d.generation); AmrCache.set('ov:'+key, d); }
-          CACHE[key]=d; STATE.data=d;
-          syncWindow();
-          renderChips(); renderActiveTab();
-          prefetchPeriod();          // so the OTHER button is instant when pressed
-        })
-        .withFailureHandler(function(err){
-          hideLoader();
-          banner('Could not load the overview: '+((err&&err.message)||err));
-        })
-        .getOverview({ period: STATE.period, month: loadMonth() });
+
+      /* BOTH PERIODS, ONE ROUND TRIP. The other Period button was always going
+         to be fetched — prefetchPeriod() did it the moment this one landed —
+         and Apps Script runs a user's calls end to end, so as a second call it
+         cost a whole second execution to make a button instant. In the same
+         batch it costs the server's own cache read. */
+      var other=(STATE.period==='MTD')?'YTD':'MTD', okey=other+'|m'+mo;
+      if(!CACHE[okey] && window.AmrCache){
+        var odev=AmrCache.get('ov:'+okey);
+        if(odev) CACHE[okey]=odev;
+      }
+      var alsoOther = !CACHE[okey] && !PREFETCHING[okey];
+      var calls=[{ fn:'getOverview', arg:{ period:STATE.period, month:mo } }];
+      if(alsoOther){ PREFETCHING[okey]=1; calls.push({ fn:'getOverview', arg:{ period:other, month:mo } }); }
+
+      /* AND THE FUEL SURCHARGE, ONCE, HERE. Its panel is one of the ones this
+         paint draws, so its data belongs in the reply that triggers the paint —
+         and it is server-cached under the surcharge sheet's own generation, so
+         on any warm server it is a CacheService read riding along for nothing.
+         What it replaces: loadFsc() painted from the device and then re-checked
+         in the background because that sheet carries no version token of its
+         own, which is two executions on every single open. Only on the FIRST
+         load — a Period switch or a re-anchor must not fetch it again. */
+      var alsoFsc = !FSC_DATA && !FSC_CHECKED;
+      if(alsoFsc){ FSC_CHECKED=true; calls.push({ fn:'getFscData' }); }
+
+      AMR.batch(calls).then(function(res){
+        if(alsoOther){
+          PREFETCHING[okey]=0;
+          var od=AMR.slot(res[1]);
+          /* opportunistic, exactly as prefetchPeriod() was: it never surfaces */
+          if(od && od.ok){
+            CACHE[okey]=od;
+            if(window.AmrCache && od.generation!=null) AmrCache.set('ov:'+okey, od);
+          }
+        }
+        if(alsoFsc){
+          var fd=AMR.slot(res[res.length-1]);
+          /* A FAILURE HERE IS NOT SILENT, it just is not handled here: leaving
+             FSC_DATA null sends the panel down loadFsc()'s own path, which has
+             the message and the link to the Fuel Surcharge page. */
+          if(fd){
+            FSC_DATA=fd;
+            if(window.AmrCache) AmrCache.set('fsc', fd);
+          } else FSC_CHECKED=false;
+        }
+        hideLoader();
+        var d=AMR.slot(res[0]);
+        if(!d || !d.ok){
+          banner('Could not load the overview data.'
+                 + ((res[0] && res[0].error) ? ' ' + res[0].error : ''));
+          return;
+        }
+        if(window.AmrCache && d.generation!=null){ AmrCache.check(d.generation); AmrCache.set('ov:'+key, d); }
+        CACHE[key]=d; STATE.data=d;
+        syncWindow();
+        renderChips(); renderActiveTab();
+      }, function(err){
+        if(alsoOther) PREFETCHING[okey]=0;
+        if(alsoFsc) FSC_CHECKED=false;      // never asked: loadFsc() may still try
+        hideLoader();
+        banner('Could not load the overview: '+((err&&err.message)||err));
+      });
     }
 
     /* The only reason pressing the other Period button ever waited is that its
@@ -22148,43 +22709,58 @@ AMR.page('overview', {
       var scope=pvScope();
       var mkts = (scope==='__ALL__') ? ['__ALL__'] : scope;
       var secondary = STATE.split ? 'CUST_SEGMENT' : 'NONE';
-      var reports=[], pending=mkts.length, failed=false;
+
+      /* ONE CALL PER MARKET, IN ONE ROUND TRIP. Customer data is fetched per
+         selected market and merged here — a dedicated getOverviewCustomers on
+         the server hung, and the direct per-market pattern is what fixed it
+         (§7). What it left behind was the fan-out: at all markets that is one
+         call, but any two-or-more subset was three or five, and Apps Script
+         runs them end to end, so the panel took as long as the number of
+         markets someone happened to click. The merge is unchanged and still
+         client-side; only the transport is. */
+      var params=[], keys=[], reports=[], calls=[];
       mkts.forEach(function(mk){
-        var params={ period:STATE.period, secondary:secondary, market:mk };
-        var one=JSON.stringify(params);
-        function done(d){
-          if(d) RAW_CUST[one]=d;
-          reports.push(d);
-          if(--pending===0 && !failed){
-            var merged=mergeCustReports(reports);
-            CUST_CACHE[mergedKey]=merged;
-            if(window.AmrCache) AmrCache.set('c:'+mergedKey, merged);
-            /* A SERVER ANSWER CAN LAND AFTER THE SELECTION MOVED. This fetch is
-               for STATE.period; by the time it returns the user may have opened
-               a window, and then the cube owns both panels. Same rule as
-               srvOwnsAgg() and repaintPanel() - the key check below catches a
-               changed market or split, but not a changed OWNER. */
-            if(mergedKey===custKey() && !winMode()){
-              if(!(xfActive() && STATE.tab==='agg')) renderCustomers(merged);
-              renderFscCustomers(merged);
-              xfDropsRefresh();
-            }
-          }
-        }
-        if(RAW_CUST[one]){ done(RAW_CUST[one]); return; }
-        try{
-          google.script.run
-            .withSuccessHandler(done)
-            .withFailureHandler(function(err){
-              failed=true;
-              if(!(xfActive() && STATE.tab==='agg')) body.innerHTML='<div class="ov-mini">Could not load customers: '+esc((err&&err.message)||err)+'</div>';
-            })
-            .getCustomerReport(params);
-        }catch(e){
-          failed=true;
-          if(!(xfActive() && STATE.tab==='agg')) body.innerHTML='<div class="ov-mini">Could not load customers: '+esc(e&&e.message||e)+'</div>';
-        }
+        var p={ period:STATE.period, secondary:secondary, market:mk };
+        var one=JSON.stringify(p);
+        params.push(p); keys.push(one);
+        if(RAW_CUST[one]) reports.push(RAW_CUST[one]);
+        else calls.push({ fn:'getCustomerReport', arg:p, at:keys.length-1 });
       });
+
+      function fail(msg){
+        if(!(xfActive() && STATE.tab==='agg')) body.innerHTML='<div class="ov-mini">Could not load customers: '+esc(msg)+'</div>';
+      }
+      function settle(){
+        var merged=mergeCustReports(reports);
+        CUST_CACHE[mergedKey]=merged;
+        if(window.AmrCache) AmrCache.set('c:'+mergedKey, merged);
+        /* A SERVER ANSWER CAN LAND AFTER THE SELECTION MOVED. This fetch is
+           for STATE.period; by the time it returns the user may have opened
+           a window, and then the cube owns both panels. Same rule as
+           srvOwnsAgg() and repaintPanel() - the key check below catches a
+           changed market or split, but not a changed OWNER. */
+        if(mergedKey===custKey() && !winMode()){
+          if(!(xfActive() && STATE.tab==='agg')) renderCustomers(merged);
+          renderFscCustomers(merged);
+          xfDropsRefresh();
+        }
+      }
+
+      if(!calls.length){ settle(); return; }
+      if(!window.AMR || !AMR.batch){ fail('the batch transport is missing'); return; }
+
+      AMR.batch(calls.map(function(c){ return { fn:c.fn, arg:c.arg }; })).then(function(res){
+        for(var i=0;i<calls.length;i++){
+          var d=AMR.slot(res[i]);
+          /* ONE MARKET SHORT IS NOT A CUSTOMER PANEL. The merge adds markets
+             together, so quietly dropping the one that failed would print a
+             smaller total under the same heading and nothing would say so. */
+          if(!d){ fail((res[i] && res[i].error) || 'one market did not answer'); return; }
+          RAW_CUST[keys[calls[i].at]]=d;
+          reports.push(d);
+        }
+        settle();
+      }, function(err){ fail((err&&err.message)||err); });
     }
 
     function mergeCustReports(reports){
@@ -22496,45 +23072,102 @@ AMR.page('overview', {
     });
 
     /* ---- go ---------------------------------------------------------------
-       TWO changes here, and between them they are most of why this page used to
-       sit and think for so long.
+       THE OPENING IS ONE ROUND TRIP NOW, AND THAT IS THE WHOLE STORY OF THIS
+       PAGE'S LOADING TIME. Apps Script runs a user's calls END TO END: nothing
+       here ever overlapped, so twenty-four calls meant twenty-four queue waits
+       and twenty-four executions, almost all of them handing over something
+       CacheService already held. What that looked like from the outside was a
+       loading screen, then a page, then a loading screen again.
 
-       1. ONE version call, not three. The Overview has no sheet of its own, so
-          its device cache has to be checked against Price & Volume, RMX AND
-          Product Segment. It used to ask three times; Apps Script runs a user's
-          calls end to end, so that was three round trips of dead air before the
-          page even started. getDataVersions answers all three in one.
+       WHAT IS IN THE OPENING BATCH, AND WHY EACH ONE EARNS ITS PLACE.
 
-       2. THE CUBE GOES FIRST. It used to start 1.2s after everything else and
-          therefore landed LAST, behind every server report on the page — which
-          is exactly backwards, because once the cube is in, those reports are
-          not needed to change month or market. Starting it first means the
-          second half of the loading time is spent making the page instant
-          rather than repeating work.
+         getDataVersions  three generations, because this page owns no sheet and
+                          reads three. Already one call rather than three.
+         CUBE_getManifest the dictionaries, the chunk plan — and man.ym, which
+                          is what makes the FIRST getOverview ask for the right
+                          month instead of month 0 and then do it all again.
+                          Handed to AmrCube.seed() so the cube's own opening
+                          call disappears into this one.
+         getKpiValues     the SAP / USGAAP cards. Sent with AmrKpi.known(), so
+                          the usual answer is "unchanged" and a few bytes.
 
-       Nothing blocks: load() runs regardless of what the cube is doing, and the
-       panels fill in as their data arrives. */
+       THEN ONE SECOND BATCH: both Period payloads for a month already known to
+       be right, and the fuel-surcharge data beside them. Six calls before this
+       — the anchor moved when the cube landed so the pair was fetched twice
+       over, and the surcharge painted from the device and re-checked itself in
+       the background.
+
+       WHY THOSE THREE ARE IN THE FIRST BATCH AND NOTHING ELSE IS. A batch is
+       ONE reply, so everything in it arrives at the speed of its slowest entry
+       — which makes "what is the page waiting on" the only question that
+       decides membership, not "what will the page eventually want". The first
+       paint cannot happen until the overview payload is in, and that cannot be
+       ASKED for until the manifest names the month. Those three are that
+       critical path. Everything else — the customer merge, the cross-report,
+       the Ready-Mix dimensions, the older month blocks — arrives behind the
+       paint and must not be allowed in front of it.
+
+       Nothing blocks: the cube starts as soon as the manifest is in hand and
+       the panels fill in as their data arrives. */
     function boot(){
-      /* ONE screen for the whole opening. Both steps are named up front and the
-         screen comes down when the LAST of them lands - not when the first does,
-         which is what used to leave people reading a half-filled page. */
+      /* ONE screen for the whole opening. Both steps are named up front; the
+         screen becomes the bottom-right card at the first paint (see
+         renderActiveTab) and lets go for good when the last step lands. */
       if(window.AmrBoot){ AmrBoot.need('data'); AmrBoot.need('month history'); }
-      loadWorkbooks();   // SAP/USGAAP cards (shared KPI numbers, independent of the sheet data)
-      wirePill(); renderPill(); wireCube();
-      if(!IS_LIVE || !window.AmrCache){ load(); return; }
-      function done(gens){
-        gens = gens || {};
-        var combo=(gens.pricevolume&&gens.rmx&&gens.segment)
+      wirePill(); renderPill();
+
+      if(!IS_LIVE || !window.AMR || !AMR.batch){
+        loadWorkbooks(); wireCube(); load(); return;
+      }
+
+      /* BEFORE the batch, so AmrCube.seed() knows which lines a manifest has to
+         cover before it will accept one. configure() is idempotent and
+         wireCube() calls it again with the same argument. */
+      try{ if(window.AmrCube) AmrCube.configure({ lines:['agg','rmx'], priority:(STATE.tab==='agg'?'agg':'rmx') }); }catch(e){}
+
+      AMR.batch([
+        { fn:'getDataVersions',  arg:['pricevolume','rmx','segment'] },
+        { fn:'CUBE_getManifest', arg:{ lines:['agg','rmx'] } },
+        { fn:'getKpiValues',     arg:(window.AmrKpi ? AmrKpi.known() : '') }
+      ]).then(function(res){ opened(res); }, function(){ opened(null); });
+    }
+
+    /* The batch came back — or did not, in which case every step below falls
+       through to the path it had before this existed. Nothing here is allowed
+       to be load-bearing on the batch having worked. */
+    function opened(res){
+      res = res || [];
+      var gens = (AMR.slot(res[0]) || {}).generations || null;
+
+      /* 1. the device cache, against all three base pages at once */
+      if(window.AmrCache){
+        var combo=(gens && gens.pricevolume && gens.rmx && gens.segment)
           ? gens.pricevolume+'-'+gens.rmx+'-'+gens.segment : '';
         AmrCache.check(combo);      // '' -> device cache stays off this visit
-        load();
       }
-      try{
-        google.script.run
-          .withSuccessHandler(function(r){ done(r && r.generations); })
-          .withFailureHandler(function(){ done(null); })
-          .getDataVersions(['pricevolume','rmx','segment']);
-      }catch(e){ done(null); }
+
+      /* 2. the manifest: the cube takes it, and the month anchor comes off it.
+            SEED_YM before load(), or the first fetch asks for month 0 and the
+            cube's arrival makes a liar of it a second later. */
+      var man = AMR.slot(res[1]);
+      if(man && man.ok){
+        var hi=null;
+        ['agg','rmx'].forEach(function(l){
+          var ys=(man.lines && man.lines[l] && man.lines[l].ym) || [];
+          if(!ys.length) return;
+          var b=ys[ys.length-1];
+          if(hi===null || b>hi) hi=b;
+        });
+        SEED_YM = hi;
+        try{ if(window.AmrCube) AmrCube.seed(man); }catch(e){}
+      }
+
+      /* 3. the KPI workbooks, from the slot rather than a call of their own */
+      if(window.AmrKpi && res.length>2) AmrKpi.seed(AMR.slot(res[2]));
+      loadWorkbooks();
+
+      wireCube();
+      load();
     }
     /* AmrCube is §E, above §P, so it exists by construction now — the poll
        resolves on its first call and is left alone rather than rewritten
@@ -22552,11 +23185,16 @@ AMR.page('overview', {
            current year has finished streaming */
         syncWindow(); renderPill(); dqBadge();
         if(ev==='ready') maybeBuildHistory();
-        /* The first load() runs before the cube exists, so it asks for month 0 -
-           the server's own default, which is the REPORTING month. Once the cube
-           lands the anchor is known and it may be a different month; re-fetch so
-           the server-fed half of the page reports the same month as the cube-fed
-           half. Cache-first on both sides, so this is usually free. */
+        /* THE SAFETY NET, AND IT SHOULD NOW NEVER FIRE. The first load() used
+           to run before the cube existed, so it asked for month 0 — the
+           server's own default, the REPORTING month — and the moment a block
+           landed the anchor moved and the whole page was fetched again under
+           the right month. The manifest names those months and arrives in the
+           opening batch, so the first fetch is already on the right one (see
+           anchorYm / SEED_YM). This stays because the two halves of the page
+           reporting different months is the one failure nobody can see from
+           the outside: cache-first on both sides, so when it is right it costs
+           nothing, and when something has moved it is still corrected. */
         if(LOADED_KEY && LOADED_KEY!==loadKey()){ load(); return; }
         if(winMode()) renderActiveTab(); else renderTrendSoon();
       });
