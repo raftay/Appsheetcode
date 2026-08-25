@@ -1660,6 +1660,10 @@ body[data-page="deckbuilder"] .dbbtn.primary{background:var(--blue-100); border-
 body[data-page="deckbuilder"] .dbbtn.primary:hover:not(:disabled){background:var(--blue-90)}
 body[data-page="deckbuilder"] .dbbtn:disabled{opacity:.45; cursor:default}
 body[data-page="deckbuilder"] .dbbtn.wide{width:100%}
+/* .dbbtn is inline-flex, which beats the hidden attribute on its own. */
+body[data-page="deckbuilder"] .dbbtn[hidden]{display:none}
+body[data-page="deckbuilder"] .dbbtn.stop{border-color:#F3B7B7; background:#FDECEC; color:#8A1F1F}
+body[data-page="deckbuilder"] .dbbtn.stop:hover:not(:disabled){background:#FBDCDC; border-color:#E79B9B}
 
 /* ---- stage bar ---- */
 body[data-page="deckbuilder"] .db-stages{display:flex; gap:10px; flex-wrap:wrap; align-items:center;
@@ -1674,9 +1678,13 @@ body[data-page="deckbuilder"] .db-arrow{color:var(--line); font:700 15px Inter}
 body[data-page="deckbuilder"] .db-spacer{flex:1}
 body[data-page="deckbuilder"] .db-prog{font:600 12px Inter; color:var(--muted)}
 
-/* ---- the slide list ---- */
-body[data-page="deckbuilder"] .db-list{background:var(--white); border:1px solid var(--line); border-radius:var(--r);
+/* ---- the slide list, which is now the whole of the deck --------------------
+   #dbDeck is the card: the Arrange toolbar, the rows, the drawer and the
+   Deleted slides are one panel rather than two stacked ones. .db-list is a
+   plain container inside it and carries no chrome of its own.              */
+body[data-page="deckbuilder"] .db-deck{background:var(--white); border:1px solid var(--line); border-radius:var(--r);
   box-shadow:var(--shadow); overflow:hidden}
+body[data-page="deckbuilder"] .db-list{min-width:0}
 body[data-page="deckbuilder"] .db-group{background:var(--blue-10); border-top:1px solid var(--line);
   border-bottom:1px solid var(--line); padding:7px 14px;
   font:800 11px Archivo; letter-spacing:.06em; text-transform:uppercase; color:var(--blue-100)}
@@ -1684,13 +1692,55 @@ body[data-page="deckbuilder"] .db-group:first-child{border-top:0}
 body[data-page="deckbuilder"] .db-row{display:grid; grid-template-columns:30px 34px minmax(0,1fr) 152px 132px 96px 176px;
   gap:12px; align-items:center; padding:9px 14px; border-bottom:1px solid #F0F4FA}
 body[data-page="deckbuilder"] .db-row:last-child{border-bottom:0}
+/* ARRANGE MODE. Two cells at the front - the move arrows and the tick - and one
+   at the back for Tables and the ×. Everything between them is where it was in
+   the list, which is the whole point: the layout picker and the preview do not
+   move when the row becomes editable. TWO GRID LINES, because the selects need
+   the width of the row and the title cell is worth ~250px of it. */
+body[data-page="deckbuilder"] .db-row.arr{grid-template-columns:26px 30px 34px minmax(0,1fr) 152px 132px 96px 176px auto;
+  grid-template-rows:auto auto; align-items:center; padding:10px 14px}
+/* THE SELECTS GET THE WHOLE WIDTH OF THE ROW, on a second grid line under the
+   title. Left in the title cell they had the ~250px that column is worth and
+   stacked one per line, which made a 43-row list four screens long — the exact
+   thing merging the two lists was for. Everything else stays on line one, so
+   the layout picker and the preview are still beside the slide they belong
+   to. */
+body[data-page="deckbuilder"] .db-row.arr > *{grid-row:1}
+/* COLUMN 4 TO 8, not to the end: the preview and the two buttons span BOTH
+   lines, and a cell cannot span into a row another item already fills. Taking
+   the selects to the right edge pushed the thumbnail into an eleventh, implicit
+   column and collapsed the title to 40px. */
+body[data-page="deckbuilder"] .db-row.arr > .db-ar-row2{grid-row:2; grid-column:4 / 8; align-self:start; margin-top:2px;
+  padding-left:6px}
+/* THE COLUMNS EITHER SIDE SPAN BOTH LINES, so they centre on the whole row and
+   the preview is not what sets line one's height. Left on line one, a 99px
+   thumbnail pushed the selects to the bottom of the row, a long way under the
+   title they belong to and right against the divider below them. */
+body[data-page="deckbuilder"] .db-row.arr > .db-ar-move,
+body[data-page="deckbuilder"] .db-row.arr > input[type=checkbox],
+body[data-page="deckbuilder"] .db-row.arr > .db-num,
+body[data-page="deckbuilder"] .db-row.arr > .db-thumb,
+body[data-page="deckbuilder"] .db-row.arr > .db-ar-side-btns{grid-row:1 / span 2}
+/* ...and they read against the TITLE, which is line one. Centred on a row two
+   lines tall they sat below it, so the arrows and the tick looked as though
+   they belonged to the selects rather than to the slide. */
+body[data-page="deckbuilder"] .db-row.arr > .db-ar-move,
+body[data-page="deckbuilder"] .db-row.arr > input[type=checkbox],
+body[data-page="deckbuilder"] .db-row.arr > .db-num,
+body[data-page="deckbuilder"] .db-row.arr > .db-ar-side-btns{align-self:start; margin-top:4px}
+body[data-page="deckbuilder"] .db-row.sel{background:#EAF1FB}
 /* THE LAYOUT COLUMN SURVIVES TO 980px, where the Region picker also goes. It
    used to drop at 1180 because it was a label and a label is only worth its
    width; it is a dropdown now, and hiding it is hiding the only way to change
    which template slide a row is built from. */
 @media (max-width:1180px){ body[data-page="deckbuilder"] .db-row{grid-template-columns:30px 34px minmax(0,1fr) 140px 132px 96px} 
+  body[data-page="deckbuilder"] .db-row.arr{grid-template-columns:26px 30px 34px minmax(0,1fr) 140px 132px 96px auto}
   body[data-page="deckbuilder"] .db-row .db-thumb{display:none} }
 @media (max-width:980px){ body[data-page="deckbuilder"] .db-row{grid-template-columns:30px 34px minmax(0,1fr) 96px}
+  body[data-page="deckbuilder"] .db-row.arr{grid-template-columns:26px 30px 34px minmax(0,1fr) 96px auto}
+  /* four columns fewer, so the selects stop at the status cell rather than
+     naming a grid line this step does not have and opening two 0px ones */
+  body[data-page="deckbuilder"] .db-row.arr > .db-ar-row2{grid-column:4 / 6}
   body[data-page="deckbuilder"] .db-row .db-layout, body[data-page="deckbuilder"] .db-row .db-kpi-wrap, body[data-page="deckbuilder"] .db-row .db-kpi-none, body[data-page="deckbuilder"] .db-row .db-thumb{display:none} }
 
 /* the per-row Region picker, on slides that carry a KPI strip */
@@ -1767,44 +1817,30 @@ body[data-page="deckbuilder"] .db-banner.bad{background:#FDECEC; border:1px soli
 body[data-page="deckbuilder"] .db-banner.ok{background:#E9F8EF; border:1px solid #A9DFC0; color:#15653A}
 body[data-page="deckbuilder"] .db-banner a{color:inherit; font-weight:800}
 
-/* ---- THE ARRANGE STAGE ------------------------------------------------------
-   Its own panel, above the slide list and never inside it. #dbList's rows are
-   what pageparity.js diffs byte for byte against the page this one was ported
-   from, and the arrangement is a fourth stage rather than a wider row: putting
-   any of it into rowHtml would mean narrowing that comparison a third time for
-   no reader's benefit.
+/* ---- ARRANGE, WHICH IS A MODE OF THE LIST AND NOT A PANEL ABOVE IT ---------
+   It used to be its own card above #dbList, holding a SECOND copy of all 43
+   rows in a 620px scroller with a fixed 356px column beside it. That is what
+   made "move this slide" and "pick its layout" two lists and two scroll
+   positions, and what made the tables panel something you scrolled back up to.
 
-   TWO COLUMNS. The order on the left, because that is the list you scan; what
-   the selected scope shows on the right, because that is the thing you change
-   once and apply to five slides. Below --bp-mid they stack, side first, so the
-   panel you just opened is the one on screen.                               */
-body[data-page="deckbuilder"] .db-arr{background:var(--white); border:1px solid var(--line);
-  border-radius:var(--r); box-shadow:var(--shadow); margin-bottom:14px; overflow:hidden}
-body[data-page="deckbuilder"] .db-arr[hidden]{display:none}
+   So there is one list. .db-row.arr (above) is the row with its arrange cells
+   grown; what is left here is the toolbar at the top of the card, those cells,
+   and the drawer. The reason the two were kept apart is gone rather than
+   overruled: #dbList's rows were what pageparity.js diffed byte for byte, and
+   that harness went with the rest of tests/ on 2026-08-25 (README §10).    */
 body[data-page="deckbuilder"] .db-arr-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap;
   padding:10px 14px; background:var(--blue-10); border-bottom:1px solid var(--line)}
+body[data-page="deckbuilder"] .db-arr-head[hidden]{display:none}
 body[data-page="deckbuilder"] .db-arr-head h3{margin:0; font:800 12px Archivo; letter-spacing:.06em;
   text-transform:uppercase; color:var(--blue-100)}
 body[data-page="deckbuilder"] .db-arr-head .db-spacer{flex:1}
-body[data-page="deckbuilder"] .db-arr-body{display:grid; grid-template-columns:minmax(0,1fr) 356px}
-@media (max-width:980px){ body[data-page="deckbuilder"] .db-arr-body{grid-template-columns:1fr}
-  body[data-page="deckbuilder"] .db-arr-side{order:-1; border-left:0; border-bottom:1px solid var(--line)} }
-body[data-page="deckbuilder"] .db-arr-list{min-width:0; max-height:620px; overflow:auto}
-body[data-page="deckbuilder"] .db-arr-side{border-left:1px solid var(--line); background:#FBFCFE;
-  padding:12px 14px; min-width:0}
 
-/* one arranged slide */
-body[data-page="deckbuilder"] .db-ar{display:grid; grid-template-columns:26px 22px 30px minmax(0,1fr) auto;
-  gap:9px; align-items:start; padding:8px 12px; border-bottom:1px solid #F0F4FA}
-body[data-page="deckbuilder"] .db-ar:last-child{border-bottom:0}
-body[data-page="deckbuilder"] .db-ar.sel{background:#EAF1FB}
-body[data-page="deckbuilder"] .db-ar.off{opacity:.5}
-body[data-page="deckbuilder"] .db-ar-move{display:flex; flex-direction:column; gap:2px}
+/* the cells a row grows in Arrange mode */
+body[data-page="deckbuilder"] .db-ar-move{display:flex; flex-direction:column; gap:2px; padding-top:2px}
 body[data-page="deckbuilder"] .db-ar-move button{border:1px solid var(--line); background:#fff; border-radius:4px;
   width:22px; height:15px; line-height:1; padding:0; font:700 9px Inter; color:var(--blue-80); cursor:pointer}
 body[data-page="deckbuilder"] .db-ar-move button:hover:not(:disabled){background:var(--blue-10)}
 body[data-page="deckbuilder"] .db-ar-move button:disabled{opacity:.3; cursor:default}
-body[data-page="deckbuilder"] .db-ar-num{font:600 11px Inter; color:var(--muted); text-align:right; padding-top:3px}
 body[data-page="deckbuilder"] .db-ar-main{min-width:0}
 body[data-page="deckbuilder"] .db-ar-ttl{width:100%; box-sizing:border-box; border:1px solid transparent;
   border-radius:6px; background:transparent; padding:3px 5px; font:600 12.5px Inter; color:var(--ink)}
@@ -1818,19 +1854,32 @@ body[data-page="deckbuilder"] .db-ar-fields select.edited{border-color:var(--blu
 body[data-page="deckbuilder"] .db-ar-tag{font:600 10.5px Inter; color:var(--muted); padding:3px 5px}
 body[data-page="deckbuilder"] .db-ar-scope{font:500 10px Inter; color:var(--muted); margin-top:3px}
 body[data-page="deckbuilder"] .db-ar-scope b{color:var(--blue-80); font-weight:700}
-body[data-page="deckbuilder"] .db-ar-side-btns{display:flex; gap:4px; align-items:center}
+body[data-page="deckbuilder"] .db-ar-side-btns{display:flex; gap:4px; align-items:center; padding-top:2px}
 body[data-page="deckbuilder"] .db-ar-x{border:1px solid var(--line); background:#fff; border-radius:6px;
   padding:3px 7px; font:700 11px Inter; color:var(--neg); cursor:pointer}
 body[data-page="deckbuilder"] .db-ar-x:hover{background:#FDECEC; border-color:#F3B7B7}
 body[data-page="deckbuilder"] .db-ar-pick{border:1px solid var(--line); background:#fff; border-radius:6px;
   padding:3px 7px; font:600 10.5px Inter; color:var(--blue-80); cursor:pointer}
 body[data-page="deckbuilder"] .db-ar-pick:hover{background:var(--blue-10)}
-body[data-page="deckbuilder"] .db-ar.sel .db-ar-pick{background:var(--blue-100); border-color:var(--blue-100); color:#fff}
+/* .on, not .sel on the row: the drawer being open is what the button reports,
+   and a row can be the one you are editing without its drawer being out. */
+body[data-page="deckbuilder"] .db-ar-pick.on{background:var(--blue-100); border-color:var(--blue-100); color:#fff}
 
-/* the right-hand panel: scope, then tables, then KPI */
+/* ---- THE DRAWER: what the fixed right-hand column became -------------------
+   Under the row whose Tables button asked for it, so the slide being changed
+   and the change are the same place on screen. Three columns rather than one
+   narrow one - how far the change reaches, then the tables, then the KPI strip
+   - because the width of the list is width this panel used to do without. */
+body[data-page="deckbuilder"] .db-drawer{background:#F7FAFE; border-bottom:1px solid var(--line); padding:12px 16px 14px}
+body[data-page="deckbuilder"] .db-dr-grid{display:grid; grid-template-columns:minmax(0,250px) minmax(0,1fr) minmax(0,300px);
+  gap:18px; align-items:start}
+@media (max-width:1180px){ body[data-page="deckbuilder"] .db-dr-grid{grid-template-columns:minmax(0,240px) minmax(0,1fr)} }
+@media (max-width:980px){ body[data-page="deckbuilder"] .db-dr-grid{grid-template-columns:1fr} }
+body[data-page="deckbuilder"] .db-dr-col{min-width:0}
+
+/* what is inside the drawer's three columns: the rungs, the tick list, the strip */
 body[data-page="deckbuilder"] .db-sc-h{font:800 11px Archivo; letter-spacing:.06em; text-transform:uppercase;
   color:var(--blue-100); margin:0 0 6px}
-body[data-page="deckbuilder"] .db-sc-h.sp{margin-top:16px}
 body[data-page="deckbuilder"] .db-sc{display:flex; flex-direction:column; gap:4px}
 body[data-page="deckbuilder"] .db-sc button{text-align:left; border:1px solid var(--line); background:#fff;
   border-radius:7px; padding:6px 9px; font:600 11.5px Inter; color:var(--ink); cursor:pointer}
@@ -23759,7 +23808,12 @@ AMR.page('overview', {
       <span class="db-arrow">&rarr;</span>
       <div class="db-stage" id="dbStage3"><span class="db-step">3</span>
         <button class="dbbtn" id="dbBtnRender" disabled
-          title="Re-reads the source sheets, then photographs each content block">Render</button></div>
+          title="Re-reads the source sheets, then photographs each content block">Render</button>
+        <!-- ONLY WHILE A PASS IS RUNNING, and it stops at the next slide rather
+             than mid-capture: the slide being photographed finishes and is kept,
+             so Render afterwards carries on instead of starting again. -->
+        <button class="dbbtn stop" id="dbBtnStop" hidden
+          title="Stop after the slide being photographed right now. Everything already rendered is kept &mdash; press Render to carry on with the rest.">&#9632; Stop render</button></div>
       <span class="db-arrow">&rarr;</span>
       <div class="db-stage" id="dbStage4"><span class="db-step">4</span>
         <button class="dbbtn primary" id="dbBtnPublish" disabled>Publish to Slides</button></div>
@@ -23767,11 +23821,21 @@ AMR.page('overview', {
       <div class="db-prog" id="dbProg"></div>
     </div>
 
-    <!-- THE ARRANGE STAGE. Its own panel, above the list and never inside a
-         row: #dbList's markup is what pageparity.js diffs byte for byte
-         against the page this was ported from. -->
-    <div class="db-arr" id="dbArrange" hidden>
-      <div class="db-arr-head">
+    <!-- THE DECK, AND THERE IS ONLY ONE LIST OF IT.
+         Arrange was a panel of its own above this one, with a second copy of
+         all 43 rows in a 620px scroller and a fixed column beside it - so the
+         layout picker was in one list, the arrows and the tables were in the
+         other, and every change meant scrolling between them. It is a MODE of
+         this list now: the toolbar appears, every row grows its arrange cells,
+         and the tables panel opens as a drawer under the row whose Tables
+         button asked for it.
+
+         The reason it was kept out of here is gone rather than overruled -
+         #dbList's markup was what pageparity.js diffed byte for byte against
+         the page this was ported from, and that harness was removed with the
+         rest of tests/ on 2026-08-25 (README section 10, Testing). -->
+    <div class="db-deck" id="dbDeck">
+      <div class="db-arr-head" id="dbArrHead" hidden>
         <h3>Arrange</h3>
         <span class="db-note" id="dbArrCount" style="margin:0"></span>
         <div class="db-spacer"></div>
@@ -23779,17 +23843,14 @@ AMR.page('overview', {
         <button class="dbbtn" id="dbArrReset">&#8630; Reset arrangement</button>
         <button class="dbbtn" id="dbArrDone">Done</button>
       </div>
-      <div class="db-arr-body">
-        <div class="db-arr-list" id="dbArrList"></div>
-        <div class="db-arr-side" id="dbArrSide"></div>
-      </div>
-      <div class="db-del" id="dbArrDeleted" hidden></div>
-    </div>
 
-    <div class="db-list" id="dbList">
-      <div style="padding:26px 16px; text-align:center" class="db-note">
-        Press <b>Plan</b> to list the slides this month&rsquo;s deck will contain.
+      <div class="db-list" id="dbList">
+        <div style="padding:26px 16px; text-align:center" class="db-note">
+          Press <b>Plan</b> to list the slides this month&rsquo;s deck will contain.
+        </div>
       </div>
+
+      <div class="db-del" id="dbArrDeleted" hidden></div>
     </div>
   </div>
 </div>
@@ -23824,10 +23885,13 @@ AMR.page('overview', {
 
    NOT changed by the port: the stage flow, the source check inside Render, and
    the per-row Region picker are the page's own and were ported line for line.
-   The ARRANGE stage was added afterwards, as its own piece of work, and it is
-   a fourth stage and a panel of its own rather than anything inside #dbList —
-   those rows are what pageparity.js diffs byte for byte against the page this
-   was ported from.   */
+   The ARRANGE stage was added afterwards, as its own piece of work. It was a
+   panel of its own above #dbList for exactly one reason — those rows were what
+   pageparity.js diffed byte for byte against the page this was ported from, so
+   nothing was allowed into rowHtml. That harness was removed with the rest of
+   tests/ on 2026-08-25 (README §10, Testing), and on 2026-08-25 the two were
+   merged: one list, arrange is a mode of it, and the tables panel opens as a
+   drawer under the row that asked for it.   */
 AMR.page('deckbuilder', {
   title: 'Amrize · Deck Builder',
   /* Chart.js because the content modules draw the slides' charts, html2canvas
@@ -23840,7 +23904,8 @@ AMR.page('deckbuilder', {
     'table or chart goes in as a picture. That is the difference from the PNG export on '+
     'each report page, which flattens the whole slide into one image.</p>'+
     '<h3>Four stages</h3><p><b>Plan</b> lists the slides. <b>Arrange</b> is where the pack '+
-    'is decided — order, what each slide shows, what is in it this month. <b>Render</b> '+
+    'is decided — order, what each slide shows, what is in it this month; it turns the list '+
+    'you are already looking at into an editor rather than opening a second one. <b>Render</b> '+
     're-reads the source sheets, then photographs each content block in your browser, one at '+
     'a time; you can watch the previews fill in. <b>Publish</b> sends them to Slides, one '+
     'slide per call.</p>'+
@@ -23848,6 +23913,11 @@ AMR.page('deckbuilder', {
     'only place that shows what somebody set months ago.</p>'+
     '<h3>If a slide fails</h3><p>It goes red with the reason. Press <b>Render</b> again — only '+
     'the unfinished rows are retried, nothing already done is rebuilt.</p>'+
+    '<h3>Stopping a render</h3><p><b>Stop render</b> appears beside <b>Render</b> while a pass '+
+    'is running. It stops at the <b>next</b> slide — the one being photographed right now is '+
+    'finished and kept, because a capture is one operation and abandoning it half way would '+
+    'lose that slide for nothing. Everything already rendered stays, so pressing <b>Render</b> '+
+    'again carries on with the slides that were left, exactly as it does after a failure.</p>'+
     '<h3>Getting new figures</h3><p>There is nothing to press and nothing to remember — '+
     '<b>Render re-reads the source sheets itself</b>, every time, before it photographs '+
     'anything. Almost always nothing has moved, and then it costs one question and renders '+
@@ -23881,12 +23951,14 @@ AMR.page('deckbuilder', {
     '{{IMAGE}} box is a guide, not a frame, so the picture is always fitted inside it and can '+
     'never cover the title or the comments.</p>'+
     '<h3>Changing which slides are in the deck</h3>'+
-    '<p>Press <b>Arrange</b>. Move a slide with the arrows, untick one this month skips, '+
-    'retype a title, change which page a slide comes from, or delete it outright. '+
-    '<b>+ Add slide</b> is the same editor with an empty row.</p>'+
+    '<p>Press <b>Arrange</b>. Every row of the list grows its arrows, its title box and its '+
+    'pickers where it already is — so move a slide, untick one this month skips, retype a '+
+    'title, change which page a slide comes from, or delete it outright, all without leaving '+
+    'the row you are looking at. <b>+ Add slide</b> is the same editor with an empty row, and '+
+    '<b>Done</b> puts the extra controls away.</p>'+
     '<p><b>Every one of those is saved for everybody</b> — it is the deck&rsquo;s setting, '+
     'not this browser&rsquo;s — and it stays until somebody changes it again. Nothing is '+
-    'lost: a deleted slide goes to <b>Deleted slides</b> at the bottom of the panel with a '+
+    'lost: a deleted slide goes to <b>Deleted slides</b> at the bottom of the list with a '+
     '<b>Restore</b> beside it, and <b>Reset arrangement</b> puts the whole deck back to what '+
     'the code says.</p>'+
     '<p><b>Unticking and deleting are different questions.</b> Unticked means &ldquo;not in '+
@@ -23897,7 +23969,9 @@ AMR.page('deckbuilder', {
     'exactly what that file says, and a slide added to it later lands beside its neighbour '+
     'here rather than at the back.</p>'+
     '<h3>Which tables a slide shows</h3>'+
-    '<p>Also in Arrange, on the right. Pick a slide, then pick <b>how far the change should '+
+    '<p>Also in Arrange. Press <b>Tables</b> on a slide and the panel opens underneath that '+
+    'row — not off to the side, so the slide you are changing and the change are the same '+
+    'place on screen. Press it again to put it away. Then pick <b>how far the change should '+
     'reach</b> — <i>All Price &amp; Volume slides</i>, <i>Southwest only</i>, <i>Southwest '+
     '&middot; Docks only</i>, <i>This slide only</i>. Most months you want the widest one: '+
     'fourteen market slides showing the same three tables is the normal shape, and setting '+
@@ -24291,7 +24365,6 @@ AMR.page('deckbuilder', {
         prog(ROWS.length + ' slides planned');
         redraw();
         dbDrawRail();
-        if(ARR.open) dbArrDraw();
         setBusy(false);
         updateStages();
 
@@ -24330,10 +24403,16 @@ AMR.page('deckbuilder', {
     if(!TPL){ banner('bad', 'Load the template first — the capture size comes from it.'); return; }
     clearBanners();
     setBusy(true);
+    RENDERING = true; RSTOP = false; dbStopUi();
 
     /* The check may DROP rows that already have pictures, so `todo` cannot be
-       worked out until it has run. */
-    dbSourceCheck().then(dbRenderPass);
+       worked out until it has run. Stop is live from here rather than from the
+       first slide: the check can cost a sync's worth of seconds, and a button
+       that appears and does nothing yet is worse than no button. */
+    dbSourceCheck().then(function(){
+      if(RSTOP) return dbRenderEnd(true);
+      dbRenderPass();
+    });
   }
 
   /* THE QUEUE IS LIVE WHILE IT RUNS.
@@ -24346,21 +24425,70 @@ AMR.page('deckbuilder', {
      this pass, whether it has been photographed already or not. */
   var RQ = null;                       // { list:[rows], i:cursor } while rendering
 
+  /* ---- STOPPING ONE -------------------------------------------------------
+     AT THE NEXT SLIDE, never mid-capture. A capture is one html2canvas call
+     that either produces a picture or does not, and abandoning it half way
+     would cost the slide being photographed and leave the adapter's off-screen
+     layout on the page. So the slide in flight FINISHES AND IS KEPT and the
+     pass ends before the next one starts — which is also what makes Render
+     afterwards a resume rather than a restart, on exactly the rule a failed
+     slide already uses: the next pass renders `r.on && !r.png`, so every
+     picture already taken is skipped.
+
+     Two flags, not one. RENDERING is "is the button worth offering", and it is
+     not BUSY — Plan and Publish are busy too and there is nothing to stop.
+     RSTOP is "somebody pressed it", read at the boundary. */
+  var RENDERING = false;
+  var RSTOP     = false;
+
+  function dbStopRender(){
+    if(!RENDERING || RSTOP) return;
+    RSTOP = true;
+    dbStopUi();
+    prog('Stopping — finishing the slide being photographed…');
+  }
+  function dbStopUi(){
+    var b = document.getElementById('dbBtnStop');
+    if(!b) return;
+    b.hidden    = !RENDERING;
+    b.disabled  = RSTOP;
+    b.innerHTML = RSTOP ? 'Stopping…' : '&#9632; Stop render';
+  }
+
+  /* The end of a pass, however it ended. It was the top of next(); a stop
+     reaches it from two places now, so it is one function and the two paths
+     cannot drift. */
+  function dbRenderEnd(stopped){
+    var left = RQ ? RQ.list.slice(RQ.i).filter(function(r){ return r.on && !r.png; }).length : 0;
+    RQ = null; RENDERING = false; RSTOP = false; dbStopUi();
+
+    var ok = countReady(), failed = ROWS.filter(function(r){ return r.status==='error'; }).length;
+    prog((stopped ? 'Stopped · ' : '') + ok + ' of ' + countOn() + ' slides ready' +
+         (failed ? ' · ' + failed + ' failed' : '') +
+         (stopped && left ? ' · ' + left + ' not rendered' : ''));
+    if(stopped && left)
+      banner('warn', '<b>Render stopped.</b> ' + left + ' slide' + (left===1?'':'s') +
+        ' had not been photographed. Nothing already rendered was thrown away — press ' +
+        '<b>Render</b> to carry on with just those.');
+    if(failed) banner('warn', failed+' slide'+(failed===1?'':'s')+' could not be rendered. '+
+      'Press <b>Render</b> again to retry just those.');
+    setBusy(false); updateStages();
+  }
+
   function dbRenderPass(){
     var todo = ROWS.filter(function(r){ return r.on && !r.png; });
-    if(!todo.length){ prog('Nothing to render'); setBusy(false); updateStages(); return; }
+    if(!todo.length){
+      prog('Nothing to render');
+      RENDERING = false; RSTOP = false; dbStopUi();
+      setBusy(false); updateStages();
+      return;
+    }
 
     RQ = { list: todo, i: 0 };
     function next(){
-      if(RQ.i >= RQ.list.length){
-        RQ = null;
-        var ok = countReady(), failed = ROWS.filter(function(r){ return r.status==='error'; }).length;
-        prog(ok + ' of ' + countOn() + ' slides ready' + (failed ? ' · ' + failed + ' failed' : ''));
-        if(failed) banner('warn', failed+' slide'+(failed===1?'':'s')+' could not be rendered. '+
-          'Press <b>Render</b> again to retry just those.');
-        setBusy(false); updateStages();
-        return;
-      }
+      /* the two ways a pass ends: it ran out of slides, or Stop was pressed
+         while the last one was being photographed */
+      if(RSTOP || RQ.i >= RQ.list.length) return dbRenderEnd(RSTOP);
       var row = RQ.list[RQ.i++];
       /* a row can be dropped from the queue after it was added - unticked, or its
          picture rebuilt by something else */
@@ -24513,11 +24641,16 @@ AMR.page('deckbuilder', {
    * to exist — and when someone moves a box in the template and reloads, the
    * previews move with it.
    * ======================================================================= */
+  /* THE WHOLE DECK, every time. It was the slide list alone and Arrange had a
+     redraw of its own for its own copy of the same rows; one list means one
+     draw, and the toolbar's count, the drawer and the Deleted slides are all
+     part of the same picture. */
   function redraw(){
     var host = document.getElementById('dbList');
     if(!ROWS.length){
       host.innerHTML = '<div style="padding:26px 16px;text-align:center" class="db-note">'+
         'Press <b>Plan</b> to list the slides this month&rsquo;s deck will contain.</div>';
+      dbDrawDeleted(); dbDrawCount();
       return;
     }
     var html = '', group = '';
@@ -24527,10 +24660,15 @@ AMR.page('deckbuilder', {
         html += '<div class="db-group">'+esc(group)+'</div>';
       }
       html += rowHtml(r, i);
+      /* THE DRAWER OPENS WHERE THE SLIDE IS — under its own row, and only for
+         the one whose Tables button asked for it. */
+      if(ARR.open && r.spec.id === ARR.sel) html += arrSideHtml(r);
     });
     host.innerHTML = html;
     ROWS.forEach(function(r, i){ paintThumb(i); });
     dbLayoutCount();
+    dbDrawDeleted();
+    dbDrawCount();
   }
 
   /* How many rows are off their recipe layout, in the rail. This is the only
@@ -24600,10 +24738,9 @@ AMR.page('deckbuilder', {
        under that would be a dropdown that visibly moves and changes nothing —
        the same silent failure as a slide built from last week's figures.
 
-       THE MARKUP IS UNCHANGED WHERE NOTHING IS SHARED, which is the default
-       and is the state pageparity.js's fixture compares. Same shape as the
-       layout picker beside it, which also only grows its "changed" caption
-       once a row has been moved off its recipe default. */
+       THE MARKUP IS UNCHANGED WHERE NOTHING IS SHARED, which is the default.
+       Same shape as the layout picker beside it, which also only grows its
+       "changed" caption once a row has been moved off its recipe default. */
     var pinned = (r.spec.kpi && r.spec.kpi.sheet) || '';
     if(pinned){
       return '<div class="db-kpi-wrap"><span class="db-kpi-cap moved">Region \u00b7 shared</span>'+
@@ -24875,11 +25012,15 @@ AMR.page('deckbuilder', {
    * Slide ORDER, what each slide SHOWS, and what is in the pack — all of it
    * from the page, all of it saved SHARED, and none of it freezing the recipe.
    *
-   * WHY IT IS A FOURTH STAGE AND NOT A WIDER ROW. #dbList's markup is what
-   * pageparity.js diffs byte for byte against the page this one was ported
-   * from. That comparison has already been narrowed once, for the layout cell,
-   * and README §10's rule is to narrow a claim only as far as it has to go.
-   * Nothing below writes into rowHtml.
+   * IT IS A STAGE, AND IT IS ALSO THE LIST. It used to be a panel of its own
+   * with a second copy of all 43 rows in it, because #dbList's markup was what
+   * pageparity.js diffed byte for byte against the page this was ported from
+   * and nothing was allowed into rowHtml. The harness went with the rest of
+   * tests/ on 2026-08-25, and two lists of the same slides was the whole of
+   * the complaint: the layout picker in one, the arrows and the tables in the
+   * other, and a fixed side panel you scrolled back up to. So Arrange is a
+   * MODE of the one list now — rowHtml grows the row's arrange cells, and
+   * arrSideHtml opens under the row whose Tables button asked for it.
    *
    * THE TWO RULES THE SERVER'S STORE KEEPS, and what they cost here:
    *   1. Nothing stored = the recipe. So dbPlanFromRows() writes DIFFERENCES:
@@ -24892,7 +25033,8 @@ AMR.page('deckbuilder', {
    *      buys.
    * ======================================================================= */
 
-  var ARR = { open:false, sel:'', scope:'', plan:null, deleted:[], markets:[], natural:[] };
+  var ARR = { open:false, seen:false, sel:'', scope:'', plan:null, deleted:[],
+              markets:[], natural:[] };
 
   /* Plain words for a scope key. 'pv|Southwest|Docks' is not something to put
      in front of anybody, and the whole point of the selector is that you can
@@ -25000,41 +25142,39 @@ AMR.page('deckbuilder', {
     return r.labels || [];
   }
 
-  /* ---- opening and closing ---------------------------------------------- */
+  /* ---- opening and closing ----------------------------------------------
+     Nothing is shown or hidden but the toolbar: the list underneath is the
+     same list either way, and redraw() gives every row its arrange cells or
+     takes them back. */
   function dbOpenArrange(){
     if(!ROWS.length){ banner('warn', 'Press <b>Plan</b> first.'); return; }
     ARR.open = true;
-    if(!ARR.sel && ROWS.length) ARR.sel = ROWS[0].spec.id;
-    ARR.scope = '';
-    document.getElementById('dbArrange').hidden = false;
-    dbArrDraw();
+    ARR.seen = true;
+    /* NO DRAWER UNTIL A ROW ASKS FOR ONE. It used to open on the first slide
+       whether or not anybody was looking at it; a drawer costs a screenful
+       wherever it lands, so it lands where its Tables button was pressed. */
+    ARR.sel = ''; ARR.scope = '';
+    document.getElementById('dbArrHead').hidden = false;
+    redraw();
     updateStages();
   }
   function dbArrClose(){
     ARR.open = false;
-    document.getElementById('dbArrange').hidden = true;
+    ARR.sel = '';
+    document.getElementById('dbArrHead').hidden = true;
+    redraw();
     updateStages();
   }
 
-  /* ---- the left column: the arrangement ---------------------------------- */
-  function dbArrDraw(){
-    if(!ARR.open) return;
-    var host = document.getElementById('dbArrList'), html = '', group = '';
-    ROWS.forEach(function(r, i){
-      if(r.spec.group !== group){
-        group = r.spec.group;
-        html += '<div class="db-group">' + esc(group) + '</div>';
-      }
-      html += arrRowHtml(r, i);
-    });
-    host.innerHTML = html || '<div class="db-note" style="padding:20px">No slides.</div>';
-    dbDrawSide();
-    dbDrawDeleted();
-    dbDrawCount();
-  }
-
-  function arrRowHtml(r, i){
-    var sp = r.spec, sel = (sp.id === ARR.sel);
+  /* ---- the four things a row IS ------------------------------------------
+     Which page produces it, which market, which cut of that market and which
+     period - plus the line saying which rung of the ladder is answering for
+     its tables. Every one of them is DECLARED BY THE ADAPTER, so this stays
+     generic: the page has never known that Manitoba is on the second EBITDA
+     workbook and it must not start knowing that Ready-Mix spells the Southwest
+     'HNS_SW'. */
+  function arrFieldsHtml(r, i){
+    var sp = r.spec;
     var srcs = srcList();
     if(srcs.indexOf(sp.source) === -1) srcs = [sp.source].concat(srcs);
 
@@ -25090,59 +25230,48 @@ AMR.page('deckbuilder', {
       scope = '<div class="db-ar-scope">' + bits.join(' · ') + '</div>';
     }
 
-    return '<div class="db-ar' + (sel ? ' sel' : '') + (r.on ? '' : ' off') + '">' +
-      '<div class="db-ar-move">' +
-        '<button data-db-arr="up" data-i="' + i + '"' + (i === 0 ? ' disabled' : '') +
-          ' title="Move up">&#9650;</button>' +
-        '<button data-db-arr="down" data-i="' + i + '"' + (i === ROWS.length - 1 ? ' disabled' : '') +
-          ' title="Move down">&#9660;</button>' +
-      '</div>' +
-      '<input type="checkbox"' + (r.on ? ' checked' : '') + ' data-db-arr="tick" data-i="' + i +
-        '" title="In this month’s pack by default. Unticking leaves the slide here, greyed.">' +
-      '<div class="db-ar-num">' + (i + 1) + '</div>' +
-      '<div class="db-ar-main">' +
-        '<input class="db-ar-ttl" value="' + esc(r.spec.title) + '" data-db-arr="title" data-i="' + i +
-          '" title="The real, editable Slides heading. Not baked into the picture.">' +
-        '<div class="db-ar-fields">' + fields + '</div>' + scope +
-      '</div>' +
-      '<div class="db-ar-side-btns">' +
-        '<button class="db-ar-pick" data-db-arr="sel" data-i="' + i + '">Tables</button>' +
-        '<button class="db-ar-x" data-db-arr="del" data-i="' + i +
-          '" title="Take this slide out of the pack. It goes to Deleted slides and can be put back.">' +
-          '&times;</button>' +
-      '</div>' +
-    '</div>';
+    return '<div class="db-ar-row2"><div class="db-ar-fields">' + fields + '</div>' +
+      scope + '</div>';
   }
 
-  /* ---- the right column: tables and KPI for the chosen scope -------------- */
-  function dbDrawSide(){
-    var host = document.getElementById('dbArrSide'), r = selRow();
-    if(!r){ host.innerHTML = ''; return; }
+  /* ---- THE DRAWER: tables and KPI for the chosen scope ---------------------
+     Same content the fixed right-hand column carried, returned as a string and
+     drawn UNDER the row whose Tables button asked for it. Two things changed
+     with it and both were the panel's own problem: choosing a slide at the
+     bottom of one list and reading its tables at the top of another, and doing
+     all of it in 356px while the list beside it had 900. It is three columns
+     now - how far a change reaches, the tables, the KPI strip - and it is
+     wherever the slide is. */
+  function arrSideHtml(r){
     var sp = r.spec, src = srcOf(sp.source);
     var ladder = sp.scopeLadder || [];
     var key = (ARR.scope && ladder.indexOf(ARR.scope) !== -1) ? ARR.scope
             : arrDefaultScope(sp);
 
-    var html = '<h3 class="db-sc-h">' + esc(sp.title) + '</h3>' +
+    var reach = '<div class="db-dr-col"><h3 class="db-sc-h">How far a change reaches</h3>' +
       '<div class="db-sc">' + ladder.map(function(k){
         var n = scopeReach(k, 'tablesScope');
         return '<button class="' + (k === key ? 'on' : '') + '" data-db-scope="' + esc(k) + '">' +
           '<span class="n">' + n + ' slide' + (n === 1 ? '' : 's') + '</span>' +
           esc(scopeLabel(k, r)) +
           '</button>';
-      }).join('') + '</div>';
+      }).join('') + '</div></div>';
+
+    function wrap(cols){
+      return '<div class="db-drawer"><div class="db-dr-grid">' + cols + '</div></div>';
+    }
 
     if(!src){
-      host.innerHTML = html + '<p class="db-note">No content source is registered for <b>' +
-        esc(sp.source) + '</b>, so there is nothing to choose from yet.</p>';
-      return;
+      return wrap(reach + '<div class="db-dr-col"><p class="db-note" style="margin-top:0">' +
+        'No content source is registered for <b>' + esc(sp.source) + '</b>, so there is ' +
+        'nothing to choose from yet.</p></div>');
     }
 
     /* ---- tables ---- */
-    html += '<h3 class="db-sc-h sp">Tables</h3>';
+    var html = '<div class="db-dr-col"><h3 class="db-sc-h">Tables</h3>';
     if(!src.tables){
-      html += '<p class="db-note">This page’s slide has fixed content — there are no ' +
-        'tables to choose.</p>';
+      html += '<p class="db-note" style="margin-top:0">This page’s slide has fixed content — ' +
+        'there are no tables to choose.</p>';
     } else {
       var stored = (ARR.plan && scopeEntry(key) && scopeEntry(key).tables) || null;
       var chosen = stored ? stored.slice() : null;
@@ -25186,12 +25315,13 @@ AMR.page('deckbuilder', {
           'it publishes a picture saying “Load market data”.</p>';
       }
     }
+    html += '</div>';
 
     /* ---- KPI ---- */
-    html += '<h3 class="db-sc-h sp">KPI strip</h3>';
+    html += '<div class="db-dr-col"><h3 class="db-sc-h">KPI strip</h3>';
     if(!src.kpiToggle){
-      html += '<p class="db-note">This page’s slide carries no KPI strip, so there is ' +
-        'nothing to configure.</p>';
+      html += '<p class="db-note" style="margin-top:0">This page’s slide carries no KPI ' +
+        'strip, so there is nothing to configure.</p>';
     } else {
       var ke = (scopeEntry(key) && scopeEntry(key).kpi) || null;
       var kon = !ke || ke.on !== false;
@@ -25224,7 +25354,9 @@ AMR.page('deckbuilder', {
         }
       }
     }
-    host.innerHTML = html;
+    html += '</div>';
+
+    return wrap(reach + html);
   }
 
   function scopeEntry(key){
@@ -25358,17 +25490,20 @@ AMR.page('deckbuilder', {
     var j = i + by;
     if(j < 0 || j >= ROWS.length) return;
     var t = ROWS[i]; ROWS[i] = ROWS[j]; ROWS[j] = t;
-    ARR.sel = ROWS[j].spec.id;
+    /* NOT ARR.sel = the moved row. It used to mean "which slide the side panel
+       is showing" and there was always one; it means "whose drawer is open"
+       now, and moving a slide must not pop one open under it. The drawer needs
+       no help to follow: it is keyed by id, and an id does not change place. */
     /* REORDERING DROPS NO PICTURE. It changes only where a slide lands, and
        that is finish()'s job now — DECK_finish takes the order and moves the
        built slides into place before it numbers them. */
-    dbArrDraw(); redraw();
+    redraw();
     dbSavePlan('Moved · ' + ROWS[j].spec.title);
   }
 
   function dbArrTick(i, on){
     ROWS[i].on = on;
-    dbArrDraw(); redraw(); setBusy(BUSY);
+    redraw(); setBusy(BUSY);
     dbSavePlan(ROWS.filter(function(r){ return r.on; }).length + ' of ' + ROWS.length +
                ' slides in the pack');
   }
@@ -25415,7 +25550,7 @@ AMR.page('deckbuilder', {
     sp.scopeLadder = ladderFor(sp);
 
     var dropped = dbArrDropPicture(ROWS[i]);
-    dbArrDraw(); redraw(); setBusy(BUSY);
+    redraw(); setBusy(BUSY);
     dbSavePlan(sp.title + ' → ' + srcLabel(next) +
       (sp.market ? '' : ' · pick a market') +
       (dropped ? ' · picture dropped' : ''));
@@ -25432,7 +25567,7 @@ AMR.page('deckbuilder', {
     /* MARKET, PERIOD AND REFINE ARE THE PICTURE. Unlike a table change, there
        is nothing to compare — a different market is different content, always. */
     var moved = dbArrDropPicture(ROWS[i]);
-    dbArrDraw(); redraw(); setBusy(BUSY);
+    redraw(); setBusy(BUSY);
     dbSavePlan(sp.title + ' · ' + [sp.market, sp.refine, sp.period].filter(Boolean).join(' · ') +
       (moved ? ' · picture dropped' : ''));
   }
@@ -25483,8 +25618,8 @@ AMR.page('deckbuilder', {
       ARR.deleted.push({ id:sp.id, title:sp.title, group:sp.group, inRecipe:true });
     }
     ROWS.splice(i, 1);
-    if(ARR.sel === sp.id) ARR.sel = (ROWS[0] && ROWS[0].spec.id) || '';
-    dbArrDraw(); redraw(); setBusy(BUSY);
+    if(ARR.sel === sp.id) ARR.sel = '';
+    redraw(); setBusy(BUSY);
     dbSavePlan('Deleted · ' + sp.title);
   }
 
@@ -25496,7 +25631,7 @@ AMR.page('deckbuilder', {
     ARR.deleted.splice(i, 1);
     dbSavePlan(d.inRecipe ? ('Restoring · ' + (d.title || d.id))
                           : 'Cleared a deletion that had nothing left behind it')
-      .then(function(){ if(d.inRecipe) dbPlan(); else { dbArrDraw(); dbDrawRail(); } });
+      .then(function(){ if(d.inRecipe) dbPlan(); else { redraw(); dbDrawRail(); } });
   }
 
   /* ADD SLIDE is the same editor with an empty row: source from the registered
@@ -25505,7 +25640,10 @@ AMR.page('deckbuilder', {
   function dbAddSlide(){
     var srcs = srcList();
     if(!srcs.length){ banner('warn', 'No content sources are registered, so there is nothing to add.'); return; }
-    var at = ROWS.indexOf(selRow());
+    /* AFTER THE SLIDE WHOSE DRAWER IS OPEN, and at the end when none is —
+       which is where naturalOrder puts an added row anyway, so nothing has to
+       be moved to make the arrangement agree with the recipe. */
+    var at = ARR.sel ? ROWS.indexOf(selRow()) : ROWS.length - 1;
     var like = (at >= 0 ? ROWS[at] : null);
     var source = like ? like.spec.source : srcs[0];
     var id = arrNewId(source);
@@ -25537,7 +25675,7 @@ AMR.page('deckbuilder', {
     }
     ROWS.splice(at + 1, 0, { spec:spec, on:true, status:'pending', png:null, w:0, h:0, err:'' });
     ARR.sel = id;
-    dbArrDraw(); redraw(); setBusy(BUSY);
+    redraw(); setBusy(BUSY);
     dbSavePlan('Added · ' + spec.title);
   }
   function arrNewId(source){
@@ -25576,7 +25714,7 @@ AMR.page('deckbuilder', {
       banner('warn', 'A ' + srcLabel(r.spec.source) + ' slide needs at least ' + min +
         ' table: its KPI card reads a grand total off one, and with none it publishes ' +
         'a picture saying “Load market data to fill this card”.');
-      dbDrawSide();
+      redraw();
       return;
     }
     arrStoreScope(key, { tables: next, source: r.spec.source, min: min });
@@ -25605,7 +25743,7 @@ AMR.page('deckbuilder', {
        is the point of it — and each of those rows carries the line saying
        which rung its tables come from. Redrawing only the side leaves five
        rows on screen still naming the rung they were on before the change. */
-    dbArrDraw(); dbDrawRail();
+    redraw(); dbDrawRail();
     prog('Saving…');
 
     srv('DECK_setTables', [key, patch])
@@ -25619,13 +25757,13 @@ AMR.page('deckbuilder', {
            is no putting it back. dbPickLayout drops first and apologises in the
            banner; there is no reason to, and this is the shape to copy. */
         var n = dbRestale();
-        dbArrDraw(); dbDrawRail(); redraw(); setBusy(BUSY);
+        redraw(); dbDrawRail(); setBusy(BUSY);
         prog(scopeLabel(key, selRow()) + ' · saved for everybody' + dbRestaleNote(n));
       })
       .catch(function(err){
         if(was) ARR.tables.scopes[key] = was; else delete ARR.tables.scopes[key];
         arrApplyScopes();
-        dbArrDraw(); dbDrawRail(); prog('');
+        redraw(); dbDrawRail(); prog('');
         banner('bad', '<b>Could not save:</b> ' + esc(err && err.message ? err.message : String(err)));
       });
   }
@@ -25690,23 +25828,71 @@ AMR.page('deckbuilder', {
     });
   }
 
+  /* ONE ROW OF THE DECK — and in Arrange mode the row IS the editor.
+     Everything the Arrange stage used to draw into a second list above this
+     one is four more cells here: the move arrows and the tick at the front,
+     the editable title and the source / market / refine / period selects in
+     the middle, Tables and × at the end. The layout picker, the Region
+     dropdown, the status and the preview do not move — which is the point of
+     merging the two: changing what a slide IS and seeing what it will look
+     like are one row and one scroll position.
+
+     THE TICK MEANS TWO DIFFERENT THINGS, and always did. Outside Arrange it is
+     this browser's "skip it on this render" and nothing is saved; inside it is
+     the pack's membership, saved for everybody. So it carries the attribute of
+     the mode it is in — data-db-toggle or data-db-arr="tick" — and neither
+     behaviour changed. */
   function rowHtml(r, i){
-    /* refine sits next to the market it narrows, so a Land row is readable as
-       "pv · Southwest · Land · MTD" rather than looking like a duplicate of the
-       plain Southwest row above it */
-    var sub = [r.spec.source, r.spec.market, r.spec.refine, r.spec.period]
-      .filter(Boolean).join(' · ');
-    return '<div class="db-row'+(r.on?'':' off')+'" id="dbRow'+i+'">'+
-      '<input type="checkbox" '+(r.on?'checked':'')+' data-db-toggle="'+i+'">'+
-      '<div class="db-num">'+(i+1)+'</div>'+
-      '<div><div class="db-ttl">'+esc(r.spec.title)+'</div>'+
+    var sp = r.spec, arr = ARR.open, sel = arr && sp.id === ARR.sel;
+
+    var head, main;
+    if(arr){
+      head =
+        '<div class="db-ar-move">'+
+          '<button data-db-arr="up" data-i="'+i+'"'+(i === 0 ? ' disabled' : '')+
+            ' title="Move up">&#9650;</button>'+
+          '<button data-db-arr="down" data-i="'+i+'"'+(i === ROWS.length - 1 ? ' disabled' : '')+
+            ' title="Move down">&#9660;</button>'+
+        '</div>'+
+        '<input type="checkbox"'+(r.on ? ' checked' : '')+' data-db-arr="tick" data-i="'+i+
+          '" title="In this month’s pack by default. Unticking leaves the slide here, greyed.">';
+      main =
+        '<div class="db-ar-main">'+
+          '<input class="db-ar-ttl" value="'+esc(sp.title)+'" data-db-arr="title" data-i="'+i+
+            '" title="The real, editable Slides heading. Not baked into the picture.">'+
+          (r.err ? '<div class="db-err">'+esc(r.err)+'</div>' : '')+
+        '</div>'+
+        arrFieldsHtml(r, i);
+    } else {
+      /* refine sits next to the market it narrows, so a Land row is readable as
+         "pv · Southwest · Land · MTD" rather than looking like a duplicate of the
+         plain Southwest row above it */
+      var sub = [sp.source, sp.market, sp.refine, sp.period].filter(Boolean).join(' · ');
+      head = '<input type="checkbox" '+(r.on?'checked':'')+' data-db-toggle="'+i+'">';
+      main = '<div><div class="db-ttl">'+esc(sp.title)+'</div>'+
         '<div class="db-sub">'+esc(sub)+'</div>'+
-        (r.err ? '<div class="db-err">'+esc(r.err)+'</div>' : '')+'</div>'+
+        (r.err ? '<div class="db-err">'+esc(r.err)+'</div>' : '')+'</div>';
+    }
+
+    return '<div class="db-row'+(arr?' arr':'')+(sel?' sel':'')+(r.on?'':' off')+
+      '" id="dbRow'+i+'">'+
+      head+
+      '<div class="db-num">'+(i+1)+'</div>'+
+      main+
       layoutPickerHtml(r, i)+
       kpiPickerHtml(r, i)+
       '<div class="db-st '+stCls(r.status)+'">'+stTxt(r.status)+'</div>'+
       '<div class="db-thumb'+(r.png?'':' empty')+'" id="dbThumb'+i+'" '+
         'data-db-lb="'+i+'" title="Click for a full-size look"></div>'+
+      (arr ?
+        '<div class="db-ar-side-btns">'+
+          '<button class="db-ar-pick'+(sel?' on':'')+'" data-db-arr="sel" data-i="'+i+
+            '" title="Which tables this slide shows, and how far a change to them reaches. '+
+            'Opens under this row.">Tables</button>'+
+          '<button class="db-ar-x" data-db-arr="del" data-i="'+i+
+            '" title="Take this slide out of the pack. It goes to Deleted slides and can be put back.">'+
+            '&times;</button>'+
+        '</div>' : '')+
     '</div>';
   }
   function stCls(s){ return s==='working'?'working': s==='ready'?'ready':
@@ -25714,11 +25900,28 @@ AMR.page('deckbuilder', {
   function stTxt(s){ return s==='working'?'working…': s==='ready'?'ready':
                             s==='error'?'failed': s==='done'?'published':'—'; }
 
+  /* ONE ROW, on a status change. It runs on every slide of a render, and the
+     row now carries a text box — so a title being typed while the render
+     reaches that slide is put back with its caret where it was, rather than
+     losing the word mid-edit. Nothing else in the row holds state worth
+     keeping: a select's value comes from the spec it is drawn from. */
   function drawRow(r){
     var i = ROWS.indexOf(r); if(i < 0) return;
     var el = document.getElementById('dbRow'+i); if(!el) return;
+    var a = document.activeElement, keep = null;
+    if(a && el.contains(a) && a.getAttribute && a.getAttribute('data-db-arr') === 'title'){
+      keep = { v:a.value, s:a.selectionStart, e:a.selectionEnd };
+    }
     el.outerHTML = rowHtml(r, i);
     paintThumb(i);
+    if(keep){
+      var back = document.querySelector('#dbRow'+i+' [data-db-arr="title"]');
+      if(back){
+        back.value = keep.v;
+        back.focus();
+        try { back.setSelectionRange(keep.s, keep.e); } catch(e){}
+      }
+    }
   }
 
   function dbToggle(i, on){
@@ -25781,8 +25984,10 @@ AMR.page('deckbuilder', {
     /* Arrange is DONE once it has been opened, not once something has been
        changed: a month where the pack is right as it stands is the normal
        month, and a stage that only ticks when you edit something reads as a
-       step you skipped. */
-    document.getElementById('dbStage2').classList.toggle('done', ARR.open);
+       step you skipped. ARR.seen rather than ARR.open, because Done now leaves
+       you looking at the same list it opened on — a tick that came off when
+       the editor was put away would read as the stage undoing itself. */
+    document.getElementById('dbStage2').classList.toggle('done', ARR.seen);
     document.getElementById('dbStage3').classList.toggle('done', countReady() > 0);
     document.getElementById('dbStage4').classList.toggle('done', countDone() > 0);
   }
@@ -25827,20 +26032,23 @@ AMR.page('deckbuilder', {
     document.getElementById('dbBtnPlan').addEventListener('click', dbPlan);
     document.getElementById('dbBtnArrange').addEventListener('click', dbOpenArrange);
     document.getElementById('dbBtnRender').addEventListener('click', dbRenderAll);
+    document.getElementById('dbBtnStop').addEventListener('click', dbStopRender);
     document.getElementById('dbBtnPublish').addEventListener('click', dbPublish);
     document.getElementById('dbArrAdd').addEventListener('click', dbAddSlide);
     document.getElementById('dbArrReset').addEventListener('click', dbArrResetAll);
     document.getElementById('dbArrDone').addEventListener('click', dbArrClose);
 
-    /* THE ARRANGE PANEL IS REDRAWN WHOLE on every change, exactly as #dbList
-       is, so its controls are delegated on the two hosts rather than bound to
-       elements that get replaced. Same reason, same pattern. */
-    var arr = document.getElementById('dbArrange');
+    /* THE ARRANGE CONTROLS ARE INSIDE THE ROWS, and the rows are rewritten
+       whole on every change — so they are delegated on #dbDeck, which holds
+       the toolbar, the list and the Deleted slides and is never replaced.
+       #dbList's own three controls keep their own listener below: the two sets
+       share no attribute, and each reads only its own. */
+    var arr = document.getElementById('dbDeck');
     arr.addEventListener('click', function(e){
       var b = e.target.closest ? e.target.closest('[data-db-arr],[data-db-scope],[data-db-tbmove],[data-db-restore],[data-db-tbreset]') : null;
       if(!b) return;
       if(b.hasAttribute('data-db-scope')){
-        ARR.scope = b.getAttribute('data-db-scope'); dbDrawSide(); return;
+        ARR.scope = b.getAttribute('data-db-scope'); redraw(); return;
       }
       if(b.hasAttribute('data-db-restore')){
         e.preventDefault(); dbArrRestore(Number(b.getAttribute('data-db-restore'))); return;
@@ -25850,7 +26058,7 @@ AMR.page('deckbuilder', {
         var key0 = arrScopeKey();
         srv('DECK_resetTables', [key0]).then(function(res){
           ARR.tables = (res && res.map) || { v:1, scopes:{} };
-          arrApplyScopes(); dbArrDraw(); dbDrawRail();
+          arrApplyScopes(); redraw(); dbDrawRail();
           prog(scopeLabel(key0, selRow()) + ' · back to this page’s own tables');
         }).catch(function(err){
           banner('bad', esc(err && err.message ? err.message : String(err)));
@@ -25865,7 +26073,10 @@ AMR.page('deckbuilder', {
       if(act === 'up')        dbArrMove(i, -1);
       else if(act === 'down') dbArrMove(i, 1);
       else if(act === 'del')  dbArrDelete(i);
-      else if(act === 'sel'){ ARR.sel = ROWS[i].spec.id; ARR.scope = ''; dbArrDraw(); }
+      else if(act === 'sel'){
+        ARR.sel = (ARR.sel === ROWS[i].spec.id) ? '' : ROWS[i].spec.id;
+        ARR.scope = ''; redraw();
+      }
     });
     arr.addEventListener('change', function(e){
       var t = e.target;
