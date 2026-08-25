@@ -552,14 +552,29 @@ the write arrived and the run reports success.
 ### Nobody is watching a trigger, so a failed run says so
 
 A throw inside a time-driven trigger reaches one place: the execution log, which nobody opens
-until they already suspect something. **A failed run mails the failure** — to
-`QLIK_ALERT_TO` (a Script Property) if set, otherwise to the account the execution runs as,
-which by the trigger rule above is by definition whoever set the pipeline up.
+until they already suspect something. **A failed run reports the failure in full** — the
+source, the tab, every reason the gate produced, and two things the reasons alone do not: that
+**the sheet is unchanged rather than half-written**, and what happens next. Both matter — "the
+sync failed" usually means something was half-done, and here it means the opposite.
 
-The mail names the source, the tab and the reason, and says two things the reasons alone do
-not: that **the sheet is unchanged rather than half-written**, and what happens next. Both
-matter — "the sync failed" usually means something was half-done, and here it means the
-opposite.
+**Whether that report is also MAILED is a switch, and it is off by default.** `qlikAlertsOn()`
+turns it on and `qlikAlertsOff()` turns it back off — two editor tools over one Script
+Property, `QLIK_ALERT_MAIL`, which has to say `on` before `MailApp` is reached. The recipient
+is a separate property, `QLIK_ALERT_TO`, falling back to the account the execution runs as,
+which by the trigger rule above is by definition whoever set the pipeline up; the address
+survives a mute, so turning the mail back on does not need it typed in again.
+
+**Off by default, because the mail's failure mode is volume.** It was written for a pipeline
+nobody was watching and it is the right thing for one — but a sync that has started failing
+sends the same mail every fifteen minutes to somebody who is already dealing with it, and
+that is how the one mail that matters ends up looking exactly like the twenty before it.
+
+**Muted is not silent, and that is why this is a switch rather than a deletion.** A muted run
+writes the *entire* report it would have sent to the execution log at `error` — the same text,
+in the one place a trigger does reach — and `qlikRetryStatus()` says the mail is off every time
+it is asked, so a mute set for one bad afternoon cannot quietly outlive the afternoon. Nothing
+else changes: the gate still refuses a bad export, the tab is still left exactly as it was, the
+stamp is still withheld and the one-shot retry is still armed.
 
 **The retry is one attempt, five minutes out, and then it stops.** The existing rule still
 stands — a run that FINISHED with a broken tab is not retried, because that tab will be just
@@ -568,7 +583,17 @@ because of what usually causes it: a file Drive was still writing when the sync 
 That is gone a few minutes later; a genuinely broken export is not fixed by asking again. A
 gate failure also **withholds the export's stamp**, on the timer path and the manual one alike
 — keeping it would mark a file as read that the run refused to read. `qlikRetryStatus()` shows
-what is waiting.
+what is waiting, and which tabs it is waiting on.
+
+**And the retry rewrites the tabs that failed, not the page they are on.** The failure record
+names them; `run(page, only)` takes that list, and the retry is its only caller — the three
+timers and the three editor tools pass nothing and get the whole page, exactly as before. One
+Ready-Mix tab failing used to retry all three: 82,200 rows rewritten to fix 14,157, which is
+the work that used the budget up in the first place, done again. **And it is a risk taken for
+no gain, not merely waste** — a retry killed mid-write on a tab that was already right takes a
+*good* tab apart and leaves it blank below the boundary. A record that cannot name its tabs
+(a read that failed before any tab was reached, or one written before the field existed) still
+retries the whole page, because doing nothing would silently drop the failure that armed it.
 
 ### What the sync owns
 
@@ -690,11 +715,23 @@ One agreeing pair of looks is not enough — a conversion pauses between tabs an
 across a single gap reads exactly like a finished file — so it wants **two consecutive
 agreements**, starting 2 s apart and backing off to 10 s, because a copy that has been filling
 for two minutes is not going to be caught out by a look every second. The ceiling is **4
-minutes**, bounded by what is left of a five-minute slice of the execution (the export still has
-to be read and written afterwards) and floored at 60 s, and **the floor wins over the budget**: a
-run that has already spent its slice is a run about to be killed at the six-minute limit, and
-being killed during the *wait* costs a stranded temp copy the sweep clears, while giving up on
-the wait costs a truncated tab. **Giving up still does not throw**, and check 0 above is why.
+minutes**, bounded by what is left of a five-minute slice of the execution **once the write's
+three minutes have been taken out of it**, and floored at 60 s — so on a fresh execution the
+wait may spend **two** of the five, not four. The floor still **wins over the budget**: a run
+that has already spent its slice is a run about to be killed at the six-minute limit, and being
+killed during the *wait* costs a stranded temp copy the sweep clears, while giving up on the
+wait costs a truncated tab.
+
+**The reserve is what was missing, and its absence is a whole class of timeout.** The
+arithmetic used to be "five minutes minus what this run has already spent", which on a fresh
+execution is all five — so a wait that ran to its 4-minute ceiling left **sixty seconds** to
+read the conversion and write 82,200 rows of Ready-Mix, and no version of that finishes. What
+it produced on 2026-08-25 is two tabs written, `Associate Raw Data` refused 5,000 rows into a
+14,157-row write, a retry armed, and the same four minutes spent waiting again on the retry.
+**The two outcomes are not symmetrical**, which is the argument for taking the time off the
+wait rather than off the write: a wait cut short reads a copy that may still be filling, and
+check 0 catches exactly that — refuses the tab, leaves it as it was, arms the retry. A write
+cut short is the failure with no floor under it. So the wait gives way. **Giving up still does not throw**, and check 0 above is why.
 When the fill cannot be watched at all the wait goes blind for **45 s** and says so at `warn` —
 sized by the measurement above rather than by optimism — and a blind wait is served its full
 length rather than being allowed to finish early on Drive's `version`, which agrees with itself
@@ -724,11 +761,21 @@ don't have read access?)" is the service refusing one call rather than a permiss
 there — that happened to a file its owner had opened successfully two minutes earlier in the same
 execution.
 
-**The page is the unit and cannot be split further**, because the array formulas are re-pointed
-once per workbook off an `ends` map that must hold every tab of it. A read that fails fails **one
-page**, by tab name, instead of throwing into `run()`'s own catch, which reports an error and no
-failed tabs — and it is flagged retryable, so an export nothing could read is never stamped as
-read.
+**The page is the unit of the WORKBOOK**, because the array formulas are re-pointed once per
+workbook off an `ends` map holding the final height of every tab this run changed, and a formula
+on one tab can name a range on another. A read that fails fails **one page**, by tab name,
+instead of throwing into `run()`'s own catch, which reports an error and no failed tabs — and it
+is flagged retryable, so an export nothing could read is never stamped as read.
+
+**Which is not the same as every tab having to be written, and it was read that way for a
+while.** What actually has to hold is that no formula is left pointing at a height that has
+moved — so the re-point pass covers **every `'columns'` tab of the page**, not only the ones in
+`plan`. A tab this run did not write has its band read off the tab (a dozen rows, one call) and
+re-pointed only if it names a tab this run *did* write; a tab naming nobody is read and not
+written. **That closes a hole the full-run path had all along**: a run whose second tab failed
+its gate left the first tab's cross-references pointing at the second tab's old height, with
+nothing to notice. The Product Segment tabs are not asked — they *are* their export, carry no
+band by rule, and a page of them is forty tabs.
 
 **What went with the split is most of what used to be here.** `run()` took `'all'`, walked a
 `byPage` map, read each export on first use and dropped it when the last page needing it was
@@ -747,9 +794,11 @@ is written, the stamp is withheld and the one-shot is armed with a whole six min
 **And the retry is one attempt for both kinds of failure now.** It used to be one for a broken
 export and up to five for the clock, and the reason for the second number was convergence: a run
 of `'all'` retried only the *pages* that failed, so every attempt was strictly smaller than the
-one before it. A run is one page now, so there is nothing left to shrink — a page that ran out of
-time retries by doing the same page again, and five identical attempts are five ways of not saying
-that the page does not fit. With one export to an execution it should not happen at all.
+one before it. **The shrinking is back, one level down** — a retry does the *tabs* that failed,
+so a Ready-Mix retry for one tab is 14,157 rows rather than 82,200 — but one attempt is still
+the right number: what is left after that is an export that is genuinely wrong, and asking a
+third time neither fixes it nor tells anybody. With one export to an execution and the write
+no longer spending its time on `Utilities.formatDate`, it should not be reached at all.
 
 **A retry that works records the export as read.** The failure that armed it withheld the stamp
 on purpose; without this the stamp stays withheld, the next firing of that export's timer sees a
@@ -804,6 +853,51 @@ folder that sits in, visible to everyone with access and turning up in their Dri
 mail. The copy is created in the script account's own Drive root and every non-owner
 permission on it is removed before anything is read. **Nothing in the codebase creates a Drive
 permission**, which is the only call that emails a person.
+
+### Where a Ready-Mix run's six minutes were actually going
+
+Three of them were being spent on work that produced nothing, and all three are the same shape:
+something correct being done far more times than it has answers.
+
+**`Utilities.formatDate` was being called once per exported row, and that was most of the
+write.** `monthText_` turns a Bill Month into text, and the two calls it makes to do that —
+`Session.getScriptTimeZone` and `Utilities.formatDate` — are not JavaScript: each one crosses
+out of the V8 runtime into Apps Script's own services and back, and **the crossing is the cost,
+not the formatting**. Ready-Mix writes 82,200 rows across its three tabs and every one carries
+a Bill Month, so that is ~165,000 service calls a sync — which is, to within noise, the whole
+of the ~165 s the Ready-Mix write was measured at. **A month column of 82,200 rows holds about
+a dozen distinct values**, so the answers are memoised on the value: on a harness of 34,200
+rows over 114 distinct values, 29,100 `formatDate` calls became **97** and 15,600
+`getScriptTimeZone` calls became **1**, with identical output on every one. The cache
+*memoises*; it does not reimplement — `Utilities.formatDate` still produces every string
+returned, because hand-rolling `MMM-yy` would mean hand-rolling a time zone, which is not a
+trade worth making for a column nobody looks at twice. It empties itself past 5,000 distinct
+values, so a column that is not a month column costs nothing worse than what it used to.
+
+**The formula band was going back onto every tab twice.** `writeColumns_` puts it home the
+moment its own tab is written; the pass at the end of `run()` then re-points the whole band
+again, because a reference into a *sibling* tab cannot be resolved until every height is final.
+For a formula that names no sibling — which is nearly all of them — those two passes write the
+**identical string**, and the second one costs exactly what the band is taken off the tab to
+avoid: six `ARRAYFORMULA`s landing on a 47,845-row column is 140,000 string operations and six
+full-column sums, served before the next call is. So the second pass now re-points each run
+both ways and **skips the ones that come out identical**. It is a comparison of the formulas,
+not an assumption about the heights: a sibling reference this pass can now resolve, or a height
+that moved, still writes. A tab that threw mid-write, a band too big to park, and a restore
+that half-failed all fall through to the write, because in each of those the band really is
+still off the tab.
+
+**And the export's month column was being walked twice.** `shapeOf_` walks it for the gate;
+`writeColumns_` walked it again for `QLIK_REPORT_MONTH`, 40,000 rows later, for the same answer
+off the same column. The shape record carries it now.
+
+**What was looked at and left alone**, because each is load-bearing in a way that costs less
+than it saves: the full-block `clearContent` before the write (§5 — it is what makes a killed
+write *blank* rather than last month's figures), the unconditional `setNumberFormat('@')` on
+the month column (`getNumberFormat` answers for the top-left cell only, so a column pasted over
+in the middle would keep whatever that paste brought), and the poll's per-look Drive call
+(dropping it saves one REST call in six and costs the wait its only signal when the Sheets API
+is off).
 
 ### Per-page sheet overrides
 
@@ -1840,6 +1934,7 @@ the banner still stood for four chunks. **Read the code, not the label.**
 | `qlikAggNow` / `qlikRmxNow` / `qlikSegmentNow` | **Editor tools, and the whole of the manual recovery path** when a timer misfires or a sync has to be forced. The Run menu passes no arguments, so a function taking a source key cannot be run from it — these three carry the key, which is why they exist and why they take nothing. Zero callers is what they are for |
 | `qlikSyncNowOne_` | The one export behind those three. Private, and it stays private: it is what makes "one at a time" a property of the code rather than advice. `qlikSyncNow(scope)` and `qlikSyncCheck` — the two ways of asking for all three at once — were removed on 2026-08-25 |
 | `qlikStamps` | What each timer will compare on its next firing, and what it will do. With five hand-set triggers and no harness left, the diagnostics are how this pipeline is inspected at all |
+| `qlikAlertsOn` / `qlikAlertsOff` | The failure mail's switch, and the only way to reach it without editing Project Settings by hand. Editor tools, and the mute they set is reported by `qlikRetryStatus` precisely so it cannot be forgotten |
 | `clearRetiredOverrides` | Its own comment says "run from the Apps Script editor", and it is idempotent. An editor tool, not dead code |
 | `getSaskRatesStatus` | Its comment says "so the Settings screen **(and a quick manual run)** can check the sheet" — that parenthetical is the editor-tool criterion. The Settings screen never calls it; wiring it would be a behaviour change, not a cleanup |
 | `DECK_status` | A real deck build has still never run against the live deployment, and that is what decides whether the Publish stage needs it. **Do not delete before then** |
@@ -2007,11 +2102,11 @@ or was forgotten.**
 | 2026-08-20 | **The Overview's two halves disagreed about which month "this month" is, and the fix is one anchor.** The server reports land on the reporting month — last calendar month — while the month cube also holds the running, part-billed month and the window anchored on *that*. So on an August visit the KPI strip read July's 2,266,577 t while the market table under it read August's 1,067,541 t for the same selection, every market at −50% or worse; and **"Prev month (MTD)", one back from the anchor, landed on the server's July, so the two Period buttons drew the same view.** `getOverview` echoes `reportMonth` off the data (`pvReportMonth_`, never the clock) and `anchorMonth()` uses it, clock rule as fallback; the part-billed month is still a drag away as the custom window it is. The KPI cards now name their month, so the workbook's MTD and YTD halves can no longer read as "unchanged" beside a Period that did move | ✅ |
 | 2026-08-20 | **The opening screen stopped waiting for the whole history.** `AmrBoot`'s `month history` step was released only once every calendar-year block had streamed *and* every linked closed-year book had been read end to end — minutes of a modal over a page whose own pill says "Nothing else on the page is waiting on this". `histBootReady()` releases it when the cube can answer the month the page opens on; the rest arrives behind the pill | ✅ |
 | 2026-08-20 | **CPI joins PPI: one formula, two keys.** They are the same weighted index — coverage-gated pairs, weight = CY revenue, factor = weight × the pair's own ASP move, Σfactor ÷ Σweight — differing only in what a *pair* is: PPI keys on plant × product, CPI on plant × **sold-to** × product (Qlik's Cust Price Detail calls that column "Customer", and it is Sold To). Written once per runtime: `piIndex_` on the server, `pool()` in `AmrCube`, `poolPairs()` in the Overview's local cross-filter path; `SOLD_TO` rides the cross dataset so both cross paths agree. **The column is drawn only where its source can answer it** — never as dashes, never filled with PPI, which would read as the two indices agreeing. `metrics_()` is left alone deliberately: it sums the pivot's precomputed weights at a finer key and those are the figures Price & Volume publishes | ✅ |
-| 2026-08-20 | **CPI published +206.7%, and the cause was a credit row.** A reversal is its own raw row \u2014 revenue, no volume \u2014 so netted into a pair it moves the dollars without moving the tonnes: it does not reduce a price, it destroys one. Plant `3P36` / Brock Aggregates / `9141` billed 47.04 t for $693.98 in March 2025 and took a $693.84 credit in April, leaving **fourteen cents against 47 tonnes** and a price "move" of **+492,409%** that carried 95.6% of \u03a3factor by itself. CPI's ASP now comes off **priced** revenue \u2014 revenue on rows that carried volume \u2014 which is how this data can express Qlik's own prior-year test (`_rev_base + _Enviro_Fees + _Govt_Fees + _disc_comp`, no `_credit_debit`, no `_rebate`). PPI is deliberately NOT given the rule: at plant \u00d7 material grain the credit is diluted, and its published figures reconcile as they stand. Written once per runtime and applied in all three. **The residual is stated, not tuned away**: 3.06% / 2.76% against Qlik's 2.95% / 2.67%, with an exhaustive search over grain \u00d7 revenue basis \u00d7 weight \u00d7 threshold finding nothing within 0.03pp of both, and the same harness reproducing every market's volume and revenue to the dollar | \u2705 |
-| 2026-08-20 | **Every numeric axis rounds now.** Chart.js walks a scale by repeated addition and 14.8 + 0.2 is 15.000000000000002, so "ASP by month" printed sixteen digits of it; `headroom()` had fixed the bounds last session but not the ticks the chart makes out of them. `axFix()` takes its precision from the tick SPACING, so one helper serves dollars, tonnes and percentages, and every raw `'$'+v` callback is gone. Magnitude suffixes are deliberately not unified \u2014 volume axes read in thousands, money axes in millions, and both are what their readers expect | \u2705 |
-| 2026-08-20 | **PPI and CPI share one chart, and the green is gone.** Colour is the SERIES, not the sign: one index drawn green-for-up borrowed a semantic the rest of the page spends on growth, and green is not in the palette at all. PPI takes navy and CPI the light blue, exactly as this year / last year do on every other paired chart in the panel. **Past twelve months \u2014 or in the oldest year the history holds \u2014 every same-period-last-year series is dropped**, the index chart with them, and the note says which of the two reasons applies. `pyAbsent()` is the new half: the 2023 chip selected a window where vs-last-year was blank everywhere at once, which reads as a broken page rather than as an absent prior year. The chip stays \u2014 the cube answers volume and revenue there perfectly well; it is the columns that go | \u2705 |
-| 2026-08-20 | **CPI, calibrated against Qlik's own exports rather than reasoned at.** Five Cust Price Detail exports (2026 Jan\u2013Jul: all markets and each of GTA, SW, Manitoba, Saskatchewan) carry Qlik's per-pair Weight and Factor, and they settle two things the expressions alone did not. **The denominator is TotalWeight, not \u03a3Weight** \u2014 $136,727,744 against $123,520,166 on the all-markets export, a tenth apart, and summing covered CY revenue reproduces it to the dollar on all five. An outlier therefore keeps its weight and loses only its factor. **The threshold is 500%, not the \u00b150% the footnote states**: Qlik keeps pairs to |ASP%| 330% and zeroes from 647%, so anything in that gap reproduces its selection exactly (0.000pp on all five) while a 50% cap costs 1.26pp on SW alone. What remains \u2014 +0.02pp Manitoba, +0.03pp Saskatchewan, +0.28pp GTA, +0.33pp all markets, +0.59pp SW \u2014 is entirely `Weight` being a rebate-adjusted revenue the export nets away, ~0.82\u00d7 ex-Works on 2,788 of 3,117 kept rows with a per-row ratio, so no constant recovers it. The priced-revenue rule from earlier today is backed out: it was the right instinct about credits and the wrong mechanism, and PPI is bit-for-bit what it has always published | \u2705 |
-| 2026-08-20 | **"This month" is the newest month again, and the server is asked for it.** The anchor had been moved to the reporting month to stop the page reporting two months at once; that fixed the disagreement by moving the wrong half. `getOverview` takes a `month` now (in its cache key) and the Overview passes its anchor, so the server-fed and cube-fed halves answer for the same month while "This month" keeps meaning the latest month there is data for. The EBITDA workbook is the one thing that genuinely belongs to the closed month, and it is handled where it is read \u2014 `kpiMonth()` is the anchor minus one, and the cards name it | \u2705 |
+| 2026-08-20 | **CPI published +206.7%, and the cause was a credit row.** A reversal is its own raw row \u2014 revenue, no volume \u2014 so netted into a pair it moves the dollars without moving the tonnes: it does not reduce a price, it destroys one. Plant `3P36` / Brock Aggregates / `9141` billed 47.04 t for $693.98 in March 2025 and took a $693.84 credit in April, leaving **fourteen cents against 47 tonnes** and a price "move" of **+492,409%** that carried 95.6% of \u03a3factor by itself. CPI's ASP now comes off **priced** revenue \u2014 revenue on rows that carried volume \u2014 which is how this data can express Qlik's own prior-year test (`_rev_base + _Enviro_Fees + _Govt_Fees + _disc_comp`, no `_credit_debit`, no `_rebate`). PPI is deliberately NOT given the rule: at plant \u00d7 material grain the credit is diluted, and its published figures reconcile as they stand. Written once per runtime and applied in all three. **The residual is stated, not tuned away**: 3.06% / 2.76% against Qlik's 2.95% / 2.67%, with an exhaustive search over grain \u00d7 revenue basis \u00d7 weight \u00d7 threshold finding nothing within 0.03pp of both, and the same harness reproducing every market's volume and revenue to the dollar | ✅ |
+| 2026-08-20 | **Every numeric axis rounds now.** Chart.js walks a scale by repeated addition and 14.8 + 0.2 is 15.000000000000002, so "ASP by month" printed sixteen digits of it; `headroom()` had fixed the bounds last session but not the ticks the chart makes out of them. `axFix()` takes its precision from the tick SPACING, so one helper serves dollars, tonnes and percentages, and every raw `'$'+v` callback is gone. Magnitude suffixes are deliberately not unified \u2014 volume axes read in thousands, money axes in millions, and both are what their readers expect | ✅ |
+| 2026-08-20 | **PPI and CPI share one chart, and the green is gone.** Colour is the SERIES, not the sign: one index drawn green-for-up borrowed a semantic the rest of the page spends on growth, and green is not in the palette at all. PPI takes navy and CPI the light blue, exactly as this year / last year do on every other paired chart in the panel. **Past twelve months \u2014 or in the oldest year the history holds \u2014 every same-period-last-year series is dropped**, the index chart with them, and the note says which of the two reasons applies. `pyAbsent()` is the new half: the 2023 chip selected a window where vs-last-year was blank everywhere at once, which reads as a broken page rather than as an absent prior year. The chip stays \u2014 the cube answers volume and revenue there perfectly well; it is the columns that go | ✅ |
+| 2026-08-20 | **CPI, calibrated against Qlik's own exports rather than reasoned at.** Five Cust Price Detail exports (2026 Jan\u2013Jul: all markets and each of GTA, SW, Manitoba, Saskatchewan) carry Qlik's per-pair Weight and Factor, and they settle two things the expressions alone did not. **The denominator is TotalWeight, not \u03a3Weight** \u2014 $136,727,744 against $123,520,166 on the all-markets export, a tenth apart, and summing covered CY revenue reproduces it to the dollar on all five. An outlier therefore keeps its weight and loses only its factor. **The threshold is 500%, not the \u00b150% the footnote states**: Qlik keeps pairs to |ASP%| 330% and zeroes from 647%, so anything in that gap reproduces its selection exactly (0.000pp on all five) while a 50% cap costs 1.26pp on SW alone. What remains \u2014 +0.02pp Manitoba, +0.03pp Saskatchewan, +0.28pp GTA, +0.33pp all markets, +0.59pp SW \u2014 is entirely `Weight` being a rebate-adjusted revenue the export nets away, ~0.82\u00d7 ex-Works on 2,788 of 3,117 kept rows with a per-row ratio, so no constant recovers it. The priced-revenue rule from earlier today is backed out: it was the right instinct about credits and the wrong mechanism, and PPI is bit-for-bit what it has always published | ✅ |
+| 2026-08-20 | **"This month" is the newest month again, and the server is asked for it.** The anchor had been moved to the reporting month to stop the page reporting two months at once; that fixed the disagreement by moving the wrong half. `getOverview` takes a `month` now (in its cache key) and the Overview passes its anchor, so the server-fed and cube-fed halves answer for the same month while "This month" keeps meaning the latest month there is data for. The EBITDA workbook is the one thing that genuinely belongs to the closed month, and it is handled where it is read \u2014 `kpiMonth()` is the anchor minus one, and the cards name it | ✅ |
 | 2026-08-21 | **The CPI exclusion was right and never arrived — a tunable that ships inside a cached payload.** The Overview published **+141.7%** for 2026 Jan–Aug against Qlik's 2.86%, and **+243.0%** for GTA against 2.48%, with `cpiOutlier: 5.0` sitting correctly in §1 the whole time. Replicating both August exports out of the raw sheet reproduces every published figure to the decimal **at threshold = 0** — MTD 2.79/2.31/3.52/1.61/6.36, YTD 141.72/242.97/14.36/2.85/5.95/6.22 — which names the fault exactly: §1 is read on the server, the **browser** does the pooling, so the number travels in the cube manifest and the cross-filter dataset, and every cache key in that chain is built from the DATA's generation. `cov.cpiOutlier || 0` then read the missing key as *no threshold at all*, and the browser's IndexedDB copy of that manifest is only wiped when the generation moves — so a warm device painted the pre-edit manifest indefinitely. **`ovcCovTok_` hashes the whole `COVERAGE` block into `ovcGen_`** (and into `getCrossData`'s key), so a floor edit is an invalidation; **a payload that cannot say what the exclusion is now reports NO CPI**, `null` not `0`, dropping the column exactly as a line with no Sold To does; and `revalidate()` writes the confirmed manifest back, which `adoptGen()` only ever did on a cold start. `tests/cpiindex.js` gates both halves off the real Brock Aggregates pair, mutation-tested both ways | ✅ |
 | 2026-08-21 | **A stronger GATE for CPI, and the outlier cap retires.** A cap was always the wrong shape: it dropped a pair's factor and left its weight in the denominator — a dilution, where Qlik DELETES. `COVERAGE.cpi` is three floors now (`minVol` 1 t, `minRev` $1, `minAsp` $3.00/t) and a pair that fails leaves both sums. **The volume and revenue floors alone are a trap**: they take the Brock pair and look like a fix while SW Ontario still reads **14.36%**, because `3Q00` / JNF Ready Mix / `9055` sails through them — 378 t at $2.343/t last year against 24,593 t at $22.75/t this, +870.9%, carrying $559,436 of weight and +3.13pp of the index on its own. Nothing about it is small; only its PRICE gives it away, and $2.343/t is Ontario's rebate rate. So `minAsp` is the floor that matters, and it is the visible shadow of Qlik's net-revenue gate (rebate $2.248/t Ontario, $0.60 Manitoba, $0.90 Saskatchewan, nil on recycled). Calibrated on both August exports: Jan–Aug **141.719% → 6.248% (> 1 only) → 3.106%** against Qlik's 2.864%; Aug MTD **2.789% → 2.724%** against 2.646%. Costs three pairs Qlik keeps, worth $1,894 of $155.5M. Any floor from $2.50 to ~$3.90 gives the same answer; $4.00 starts eating bank sand at $3.97/t. `tests/cpiindex.js` carries BOTH bad pairs deliberately — one that the revenue floor catches and one that only the price floor does, so a half-fix cannot pass | ✅ |
 | 2026-08-21 | **The 500% threshold is a guard, not Qlik's rule — and the last session's evidence for it was an accident of the window.** Qlik zeroes **10 of 3,407** covered pairs in 2026 Jan–Aug; five move by less than 100% and two by less than 5% (**+4.55%**, **+0.26%**), while it *keeps* pairs at −115.9%, +225.4% and, on the Aug MTD export, **+472.8%**. No |ASP%| threshold selects that set; the "330–647% gap" only looked like one because Jan–Jul held no counter-example. **What actually selects it: `Weight` is CY revenue net of the per-tonne aggregate levy, and Qlik's coverage runs on the net figure.** `(CY revenue − Weight) ÷ CY volume` lands on **$2.248/t Ontario, $0.60/t Manitoba, $0.90/t Saskatchewan, nil on recycled** across 3,397 pairs and both exports — 9 of the 10 zeroed pairs have a net-of-levy ASP at or below ten cents in one year. That column does not exist here, so the guard stays, and it costs **0.0001pp** against Qlik's own selection (3.0933% vs 3.0934%) and drops no pair Qlik keeps. **The denominator was never the problem**: Σ covered CY revenue reproduces `TotalWeight` to the penny on both exports ($155,497,057.14 and $13,041,331.22). The residual after the fix is **+0.23pp** all-markets — Qlik weighting the numerator net and dividing by gross, ~0.905× with a per-row ratio. Manitoba +0.01pp, Saskatchewan +0.04pp, North 0.00pp, because their levy is small or nil. Do not spend another session tuning the threshold | ✅ |
@@ -2038,3 +2133,6 @@ or was forgotten.**
 | 2026-08-25 | **One export per execution, three timers, and most of `run()` went with it.** The job is about seven minutes — Aggregates 52,538 rows and ~80 s to write, Ready-Mix 82,200 and ~165 s, Product Segment small, three conversions and reads another ~70 s — and an Apps Script execution is six. **No arrangement of one firing holds that**, which is what every timeout since 08-23 has been: the old `run('all')` did as much as fitted and pushed the rest into a retry chain, so the tail of the work ran a lap behind. `run()` takes a PAGE now — one export, one workbook, one execution, two to three minutes against six — and §11 sets **one time-driven trigger per export** (`qlikSyncAggregates`, `qlikSyncReadyMix`, `qlikSyncSegment`), a few minutes apart because the lock is script-wide and `LockService` has no named ones. `qlikSyncCheck` stays as the pre-split target only so an existing trigger on it does not fail silently; `APP_TRIGGER_TARGETS` is five entries now and `APP_verifyPermissions` is still the only report of which are armed. **What went is the point**: the `byPage` walk, the read-on-first-use/drop-on-last-use bookkeeping, the per-page budget refusal, the per-page retry fan-out and `QLIK_RETRY_MAX_BUDGET` all existed to fit three exports into one execution and make the leftovers converge across firings — with one page a firing there is nothing left to shrink, so a clock failure retries **once**, like a broken export, and five identical attempts were five ways of not saying that a page does not fit. **Two holes closed on the way**: a page whose export could not be READ kept its stamp, marking a file as read that nothing had opened, so the next firing skipped it — it is flagged retryable now; and a retry that SUCCEEDED never wrote a stamp, so the next firing re-did the minutes of work it had just done, and it now records the modified time the run itself read off `QLIK_LAST_SYNC` rather than whatever is in Drive when the retry finishes. **The two counts the business reconciles against Qlik are checked out loud after the write**: the tab must end at `firstData + rows - 1` exactly and **both directions throw** (too tall is surplus still holding the previous export's figures, which is the failure deleting the surplus exists to prevent), and paired-vs-unmatched columns are logged on every run and returned — unmatched deliberately **not** a failure, because that is what a new year's column looks like before somebody adds it to the workbook and refusing would stop the pipeline every January. The shrink allowance on a period roll is untouched, and so is the rule that the sync owns only the columns it pairs. **`tests/` is deleted** — 31 harnesses, 500 KB — rather than rewritten around a `run()` that no longer has the shape they gated; they are in git history, and every `tests/…` reference left in this document is now marked historical at the top. `node --check` and `APP_verifyPermissions` are what is left | ☐ |
 | 2026-08-25 | **`qlikSyncNow` run from the editor asks for `'all'`, which is the one thing its own comment says not to do.** The Run menu calls a function with no arguments and `qlikSyncNow`'s default for none is `'all'` — three exports in one execution, the seven minutes that does not fit six, with the third usually refused on the budget and retried. There is no way to pass `'AGG'` from that dropdown, so "prefer one at a time" was advice nobody standing in the editor could follow. `qlikAggNow`, `qlikRmxNow` and `qlikSegmentNow` are that call with the key already in it, and nothing else: the unconditional pull, the stamp read before the run, the stamp withheld on a gated export and the single result object are all still `qlikSyncNow`'s. **They are deliberately not trigger targets** and are not in `APP_TRIGGER_TARGETS` — they skip an unchanged export the way the timers do, which is to say not at all, so a timer on one would re-sync minutes of Drive work every interval for ever. Named in §11's banner and in §9's do-not-delete table, because zero callers is what an editor tool looks like | ✅ |
 | 2026-08-25 | **Both ways of starting all three exports at once are gone, and "one at a time" is now a property of the code rather than advice.** `qlikSyncCheck` ran the three exports in one execution and was kept, after the 08-25 split, only so that a trigger still pointed at it would not fail silently; `qlikSyncNow(scope)` took `'all'` and **defaulted to it** for the no-argument call the Run menu makes. Both were the same seven minutes against a six-minute execution that every timeout since 08-23 has been, and keeping either kept a way to ask for it. **Both are deleted.** What is behind `qlikAggNow` / `qlikRmxNow` / `qlikSegmentNow` is now the private `qlikSyncNowOne_`, which takes ONE source and refuses anything naming more or naming nothing — `'all'` arrives as a name no source answers to, so the refusal is a `pick.length !== 1` check rather than a comment asking nicely, and there is no branch left that could walk more than one source. Everything else is unchanged and deliberately so: the unconditional pull (the manual path exists BECAUSE the file did not move), the stamp read before the run, the stamp withheld on a gated export, one result object. **The operational half is the trigger list, not the code**: a timer still set on `qlikSyncCheck` now fails on every firing, and a timer nobody watches fails quietly — delete it, set one on each of `qlikSyncAggregates`, `qlikSyncReadyMix` and `qlikSyncSegment`, and run `APP_verifyPermissions` to see which are armed. `APP_TRIGGER_TARGETS` is unchanged, because `qlikSyncCheck` was never in it. Six prose references followed the code: the two places in §5 that told a reader to run `qlikSyncNow` are **in the failure email a human reads**, so they name the three wrappers now. `node --check` clean | ☐ |
+| 2026-08-25 | **The sync failure mail is a switch now, and it is off by default.** `MailApp` is reached only when `QLIK_ALERT_MAIL` says `on`; `qlikAlertsOn()` / `qlikAlertsOff()` (§11) are the two editor tools that set it, and neither touches `QLIK_ALERT_TO`, so the address survives a mute. The mail was written for a pipeline nobody was watching and is right for one — but a sync that has *started* failing sends the same mail every fifteen minutes to somebody already dealing with it, and that is how the one mail that matters ends up looking like the twenty before it. **Muted is not silent**, which is why this is a switch and not a deletion: `run()` returns its failures to a time-driven trigger, which reads them nowhere, so a muted run writes the **entire** report it would have mailed to the execution log at `error`, and `qlikRetryStatus()` names the mute every time it is asked — a mute set for one bad afternoon cannot quietly outlive the afternoon | ✅ |
+| 2026-08-25 | **Most of the Ready-Mix write was `Utilities.formatDate`, called once a row.** `monthText_` crosses out of V8 into Apps Script's services twice per row to format a Bill Month, and the *crossing* is the cost — 82,200 rows is ~165,000 service calls, which is to within noise the whole of the ~165 s that write was measured at. A month column holds about a dozen distinct values, so the answers are memoised on the value: 29,100 `formatDate` calls become 97 on a 34,200-row harness, identical output on every one. Two more of the same shape went with it — the formula band was going home **twice** per tab (the second pass now skips a run whose re-pointed formulas are identical to the ones already there, which is the 140,000-string-operation recalculation the band is taken *off* the tab to avoid), and the month column was walked twice for one answer. **And the settle now reserves the write's three minutes**: the ceiling was "five minutes minus what this run has spent", so a 4-minute wait left 60 s to write 82,200 rows — which is exactly the run that refused `Associate Raw Data` 5,000 rows in | ✅ |
+| 2026-08-25 | **The retry does the tabs that failed, not the page they are on.** One Ready-Mix tab failing retried all three — 82,200 rows rewritten to fix 14,157, which is the work that used the budget up in the first place — and that is a **risk** taken for no gain, not merely waste: a retry killed mid-write on a tab that was already right takes a *good* tab apart and leaves it blank below the boundary. The failure record names its tabs and `run(page, only)` takes the list; the timers and the editor tools pass nothing and get the whole page. **"The page cannot be split further" was the wrong reading of a true constraint** — what has to hold is that no formula is left pointing at a height that has moved, so the re-point pass now covers every `'columns'` tab of the page rather than only the ones in `plan`: a tab this run did not write has its band read off the tab and re-pointed only if it names a tab this run did. That **closes a hole the full-run path had all along** — a run whose second tab failed its gate left the first tab's cross-references pointing at the second tab's old height, with nothing to notice | ✅ |

@@ -3660,8 +3660,33 @@ var QLIKSYNC = (function () {
      falling out of the loop reporting a copy that is "still growing". A run
      that has already spent its slice is a run about to be killed at the
      six-minute limit; being killed during the WAIT costs a stranded temp copy
-     the sweep clears, while giving up on the wait costs a truncated tab. */
+     the sweep clears, while giving up on the wait costs a truncated tab.
+
+     AND THE WRITE IS RESERVED FOR OUT OF THAT SLICE, WHICH IT USED NOT TO BE.
+     The arithmetic was `EXEC_SAFE_MS minus what this run has already spent`,
+     which on a fresh execution is the whole five minutes — so a wait allowed to
+     run to its 240-second ceiling left SIXTY seconds for the conversion to be
+     read and 82,200 rows of Ready-Mix to be written, and there is no version of
+     that which finishes. The failure it produced is the one this reserve is
+     named after: two tabs written, the third refused 5,000 rows in, a retry
+     armed and the same four minutes spent waiting all over again.
+
+     WHAT THE TWO OUTCOMES COST IS NOT SYMMETRICAL, and that is the whole
+     argument for taking the time off the wait rather than off the write. A wait
+     cut short reads a copy that may still be filling — and check 0 catches
+     exactly that, refuses the tab, leaves it as it was and arms the retry. A
+     write cut short is the failure with no floor under it: the rows stop
+     arriving mid-flush, nothing throws, and only the per-tab budget check
+     stands between that and a tab stamped as synced. So the wait gives way.
+
+     THREE MINUTES, WHICH IS THE HEAVIEST PAGE'S WRITE WITH ROOM OVER IT.
+     Ready-Mix was measured at about 165 seconds for its 82,200 rows, and the
+     month-column caching above takes a large bite out of that. It leaves the
+     wait 120 seconds on a fresh execution, against the four seconds the poll
+     has ever actually needed to watch a copy stop filling — this is a ceiling
+     on a pathological conversion, not a budget the normal case spends. */
   var SETTLE_CEIL_MS = 240000, SETTLE_FLOOR_MS = 60000, EXEC_SAFE_MS = 300000;
+  var WRITE_RESERVE_MS = 180000;
 
   /* This execution's own start. The module body runs once, when the script
      loads, which is near enough to it for a budget. */
@@ -3676,7 +3701,8 @@ var QLIKSYNC = (function () {
   function settle_(ssId, name) {
     var t0 = Date.now(), prev = null, last = null, stable = 0, looks = 0, gap = SETTLE_GAP_MS;
     var ceiling = Math.max(SETTLE_FLOOR_MS,
-                           Math.min(SETTLE_CEIL_MS, EXEC_SAFE_MS - (Date.now() - EXEC_T0)));
+                           Math.min(SETTLE_CEIL_MS,
+                                    EXEC_SAFE_MS - WRITE_RESERVE_MS - (Date.now() - EXEC_T0)));
 
     while (Date.now() - t0 < ceiling) {
       var now;
@@ -4151,12 +4177,78 @@ var QLIKSYNC = (function () {
     return out;
   }
 
+  /* =====================================================================
+   * THE MONTH COLUMN, AND THE TWO CACHES IN FRONT OF IT
+   * ---------------------------------------------------------------------
+   * BOTH FUNCTIONS BELOW ARE CALLED ONCE PER ROW OF AN EXPORT, and that is the
+   * only thing about them that matters for the runtime. Ready-Mix writes 82,200
+   * rows across its three tabs and every one of them carries a Bill Month, so
+   * monthText_ runs 82,200 times a sync and latestMonth_ walks the column again
+   * on top of that.
+   *
+   * A COLUMN OF 82,200 ROWS HOLDS ABOUT A DOZEN DISTINCT VALUES. It is a month
+   * column: "Apr-26" repeats for every row of April. So the answer for a value
+   * that has already been seen is the answer it gave last time — the mapping is
+   * deterministic inside one execution, because the only thing it depends on
+   * that is not the value itself is the script's time zone, which does not move
+   * — and a cache in front of it turns tens of thousands of calls into a dozen.
+   *
+   * WHICH MATTERS BECAUSE OF WHAT monthText_ CALLS. Utilities.formatDate and
+   * Session.getScriptTimeZone are not JavaScript: each one crosses out of the
+   * V8 runtime into Apps Script's own services and back, and that crossing is
+   * the expensive part, not the formatting. Two of them per row, 82,200 rows,
+   * is on the order of a minute and a half of a six-minute execution spent
+   * formatting the same twelve strings over and over — which is most of the
+   * gap between a Ready-Mix sync that finishes and one that runs out of time
+   * with its last tab half written.
+   *
+   * THE CACHE MEMOISES, IT DOES NOT REIMPLEMENT. Every branch below is the one
+   * that was there before and Utilities.formatDate still produces every string
+   * this returns; what changed is how many times it is asked. Rewriting
+   * "MMM-yy" by hand in JavaScript would be faster still and would also be a
+   * second implementation of a time zone, which is not a trade worth making
+   * for a column nobody looks at twice.
+   *
+   * AND IT IS BOUNDED. A month column cannot grow one, but nothing here
+   * enforces that the column IS a month column, so the cache empties itself
+   * rather than assuming: a run that somehow puts 5,000 distinct values through
+   * it starts again from empty and is merely as slow as it used to be.
+   * =================================================================== */
+  var MONTH_NAMES = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
+                      jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+
+  var MONTH_CACHE_MAX = 5000;
+  var monthTextCache_ = {}, monthTextN_ = 0, monthTz_ = null;
+  var monthYMCache_   = {}, monthYMN_   = 0;
+
+  /* One export value as a cache key, or null for something not worth keying.
+     A Date and the Excel serial for the same instant are different keys on
+     purpose: the two branches below format them against different time zones,
+     so they are not interchangeable and must not share an entry. */
+  function monthKey_(v) {
+    if (Object.prototype.toString.call(v) === '[object Date]') return 'd' + v.getTime();
+    if (typeof v === 'number') return 'n' + v;
+    return 's' + String(v == null ? '' : v);
+  }
+
   /* The Bill Month cell as { y, m } (m is 0-based) — used to work out which
      month the exports are for, so the Product Segment's month picker can default
-     to it. A value carrying no year is not readable and returns null. */
+     to it. A value carrying no year is not readable and returns null.
+
+     A FRESH OBJECT EVERY TIME, even on a cache hit. latestMonth_ hands what
+     this returns straight out to a caller that keeps it, and handing out the
+     cached object would let one caller's edit reach the next row's answer. */
   function monthYM_(v) {
-    var MON = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
-                jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+    var ck = monthKey_(v), hit = monthYMCache_[ck];
+    if (hit !== undefined) return hit ? { y: hit.y, m: hit.m } : null;
+
+    var got = monthYMRead_(v);
+    if (monthYMN_ >= MONTH_CACHE_MAX) { monthYMCache_ = {}; monthYMN_ = 0; }
+    monthYMCache_[ck] = got; monthYMN_++;
+    return got ? { y: got.y, m: got.m } : null;
+  }
+
+  function monthYMRead_(v) {
     var d = null, m;
     if (Object.prototype.toString.call(v) === '[object Date]') d = v;
     else if (typeof v === 'number') d = new Date(Math.round((v - 25569) * 86400000));
@@ -4166,7 +4258,7 @@ var QLIKSYNC = (function () {
 
     var mt = s.match(/^([A-Za-z]{3,})[\s\-\/.]*(\d{2,4})$/);
     if (!mt) return null;
-    m = MON[mt[1].slice(0, 3).toLowerCase()];
+    m = MONTH_NAMES[mt[1].slice(0, 3).toLowerCase()];
     if (m === undefined) return null;
     var y = parseInt(mt[2], 10); if (y < 100) y += 2000;
     return { y: y, m: m };
@@ -4202,15 +4294,29 @@ var QLIKSYNC = (function () {
      formatted back into "MMM-yy". */
   function monthText_(v) {
     if (v === '' || v == null) return '';
-    var fmt = 'MMM-yy';
-    if (Object.prototype.toString.call(v) === '[object Date]') {
-      return Utilities.formatDate(v, Session.getScriptTimeZone(), fmt);
+
+    /* A STRING IS ALREADY THE ANSWER and costs nothing to hand back, so it
+       never reaches the cache — which is also what keeps the cache small when
+       an export sends its months as text. */
+    var isDate = Object.prototype.toString.call(v) === '[object Date]';
+    if (!isDate && typeof v !== 'number') return String(v);
+
+    var ck = monthKey_(v), hit = monthTextCache_[ck];
+    if (hit !== undefined) return hit;
+
+    var fmt = 'MMM-yy', out;
+    if (isDate) {
+      /* Asked once per execution rather than once per row. The script's time
+         zone is a project setting; it cannot change under a running script. */
+      if (monthTz_ === null) monthTz_ = Session.getScriptTimeZone();
+      out = Utilities.formatDate(v, monthTz_, fmt);
+    } else {                                            // Excel serial
+      out = Utilities.formatDate(new Date(Math.round((v - 25569) * 86400000)), 'UTC', fmt);
     }
-    if (typeof v === 'number') {                        // Excel serial
-      var d = new Date(Math.round((v - 25569) * 86400000));
-      return Utilities.formatDate(d, 'UTC', fmt);
-    }
-    return String(v);
+
+    if (monthTextN_ >= MONTH_CACHE_MAX) { monthTextCache_ = {}; monthTextN_ = 0; }
+    monthTextCache_[ck] = out; monthTextN_++;
+    return out;
   }
 
   /* Which year the EXPORT is current for, read off its ROWS. The Aggregates
@@ -4379,7 +4485,12 @@ var QLIKSYNC = (function () {
        throws, run() records the tab as failed and carries on — and the restore
        pass still has this entry, so the band goes back re-pointed instead of
        staying as the write left it. */
-    plan.push({ sh: sh, spec: spec, firstData: firstData, band: band, nCols: nCols });
+    var entry = { sh: sh, spec: spec, firstData: firstData, band: band, nCols: nCols,
+                  /* the height the band was last put back against, and 0 while it
+                     is still off the tab — see the restore pass at the end of
+                     run(), which uses it to tell "already home" from "still out". */
+                  homeEnd: 0 };
+    plan.push(entry);
 
     /* A band already in the property does not need putting there again.
 
@@ -4578,19 +4689,23 @@ var QLIKSYNC = (function () {
        been written yet; the pass at the end of run() re-points the whole band
        again once every height is final, and it re-points from the same `band`
        this took out. */
-    if (parked && putBand_(sh, band, sh.getMaxRows(), {}, null)) dropPark_(spec);
+    if (parked) {
+      var homeEnd = sh.getMaxRows();
+      if (putBand_(sh, band, homeEnd, {}, null)) { entry.homeEnd = homeEnd; dropPark_(spec); }
+    }
 
     /* Recorded only now, past every check, so a bad run cannot become the
        baseline the NEXT run measures itself against — which would let a fault
        through by degrees, one export at a time. */
     recordShape_(spec.page, spec.tab, check.shape);
 
-    var stamped = null;
-    if (spec.stampMonth) {
-      for (var sp = 0; sp < pairs.length; sp++) {
-        if (pairs[sp].isMonth) { stamped = latestMonth_(src, pairs[sp].src); break; }
-      }
-    }
+    /* THE REPORT MONTH, OFF THE WALK THE GATE HAS ALREADY DONE. This used to
+       call latestMonth_ again, which is a second pass over every row of the
+       export — 40,000 of them on Main Raw Data, each one a regex or a Date —
+       to answer a question shapeOf_ answered before the gate ran. It is the
+       same column read the same way; the only thing that changed is that it is
+       read once. */
+    var stamped = (spec.stampMonth && check.shape.month) ? check.shape.month : null;
 
     return {
       tab: spec.tab, mode: 'columns', from: src.file + ' · ' + src.name,
@@ -4843,7 +4958,7 @@ var QLIKSYNC = (function () {
      `names` keeps the raw spelling beside it, because the message this ends up
      in is read by somebody looking at the export, not at the code. */
   function shapeOf_(src, pairs) {
-    var cols = {}, names = {}, n = src.rows.length, ym = 0;
+    var cols = {}, names = {}, n = src.rows.length, ym = 0, month = null, monthAsked = false;
     for (var q = 0; q < pairs.length; q++) {
       var sc = pairs[q].src, fill = 0;
       for (var i = 0; i < n; i++) {
@@ -4856,6 +4971,12 @@ var QLIKSYNC = (function () {
       names[key] = String(src.hdrRaw[sc]);
       if (pairs[q].isMonth && ym === 0) {
         var mm = latestMonth_(src, sc);
+        /* THE FIRST MONTH COLUMN'S ANSWER, KEPT WHATEVER IT IS — including
+           null. It is the same column, chosen the same way, that writeColumns_
+           used to walk the export a second time for; keeping it here is what
+           lets that walk go. Later month columns can still supply `ym`, which
+           is the behaviour that was here, but they do not become the stamp. */
+        if (!monthAsked) { monthAsked = true; month = mm; }
         if (mm) ym = mm.y * 12 + mm.m;
       }
     }
@@ -4872,7 +4993,7 @@ var QLIKSYNC = (function () {
       var y = srcCyYear_(src, src.hdr.map(canon_));
       if (y) ym = y * 12;
     }
-    return { rows: n, cols: cols, names: names, ym: ym, at: Date.now() };
+    return { rows: n, cols: cols, names: names, ym: ym, month: month, at: Date.now() };
   }
 
   /* HOW FAR AN EXPORT IS ALLOWED TO SHRINK BEFORE IT IS TREATED AS BROKEN.
@@ -5058,7 +5179,68 @@ var QLIKSYNC = (function () {
    * execution is running as. That default is the right one here rather than a
    * fallback: an installable trigger runs as WHOEVER CREATED IT (§11), so the
    * effective user is by definition the person who set this pipeline up.
+   *
+   * AND WHETHER TO MAIL ANYBODY AT ALL IS A SWITCH, DEFAULTING TO NO. The mail
+   * was written for a pipeline nobody was watching, and it is the right thing
+   * for one — but a sync that is failing for a reason somebody is already
+   * working on sends the same mail every fifteen minutes to a person who
+   * already knows, and a mail nobody reads is worse than no mail, because the
+   * one that matters arrives looking exactly like the twenty before it. So it
+   * is opt-in: QLIK_ALERT_MAIL must say `on` before MailApp is reached, and
+   * qlikAlertsOn() / qlikAlertsOff() (§11) are the two editor tools that set
+   * it. Neither touches QLIK_ALERT_TO — the address survives being muted, so
+   * turning the mail back on does not need it typed in again.
+   *
+   * MUTED IS NOT SILENT, AND THAT IS THE WHOLE OF WHY THIS IS A SWITCH RATHER
+   * THAN A DELETION. §7's rule is that nothing fails quietly, and the mail was
+   * the only thing standing behind it here: run() returns its failures to a
+   * time-driven trigger, which reads them nowhere. So a muted run writes the
+   * ENTIRE report it would have sent to the execution log at `error` — the same
+   * text, the same reasons, in the one place a trigger does reach — and
+   * qlikRetryStatus() says out loud that the mail is off whenever it is.
    * ================================================================== */
+
+  /* The switch, and it is a Script Property rather than a constant so that
+     turning the mail back on is a Run-menu click and not a deployment. */
+  var QLIK_ALERT_MAIL_KEY = 'QLIK_ALERT_MAIL';
+
+  /* ANYTHING BUT AN EXPLICIT YES IS NO — an unset property, a typo, a
+     PropertiesService that will not answer. The failure still reaches the log
+     either way, so the safe direction here is the quiet one: a run that cannot
+     read the switch mails nobody rather than mailing everybody. */
+  function alertMailOn_() {
+    try {
+      var v = String(PropertiesService.getScriptProperties()
+                       .getProperty(QLIK_ALERT_MAIL_KEY) || '').trim().toLowerCase();
+      return v === 'on' || v === 'yes' || v === 'true' || v === '1';
+    } catch (e) { return false; }
+  }
+
+  /* What §11's two entry points do. Returns the state it left behind, so the
+     Run menu's execution log shows what happened without a second call. */
+  function setAlertMail_(on) {
+    var to = alertTo_();
+    try {
+      if (on) PropertiesService.getScriptProperties().setProperty(QLIK_ALERT_MAIL_KEY, 'on');
+      else    PropertiesService.getScriptProperties().deleteProperty(QLIK_ALERT_MAIL_KEY);
+    } catch (e) {
+      return { mail: alertMailOn_() ? 'on' : 'off', to: to,
+               error: 'The switch could not be written: ' + String(e && e.message || e) };
+    }
+    APP_log('info', 'QLIKSYNC.alert', 'the sync failure mail was switched ' + (on ? 'on' : 'off'),
+            { to: to.join(',') });
+    return {
+      mail: alertMailOn_() ? 'on' : 'off',
+      to: to,
+      note: on
+        ? (to.length ? 'A failed sync will mail ' + to.join(', ') + '.'
+                     : 'The mail is on but there is nobody to send it to — set the ' +
+                       'QLIK_ALERT_TO script property.')
+        : 'A failed sync will write its whole report to the execution log at error level and ' +
+          'mail nobody. qlikAlertsOn() puts the mail back.'
+    };
+  }
+
   function alertTo_() {
     var to = [];
     try {
@@ -5073,13 +5255,25 @@ var QLIKSYNC = (function () {
   }
 
   function alert_(subject, lines) {
+    var body = lines.join('\n');
+
+    /* SWITCHED OFF IS STILL REPORTED, IN FULL. The body is the report — every
+       reason the gate produced, which tab, and what happens next — so it goes
+       to the log verbatim rather than being summarised into a line that would
+       send somebody looking for the mail that is not coming. */
+    if (!alertMailOn_()) {
+      APP_log('error', 'QLIKSYNC.alert', 'the sync failed and the failure mail is switched off, ' +
+              'so this line is the whole report — qlikAlertsOn() puts the mail back',
+              { subject: subject, report: body });
+      return false;
+    }
+
     var to = alertTo_();
     if (!to.length) {
       APP_log('error', 'QLIKSYNC.alert', 'the sync failed and there is nobody to tell — set the ' +
-              'QLIK_ALERT_TO script property', { subject: subject });
+              'QLIK_ALERT_TO script property', { subject: subject, report: body });
       return false;
     }
-    var body = lines.join('\n');
     try {
       MailApp.sendEmail({ to: to.join(','), subject: subject, body: body });
       return true;
@@ -5188,7 +5382,13 @@ var QLIKSYNC = (function () {
     if (!Object.keys(all).length) dropRetryTriggers_();
   }
 
-  function scheduleRetry_(scope, problems) {
+  /* `tabs` IS THE HALF THAT MAKES THE RETRY SMALLER THAN THE RUN. A page is
+     three tabs and 82,200 rows on Ready-Mix; when one of them fails, re-writing
+     the other two is not just the work that used the budget up in the first
+     place, it is a risk taken for nothing — a retry killed mid-write on a tab
+     that was already right leaves a good tab blank below the boundary. So the
+     failure names its tabs and the retry does those. */
+  function scheduleRetry_(scope, problems, tabs) {
     var all = retryLog_(), rec = all[scope] || { tries: 0 };
     if (rec.tries >= QLIK_RETRY_MAX) {
       APP_log('error', 'QLIKSYNC.retry', 'this page has already been retried and failed again — ' +
@@ -5199,6 +5399,11 @@ var QLIKSYNC = (function () {
       return 'exhausted';
     }
     rec.tries++; rec.at = Date.now(); rec.problems = problems;
+    /* EMPTY MEANS THE WHOLE PAGE, and that is the safe direction: a failure
+       that could not say which tabs it was about — a read that failed before
+       any tab was reached, an older record written before this field existed —
+       retries everything rather than nothing. */
+    rec.tabs = (tabs || []).slice();
     all[scope] = rec;
     saveRetry_(all);
 
@@ -5246,9 +5451,9 @@ var QLIKSYNC = (function () {
        tell somebody, and one boolean told two of them the same lie. */
     var retry = 'none';
     if (retryable.length) {
-      retry = scheduleRetry_(scope, retryable.map(function (f) {
-        return f.tab + ': ' + f.error;
-      }));
+      retry = scheduleRetry_(scope,
+        retryable.map(function (f) { return f.tab + ': ' + f.error; }),
+        retryable.map(function (f) { return f.tab; }));
     }
 
     var body = [];
@@ -5268,9 +5473,12 @@ var QLIKSYNC = (function () {
       body.push(
         retry === 'armed'
           ? 'WHAT HAPPENS NEXT: this runs again by itself in about ' + QLIK_RETRY_MINS +
-            ' minutes. The usual cause is an export that was still being written when the sync ' +
-            'opened it, and that clears on its own. If the retry fails too, nothing further is ' +
-            'scheduled and the export itself needs looking at.'
+            ' minutes, and it rewrites only the tab(s) named above — ' +
+            retryable.map(function (f) { return '"' + f.tab + '"'; }).join(', ') +
+            '. Every other tab of this workbook wrote cleanly and is left alone. The usual ' +
+            'cause is an export that was still being written when the sync opened it, and that ' +
+            'clears on its own. If the retry fails too, nothing further is scheduled and the ' +
+            'export itself needs looking at.'
         : retry === 'exhausted'
           ? 'WHAT HAPPENS NEXT: nothing automatic — this has already been retried once and ' +
             'failed again, so the export itself needs looking at. Re-export it and run this ' +
@@ -5292,12 +5500,16 @@ var QLIKSYNC = (function () {
      point is one line and this stays beside the state it reads. */
   function runRetries_() {
     dropRetryTriggers_();                     /* including the one now firing */
-    var scopes = Object.keys(retryLog_());
+    var waiting = retryLog_(), scopes = Object.keys(waiting);
     if (!scopes.length) return { ok: true, retried: [] };
 
     var out = { ok: true, retried: [], failed: [] };
     scopes.forEach(function (scope) {
-      var res = run(scope);
+      /* THE TABS ARE READ HERE AND THE LOG IS NOT HELD. This is the one thing
+         the copy above is for — which tabs this scope is waiting on — and it is
+         read before run() rather than after, because run() rewrites the record
+         on its way out. Everything else about the record is re-read below. */
+      var res = run(scope, (waiting[scope] || {}).tabs);
 
       /* RE-READ, NEVER HOLD. run() reaches scheduleRetry_ on its way out and
          that writes this same property — it is what decides whether a second
@@ -5369,11 +5581,27 @@ var QLIKSYNC = (function () {
      up — which is why §11 sets the three a few minutes apart. All three exports
      rarely move at once, so this is a cost that is almost never paid.
 
-     WHAT THE PAGE IS THE UNIT OF, and why a page cannot be split further: the
-     array formulas are re-pointed once per WORKBOOK, off an `ends` map that has
-     to hold every tab of it, so one page's tabs have to be written in one
-     execution. */
-  function run(page) {
+     WHAT THE PAGE IS THE UNIT OF: the array formulas are re-pointed once per
+     WORKBOOK, off an `ends` map holding the final height of every tab this run
+     changed, and a formula on one tab can name a range on another.
+
+     WHICH IS NOT THE SAME AS SAYING EVERY TAB HAS TO BE WRITTEN. It used to be
+     read that way, and the retry paid for it: a Ready-Mix run where one tab of
+     three failed retried all three — 82,200 rows to rewrite 14,157 — which is
+     the work that used the budget up in the first place, done again, with the
+     two good tabs taken apart and put back for nothing. A retry killed
+     mid-write on a tab that was already right leaves a GOOD tab blank below the
+     boundary, so this is a risk taken for no gain and not merely waste.
+
+     `only` IS THE TAB LIST A RUN IS RESTRICTED TO, and the retry is the only
+     caller that passes one. Omitted — the three timers, the three editor tools
+     — is the whole page, exactly as before. What makes it safe is the second
+     half, at the re-point pass below: a tab this run did NOT write still has
+     its band read and re-pointed if it names a tab this run DID write, so a
+     sibling reference cannot be left pointing at a height that has moved. That
+     pass now covers the tabs a full run failed or skipped as well, which is a
+     hole it had all along. */
+  function run(page, only) {
     var want = String(page || '').toLowerCase();
 
     var lock = LockService.getScriptLock();
@@ -5393,10 +5621,35 @@ var QLIKSYNC = (function () {
     sweepTemps_();
 
     try {
-      var SPEC = buildSpec_().filter(function (s) { return s.page === want; });
-      if (!SPEC.length) {
+      var PAGE = buildSpec_().filter(function (s) { return s.page === want; });
+      if (!PAGE.length) {
         return { ok: false, scope: want, files: [], done: [], skipped: [], failed: [],
                  error: 'Nothing is set up to update for "' + want + '".' };
+      }
+
+      /* THE TABS THIS RUN IS FOR. `PAGE` stays the whole workbook either way,
+         because the re-point pass needs it; `SPEC` is what gets written.
+
+         A LIST THAT MATCHES NOTHING RUNS THE WHOLE PAGE. A retry record can
+         name a tab that has since been renamed in the workbook or taken out of
+         the spec, and the two ways of being wrong here are not equal: doing the
+         whole page costs an execution, and doing nothing silently drops the
+         failure that armed the retry. */
+      var pick = {};
+      (only || []).forEach(function (t) { if (t) pick[norm_(t)] = 1; });
+      var SPEC = PAGE;
+      if (Object.keys(pick).length) {
+        SPEC = PAGE.filter(function (s) { return pick[norm_(s.tab)]; });
+        if (!SPEC.length) {
+          APP_log('warn', 'QLIKSYNC.run', 'this run was asked for tabs that are not in this ' +
+                  'page any more, so the whole page is being done instead',
+                  { page: want, asked: (only || []).join(', ') });
+          SPEC = PAGE;
+        } else if (SPEC.length < PAGE.length) {
+          APP_log('info', 'QLIKSYNC.run', 'writing only the tabs this run was asked for',
+                  { page: want, tabs: SPEC.map(function (s) { return s.tab; }).join(', '),
+                    of: PAGE.length });
+        }
       }
 
       /* Every tab of a page comes out of one export folder. */
@@ -5507,6 +5760,56 @@ var QLIKSYNC = (function () {
         });
       }
 
+      /* --- THE TABS THIS RUN DID NOT WRITE, AND WHY THEY ARE IN THIS PASS ---
+         A formula on one tab can name a range on another, and the height it
+         names has just moved on every tab in `ends`. `plan` holds the tabs this
+         run WROTE; a tab it did not — one the retry left alone, one that failed
+         its gate, one skipped as optional — is not in it, and its band is
+         sitting on the tab still pointing at yesterday's height of a sibling
+         that has just been rewritten.
+
+         THAT WAS TRUE BEFORE THE RETRY WAS NARROWED, and is the hole the
+         narrowing would have widened: a full run whose second tab failed its
+         checks left the first tab's cross-references stale in exactly the same
+         way, with nothing to notice. So the pass covers the whole page.
+
+         THE BAND HERE IS READ OFF THE TAB, not out of `plan` — this run never
+         lifted it, so what is on the tab is the real thing. `onTab` tells the
+         loop below to compare against that rather than against a restore it
+         made itself, so a tab with no sibling reference is READ and not
+         written, and costs one getFormulas of a dozen rows.
+
+         'replace' TABS ARE NOT ASKED. The Product Segment tabs ARE their
+         export, they carry no band by rule, and a page of them is forty tabs —
+         forty reads to find forty blanks. */
+      if (done.length && ss) {
+        PAGE.forEach(function (spec) {
+          if (spec.mode === 'replace') return;
+          if (plan.some(function (p) { return p.spec && p.spec.tab === spec.tab; })) return;
+          try {
+            var sh2 = ss.getSheetByName(spec.tab);
+            if (!sh2) return;
+            /* The band lives between row 1 and the first data row, and that row
+               is at most a handful below a header that is itself inside the
+               first few rows — tgtHeaderRow_ probes 8 and firstDataRow_ looks 4
+               past it. Sixteen covers both with room, and reading past the band
+               only adds rows with no formulas on them. */
+            var top = Math.min(16, sh2.getMaxRows());
+            if (top < 1) return;
+            plan.push({ sh: sh2, spec: null, band: sh2.getRange(1, 1, top, sh2.getMaxColumns())
+                                                  .getFormulas(),
+                        onTab: true, homeEnd: 0 });
+          } catch (e) {
+            /* Not fatal and not silent: the tabs that were written are correct,
+               and what may be stale is a cross-reference on a tab this run was
+               not asked to touch. */
+            APP_log('warn', 'QLIKSYNC.run', 'could not check whether this tab\u2019s formulas ' +
+                    'point at a tab that was just rewritten', { page: want, tab: spec.tab,
+                    error: String(e && e.message || e) });
+          }
+        });
+      }
+
       /* Every tab in this workbook has its final height now, so the array
          formulas can be re-pointed — including the ones that reach across into
          another tab of the same workbook. */
@@ -5516,9 +5819,42 @@ var QLIKSYNC = (function () {
           var fRuns = cellRuns_(p.band[r]);
           for (var q = 0; q < fRuns.length; q++) {
             var start = fRuns[q].start, len = fRuns[q].len, seg = new Array(len);
+
+            /* A RUN THIS PASS WOULD WRITE UNCHANGED IS NOT WRITTEN AGAIN, AND
+               THAT IS NOT A MICRO-SAVING. writeColumns_ already put this band
+               back the moment its own tab was written, with an empty `ends` —
+               so every formula that does NOT reach into a sibling tab came out
+               of that call exactly as it comes out of this one. Writing it a
+               second time changes nothing on the tab and costs the thing §5b
+               takes the band off the tab to avoid in the first place: six
+               ARRAYFORMULAs landing on a 47,845-row column is 140,000 string
+               operations and six full-column sums, and the sheet does all of it
+               before the next call is served. Doing that twice per tab, once
+               for nothing, is where a page's last minutes were going.
+
+               `homeEnd` is the height that earlier restore was pointed at, and
+               it is 0 unless the restore ran AND every run of it wrote. So a tab
+               that threw mid-write, a band that could not be parked, and a
+               restore that half failed all fall through to the write below —
+               which is the safe direction, because in each of those the band
+               really is still off the tab.
+
+               THE COMPARISON IS THE FORMULA, NOT THE ASSUMPTION. Nothing here
+               relies on believing the heights match: each cell is re-pointed
+               both ways and skipped only if the two strings are identical, so a
+               sibling reference that this pass can now resolve, or a height that
+               moved since, writes exactly as it did before. */
+            /* `onTab` — a tab this run did not write — compares against the
+               formula AS IT IS, because that is what is on the tab. Anything
+               else compares against the restore writeColumns_ already made. */
+            var same = p.onTab || !!p.homeEnd;
             for (var k = 0; k < len; k++) {
-              seg[k] = reanchor_(p.band[r][start + k], ownEnd, ends);
+              var was = p.band[r][start + k];
+              seg[k] = reanchor_(was, ownEnd, ends);
+              if (same && seg[k] !== (p.onTab ? was : reanchor_(was, p.homeEnd, {}))) same = false;
             }
+            if (same) continue;
+
             try {
               p.sh.getRange(r + 1, start + 1, 1, len).setFormulas([seg]);
             } catch (e) {
@@ -5616,6 +5952,7 @@ var QLIKSYNC = (function () {
   return { run: run, sources: sources_, lastSync: lastSync_,
            retry: runRetries_, retryPending: retryLog_, dropRetries: dropRetryTriggers_,
            shape: tabShape_,
+           alertMail: alertMailOn_, setAlertMail: setAlertMail_, alertTo: alertTo_,
            toSheet: convertToSheet_, trash: trashFile_, tempPrefix: TEMP_PREFIX };
 })();
 
@@ -17969,6 +18306,11 @@ var IRMAIL = (function () {
  *                    rows behind the comparison with the customer-parent
  *                    spellings actually in the sheet, and the match rate between
  *                    the two sides. Sends nothing and marks nothing.
+ *   qlikAlertsOn / qlikAlertsOff
+ *                    whether a failed sync MAILS anybody. Off is the default and
+ *                    off is not silent — the whole report goes to the execution
+ *                    log at `error` either way, and qlikRetryStatus() names the
+ *                    mute. §5c is the argument for the switch.
  *
  * The other functions in this file that are run by hand rather than called are
  * signposted where they live, because they belong with the code they report on:
@@ -18356,19 +18698,58 @@ function qlikSyncRetry() {
 
 /* Run from the editor when you want to know whether a retry is waiting, and
    clear it if one is stuck. Reads the retry state; `dropRetryTriggers` is the
-   escape hatch if a one-shot ever survives its own firing. */
+   escape hatch if a one-shot ever survives its own firing.
+
+   IT REPORTS THE MAIL SWITCH TOO, and that is not a convenience. With the mail
+   off, a failing sync says so in one place only — the execution log — and this
+   is the diagnostic somebody reaches for when they suspect a sync is failing.
+   Not saying "and by the way you asked not to be told" here is how a mute set
+   for one bad afternoon outlives the afternoon. */
 function qlikRetryStatus() {
   var pending = QLIKSYNC.retryPending();
   var keys = Object.keys(pending);
+  var mailOn = QLIKSYNC.alertMail(), to = QLIKSYNC.alertTo();
   return {
     waiting: keys.map(function (k) {
+      var tabs = pending[k].tabs || [];
       return { source: k, attempt: pending[k].tries, since: new Date(pending[k].at),
+               /* WHAT THE RETRY WILL ACTUALLY REWRITE. An empty list is the
+                  whole page, which is what a failure that could not name its
+                  tabs — a read that never reached one — falls back to. */
+               tabs: tabs.length ? tabs.join(', ') : '(the whole page)',
                problems: pending[k].problems };
     }),
+    mail: mailOn ? 'on \u2014 a failed sync mails ' + (to.join(', ') || 'nobody (set QLIK_ALERT_TO)')
+                 : 'OFF \u2014 a failed sync writes its whole report to the execution log at ' +
+                   'error level and mails nobody. qlikAlertsOn() puts the mail back.',
     note: keys.length ? 'A one-shot trigger should be armed for these. qlikSyncRetry() runs it now.'
                       : 'Nothing is waiting to be retried.'
   };
 }
+
+
+/* ==========================================================================
+ * THE FAILURE MAIL, ON AND OFF. Two editor tools, run from the Run menu.
+ * --------------------------------------------------------------------------
+ * §5c is the argument; this is the switch. THE MAIL IS OFF BY DEFAULT — a
+ * pipeline that has started failing sends the same mail every fifteen minutes
+ * to somebody who already knows, and that is how the one mail that matters
+ * ends up looking like the twenty before it.
+ *
+ * WHAT IS NOT SWITCHED OFF IS THE FAILURE. A muted run writes the entire
+ * report it would have mailed to the execution log at `error`, and
+ * qlikRetryStatus() names the mute every time it is asked. Nothing about the
+ * gate, the retry or the withheld stamp changes: a tab that fails its checks
+ * is still left exactly as it was and still rewritten whole five minutes
+ * later.
+ *
+ * NEITHER TOUCHES QLIK_ALERT_TO. The address is a separate property and it
+ * survives a mute, so turning the mail back on does not need it typed in
+ * again. Both return the state they left behind, so the Run menu's own log
+ * line is the confirmation.
+ * ======================================================================== */
+function qlikAlertsOn()  { return QLIKSYNC.setAlertMail(true); }
+function qlikAlertsOff() { return QLIKSYNC.setAlertMail(false); }
 
 
 /* ---- IR_MailWatch.gs ---------------------------------------------------------
