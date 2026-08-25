@@ -107,8 +107,8 @@ why TP01's market → email map is a single list.
 as **whoever created it in the Triggers UI** — not the script owner, not the deployer, not the
 person whose browser is open. Two identities, two consent screens, two sets of Drive and Gmail
 access, and nothing anywhere reports the mismatch: if the deployer and the trigger-creator are
-different accounts, the pages serve one account's Drive while `qlikSyncCheck` writes from
-another's, `inventoryReportMailCheck` reads another's mail, and `tp01ReportMailCheck` reads
+different accounts, the pages serve one account's Drive while `qlikSyncAggregates` and its two
+siblings write from another's, `inventoryReportMailCheck` reads another's mail, and `tp01ReportMailCheck` reads
 another's mail **and sends the exceptions report under another's name**. **Create all three
 triggers from the account that deployed the web app**, and if you are ever unsure which one
 that is, `APP_verifyPermissions()` prints the effective user — run it from the editor, and read
@@ -404,8 +404,13 @@ execution is six. One firing could never hold the job however it was arranged: i
 as fitted and armed a one-shot for the rest, so the tail of the work went round a retry chain
 and the sheets ran a pipeline behind. Each export in its own execution is two to three minutes
 against six, with the settle, the read and the write all inside one page's own limit and
-nothing to defer. `qlikSyncCheck` is still there, and only so that a trigger set on it before
-the split does not fail silently — **replace it.**
+nothing to defer.
+
+**`qlikSyncCheck` was deleted on 2026-08-25** — it was kept after the split only so a trigger
+still pointed at it would not fail silently, and keeping it kept a way to start all three
+exports in one execution. **So check the Triggers UI**: a trigger still set on that name now
+fails on every firing, and a timer nobody is watching fails quietly. Delete it, set one on each
+of the three targets above, and run `APP_verifyPermissions()` to see which are armed.
 
 **The lock is script-wide, which is why they are staggered.** `LockService` has no named
 locks, so two of these firing across each other means the second waits five seconds, gives up,
@@ -420,18 +425,25 @@ by hand in the Apps Script UI, which is why `script.gs` §11 exists. There is **
 checks arms a **one-shot retry** five minutes out, pointed at `qlikSyncRetry`, which deletes
 it when it fires. Do not add a trigger for that one by hand.)
 
-The timers skip a source whose file has not moved since it was last synced. **`qlikSyncNow`
+The timers skip a source whose file has not moved since it was last synced. **The manual path
 deliberately does not** — somebody running it by hand is there *because* the sheet is wrong
 and the file did not move (a bad write, a header renamed in the workbook, a cleared cache), so
-the timer's optimisation must not reach them. It takes a page id, a source key, or `'all'`;
-prefer one at a time, because `'all'` is the seven minutes that does not fit six.
+the timer's optimisation must not reach them.
 
-**And the editor's Run menu passes no argument, so `'all'` is exactly what it asks for.**
-Running `qlikSyncNow` out of the dropdown does the opposite of what its own comment tells you
-to prefer — there is no way to type `'AGG'` into that menu. `qlikAggNow`, `qlikRmxNow` and
-`qlikSegmentNow` are the same call with the key already in it, and they are what to run by
-hand. They are **not** trigger targets: like `qlikSyncNow` they skip nothing, so a timer on one
-would re-sync minutes of Drive work every interval for ever.
+**`qlikAggNow`, `qlikRmxNow` and `qlikSegmentNow` are that path, and they are the whole of
+it.** One export each, no argument to pass, and no way to ask for more than one — the Run menu
+calls a function with no arguments, so a source key that is not already in the function cannot
+be typed into that menu at all. They are **not** trigger targets: they skip nothing, so a
+timer on one would re-sync minutes of Drive work every interval for ever.
+
+**`qlikSyncNow(scope)` was deleted on 2026-08-25 along with `qlikSyncCheck`.** It took `'all'`
+as well as one source, and `'all'` was its default for no argument — which is precisely what
+the Run menu passed, so picking it out of the dropdown did the opposite of what its own comment
+told you to prefer: three exports in one execution, the seven minutes that does not fit six,
+with the third usually refused on the budget and pushed round the retry chain. The private
+`qlikSyncNowOne_` behind the three wrappers takes **one** source and refuses anything naming
+more or naming nothing, so there is no longer a way — from the editor or from code — to start
+all three in one execution.
 
 **Columns are paired on the figure and the period, never on the literal header** — see §7. The
 sync writes data under the headers the workbook already has and never rewrites a header row,
@@ -554,7 +566,7 @@ stands — a run that FINISHED with a broken tab is not retried, because that ta
 as broken in fifteen minutes. A run that failed its *checks* is the exception, and only
 because of what usually causes it: a file Drive was still writing when the sync opened it.
 That is gone a few minutes later; a genuinely broken export is not fixed by asking again. A
-gate failure also **withholds the export's stamp**, in both `qlikSyncCheck` and `qlikSyncNow`
+gate failure also **withholds the export's stamp**, on the timer path and the manual one alike
 — keeping it would mark a file as read that the run refused to read. `qlikRetryStatus()` shows
 what is waiting.
 
@@ -1797,10 +1809,12 @@ does not prove it.**
 > 3. **`doGet`**, called by Apps Script itself.
 >
 > This is not hypothetical. An earlier draft of the merge plan described the sync's four entry
-> points as having "no client caller" — true, and badly misleading: **`qlikSyncCheck` is the
-> time-driven trigger that runs the entire QlikView → Sheets pipeline.** Deleting it on a
+> points as having "no client caller" — true, and badly misleading: **`qlikSyncCheck` was the
+> time-driven trigger that ran the entire QlikView → Sheets pipeline.** Deleting it on a
 > zero-caller count would have silently stopped every page's data from updating again, and
-> nothing would have errored.
+> nothing would have errored. (That function is gone now — deliberately, on 2026-08-25, and
+> with the trigger list checked. `qlikSyncAggregates`, `qlikSyncReadyMix` and `qlikSyncSegment`
+> stand in exactly the same position and carry exactly the same warning.)
 >
 > So: **before deleting a top-level function, check the trigger list in the Apps Script UI and
 > check whether its own comment says it is run from the editor.** Both are outside the repo.
@@ -1820,13 +1834,11 @@ the banner still stood for four chunks. **Read the code, not the label.**
 
 | | |
 |---|---|
-| `qlikSyncCheck` | **Load-bearing.** The time-driven trigger target; the whole data pipeline runs through it |
 | `park_`'s `firstData` | Looks like a field nothing reads back. It is the first data row, and it is the only correct answer available to a run that finds a parked band: with the band off the tab `firstDataRow_` answers one row too low, and the export lands one row out |
 | `qlikSyncAggregates` / `qlikSyncReadyMix` / `qlikSyncSegment` | **The data pipeline.** One hand-set time-driven trigger each, and nothing in the repo points at any of them. Deleting one stops that page's figures updating for ever, silently, while the other two keep going — which reads as a fault in the page rather than in the timer |
-| `qlikSyncCheck` | The pre-split target, kept only so a trigger set on it before 2026-08-25 does not fail silently. It runs all three exports in one execution, which is the seven minutes that does not fit six. Delete the *trigger*, not the function, and set the three above |
 | `qlikMarkCurrent` | Run once from the editor after the timers are set up, so the first firing of each has a stamp to compare. Needed again any time they are rebuilt |
-| `qlikSyncNow(scope)` | The only manual recovery path when a timer misfires or a sync has to be forced |
-| `qlikAggNow` / `qlikRmxNow` / `qlikSegmentNow` | **Editor tools, and the only way to force one export.** `qlikSyncNow` takes a scope and the Run menu cannot pass one, so without these three "prefer one at a time" is advice nobody in the editor can follow. Zero callers is what they are for |
+| `qlikAggNow` / `qlikRmxNow` / `qlikSegmentNow` | **Editor tools, and the whole of the manual recovery path** when a timer misfires or a sync has to be forced. The Run menu passes no arguments, so a function taking a source key cannot be run from it — these three carry the key, which is why they exist and why they take nothing. Zero callers is what they are for |
+| `qlikSyncNowOne_` | The one export behind those three. Private, and it stays private: it is what makes "one at a time" a property of the code rather than advice. `qlikSyncNow(scope)` and `qlikSyncCheck` — the two ways of asking for all three at once — were removed on 2026-08-25 |
 | `qlikStamps` | What each timer will compare on its next firing, and what it will do. With five hand-set triggers and no harness left, the diagnostics are how this pipeline is inspected at all |
 | `clearRetiredOverrides` | Its own comment says "run from the Apps Script editor", and it is idempotent. An editor tool, not dead code |
 | `getSaskRatesStatus` | Its comment says "so the Settings screen **(and a quick manual run)** can check the sheet" — that parenthetical is the editor-tool criterion. The Settings screen never calls it; wiring it would be a behaviour change, not a cleanup |
@@ -2025,3 +2037,4 @@ or was forgotten.**
 | 2026-08-25 | **`Service timed out: Spreadsheets` was the unpark, and the band it put back was one it was about to take off again.** The 22:12 run is the whole story: at 22:13:03 `unpark_` — the first line of `writeColumns_` — wrote a parked band home, and forty lines later that same band was read, parked and cleared again. **Putting six `ARRAYFORMULA`s back onto a 47,845-row tab is exactly the full-column recalculation §5b takes the band out to avoid**, and the sheet was still doing it when the write asked for the tab: `Service timed out: Spreadsheets` on BOTH Aggregates tabs, about 150 seconds producing nothing, and Ready-Mix (30,000 of 44,246 rows) and Product Segment ran out of execution time behind it. The park is a copy of the band, so `readPark_` reads it and the write puts it back at the end the way it puts back one it lifted out itself. **Removing the unpark exposed what it had been hiding**: `firstDataRow_` finds the first data row by looking for a formula in a column the export does not feed, and with the band off the tab there is none on that row — it finds the next row down of a foreign column that IS filled down and answers **one row too low**, so every row of the export lands one row out on every run following a killed one. The park carries `firstData` and that is now what is read; the harness caught it on the fixture's deliberate untouched column M. **The 08-25 one-export-per-firing change is reverted**, and the reasoning it was built on was wrong twice over: the `scope=all tries=1` line that was read as a stale build was a stale READING — the code and the mail were current — and deferring an export that would have fitted makes the common case worse, turning one run into three across fifteen minutes when all three exports rarely move together. `run()` already refuses a PAGE it cannot start and arms the one-shot for what is left, so a firing is one execution's worth of work rather than one export's. Kept from that change: the three park fixes (the drop moved to the restore pass that always runs, `putBand_` reporting whether the band actually went back, and its catch no longer silent), the stamp read/write folded into one helper each, and `logging.js` green again. **A number-format skip was written and dropped**: `getNumberFormat` on a range answers for the top-left cell only, so a column pasted over in the middle would keep the wrong format and Bill Month would come back as a date in the rows nobody looks at — the wrong trade for one write. Six mutations, every one caught. `qliksync.js`'s two `settle_` cases are still red and still deliberate. **What is left is arithmetic and it is tight**: about 320–350 seconds of work against a 360-second limit with the budget guard at 300, so the biggest remaining lever is the write itself — `values.batchUpdate` over the Sheets REST API the poll already uses, which would also blind every write-path gate in the harness and is its own piece of work | ☐ |
 | 2026-08-25 | **One export per execution, three timers, and most of `run()` went with it.** The job is about seven minutes — Aggregates 52,538 rows and ~80 s to write, Ready-Mix 82,200 and ~165 s, Product Segment small, three conversions and reads another ~70 s — and an Apps Script execution is six. **No arrangement of one firing holds that**, which is what every timeout since 08-23 has been: the old `run('all')` did as much as fitted and pushed the rest into a retry chain, so the tail of the work ran a lap behind. `run()` takes a PAGE now — one export, one workbook, one execution, two to three minutes against six — and §11 sets **one time-driven trigger per export** (`qlikSyncAggregates`, `qlikSyncReadyMix`, `qlikSyncSegment`), a few minutes apart because the lock is script-wide and `LockService` has no named ones. `qlikSyncCheck` stays as the pre-split target only so an existing trigger on it does not fail silently; `APP_TRIGGER_TARGETS` is five entries now and `APP_verifyPermissions` is still the only report of which are armed. **What went is the point**: the `byPage` walk, the read-on-first-use/drop-on-last-use bookkeeping, the per-page budget refusal, the per-page retry fan-out and `QLIK_RETRY_MAX_BUDGET` all existed to fit three exports into one execution and make the leftovers converge across firings — with one page a firing there is nothing left to shrink, so a clock failure retries **once**, like a broken export, and five identical attempts were five ways of not saying that a page does not fit. **Two holes closed on the way**: a page whose export could not be READ kept its stamp, marking a file as read that nothing had opened, so the next firing skipped it — it is flagged retryable now; and a retry that SUCCEEDED never wrote a stamp, so the next firing re-did the minutes of work it had just done, and it now records the modified time the run itself read off `QLIK_LAST_SYNC` rather than whatever is in Drive when the retry finishes. **The two counts the business reconciles against Qlik are checked out loud after the write**: the tab must end at `firstData + rows - 1` exactly and **both directions throw** (too tall is surplus still holding the previous export's figures, which is the failure deleting the surplus exists to prevent), and paired-vs-unmatched columns are logged on every run and returned — unmatched deliberately **not** a failure, because that is what a new year's column looks like before somebody adds it to the workbook and refusing would stop the pipeline every January. The shrink allowance on a period roll is untouched, and so is the rule that the sync owns only the columns it pairs. **`tests/` is deleted** — 31 harnesses, 500 KB — rather than rewritten around a `run()` that no longer has the shape they gated; they are in git history, and every `tests/…` reference left in this document is now marked historical at the top. `node --check` and `APP_verifyPermissions` are what is left | ☐ |
 | 2026-08-25 | **`qlikSyncNow` run from the editor asks for `'all'`, which is the one thing its own comment says not to do.** The Run menu calls a function with no arguments and `qlikSyncNow`'s default for none is `'all'` — three exports in one execution, the seven minutes that does not fit six, with the third usually refused on the budget and retried. There is no way to pass `'AGG'` from that dropdown, so "prefer one at a time" was advice nobody standing in the editor could follow. `qlikAggNow`, `qlikRmxNow` and `qlikSegmentNow` are that call with the key already in it, and nothing else: the unconditional pull, the stamp read before the run, the stamp withheld on a gated export and the single result object are all still `qlikSyncNow`'s. **They are deliberately not trigger targets** and are not in `APP_TRIGGER_TARGETS` — they skip an unchanged export the way the timers do, which is to say not at all, so a timer on one would re-sync minutes of Drive work every interval for ever. Named in §11's banner and in §9's do-not-delete table, because zero callers is what an editor tool looks like | ✅ |
+| 2026-08-25 | **Both ways of starting all three exports at once are gone, and "one at a time" is now a property of the code rather than advice.** `qlikSyncCheck` ran the three exports in one execution and was kept, after the 08-25 split, only so that a trigger still pointed at it would not fail silently; `qlikSyncNow(scope)` took `'all'` and **defaulted to it** for the no-argument call the Run menu makes. Both were the same seven minutes against a six-minute execution that every timeout since 08-23 has been, and keeping either kept a way to ask for it. **Both are deleted.** What is behind `qlikAggNow` / `qlikRmxNow` / `qlikSegmentNow` is now the private `qlikSyncNowOne_`, which takes ONE source and refuses anything naming more or naming nothing — `'all'` arrives as a name no source answers to, so the refusal is a `pick.length !== 1` check rather than a comment asking nicely, and there is no branch left that could walk more than one source. Everything else is unchanged and deliberately so: the unconditional pull (the manual path exists BECAUSE the file did not move), the stamp read before the run, the stamp withheld on a gated export, one result object. **The operational half is the trigger list, not the code**: a timer still set on `qlikSyncCheck` now fails on every firing, and a timer nobody watches fails quietly — delete it, set one on each of `qlikSyncAggregates`, `qlikSyncReadyMix` and `qlikSyncSegment`, and run `APP_verifyPermissions` to see which are armed. `APP_TRIGGER_TARGETS` is unchanged, because `qlikSyncCheck` was never in it. Six prose references followed the code: the two places in §5 that told a reader to run `qlikSyncNow` are **in the failure email a human reads**, so they name the three wrappers now. `node --check` clean | ☐ |
