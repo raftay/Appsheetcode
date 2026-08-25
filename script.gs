@@ -5175,8 +5175,8 @@ var QLIKSYNC = (function () {
   /* A SCOPE THAT SUCCEEDED IS NOT WAITING FOR ANYTHING. Called on every clean
      run, not only by the retry path, because the retry is not the only thing
      that can fix one: the scheduled check comes round every fifteen minutes and
-     somebody can run qlikSyncNow at any point, and either may land before the
-     five-minute one-shot fires. Left behind, the entry costs twice — the retry
+     somebody can run that page's qlikAggNow / qlikRmxNow / qlikSegmentNow at any
+     point, and either may land before the five-minute one-shot fires. Left behind, the entry costs twice — the retry
      fires against a source that is already right, and `tries` stays at 1, so
      the NEXT genuine failure is told it has already had its retry and gives up
      immediately. */
@@ -5203,7 +5203,8 @@ var QLIKSYNC = (function () {
     saveRetry_(all);
 
     /* CLEAR THEM AND MAKE ONE. Three timers can each leave a page waiting, and
-       a manual qlikSyncNow('all') can leave three in one execution; two
+       nothing runs more than one export in an execution any more — but the
+       three of them can still leave three pages waiting between firings; two
        triggers on this handler would fire two executions minutes apart doing
        the same work, and the second would find the lock held. runRetries_ walks
        every waiting page off one firing, so one trigger is all that is ever
@@ -5272,14 +5273,16 @@ var QLIKSYNC = (function () {
             'scheduled and the export itself needs looking at.'
         : retry === 'exhausted'
           ? 'WHAT HAPPENS NEXT: nothing automatic — this has already been retried once and ' +
-            'failed again, so the export itself needs looking at. Re-export it and run ' +
-            'qlikSyncNow from the Apps Script editor, or wait for the next scheduled check.'
+            'failed again, so the export itself needs looking at. Re-export it and run this ' +
+            'page\u2019s qlikAggNow / qlikRmxNow / qlikSegmentNow from the Apps Script editor, ' +
+            'or wait for the next scheduled check.'
           : 'WHAT HAPPENS NEXT: the automatic retry could not be scheduled, so the next ' +
             'scheduled check is the next attempt. The export was not marked as read, so that ' +
             'check will pick it up rather than skip it.');
     } else {
       body.push('WHAT HAPPENS NEXT: nothing automatic. This is not a failure a retry fixes — ' +
-                'run qlikSyncNow from the Apps Script editor once the cause above is dealt with.');
+                'run this page\u2019s qlikAggNow / qlikRmxNow / qlikSegmentNow from the Apps ' +
+                'Script editor once the cause above is dealt with.');
     }
     alert_('QlikView sync failed — ' + label + ' (' + failed.length + ' tab' +
            (failed.length === 1 ? '' : 's') + ')', body);
@@ -5571,15 +5574,16 @@ var QLIKSYNC = (function () {
 
       /* NOBODY IS WATCHING THIS. run() is reached from a time-driven trigger and
          from the editor, and its return value has one reader in each case: the
-         trigger's log line, and whoever typed qlikSyncNow. A tab that did not
-         write is invisible to the person whose numbers are wrong — the tab still
-         looks like a tab — so a failed run says so out loud before it returns,
-         and arms the one retry if the failure is the kind a retry can fix.
+         trigger's log line, and whoever typed qlikAggNow / qlikRmxNow /
+         qlikSegmentNow. A tab that did not write is invisible to the person
+         whose numbers are wrong — the tab still looks like a tab — so a failed
+         run says so out loud before it returns, and arms the one retry if the
+         failure is the kind a retry can fix.
 
          A CLEAN RUN CLEARS THE PAGE'S RETRY RECORD whether or not the retry is
          what fixed it: the scheduled timer comes round on its own and somebody
-         can run qlikSyncNow at any point, and either may land before the
-         five-minute one-shot fires. */
+         can run that page's qlikAggNow / qlikRmxNow / qlikSegmentNow at any
+         point, and either may land before the five-minute one-shot fires. */
       if (failed.length) reportFailure_(want, failed, filesSeen, started);
       else clearRetry_(want);
 
@@ -17906,23 +17910,29 @@ var IRMAIL = (function () {
  *                    were. Deleting one because grep found no caller would
  *                    silently stop that page's data from ever updating again,
  *                    and nothing would error.
- *   qlikSyncCheck    THE PRE-SPLIT TARGET, kept only so an existing trigger on
- *                    it does not fail silently. It runs all three in one
- *                    execution, which is the thing the split exists to stop.
- *                    Replace that trigger with the three above.
  *   qlikMarkCurrent  run once from the editor after the timers are set up, so
  *                    the first firing of each has a stamp to compare. Needed
  *                    again whenever they are rebuilt.
  *   qlikStamps       what the next firing of each will compare, and what it
  *                    will do.
- *   qlikSyncNow      the only manual recovery path when a timer misfires. It
- *                    takes a page id, a source key or 'all', and the Run menu
- *                    cannot pass one — so run it through the three below.
  *   qlikAggNow
  *   qlikRmxNow
- *   qlikSegmentNow   THE RUN MENU'S VERSION OF THAT, one export each and no
- *                    argument to pass. NOT trigger targets: they skip nothing,
- *                    so a timer on one would re-sync forever.
+ *   qlikSegmentNow   THE MANUAL RECOVERY PATH when a timer misfires: one export
+ *                    each, no argument to pass, and NO WAY TO ASK FOR MORE THAN
+ *                    ONE. qlikSyncNow — which took 'all', and was handed 'all'
+ *                    by a Run menu that passes no arguments — and qlikSyncCheck,
+ *                    which ran all three exports in one execution, were both
+ *                    removed on 2026-08-25: three exports is about seven minutes
+ *                    of work and an execution is six, so every way of asking for
+ *                    all of them at once was a way of asking for a timeout. NOT
+ *                    trigger targets: they skip nothing, so a timer on one would
+ *                    re-sync forever.
+ *
+ *                    IF A TRIGGER IS STILL SET ON qlikSyncCheck IT WILL NOW
+ *                    FAIL, and a timer nobody watches fails quietly. Delete it
+ *                    and set one on each of the three targets above —
+ *                    APP_verifyPermissions (§4) is what shows you which are
+ *                    armed.
  *   qlikSyncRetry    THE ONE TARGET NOBODY SETS UP. A run whose export failed
  *                    its checks — or ran out of execution time — arms a one-shot
  *                    trigger on this, five minutes out, and this deletes it when
@@ -18152,22 +18162,6 @@ function qlikSyncAggregates() { return qlikSyncOne_('AGG'); }
 function qlikSyncReadyMix()   { return qlikSyncOne_('RMX'); }
 function qlikSyncSegment()    { return qlikSyncOne_('SEG'); }
 
-/* ALL THREE IN ONE EXECUTION, WHICH IS THE THING THE SPLIT EXISTS TO STOP.
-   It is here for one reason: a trigger set on qlikSyncCheck before the split
-   still fires, and a target that no longer exists fails silently on a timer
-   nobody is watching. So it does what it always did — and, because the job is
-   about seven minutes and an execution is six, the third export will usually
-   run out of time and be retried.
-
-   REPLACE IT. Delete the qlikSyncCheck trigger and add one on each of the three
-   above. Nothing else in the codebase calls this. */
-function qlikSyncCheck() {
-  APP_log('warn', 'QLIKSYNC.check', 'qlikSyncCheck ran all three exports in one execution — this ' +
-          'is the pre-split target and the job does not fit six minutes. Replace this trigger ' +
-          'with one on each of qlikSyncAggregates, qlikSyncReadyMix and qlikSyncSegment.', {});
-  return { ok: true, ran: ['AGG', 'RMX', 'SEG'].map(function (k) { return qlikSyncOne_(k); }) };
-}
-
 /* Run this once from the editor after setting the timers up, so the FIRST
    firing of each has something to compare against.
 
@@ -18210,7 +18204,8 @@ function qlikStamps() {
   });
 }
 
-/* Manual sync, from the editor only. Nothing in the UI calls this.
+/* MANUAL SYNC, ONE EXPORT, from the editor only. Nothing in the UI calls this,
+   and the three wrappers below are its only callers.
 
    IT DOES NOT LOOK AT THE EXPORT'S MODIFIED TIME, and that is the whole point
    of it. The timers skip a source that has not moved since it was last synced,
@@ -18219,73 +18214,73 @@ function qlikStamps() {
    sheet is wrong and the file did not move: a bad write, a header renamed in
    the workbook, a cache that got cleared. So this pulls unconditionally.
 
-   `scope` is a page id ('pricevolume' | 'rmx' | 'segment'), a source key
-   ('AGG' | 'RMX' | 'SEG'), or 'all' for the three in turn. PREFER ONE AT A
-   TIME: 'all' is three exports in one execution, which is the seven minutes
-   that does not fit six, and the third of them will usually be refused on the
-   budget and retried.
+   ONE IS THE MOST IT WILL DO, AND THAT IS THE REASON IT LOOKS LIKE THIS. The
+   public qlikSyncNow(scope) that used to be here took 'all' as well — and 'all'
+   was its default for no argument, which is exactly what the Run menu passes.
+   Three exports is about seven minutes of work against a six-minute execution,
+   so asking for all of them was asking for the third to be refused on the
+   budget and pushed round the retry chain. It is gone, and so is qlikSyncCheck,
+   which did the same thing on a timer. This takes ONE source and REFUSES
+   anything that names more or names nothing, so there is no longer a way — from
+   the editor or from code — to start three exports in one execution. Run
+   another wrapper afterwards if you want another export.
 
-   AND 'all' IS WHAT THE EDITOR GIVES YOU IF YOU RUN THIS ONE DIRECTLY, because
-   the Run menu passes no arguments and that is this function's default for
-   none. qlikAggNow / qlikRmxNow / qlikSegmentNow below are the same call with
-   the key already in it — use those from the editor, and reach this one only
-   from code that has a scope to pass. */
-function qlikSyncNow(scope) {
-  var want = (typeof scope === 'string' && scope) ? scope.toLowerCase() : 'all';
+   `scope` is a page id ('pricevolume' | 'rmx' | 'segment') or a source key
+   ('AGG' | 'RMX' | 'SEG'). 'all' is not a scope any more: it matches nothing
+   and comes back as the refusal below.
+
+   THE THREE WRAPPERS ARE NOT TRIGGER TARGETS AND MUST NOT BE ADDED TO
+   APP_TRIGGER_TARGETS (§4). A timer belongs on qlikSyncAggregates /
+   qlikSyncReadyMix / qlikSyncSegment, which skip an export whose file has not
+   moved; these deliberately do not skip, so a timer on one would re-sync
+   minutes of Drive work every interval, forever, for nothing. */
+function qlikSyncNowOne_(scope) {
+  var want = (typeof scope === 'string' && scope) ? scope.toLowerCase() : '';
 
   var srcs;
   try { srcs = QLIKSYNC.sources(); }
   catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 
   var pick = srcs.filter(function (s) {
-    return want === 'all' || s.scope === want || s.key.toLowerCase() === want;
+    return !!want && (s.scope === want || s.key.toLowerCase() === want);
   });
-  if (!pick.length) {
-    return { ok: false, error: 'Nothing is set up to update for "' + want + '". Use one of: ' +
-             srcs.map(function (s) { return s.scope; }).join(', ') + ', or "all".' };
+
+  /* EXACTLY ONE, OR NOTHING RUNS. 'all' arrives here as a name no source
+     answers to, so the refusal costs nothing to state and there is no branch
+     that could ever walk more than one source. */
+  if (pick.length !== 1) {
+    return { ok: false, error: 'One export at a time — "' + (want || '(nothing)') + '" names ' +
+             (pick.length ? pick.length + ' of them' : 'none of them') + '. Use one of: ' +
+             srcs.map(function (s) { return s.scope; }).join(', ') + '.' };
   }
 
-  var out = { ok: true, ran: [] };
-  pick.forEach(function (src) {
-    /* Read before the run, for the same reason qlikStampSource_ gives. */
-    var stamp = null;
-    try { stamp = String(DriveApp.getFileById(src.id).getLastUpdated().getTime()); }
-    catch (e) {
-      APP_log('warn', 'QLIKSYNC.syncNow', 'no stamp for this source — it will be re-synced on ' +
-              'the next check', { source: src.key, error: String(e) });
-    }
-    var res = QLIKSYNC.run(src.scope);
-    if (!res.ok) out.ok = false;
-    if (stamp !== null) qlikStampSource_(src, stamp, res, 'QLIKSYNC.syncNow');
-    out.ran.push({ source: src.label, feeds: src.scope, result: res });
-  });
+  var src = pick[0];
+
+  /* Read before the run, for the same reason qlikStampSource_ gives. */
+  var stamp = null;
+  try { stamp = String(DriveApp.getFileById(src.id).getLastUpdated().getTime()); }
+  catch (e) {
+    APP_log('warn', 'QLIKSYNC.syncNow', 'no stamp for this source — it will be re-synced on ' +
+            'the next check', { source: src.key, error: String(e) });
+  }
+
+  var res = QLIKSYNC.run(src.scope);
+  if (stamp !== null) qlikStampSource_(src, stamp, res, 'QLIKSYNC.syncNow');
   /* One source asked for, one result to look at. */
-  return out.ran.length === 1 ? out.ran[0].result : out;
+  return res;
 }
 
 /* ONE EXPORT, BY NAME, FOR THE EDITOR'S RUN MENU.
 
-   THE RUN MENU CALLS A FUNCTION WITH NO ARGUMENTS, and qlikSyncNow's own
-   default for that is 'all' — so picking qlikSyncNow out of the dropdown and
-   pressing Run does not do the thing its comment tells you to prefer, it does
-   the opposite: three exports in one execution, which is the seven minutes that
-   does not fit six, with the third of them usually refused on the budget and
-   retried. There is no way to pass 'AGG' from that dropdown. Passing it from
-   here is the way, which is why these three exist and why they take nothing.
-
-   THEY ARE NOT TRIGGER TARGETS AND MUST NOT BE ADDED TO APP_TRIGGER_TARGETS
-   (§4). A timer belongs on qlikSyncAggregates / qlikSyncReadyMix /
-   qlikSyncSegment, which skip an export whose file has not moved; these
-   deliberately do not skip — see qlikSyncNow above — so a timer on one would
-   re-sync minutes of Drive work every interval, forever, for nothing.
-
-   Each is qlikSyncNow with its own source key, so all of it is qlikSyncNow's:
-   the unconditional pull, the stamp read before the run, the stamp withheld
-   when the export fails its checks, and one result object to look at rather
-   than a wrapper round one. */
-function qlikAggNow()     { return qlikSyncNow('AGG'); }
-function qlikRmxNow()     { return qlikSyncNow('RMX'); }
-function qlikSegmentNow() { return qlikSyncNow('SEG'); }
+   THE RUN MENU CALLS A FUNCTION WITH NO ARGUMENTS, so a function that needs a
+   source key cannot be run from it at all — which is why these three exist and
+   why they take nothing. They are the whole of the manual path now, and all of
+   each of them is qlikSyncNowOne_'s: the unconditional pull, the stamp read
+   before the run, the stamp withheld when the export fails its checks, and one
+   result object to look at rather than a wrapper round one. */
+function qlikAggNow()     { return qlikSyncNowOne_('AGG'); }
+function qlikRmxNow()     { return qlikSyncNowOne_('RMX'); }
+function qlikSegmentNow() { return qlikSyncNowOne_('SEG'); }
 
 
 /* ==========================================================================
