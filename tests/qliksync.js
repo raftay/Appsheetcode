@@ -68,7 +68,8 @@ const RealDate = Date;
 let CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);   /* virtual, ms */
 let TICK = 0;                                     /* ms added per write call */
 let OPS = [];                                     /* every write, in order */
-let BOOM = null;                                  /* (sheet, a1) => throw here */
+let BOOM = null;                                  /* (sheet, a1) => a VALUE write throws */
+let BOOM_F = null;                                /* (sheet, a1) => a FORMULA write throws */
 let SHORT = null;                                 /* drop writes past this row  */
 
 function colA1(c) {                               /* 1-based → A, B, … */
@@ -131,6 +132,11 @@ function makeSheet(name, rows) {
           return rng;
         },
         setFormulas(g) {
+          /* SEPARATE FROM BOOM, and it has to be. Putting the band back is
+             wrapped in its own catch in two places, and the tab it leaves
+             behind is not the one a failed DATA write leaves — so a harness
+             that made both fail together could not tell them apart. */
+          if (BOOM_F && BOOM_F(name, a1)) { log('setFormulas'); throw new Error('formula write failed'); }
           log('setFormulas'); CLOCK += TICK;
           span((i, j) => { at(i, j).f = g[i][j]; at(i, j).v = ''; });
           return rng;
@@ -258,7 +264,7 @@ const NAMES = { [AGG_ID]: 'Agg Margin Monitor Export.xls',
 let MTIME = {};                                   /* per export file */
 
 function load({ tick = 0, lockFree = true } = {}) {
-  PROPS = {}; OPS = []; TICK = tick; SYNC_ALL_CALLS = 0; BOOM = null;
+  PROPS = {}; OPS = []; TICK = tick; SYNC_ALL_CALLS = 0; BOOM = null; BOOM_F = null;
   EXPORT = exportBook; MAILS = []; TRIGGERS = []; SLEPT = []; SHORT = null;
   MTIME = { [AGG_ID]: 1000, [RMX_ID]: 2000, [SEG_ID]: 3000 };
   CLOCK = RealDate.UTC(2026, 7, 13, 6, 0, 0);
@@ -465,24 +471,82 @@ console.log('\nthe formula band is handled a run at a time, not a cell at a time
 
   const restores = OPS.filter(o => o.sheet === RAW_TAB && o.op === 'setFormulas');
   const perCell  = OPS.filter(o => o.op === 'setFormula');
-  check('six formulas go back in two calls', restores.length, 2);
-  check('one of those calls covers the five-column run',
-    restores.filter(o => o.cells === 5).length, 1);
+
+  /* TWO PASSES, EACH A RUN AT A TIME. The band goes back the moment THIS tab is
+     written — so the window it is absent for is one tab's write rather than the
+     whole workbook's pass — and again at the end of run(), because a reference
+     into a sibling tab cannot be re-pointed until every tab has its final
+     height. Six formulas in two runs, twice over, is four calls; what must
+     never happen is a call per cell, which is what used to push a sync past the
+     runtime limit. */
+  check('six formulas go back a run at a time, in two passes', restores.length, 4);
+  check('each pass covers the five-column run in one call',
+    restores.filter(o => o.cells === 5).length, 2);
   check('nothing goes back one cell at a time', perCell.length, 0);
 
-  /* AND THEY ARE NEVER TAKEN OUT TO MAKE ROOM. The write lands on the mapped
-     columns from row 3 down; every anchor is in a column the export does not
-     feed, so there is nothing to clear ahead of it. Clearing them used to leave
-     the band absent for the whole workbook's pass, which is why the next test
-     kills a write and expects to find them still there. (The block clear that
-     precedes the data write spans B3:G10 and is not one of these.) */
+  /* AND THEY DO COME OUT, WHICH IS THE 08-24 CHANGE AND NOT A REGRESSION OF THE
+     08-23 ONE. Leaving the band on the tab means every setValues into a mapped
+     column re-evaluates the LOOKUP KEY array formula over the whole column
+     before the next block can go in, dozens of times over a 47,000-row export —
+     which is what turned a write that finished into one that did not. What made
+     taking it out safe the second time is that it is PARKED in a script
+     property first, so a killed execution has something to put back; the two
+     tests below are the halves of that. (The block clear that precedes the data
+     write spans B3:G10 and is not one of these.) */
   const bandClears = OPS.filter(o =>
     o.sheet === RAW_TAB && o.op === 'clearContent' && /^[A-M]3(:[A-M]3)?$/.test(o.a1));
-  check('the anchors are not cleared to make room for the write', bandClears.length, 0);
+  check('the band is cleared a run at a time too', bandClears.length, 2);
 
   checkThat('the whole tab costs well under a call per cell',
-    writes(RAW_TAB).length <= 8, `${writes(RAW_TAB).length} write calls: ` +
+    writes(RAW_TAB).length <= 12, `${writes(RAW_TAB).length} write calls: ` +
     JSON.stringify(writes(RAW_TAB).map(o => o.op + ' ' + o.a1)));
+}
+
+/* ======================================================================
+ * 3a. The park, and the warning it used to leave behind
+ * ----------------------------------------------------------------------
+ * The band is taken off the tab for the write, so between the clear and the
+ * restore there is a window in which the anchors exist only in this
+ * execution's memory. Apps Script kills an execution at the runtime limit
+ * without running a `finally`, so that window is covered by parking the band
+ * in a script property first: the next run puts a parked band back before it
+ * touches the tab.
+ *
+ * WHICH MAKES THE PARK'S LIFETIME THE THING TO GATE. A park that outlives the
+ * band's return is a run that reports at warn that an earlier execution was
+ * killed, and puts back a band that is already there — and until this was
+ * fixed that happened for EVERY tab that threw, because the drop sat on the
+ * clean path only while the restore that always runs is the pass at the end of
+ * run(). Two of those warnings are in the 08-24 field logs, from tabs that
+ * failed inside a run that finished normally.
+ * ==================================================================== */
+console.log('\nthe parked band is dropped once the band is back on the tab:');
+{
+  const ctx = load();
+  ctx.qlikSyncNow('pricevolume');
+  const parked = Object.keys(PROPS).filter(k => /BAND_PARK/.test(k));
+  check('a clean run leaves nothing parked', parked, []);
+
+  /* A write that throws is the closest a harness gets to the runtime limit, and
+     it is also the case the limit does not cover: run() carries on, records the
+     tab as failed, and its restore pass still puts the band back. So the park
+     is spent, and a park left behind here is what made the next run cry wolf. */
+  const ctx2 = load();
+  BOOM = (sheet) => sheet === RAW_TAB;
+  ctx2.qlikSyncNow('pricevolume');
+  BOOM = null;
+  check('a tab that threw leaves nothing parked either',
+    Object.keys(PROPS).filter(k => /BAND_PARK/.test(k)), []);
+
+  /* AND A BAND THAT REALLY IS STILL OFF THE TAB STAYS PARKED. Without this the
+     check above passes just as well against a drop that runs unconditionally,
+     which is the one arrangement that loses the anchors for good. */
+  const ctx3 = load();
+  BOOM_F = (sheet) => sheet === RAW_TAB;
+  ctx3.qlikSyncNow('pricevolume');
+  BOOM_F = null;
+  check('a restore that could not be written keeps its park',
+    Object.keys(PROPS).filter(k => /BAND_PARK/.test(k)).length, 1);
 }
 
 /* ======================================================================
@@ -522,20 +586,152 @@ console.log('\nthe check syncs the export that moved, and only that one:');
 
   const first = ctx.qlikSyncCheck();
   check('with nothing on record every export looks new',
-    first.changed.length, 3);
+    first.changed.length + first.waiting.length, 3);
   check('and none is skipped', first.unchanged, []);
 
-  const after = OPS.length;
+  /* ONE PER FIRING, and the rest are named rather than dropped. ~135,000 rows
+     and three Drive conversions is about seven minutes of work inside a
+     six-minute execution, so a firing that took all three could only ever
+     finish two of them — the third was refused at the start-of-page budget
+     check having never been opened. */
+  check('but only one is synced', first.changed, ['Aggregates']);
+  check('the other two are named as waiting', first.waiting.sort(),
+    ['Product Segment', 'Ready-Mix']);
+
+  /* AND THE NEXT EXECUTION IS ASKED FOR NOW, not at the next scheduled firing.
+     Five minutes, not fifteen, and it is the same one-shot a failed run arms. */
+  check('one execution is armed for them', TRIGGERS.length, 1);
+  check('pointed at the one-shot handler', TRIGGERS[0].getHandlerFunction(), 'qlikSyncRetry');
+
   const second = ctx.qlikSyncCheck();
-  check('a second look syncs nothing', second.changed, []);
-  check('all three are recognised as unchanged', second.unchanged.length, 3);
+  check('the next firing takes the next one', second.changed, ['Ready-Mix']);
+  check('and Aggregates is not done twice', second.unchanged, ['Aggregates']);
+
+  const third = ctx.qlikSyncCheck();
+  check('and the third takes the last', third.changed, ['Product Segment']);
+  check('with nothing left waiting', third.waiting, []);
+
+  const after = OPS.length;
+  const fourth = ctx.qlikSyncCheck();
+  check('a fourth look syncs nothing', fourth.changed, []);
+  check('all three are recognised as unchanged', fourth.unchanged.length, 3);
   check('and nothing was written', OPS.length, after);
 
   MTIME[AGG_ID] += 1000;                       /* only Aggregates re-exported */
-  const third = ctx.qlikSyncCheck();
-  check('the re-exported one is picked up', third.changed, ['Aggregates']);
-  check('the other two are left alone', third.unchanged.sort(),
+  TRIGGERS = [];                               /* the one-shot above has fired by now */
+  const fifth = ctx.qlikSyncCheck();
+  check('the re-exported one is picked up', fifth.changed, ['Aggregates']);
+  check('the other two are left alone', fifth.unchanged.sort(),
     ['Product Segment', 'Ready-Mix']);
+  /* AN EXECUTION IS ONLY ARMED FOR WORK THAT IS ACTUALLY WAITING. A chain armed
+     on anything that will simply repeat fires every five minutes for ever. */
+  check('and nothing is armed for work that is not waiting', TRIGGERS.length, 0);
+}
+
+/* ======================================================================
+ * 4a. The turn rotates, so one broken export cannot starve the others
+ * ----------------------------------------------------------------------
+ * A source whose export fails its checks keeps its stamp WITHHELD — that is
+ * the whole point of the gate, because a stamp would mark a file as read that
+ * the run refused to read. So it stays "changed" for as long as it is broken.
+ * First-in-the-list-always would hand it every firing and the other two would
+ * never sync again, which is a worse outage than the one it is protecting
+ * against.
+ * ==================================================================== */
+console.log('\na source that keeps failing does not take every firing:');
+{
+  const ctx = load();
+  ctx.qlikMarkCurrent();                        /* nothing changed, so this starts clean */
+
+  /* Aggregates, with the Other Revenue tab missing from the export entirely:
+     nothing in the AGG folder matches that tab, which is a CHECK failure, so
+     nothing is written and the stamp is withheld — leaving it "changed" for as
+     long as the export stays broken. It is the only one of the three with a
+     fake workbook, so it is the only one that can fail the checks rather than
+     fail to open. */
+  EXPORT = () => {
+    const raw = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage', 'Volume']];
+    for (let i = 1; i <= 5; i++) raw.push([2026, 'Apr', 'Fixed', 'Sand', 10 * i, 100 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw)]);
+  };
+  MTIME[AGG_ID] += 1000; MTIME[RMX_ID] += 1000; MTIME[SEG_ID] += 1000;
+
+  const seen = [];
+  for (let i = 0; i < 4; i++) seen.push((ctx.qlikSyncCheck().changed || [])[0]);
+
+  checkThat('Aggregates is tried and refused', seen.indexOf('Aggregates') !== -1,
+    JSON.stringify(seen));
+  checkThat('its stamp is withheld, so it stays changed',
+    JSON.parse(PROPS.QLIK_FILE_STAMPS || '{}').AGG !== String(MTIME[AGG_ID]),
+    PROPS.QLIK_FILE_STAMPS);
+  checkThat('and the other two still get their turn',
+    seen.indexOf('Ready-Mix') !== -1 && seen.indexOf('Product Segment') !== -1,
+    JSON.stringify(seen));
+  EXPORT = exportBook;
+}
+
+/* ======================================================================
+ * 4b. The one-shot is the chain, not only the retry
+ * ----------------------------------------------------------------------
+ * The firing above arms an execution for the exports it deferred. If that
+ * handler only ran pending RETRIES it would find an empty log, do nothing, and
+ * leave two exports sitting until the next scheduled firing — which gives away
+ * the whole benefit of spreading the job across executions at the last step.
+ * ==================================================================== */
+/* ======================================================================
+ * 4c. Two reasons to come back is still one trigger
+ * ----------------------------------------------------------------------
+ * ENSURE, NOT CREATE. A firing can want the next execution for two reasons at
+ * once — the export it synced failed its checks AND another export is still
+ * waiting — and that is the ordinary case rather than a corner of one. Two
+ * triggers on the handler fire two executions minutes apart walking the same
+ * list; the second finds the work gone and the lock held.
+ * ==================================================================== */
+console.log('\ntwo reasons to come back arm one execution, not two:');
+{
+  const ctx = load();
+  ctx.qlikMarkCurrent();
+
+  /* Aggregates AND Ready-Mix have moved, and the turn is set so that Aggregates
+     is the one this firing takes — otherwise the rotation hands the firing to
+     Ready-Mix and the retry never happens, which is a test that passes without
+     testing anything. Its export is missing the Other Revenue tab, so the page
+     is refused and arms a retry; Ready-Mix is still waiting, which arms the
+     chain. Two callers, one firing. */
+  EXPORT = () => {
+    const raw = [['Year', 'Month', 'Plant Type', 'Material Family', 'Fuel Surchage', 'Volume']];
+    for (let i = 1; i <= 5; i++) raw.push([2026, 'Apr', 'Fixed', 'Sand', 10 * i, 100 * i]);
+    return makeBook([makeSheet('CPI Raw Export', raw)]);
+  };
+  MTIME[AGG_ID] += 1000; MTIME[RMX_ID] += 1000;
+  PROPS.QLIK_SOURCE_TURN = 'SEG';
+  TRIGGERS = [];
+
+  const res = ctx.qlikSyncCheck();
+  check('the firing took Aggregates', res.changed, ['Aggregates']);
+  checkThat('and it was refused', res.failed.length >= 1, JSON.stringify(res.failed));
+  check('a retry is waiting for that page',
+    Object.keys(ctx.QLIKSYNC.retryPending()), ['pricevolume']);
+  check('with another export still waiting too', res.waiting, ['Ready-Mix']);
+  check('one trigger, not one per reason', TRIGGERS.length, 1);
+  EXPORT = exportBook;
+}
+
+console.log('\nthe armed execution takes the next export, not just a retry:');
+{
+  const ctx = load();
+  const first = ctx.qlikSyncCheck();
+  check('two exports are waiting', first.waiting.length, 2);
+  check('and nothing is waiting to be RETRIED',
+    Object.keys(ctx.QLIKSYNC.retryPending()).length, 0);
+
+  const next = ctx.qlikSyncRetry();
+  check('the one-shot syncs the next export anyway', next.changed, ['Ready-Mix']);
+  check('the spent trigger is gone and one is armed for the last', TRIGGERS.length, 1);
+
+  const last = ctx.qlikSyncRetry();
+  check('and the one after that takes the last', last.changed, ['Product Segment']);
+  check('with nothing left to arm', TRIGGERS.length, 0);
 }
 
 console.log('\nmarking the current exports stops a needless first sync:');
@@ -561,6 +757,28 @@ console.log('\na run that could not happen is retried next time:');
   const seen = JSON.parse(PROPS.QLIK_FILE_STAMPS || '{}');
   check('no stamp was kept, so the next check tries again',
     Object.keys(seen).length, 0);
+
+}
+
+/* ONE export changed and one only, so the arm can come from nothing but the
+   collision. With all three changed the chain is armed for the two this firing
+   deferred whatever the lock did, and this would pass against a collision that
+   is simply dropped. */
+console.log('\nand it does not wait for the next scheduled firing:');
+{
+  const ctx = load({ lockFree: false });
+  ctx.qlikMarkCurrent();
+  MTIME[AGG_ID] += 1000;
+  TRIGGERS = [];
+
+  const res = ctx.qlikSyncCheck();
+  check('the run did not happen', res.changed, []);
+  check('and nothing else was waiting', res.waiting, []);
+  /* A five-second overlap used to cost a whole interval. The collision is the
+     one failure worth coming straight back for: the work is fine and only the
+     timing was wrong. Five minutes, on the same one-shot everything else uses. */
+  check('an execution is armed to try again', TRIGGERS.length, 1);
+  check('five minutes out', (TRIGGERS[0] || {})._after, 5 * 60 * 1000);
 }
 
 console.log('\nqlikStamps says what the next check will do:');
@@ -1138,6 +1356,39 @@ console.log('\nthe retry runs once and then gives up:');
   check('no further trigger is left armed', TRIGGERS.length, 0);
   check('and nothing is left waiting to be retried',
     Object.keys(r.ctx.QLIKSYNC.retryPending()).length, 0);
+}
+
+/* ======================================================================
+ * Two pages waiting is two executions, not two run() calls in one
+ * ----------------------------------------------------------------------
+ * The rule the whole retry exists to keep. Two pending scopes used to be two
+ * run() calls inside ONE firing, sharing one six-minute budget between them —
+ * which is the arrangement the retry is there to escape. The second page then
+ * reaches §5's start-of-page budget refusal, is recorded as failed, SPENDS ONE
+ * OF ITS ATTEMPTS and arms another retry for work it was never given time to
+ * start.
+ * ==================================================================== */
+console.log('\ntwo pages waiting to be retried are two firings:');
+{
+  const ctx = load();
+  ctx.qlikMarkCurrent();                     /* nothing is "changed", so this is purely the retry */
+  PROPS.QLIK_RETRY = JSON.stringify({
+    pricevolume: { tries: 1, at: CLOCK, problems: ['staged'] },
+    rmx:         { tries: 1, at: CLOCK, problems: ['staged'] },
+  });
+  TRIGGERS = []; OPS = []; SYNC_ALL_CALLS = 0;
+
+  const first = ctx.qlikSyncRetry();
+  check('one page ran', first.retried, ['pricevolume']);
+  /* run() clears every page's caches on its way out, so this counts the runs
+     themselves rather than what they left behind — which is the only thing that
+     tells one firing doing two pages from two firings doing one each. */
+  check('and only one run happened in this execution', SYNC_ALL_CALLS, 1);
+  check('and the other is still waiting', first.left, ['rmx']);
+  check('with an execution of its own armed', TRIGGERS.length, 1);
+  check('five minutes out', TRIGGERS[0]._after, 5 * 60 * 1000);
+  check('and it did not spend the waiting page\u2019s attempt',
+    ctx.QLIKSYNC.retryPending().rmx.tries, 1);
 }
 
 console.log('\na header spelt differently is not a column going missing:');

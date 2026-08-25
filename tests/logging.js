@@ -202,6 +202,23 @@ const NOT_ROWS = {
      line only fires for a copy that will not trash — the one case that leaves
      the folder holding two files for a month. */
   'IRMAIL.clearMonth':      "one month's previous copies, and only when one will not trash",
+  /* THE READ'S LOOPS ARE LOOKS AND TABS, NEVER ROWS, and there are six of them
+     because waiting for a Drive conversion is made of polling. Two walk the
+     probe windows of ONE tab (capped at PROBE_MAX_WALK, and each window is
+     20,000 rows — so a line per window is a line per twenty thousand rows at
+     worst, and only when a window fails). Two are settle_'s wait, which runs at
+     most a few dozen looks under a four-minute ceiling and RETURNS on the line
+     that logs. Two are one line per TAB of an export, of which there are two or
+     three. §7's rule is about the Ready-Mix bundle's 40,000 rows; none of these
+     is a row. */
+  'QLIKSYNC.read':          'probe windows, settle looks and export tabs — a handful of each, ' +
+                            'and the two in settle_ return on the line that logs',
+  /* putBand_ walks the RUNS of a formula band — the contiguous stretches of
+     anchors in one row of it, which is two on the Aggregates raw tab and a
+     handful anywhere — and the line only fires for a run that would not go
+     back. Nothing in the sync logs per row of an export; the write's own
+     chunk loop is 5,000 rows a call and carries no log line at all. */
+  'QLIKSYNC.write':         'the runs of one formula band, and only those that will not write',
 };
 const inLoop = [];
 LINES.forEach((l, i) => {

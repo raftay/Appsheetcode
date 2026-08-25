@@ -388,12 +388,17 @@ which each header goes to two rows.
 time-driven triggers — the Inventory Report's mail watch and TP01's are the others, both
 below. None of the three is created in code; all three are set by hand in the Apps Script UI,
 which is why `script.gs` §11 exists. There is now **exactly one** `ScriptApp.newTrigger` in
-the codebase and it is none of them — a run whose export fails its checks arms a **one-shot
-retry** five minutes out, pointed at `qlikSyncRetry`, which deletes it when it fires. Do not
-add a trigger for that one by hand.) There is no pull button and one is not
+the codebase and it is none of them — anything that finds more sync work than an execution
+holds arms a **one-shot** five minutes out, pointed at `qlikSyncRetry`, which deletes it when
+it fires. Do not add a trigger for that one by hand.) There is no pull button and one is not
 wanted — a sync is a minutes-long Drive job, not something to put behind a control a user can
 press twice. Set **one** time-driven trigger on `qlikSyncCheck`; 15 minutes costs three Drive
 lookups when nothing has changed.
+
+**One, and one only.** A firing syncs at most ONE export and arms the one-shot for the next, so
+three changed exports are three executions rather than one that cannot finish (§5). A second
+timer does not halve that — it collides with the first on the script lock — and three timers on
+three per-export targets do not either, for the same reason. §5 has the arithmetic.
 
 `qlikSyncCheck` skips a source whose file has not moved since it was last synced.
 **`qlikSyncNow` deliberately does not** — somebody running it by hand is there *because* the
@@ -707,6 +712,45 @@ fix that, and they only work together:
   is 5, and it is a ceiling rather than a licence: a page whose own write cannot fit six minutes
   would otherwise retry for ever. The ceiling is **per page**, and a page with one genuine check
   failure among its clock failures is a one-retry page again.
+
+**And the first pass has to be one export per execution too, which is where that stopped short.**
+Retrying per page fixes what a retry RE-DOES; it cannot give the first attempt more than six
+minutes, and `qlikSyncCheck` was looping over every changed source inside one of them. The
+08-24 field run is the whole shape of it: Aggregates written whole in about 140 seconds,
+Ready-Mix stopped 20,000 rows into a 23,794-row tab, Product Segment refused at the
+start-of-page budget check having never been opened — 14 tabs reported, and the retry then did
+the same walk from the same place. `runRetries_` had the same fault one layer down: two pending
+scopes were two `run()` calls inside ONE firing, so the second reached the budget refusal,
+was recorded as failed, and **spent one of its attempts on work it was never given time to
+start**.
+
+So **a firing syncs at most one export and arms the one-shot for the next**, and so does a
+retry firing. Three exports is three executions about five minutes apart. Three things make
+that hold:
+
+- **The one-shot means one thing: come back with a fresh six minutes.** It was the retry's
+  trigger; it is now the only "there is more work than this execution holds" mechanism, and it
+  answers all three callers — a page waiting to be retried, an export this firing deferred, and
+  a run refused the lock. `armSoon_` **ensures** rather than creates: two triggers on the handler
+  fire two executions minutes apart walking the same list, and the second finds the work gone
+  and the lock held. And it arms for nothing else, because a chain armed on an error that will
+  simply repeat fires every five minutes for ever.
+- **The one-shot handler falls through to the check.** Without it the chain fires, finds an empty
+  retry log, does nothing, and the deferred exports sit until the next scheduled firing — which
+  gives the whole benefit away at the last step.
+- **The turn rotates** (`QLIK_SOURCE_TURN`). A source whose export fails its checks keeps its
+  stamp withheld, so it stays "changed" for as long as it is broken; first-in-the-list-always
+  would hand it every firing and the other two would never sync again.
+
+**THREE TIMERS ON THREE TARGETS WAS THE OTHER WAY TO DO THIS, AND IT BUYS NOTHING.** It is the
+obvious reading of "three files, three functions" and the arithmetic does not support it:
+`run()` holds one **script-wide** lock — `LockService` has no named locks — and the sync's state
+is a handful of shared script properties (`QLIK_FILE_STAMPS`, `QLIK_LAST_SYNC`, `QLIK_TAB_SHAPE`,
+`QLIK_RETRY`), every one of them read-modify-written. Three firings therefore serialise whatever
+the trigger count is, and a collision costs a whole **interval** rather than five minutes. What
+it adds is three timers to configure by hand, each running as whoever created it (§11), and a
+`APP_verifyPermissions` row that cannot tell a correct setup from half a one. The split is in
+the **firing**, not the trigger count.
 
 Because it happens every time, **`sweepTemps_` clears the strays**. The copy is trashed in a
 `finally`, which covers every way the read can fail except the runtime limit — Apps Script
@@ -1750,7 +1794,8 @@ the banner still stood for four chunks. **Read the code, not the label.**
 
 | | |
 |---|---|
-| `qlikSyncCheck` | **Load-bearing.** The time-driven trigger target; the whole data pipeline runs through it |
+| `qlikSyncCheck` | **Load-bearing.** The time-driven trigger target; the whole data pipeline runs through it. Also the fall-through of `qlikSyncRetry`, which is how the chain of one-export executions continues |
+| `QLIK_SOURCE_TURN` | Looks like bookkeeping nobody reads. It is what stops a source whose export keeps failing its checks — and so stays "changed" for ever — taking every firing for itself while the other two never sync again |
 | `qlikMarkCurrent` | Run once from the editor after the trigger is set up, so the first firing has stamps to compare. Needed again any time the trigger is rebuilt |
 | `qlikSyncNow(scope)` | The only manual recovery path when the trigger misfires or a sync has to be forced |
 | `qlikStamps` | A diagnostic worth having, and firmer than that: `tests/qliksync.js` exercises it in **three** checks. Deleting it fails a green harness |
@@ -1956,3 +2001,4 @@ or was forgotten.**
 | 2026-08-24 | **The write, not the read — and it was the formula band, put back the wrong way on 08-23.** A screenshot settled it: the tab is at **full height with the sync's columns cleared to the bottom**, ~1,113 rows written, and **one half-written row at the boundary** (`A` and `B` filled, everything right of them blank). So the read is whole now and the resize ran; what does not finish is the WRITE, and a half-written row is a flush that was cut off rather than an exception. The cause is the change made on 08-23: leaving the formula band on the tab during the write, on the reasoning that clearing it "bought nothing". What it bought is the **recalculation** — the LOOKUP KEY array formula reads `B3:B47634`, so every `setValues` into a mapped column re-evaluates ~140,000 string operations plus six full-column sums before the next block can go in, dozens of times over. The run dies partway with `SpreadsheetApp` calling the workbook **"missing"** at ~3½ minutes, nowhere near the six-minute limit — the generic shape of the Sheets backend refusing a request that took too long. **So the band comes out whole again, and both halves are kept**: it goes back the moment *that tab* is written rather than after the last tab of the workbook, and it is **parked in a script property first**, so a killed execution cannot lose it — `unpark_` restores it before anything reads that tab's formulas again. A band too big to park is not taken out at all and the write is merely slow. Two guards beside it: the chunk loop **stops itself past five minutes with a retryable throw**, because being killed mid-flush is the same tab in the same state minus the failure record, the mail and the armed retry; and the workbook pass still re-points the whole band at the end, since a sibling-tab reference cannot be resolved until every height is final | ☐ |
 | 2026-08-24 | **Aggregates is right, and what is left is arithmetic.** The band coming out fixed the write: `read=47845 holds=47845`, 52,538 rows written in ~80 s, tab whole. Ready-Mix then stopped 10,000 rows into a 23,794-row tab and Product Segment was never started — both reported cleanly by the guards rather than being killed mid-flush, which is the guards doing their job. The measurement it produced is the point: **~135,000 rows and three conversions is about seven minutes of work inside a six-minute limit.** No tuning closes a gap that shape, so the job is spread across executions and **the retry is the mechanism** — which needed three fixes to converge rather than circle. Failures now **name their page**, so a retry is armed for the pages that failed instead of for the scope that was asked for (a retry of `'all'` re-wrote the 52,000 Aggregates rows that had already landed before reaching the work that had not, then ran out in the same place). `qlikSyncNow` **stamps per page**: it used to withhold every stamp when any tab anywhere was gated, on the reasoning that a `{ tab, error }` record does not say which source its tab came from — it does now. And **the clock gets a higher ceiling than a broken export**: one retry is right for a file that failed its checks, because a second failure means the export is wrong, while running out of time means nothing is wrong at all and each attempt is strictly smaller than the last. `QLIK_RETRY_MAX_BUDGET` is 5, **per page**, and a page carrying one genuine check failure among its clock failures is a one-retry page again | ☐ |
 | 2026-08-25 | **The Overview’s "+ Add these rows" was asking about a different list than the one it was showing.** Reported as a form that opened on **"Add 0 rows to the lookup · Nothing left to add here."** underneath a section listing **1,116** Ready-Mix mixes with no `PRODUCT MASTER` row. Both lists were real and neither was wrong: the section’s comes from the **month cube**, which is the live report **plus the closed-year books**, every row of it resolved against the **live** `PRODUCT MASTER` — so a mix that traded in a closed year and has since been dropped from the master is on that list **and on no live one**. The form called `getRmxSuggestions({})`, whose miss list is the live report’s own. **There was no way for that to come out right**: a clean live report gave a form with nothing in it, and a dirty one gave rows the section had not listed, because the client answered an empty filter with `if(!list.length) list=r.product` — a fallback that silently changes the question. `getSuggestions` now takes the caller’s `values` and classifies **those**: `sgProductRow_` parses the description and reads no report at all, so the Overview’s add-rows click stopped pulling the 14 MB bundle as a side effect. Deduped **by product code**, since that is the column `applyRows` keys on and two descriptions sharing a code are one row in the tab; codes the tab already carries are dropped rather than proposed again and counted as `already`, so the empty form can say **which** empty it is — "all of these are in `PRODUCT MASTER` already, the count above it is the cube’s" is a different fact from "nothing matched", and the cube being minutes behind the tab is normal. The model gained the code set for that (`SG_CACHE_VER` → `sg3`). **The form is capped at `LK_BATCH` = 200**: 1,116 proposals is 1,116 × five controls, three of them selects carrying the whole master vocabulary, built inside the Apps Script frame before anything appears — the section is sorted by revenue, so a batch is the biggest ones and the note says how many are waiting. The Ready-Mix page’s own dialog is untouched: it asks with no `values`, its section and its form read the one live list, and that is why it never showed this. `tests/lookupadd.js` is the new gate — the server half over the three lookup tabs, the client half by slicing `lkOpen` out of `app.html` and stubbing `google.script.run`; mutation-tested by reverting each half alone (14 cases fail without the server, 8 without the client). All 31 harnesses pass | ✅ |
+| 2026-08-25 | **The retry stopped re-doing what worked and the first pass never did, so the job still did not fit.** The 08-24 field logs are worth reading twice: they were produced by the build **before** the per-page retry — the `scheduleRetry_` line carries `problems= scope= tries=` and none of the `cap=`/`budget=` the new context adds, so the whole run and its retry are evidence about PR #31's predecessor, not about the fix. What they still measure is real, and it is the thing per-page retrying cannot reach: `qlikSyncCheck` **looped over every changed source inside one execution**. Aggregates went in whole in ~140 s, Ready-Mix stopped 20,000 rows into a 23,794-row tab, Product Segment was refused at the start-of-page budget check having never been opened — 14 tabs reported, and the retry then walked the same list from the same place. `runRetries_` had the identical fault one layer down: two pending scopes were two `run()` calls in ONE firing, so the second hit the budget refusal, was recorded as failed and **spent one of its attempts on work it was never given time to start**. So **a firing syncs at most one export and arms the one-shot for the next**, and so does a retry firing. The one-shot now means one thing — *come back with a fresh six minutes* — and answers all three callers (a page waiting to be retried, an export this firing deferred, a run refused the lock); `armSoon_` **ensures rather than creates**, and arms for nothing else, because a chain armed on an error that repeats fires every five minutes for ever. The handler **falls through to the check** when nothing is waiting to be retried, without which the chain finds an empty log and the deferred exports sit until the next scheduled firing. And the turn **rotates** (`QLIK_SOURCE_TURN`): a source whose export fails its checks keeps its stamp withheld and stays “changed” for ever, so first-in-the-list-always would starve the other two. **Three timers on three targets was the other way and it buys nothing** — `run()` holds one script-wide lock and the state is shared script properties, so three firings serialise anyway and a collision costs a whole interval instead of five minutes; the split is in the FIRING, not the trigger count. **Three defects in the 08-24 parking work, all visible in those same logs.** `dropPark_` sat only on the clean path while the restore that always runs is `run()`'s end-of-workbook pass, so **every tab that threw left a park behind** — which is why two “a formula band was still parked from an earlier run” warnings appear in a run that finished normally, reporting a kill that never happened; `putBand_` swallowed its own failure and the park was dropped anyway, which is the one state the park exists to prevent (band off the tab, nothing anywhere else); and `dropPark_`'s catch was silent. `putBand_` returns whether every run went back and both callers drop on that. **Five harness checks were red and are not any more**: three in `qliksync.js` asserted the pre-parking band contract (the band DOES come out now, and goes back in two passes), and both of `logging.js`'s gates had been failing since the HTTP probe landed. Ten mutations, every one caught — including two tests that passed while testing nothing, because the rotation had moved the firing off the source they were about. `qliksync.js`'s two `settle_` cases are **still red and still deliberate**, unchanged since 08-24. Not run against the real exports this session | ☐ |

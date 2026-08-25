@@ -2945,14 +2945,23 @@ function APP_permPad_(s, n) {
  *   OAuth token, so the Advanced Drive Service does NOT need to be turned on.
  *
  * TRIGGERS
- *   ONE time-driven trigger on qlikSyncCheck. Every firing compares each
- *   export's modified time against the
- *   one it last synced and does nothing at all for the ones that have not
- *   moved — so an ordinary firing is three Drive lookups.
+ *   ONE time-driven trigger on qlikSyncCheck, and still one. Every firing
+ *   compares each export's modified time against the one it last synced and
+ *   does nothing at all for the ones that have not moved — so an ordinary
+ *   firing is three Drive lookups.
+ *
+ *   A FIRING SYNCS AT MOST ONE EXPORT, and arms §11's one-shot for the next.
+ *   The whole job is about seven minutes of work and an execution is six, so
+ *   three exports have to be three executions; they are three firings five
+ *   minutes apart rather than three timers, because run() holds one script-wide
+ *   lock and the sync's state is shared script properties — three timers would
+ *   serialise on both and lose a whole interval per collision. The measurement
+ *   and the reasoning are in README §5.
  *
  *   Run qlikMarkCurrent() ONCE after setting the trigger up. Without it the
  *   first firing has nothing to compare, treats all three exports as new and
- *   syncs every one of them.
+ *   syncs every one of them — three executions rather than one, now, instead of
+ *   one execution that cannot finish.
  *
  *   qlikStamps() shows what the next check will compare, and what it will do.
  *
@@ -4010,14 +4019,31 @@ var QLIKSYNC = (function () {
   }
 
   function dropPark_(spec) {
-    try { PropertiesService.getScriptProperties().deleteProperty(bandKey_(spec)); } catch (e) {}
+    try { PropertiesService.getScriptProperties().deleteProperty(bandKey_(spec)); }
+    catch (e) {
+      /* NOT SILENT (§7). A park that outlives the band's return is not lost
+         data — the band is back on the tab — it is a LIE the next run tells:
+         unpark_ finds it, writes a band that is already there, and says at warn
+         that an earlier execution was killed. Somebody then goes looking for a
+         kill that did not happen. */
+      APP_log('warn', 'QLIKSYNC.write', 'the parked copy of the formula band could not be ' +
+              'cleared — the next run will report it as a band an earlier execution left behind, ' +
+              'and put back one that is already on the tab',
+              { tab: spec.tab, page: spec.page, error: String(e && e.message || e) });
+    }
   }
 
   /* Every formula of a band written back, re-pointed at the heights given.
      `ends` empty means only the tab's OWN ranges move — a reference into
      another tab of the workbook is left exactly as it was, for the pass at the
-     end of run() to fix once every tab has its final height. */
+     end of run() to fix once every tab has its final height.
+
+     RETURNS WHETHER EVERY RUN ACTUALLY WENT BACK, and both callers drop the
+     park on that answer rather than on having reached this line. A band still
+     off the tab with its park deleted is the one state the park exists to make
+     impossible: nothing on the sheet, and nothing anywhere else either. */
   function putBand_(sh, band, ownEnd, ends, note) {
+    var home = true;
     for (var r = 0; r < band.length; r++) {
       var runs = cellRuns_(band[r] || []);
       for (var q = 0; q < runs.length; q++) {
@@ -4025,12 +4051,14 @@ var QLIKSYNC = (function () {
         for (var k = 0; k < len; k++) seg[k] = reanchor_(band[r][start + k], ownEnd, ends || {});
         try { sh.getRange(r + 1, start + 1, 1, len).setFormulas([seg]); }
         catch (e) {
+          home = false;
           APP_log('error', 'QLIKSYNC.write', 'a formula could not be put back' + (note ? ' (' + note + ')' : ''),
                   { tab: sh.getName(), at: sh.getRange(r + 1, start + 1, 1, len).getA1Notation(),
                     error: String(e && e.message || e) });
         }
       }
     }
+    return home;
   }
 
   /* A band an earlier run took out and never put back, because that run was
@@ -4297,7 +4325,7 @@ var QLIKSYNC = (function () {
        throws, run() records the tab as failed and carries on — and the restore
        pass still has this entry, so the band goes back re-pointed instead of
        staying as the write left it. */
-    plan.push({ sh: sh, firstData: firstData, band: band, nCols: nCols });
+    plan.push({ sh: sh, spec: spec, firstData: firstData, band: band, nCols: nCols });
 
     var parked = park_(spec, firstData, band, nCols);
     var cr;
@@ -4464,10 +4492,7 @@ var QLIKSYNC = (function () {
        been written yet; the pass at the end of run() re-points the whole band
        again once every height is final, and it re-points from the same `band`
        this took out. */
-    if (parked) {
-      putBand_(sh, band, sh.getMaxRows(), {}, null);
-      dropPark_(spec);
-    }
+    if (parked && putBand_(sh, band, sh.getMaxRows(), {}, null)) dropPark_(spec);
 
     /* Recorded only now, past every check, so a bad run cannot become the
        baseline the NEXT run measures itself against — which would let a fault
@@ -5090,20 +5115,48 @@ var QLIKSYNC = (function () {
     rec.tries++; rec.at = Date.now(); rec.problems = problems;
     all[scope] = rec;
     saveRetry_(all);
+    var armed = armSoon_('a retry for ' + scope);
+    if (armed === 'armed') {
+      APP_log('info', 'QLIKSYNC.retry', 'armed a one-shot retry',
+              { page: scope, minutes: QLIK_RETRY_MINS, attempt: rec.tries });
+    }
+    return armed;
+  }
 
+  /* ONE ONE-SHOT AT A TIME, AND IT MEANS ONE THING: THERE IS MORE SYNC WORK
+     THAN THIS EXECUTION HOLDS — COME BACK WITH A FRESH SIX MINUTES.
+
+     Three callers ask for exactly that and it used to be three mechanisms, or
+     rather one mechanism and two gaps. A page that failed its checks arms it
+     (scheduleRetry_ above). An execution that has synced its one export and can
+     see another still waiting arms it (§11's check). And an execution that found
+     the lock held by another arms it, instead of losing the whole interval to a
+     five-second collision.
+
+     EXACTLY ONE AFTERWARDS, and that is what makes one mechanism safe for three
+     callers. Two triggers on this handler fire two executions minutes apart
+     walking the same list, and the second finds the work gone and the lock
+     held. So it CLEARS THEM AND MAKES ONE rather than looking first and
+     skipping if it finds any: two arms in one firing still leave one, and — the
+     half that counting would get wrong — a trigger that somehow survived its
+     own firing is replaced instead of being mistaken for the one that is about
+     to fire. `qlikRetryStatus`'s dropRetries escape hatch exists because that
+     has been considered possible since this was written.
+
+     Pushing the five minutes out by a few seconds when a second caller arms is
+     not worth reading state to avoid. */
+  function armSoon_(why) {
     dropRetryTriggers_();
     try {
       ScriptApp.newTrigger(QLIK_RETRY_FN).timeBased()
         .after(QLIK_RETRY_MINS * 60 * 1000).create();
-      APP_log('info', 'QLIKSYNC.retry', 'armed a one-shot retry',
-              { scope: scope, minutes: QLIK_RETRY_MINS, attempt: rec.tries });
       return 'armed';
     } catch (e) {
       /* Not fatal — the mail has already named the problem, and the ordinary
          time-driven check will come round again. But the "five minutes" the
          mail promises will not happen, so it is not silent either. */
-      APP_log('error', 'QLIKSYNC.retry', 'could not arm the retry — the next scheduled check is ' +
-              'the next attempt', { scope: scope, error: String(e) });
+      APP_log('error', 'QLIKSYNC.retry', 'could not arm the next execution — the next scheduled ' +
+              'check is the next attempt', { why: String(why || ''), error: String(e) });
       return 'unarmed';
     }
   }
@@ -5188,27 +5241,38 @@ var QLIKSYNC = (function () {
   function runRetries_() {
     dropRetryTriggers_();                     /* including the one now firing */
     var scopes = Object.keys(retryLog_());
-    if (!scopes.length) return { ok: true, retried: [] };
+    if (!scopes.length) return { ok: true, retried: [], failed: [], left: [] };
 
-    var out = { ok: true, retried: [], failed: [] };
-    scopes.forEach(function (scope) {
-      var res = run(scope);
+    /* ONE PAGE, ONE EXECUTION — and this is where that rule was broken last.
+       Two pages waiting used to be two run() calls inside ONE firing, sharing
+       one six-minute budget between them, which is exactly the arrangement the
+       retry exists to escape: the second page reaches §5's start-of-page budget
+       refusal, is recorded as failed, spends one of its attempts and arms
+       another retry for work it was never given time to start. The chain then
+       needs as many rounds as there are pages and burns an attempt on each.
 
-      /* RE-READ, NEVER HOLD. run() reaches scheduleRetry_ on its way out and
-         that writes this same property — it is what decides whether a second
-         failure arms anything and what clears the entry when it will not. A
-         copy taken before the run and written back after would undo that
-         decision and leave the scope waiting for a retry that is never coming,
-         which is the one state this whole mechanism must not produce. */
-      var all = retryLog_();
-      if (res.ok) { delete all[scope]; out.retried.push(scope); }
-      else {
-        out.ok = false;
-        out.failed.push(scope + ': ' + (res.error || JSON.stringify(res.failed)));
-      }
-      saveRetry_(all);
-    });
-    return out;
+       So a firing takes ONE page, and if others are still waiting it arms the
+       next firing for them. Each page gets a whole execution of its own, which
+       is the promise the mail already makes. */
+    var scope = scopes[0];
+    var res = run(scope);
+
+    /* RE-READ, NEVER HOLD. run() reaches scheduleRetry_ on its way out and
+       that writes this same property — it is what decides whether a second
+       failure arms anything and what clears the entry when it will not. A
+       copy taken before the run and written back after would undo that
+       decision and leave the scope waiting for a retry that is never coming,
+       which is the one state this whole mechanism must not produce. */
+    var all = retryLog_();
+    if (res.ok) delete all[scope];
+    saveRetry_(all);
+
+    var left = Object.keys(all);
+    if (left.length) armSoon_('pages still waiting: ' + left.join(', '));
+
+    return { ok: !!res.ok, left: left,
+             retried: res.ok ? [scope] : [],
+             failed: res.ok ? [] : [scope + ': ' + (res.error || JSON.stringify(res.failed))] };
   }
 
   /* scope: 'all', or a page id ('pricevolume' | 'rmx' | 'segment') so a tool's
@@ -5221,8 +5285,15 @@ var QLIKSYNC = (function () {
     if (!lock.tryLock(5000)) {
       /* The hourly trigger overlapping a manual run from the editor. Nothing
          is wrong, but nothing was written either — `error` says the run did
-         not happen, which is what stops the caller recording it as done. */
-      return { ok: false, scope: want, files: [], done: [], skipped: [], failed: [],
+         not happen, which is what stops the caller recording it as done.
+
+         `busy` says WHY it did not happen, and it is the one failure worth
+         coming straight back for: the work is fine and the interval is not.
+         §11 arms the one-shot on it rather than losing the whole interval to a
+         five-second collision. Nothing else in run() sets it, deliberately —
+         a chain armed on an error that will repeat is a chain that fires every
+         five minutes for ever. */
+      return { ok: false, scope: want, files: [], done: [], skipped: [], failed: [], busy: true,
                error: 'Another update is already running. Try again in a moment.' };
     }
     var started = new Date();
@@ -5429,7 +5500,7 @@ var QLIKSYNC = (function () {
            formulas can be re-pointed — including the ones that reach across
            into another tab of the same workbook. */
         plan.forEach(function (p) {
-          var ownEnd = p.sh.getMaxRows();
+          var ownEnd = p.sh.getMaxRows(), home = true;
           for (var r = 0; r < p.band.length; r++) {
             var fRuns = cellRuns_(p.band[r]);
             for (var q = 0; q < fRuns.length; q++) {
@@ -5440,6 +5511,7 @@ var QLIKSYNC = (function () {
               try {
                 p.sh.getRange(r + 1, start + 1, 1, len).setFormulas([seg]);
               } catch (e) {
+                home = false;
                 failed.push({ tab: p.sh.getName(), page: page,
                   error: 'Could not restore the formulas in ' +
                          p.sh.getRange(r + 1, start + 1, 1, len).getA1Notation() +
@@ -5447,6 +5519,21 @@ var QLIKSYNC = (function () {
               }
             }
           }
+
+          /* THE PARK IS SPENT THE MOMENT THE BAND IS BACK ON THE TAB, AND THIS
+             IS THE PASS THAT ALWAYS RUNS. writeColumns_ drops it too, but only
+             on the path where the tab wrote cleanly — so every tab that threw
+             (a failed check, and every tab stopped at the execution budget) left
+             a park behind that the band restored HERE had already made stale.
+             The next run then found one, put a band back that was already
+             there, and said at warn that an earlier run had been killed. It had
+             not been: it had thrown, been reported, and cleaned up after itself
+             everywhere except here. Two of those warnings are in the 08-24
+             field logs, from tabs that failed inside a run that finished.
+
+             A restore that could not be written keeps its park, because then
+             the band really is still off the tab. */
+          if (home && p.spec) dropPark_(p.spec);
         });
 
         SpreadsheetApp.flush();
@@ -5526,6 +5613,7 @@ var QLIKSYNC = (function () {
      clears one a runtime kill strands whichever engine made it. */
   return { run: run, sources: sources_, lastSync: lastSync_,
            retry: runRetries_, retryPending: retryLog_, dropRetries: dropRetryTriggers_,
+           armNext: armSoon_,
            shape: tabShape_,
            toSheet: convertToSheet_, trash: trashFile_, tempPrefix: TEMP_PREFIX };
 })();
@@ -17815,16 +17903,22 @@ var IRMAIL = (function () {
  *   qlikSyncCheck    the time-driven trigger target. THE WHOLE DATA PIPELINE runs
  *                    through it. Deleting it because grep found no caller would
  *                    silently stop every page's data from ever updating again,
- *                    and nothing would error. Set ONE hourly trigger on it.
+ *                    and nothing would error. Set ONE hourly trigger on it, and
+ *                    only one: a firing syncs ONE export and arms the one-shot
+ *                    below for the next, so the three exports are three
+ *                    executions and a second timer only collides with the first.
  *   qlikMarkCurrent  run once from the editor after the trigger is set up, so the
  *                    first firing has stamps to compare. Needed again whenever
  *                    the trigger is rebuilt.
  *   qlikStamps       what the next check will compare, and what it will do.
  *   qlikSyncNow      the only manual recovery path when the trigger misfires.
- *   qlikSyncRetry    THE ONE TARGET NOBODY SETS UP. A run whose export failed
- *                    its checks arms a one-shot trigger on this, five minutes
- *                    out, and this deletes it when it fires. Do NOT add a timer
- *                    for it by hand — a repeating one would re-sync forever.
+ *   qlikSyncRetry    THE ONE TARGET NOBODY SETS UP. Anything that finds more
+ *                    sync work than an execution holds arms a one-shot trigger
+ *                    on this, five minutes out, and this deletes it when it
+ *                    fires: a page whose export failed its checks, an export the
+ *                    last firing deferred, and a run refused the lock. Do NOT
+ *                    add a timer for it by hand — a repeating one would re-sync
+ *                    forever.
  *   qlikRetryStatus  whether a retry is waiting, and why. Reads only.
  *
  *   inventoryReportMailCheck
@@ -17901,33 +17995,85 @@ var IRMAIL = (function () {
  * nothing written, every page still serving from cache. Only a genuinely new
  * export costs anything, and only for the page it feeds.
  *
+ * ONE EXPORT PER FIRING, AND THAT IS THE WHOLE SHAPE OF THIS FUNCTION.
+ * ~135,000 rows and three Drive conversions is about seven minutes of work and
+ * an execution is six, so the job does not fit in one firing and no tuning
+ * closes a gap that shape (§5, and the measurement in README §5). It has to be
+ * spread across executions — and it was not, because this function looped over
+ * every changed source inside ONE of them. Aggregates took its 140 seconds,
+ * Ready-Mix took what was left and was killed partway down a tab, and Product
+ * Segment was refused at the start-of-page budget check having never been
+ * opened. Retrying per PAGE, which is what the previous session added, fixes
+ * what a retry re-does; it cannot give the first pass more than six minutes.
+ *
+ * So a firing syncs at most ONE export and arms §5's one-shot for the next, and
+ * every export gets a whole execution to itself. Three exports is three
+ * executions about five minutes apart rather than one execution that cannot
+ * finish. THE TRIGGER COUNT DOES NOT CHANGE, and three timers on three targets
+ * would not have bought this: run() holds one script-wide lock and the sync's
+ * state is a handful of shared script properties, so three firings serialise
+ * anyway — losing a whole interval per collision instead of five minutes, and
+ * costing three hand-made triggers to get wrong.
+ *
+ * IT TAKES THEM IN TURN. Which one goes first rotates, remembered in
+ * QLIK_SOURCE_TURN, and that is not fairness for its own sake: a source whose
+ * export fails its checks keeps its stamp withheld and so stays "changed" for
+ * ever. First-in-the-list-always would hand every firing to the broken one and
+ * the other two would never sync again.
+ *
  * Writing to a workbook moves its modified time, and that IS the data version
  * every open page is watching — so the prompt appears on its own, with
  * nothing here having to tell anybody. See AmrFresh in Shell.html.
  * ======================================================================== */
 var QLIK_STAMP_KEY = 'QLIK_FILE_STAMPS';
 
+/* Which source the LAST firing took, so this one starts after it. */
+var QLIK_TURN_KEY = 'QLIK_SOURCE_TURN';
+
+/* The stamps, as { source key → the export's modified time when that source was
+   last synced }. Read in three places and written in two — the check, the
+   manual pull and the marker — which is why the read and its warning live here
+   once rather than three times, slightly differently. */
+function qlikStampsRead_(where) {
+  try { return JSON.parse(PropertiesService.getScriptProperties()
+                            .getProperty(QLIK_STAMP_KEY) || '{}'); }
+  catch (e) {
+    /* NOT SILENT (§7). A corrupt stamp property means every source looks
+       changed, so the next firings re-sync all of them — minutes of Drive work
+       that reads as a normal busy run. */
+    APP_log('warn', where, 'stamps unreadable — every source will look changed',
+            { error: String(e) });
+    return {};
+  }
+}
+
+function qlikStampsWrite_(seen, where) {
+  try { PropertiesService.getScriptProperties()
+          .setProperty(QLIK_STAMP_KEY, JSON.stringify(seen)); }
+  catch (e) {
+    /* NOT SILENT (§7). Nothing recorded means every source looks changed on the
+       next firing and the whole pipeline runs again, which is slow rather than
+       wrong — and invisible without this line. */
+    APP_log('warn', where, 'could not record which exports were synced — they will all be ' +
+            'synced again on the next check', { error: String(e) });
+  }
+}
+
 /* Each export is checked on its own, so a re-exported Aggregates file costs an
-   Aggregates sync and nothing else. */
-function qlikSyncCheck() {
+   Aggregates sync and nothing else.
+
+   `only` is a source key ('AGG' | 'RMX' | 'SEG') for a firing that should look
+   at one export and ignore the others. A time-driven trigger passes its own
+   event object here, which is not a string and is meant to be ignored. */
+function qlikSyncCheck(only) {
   /* THE TRIGGER TARGET. Nothing in the repo points at it (there is not one
      ScriptApp.newTrigger arming THIS one — see §11's banner), it runs hourly
      with nobody watching, and every page's data depends on it. The log line is
      the only account of a run that will ever exist, which is why the entry is
      logged before anything can throw. */
   var t0 = Date.now();
-  APP_log('info', 'QLIKSYNC.check', 'trigger fired');
-  var props = PropertiesService.getScriptProperties();
-  var seen = {};
-  try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); }
-  catch (e) {
-    /* NOT SILENT (§7). A corrupt stamp property means every source looks
-       changed, so the next line re-syncs all of them — minutes of Drive work
-       that reads as a normal busy run. */
-    APP_log('warn', 'QLIKSYNC.check', 'stamps unreadable — every source will look changed',
-            { error: String(e) });
-    seen = {};
-  }
+  var want = (typeof only === 'string' && only) ? only : '';
+  APP_log('info', 'QLIKSYNC.check', 'trigger fired', { source: want || 'the next one waiting' });
 
   var sources;
   try { sources = QLIKSYNC.sources(); }
@@ -17936,10 +18082,26 @@ function qlikSyncCheck() {
             { ms: Date.now() - t0, error: String(e && e.message || e) });
     return { ok: false, error: e.message };
   }
+  if (want) sources = sources.filter(function (s) { return s.key === want; });
 
-  var out = { ok: true, changed: [], unchanged: [], failed: [] };
+  var props = PropertiesService.getScriptProperties();
+  var seen  = qlikStampsRead_('QLIKSYNC.check');
 
-  sources.forEach(function (src) {
+  /* WHERE THE ROTATION IS UP TO. An unreadable or unrecognised turn simply
+     starts from the top, which is the behaviour this had before there was a
+     rotation at all. */
+  var turn = '';
+  try { turn = String(props.getProperty(QLIK_TURN_KEY) || ''); } catch (e) { turn = ''; }
+  var at = 0;
+  for (var i = 0; i < sources.length; i++) {
+    if (sources[i].key === turn) { at = i + 1; break; }
+  }
+  var order = sources.slice(at).concat(sources.slice(0, at));
+
+  var out = { ok: true, changed: [], unchanged: [], waiting: [], failed: [] };
+  var ran = null, busy = false;
+
+  order.forEach(function (src) {
     var stamp;
     try {
       stamp = String(DriveApp.getFileById(src.id).getLastUpdated().getTime());
@@ -17950,6 +18112,12 @@ function qlikSyncCheck() {
     }
     if (stamp === seen[src.key]) { out.unchanged.push(src.label); return; }
 
+    /* ONE PER FIRING. The rest are counted, named in the log and left for the
+       execution this one arms — not skipped and forgotten, which is the
+       difference between a queue and a dropped job. */
+    if (ran) { out.waiting.push(src.label); return; }
+    ran = src;
+
     var res = QLIKSYNC.run(src.scope);
 
     /* Remember the stamp unless the run fell over completely (file unreadable,
@@ -17957,16 +18125,16 @@ function qlikSyncCheck() {
        is not retried: that tab will be just as broken in fifteen minutes, and
        re-syncing forever neither fixes it nor tells anybody. It is logged.
 
-       THE ONE EXCEPTION, AND IT IS NEW: a tab that failed its CHECKS wrote
-       nothing at all, and the reason is usually a file that was still being
-       written when this run opened it. Keeping the stamp there would mark the
-       export as done having never read it — so the stamp is withheld, and §5's
-       own one-shot retry (armed by the run itself, five minutes out) is what
-       actually tries again. The scheduled check is the backstop behind that,
-       not the mechanism. */
+       THE ONE EXCEPTION: a tab that failed its CHECKS wrote nothing at all, and
+       the reason is usually a file that was still being written when this run
+       opened it. Keeping the stamp there would mark the export as done having
+       never read it — so the stamp is withheld, and §5's own one-shot retry
+       (armed by the run itself, five minutes out) is what actually tries again.
+       The scheduled check is the backstop behind that, not the mechanism. */
     if (res.error) {
       out.failed.push(src.label + ': ' + res.error);
       out.ok = false;
+      busy = busy || !!res.busy;
     } else {
       var gated = (res.failed || []).filter(function (f) { return f.check; });
       if (!gated.length) seen[src.key] = stamp;
@@ -17983,10 +18151,33 @@ function qlikSyncCheck() {
     }
   });
 
-  props.setProperty(QLIK_STAMP_KEY, JSON.stringify(seen));
+  qlikStampsWrite_(seen, 'QLIKSYNC.check');
+  if (ran) {
+    try { props.setProperty(QLIK_TURN_KEY, ran.key); }
+    catch (e) {
+      /* Not silent (§7): with the turn stuck the rotation stops rotating, and
+         a source whose export is broken then takes every firing for itself. */
+      APP_log('warn', 'QLIKSYNC.check', 'could not record whose turn it was — a source that ' +
+              'keeps failing will keep taking the next firing', { error: String(e) });
+    }
+  }
+
+  /* MORE WORK THAN THIS EXECUTION HOLDS, so the next one is asked for now
+     rather than at the next scheduled firing. Two reasons and no others: an
+     export this firing deliberately deferred, and a run that could not start
+     because another execution held the lock. Both are bounded — there are three
+     sources, and a source that fails is dropped from `waiting` by having been
+     the one that ran. An error that will simply repeat arms nothing, because a
+     chain on one of those fires every five minutes for ever. */
+  if (out.waiting.length || busy) {
+    QLIKSYNC.armNext(out.waiting.length ? 'exports waiting: ' + out.waiting.join(', ')
+                                        : 'the sync lock was held');
+  }
+
   APP_log(out.failed.length ? 'error' : 'info', 'QLIKSYNC.check', 'done',
           { ms: Date.now() - t0, changed: out.changed.length,
-            unchanged: out.unchanged.length, failed: out.failed.length,
+            unchanged: out.unchanged.length, waiting: out.waiting.length,
+            failed: out.failed.length,
             detail: out.failed.length ? out.failed.join(' | ') : '' });
   return out;
 }
@@ -18006,7 +18197,12 @@ function qlikMarkCurrent() {
               'on the next check and be re-synced', { source: src.key, error: String(e) });
     }
   });
-  PropertiesService.getScriptProperties().setProperty(QLIK_STAMP_KEY, JSON.stringify(seen));
+  qlikStampsWrite_(seen, 'QLIKSYNC.markCurrent');
+  /* THE TURN IS LEFT WHERE IT IS, and that was tried the other way. Clearing it
+     looks tidy and decides nothing: after this every source is marked current,
+     so the rotation has nothing to choose between until one of them moves —
+     and when one does, it is found wherever in the order the walk starts. The
+     turn only ever breaks a tie between two changed exports. */
   return 'Marked ' + Object.keys(seen).length + ' export(s) as already synced.';
 }
 
@@ -18018,8 +18214,7 @@ function qlikMarkCurrent() {
    different questions: a source can have been synced this morning off a file
    QlikView dropped on Monday. */
 function qlikStamps() {
-  var props = PropertiesService.getScriptProperties(), seen = {};
-  try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); } catch (e) {}
+  var seen = qlikStampsRead_('QLIKSYNC.stamps');
   return QLIKSYNC.sources().map(function (src) {
     var now = '';
     try { now = String(DriveApp.getFileById(src.id).getLastUpdated().getTime()); } catch (e) { now = 'unreadable'; }
@@ -18075,17 +18270,11 @@ function qlikSyncNow(scope) {
     if (f.page) badPages[f.page] = 1; else badUnknown = true;
   });
   if (!res.error && !badUnknown) {
-    var props = PropertiesService.getScriptProperties(), seen = {};
-    try { seen = JSON.parse(props.getProperty(QLIK_STAMP_KEY) || '{}'); }
-    catch (e) {
-      /* Not silent (§7). Starting from {} means only the sources this run
-         covered get written back and every OTHER stamp is wiped, so the next
-         hourly check re-syncs the lot — which is the one thing this function
-         says it exists to prevent. */
-      APP_log('warn', 'QLIKSYNC.syncNow', 'stamps unreadable — the other sources will be ' +
-              're-synced on the next check', { scope: want, error: String(e) });
-      seen = {};
-    }
+    /* An unreadable stamp property starts this from {}, so only the sources
+       this run covered get written back and every OTHER stamp is wiped — the
+       next check then re-syncs the lot, which is the one thing this function
+       says it exists to prevent. qlikStampsRead_ says so at warn. */
+    var seen = qlikStampsRead_('QLIKSYNC.syncNow');
     QLIKSYNC.sources().forEach(function (src) {
       if (want !== 'all' && src.scope !== want) return;
       if (badPages[src.scope]) return;      /* this source's page did not finish */
@@ -18095,34 +18284,53 @@ function qlikSyncNow(scope) {
                 'on the next check', { source: src.key, error: String(e) });
       }
     });
-    props.setProperty(QLIK_STAMP_KEY, JSON.stringify(seen));
+    qlikStampsWrite_(seen, 'QLIKSYNC.syncNow');
   }
   return res;
 }
 
 
 /* ==========================================================================
- * THE ONE-SHOT RETRY — armed by §5, and the only trigger this project creates.
+ * THE ONE-SHOT — armed by §5, and the only trigger this project creates.
  * --------------------------------------------------------------------------
  * DO NOT ADD A TRIGGER FOR THIS BY HAND. Unlike the three timers above, this
- * one arms itself: a run whose export failed its checks calls
- * scheduleRetry_(), which creates a single time-based trigger five minutes out
- * and points it here. This function deletes every trigger on its own handler —
- * including the one that is firing it — before doing anything else, so they
- * cannot accumulate against the per-script limit.
+ * one arms itself: anything that finds more sync work than an execution holds
+ * calls §5's armSoon_, which creates a single time-based trigger five minutes
+ * out and points it here. This function deletes every trigger on its own
+ * handler — including the one that is firing it — before doing anything else,
+ * so they cannot accumulate against the per-script limit. A REPEATING timer on
+ * this would re-sync forever.
  *
- * IT RETRIES ONCE. The usual cause of a check failure is an export Drive was
- * still writing when the sync opened it, and that is gone a few minutes later.
- * A genuinely broken export is not fixed by asking again, so a second failure
- * arms nothing further and the mail §5 already sent says so.
+ * IT MEANS ONE THING: COME BACK WITH A FRESH SIX MINUTES. Three situations ask
+ * for that and this answers all three, in this order.
+ *
+ *   A PAGE WAITING TO BE RETRIED goes first — its export failed its checks, so
+ *   its stamp is withheld and its figures are the ones currently out of date.
+ *   ONE page per firing, and if another is still waiting this arms again for it.
+ *
+ *   OTHERWISE THIS FIRING IS THE CHAIN, not a retry: the execution before it
+ *   synced its one export and armed this to take the next. Without the fall
+ *   through it would find an empty retry log, do nothing, and leave two exports
+ *   sitting until the next scheduled firing — which is the whole benefit of
+ *   spreading the job across executions, given away at the last step.
+ *
+ *   AND A COLLISION. An execution refused the lock arms this rather than losing
+ *   the whole interval to a five-second overlap.
+ *
+ * A BROKEN EXPORT STILL GETS ONE RETRY AND NO MORE. The usual cause of a check
+ * failure is an export Drive was still writing when the sync opened it, and that
+ * is gone a few minutes later; a genuinely broken one is not fixed by asking
+ * again, so a second failure arms nothing further and the mail §5 already sent
+ * says so. Running out of execution time is the other kind and has its own,
+ * higher ceiling — see QLIK_RETRY_MAX_BUDGET in §5.
  *
  * AND IT RUNS AS WHOEVER ARMED IT, which is whoever created the hourly check —
  * the same rule as every other trigger here (see the banner above). That is the
- * right account by construction: the retry is the same work the check does.
+ * right account by construction: this is the same work the check does.
  * ======================================================================== */
 function qlikSyncRetry() {
   var t0 = Date.now();
-  APP_log('info', 'QLIKSYNC.retry', 'one-shot retry fired');
+  APP_log('info', 'QLIKSYNC.retry', 'one-shot fired');
   var out;
   try { out = QLIKSYNC.retry(); }
   catch (e) {
@@ -18130,8 +18338,19 @@ function qlikSyncRetry() {
             { ms: Date.now() - t0, error: String(e && e.message || e) });
     return { ok: false, error: String(e && e.message || e) };
   }
+
+  /* NOTHING WAS WAITING, so this firing is the chain. QLIKSYNC.retry() has
+     already deleted the spent trigger, and qlikSyncCheck arms the next one if
+     it leaves anything behind — so the walk continues from here on its own. */
+  if (!(out.retried || []).length && !(out.failed || []).length) {
+    APP_log('info', 'QLIKSYNC.retry', 'nothing was waiting to be retried — taking the next ' +
+            'export instead', { ms: Date.now() - t0 });
+    return qlikSyncCheck();
+  }
+
   APP_log(out.ok ? 'info' : 'error', 'QLIKSYNC.retry', 'done',
           { ms: Date.now() - t0, retried: (out.retried || []).join(','),
+            left: (out.left || []).join(','),
             failed: (out.failed || []).join(' | ') });
   return out;
 }
