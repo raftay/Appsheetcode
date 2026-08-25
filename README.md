@@ -7,8 +7,13 @@ exports, and a monthly Google Slides deck.
 
 **The script project is three files: `script.gs`, `app.html` and `appsscript.json`.** No
 folders, no build step, no package manager — paste those three into the script editor and it
-runs. `tests/` is Node-only and is **not** part of the project; `tests/threefiles.js` proves
-the claim by running the whole application out of a directory holding only those three.
+runs. There is nothing else in this repo that runs: the Node harnesses that used to sit in
+`tests/` were removed on 2026-08-25.
+
+**THAT MAKES EVERY OTHER `tests/…` REFERENCE IN THIS DOCUMENT HISTORICAL.** They are kept
+because each records what a gate proved and why the behaviour beside it is shaped the way it
+is, which is the durable half of a harness. None of them names a file you can run today.
+`git checkout <commit> -- tests/` brings any of them back if it is ever wanted.
 
 Navigate both merged files by section banner rather than by scrolling: `Ctrl+F` for `§7` in
 `script.gs`, `§P rmx` in `app.html`. Each region also carries the name of the file it was
@@ -65,13 +70,12 @@ Four things that will bite you:
 
 - **`script.gs` and `app.html` are LF throughout — keep them that way.** The files they were
   merged from were mixed three ways (most `.html` CRLF, `Code.gs` LF, and two `.gs` carried a
-  lone `\r` as a line terminator), and three harnesses still read them out of git. A scripted
-  edit that touches historical text must open with `newline=''`. `.gitattributes` pins the
-  three project files.
-- **Most of this cannot be tested off-platform.** Anything touching `SlidesApp`, `DriveApp`,
-  `CacheService` or a spreadsheet needs the live deployment. What *can* be checked is the
-  client-side compute and render layer — that is what `tests/` is for. Run the relevant
-  harnesses before and after touching a page; see `tests/README.md`.
+  lone `\r` as a line terminator). A scripted edit that touches historical text must open with
+  `newline=''`. `.gitattributes` pins the three project files.
+- **Most of this cannot be tested off-platform, and there is no harness here now.** Anything
+  touching `SlidesApp`, `DriveApp`, `CacheService` or a spreadsheet needs the live deployment.
+  What is left is `node --check` on a copy of `script.gs`, and `APP_verifyPermissions` in the
+  editor — see [§10 Testing](#testing).
 - **`node --check` does not accept `.gs`.** Copy to a `.js` path first.
 - **Nothing gets deleted on a hunch.** Every removal needs a repo-wide grep proving zero live
   references, logged in §11 with what proved it. Several things that look dead are
@@ -382,23 +386,45 @@ and time while there is room and its age alone once there is not, and gives up i
 before the bar gives up a row. `app.html` §A3 carries the measured before/after widths at
 which each header goes to two rows.
 
-### Syncing: one trigger, and nothing else
+### Syncing: one trigger per export
 
-**The sync is trigger-only by design and has no UI.** (This is one of the suite's *three*
-time-driven triggers — the Inventory Report's mail watch and TP01's are the others, both
-below. None of the three is created in code; all three are set by hand in the Apps Script UI,
-which is why `script.gs` §11 exists. There is now **exactly one** `ScriptApp.newTrigger` in
-the codebase and it is none of them — a run whose export fails its checks arms a **one-shot
-retry** five minutes out, pointed at `qlikSyncRetry`, which deletes it when it fires. Do not
-add a trigger for that one by hand.) There is no pull button and one is not
+**The sync is trigger-only by design and has no UI.** There is no pull button and one is not
 wanted — a sync is a minutes-long Drive job, not something to put behind a control a user can
-press twice. Set **one** time-driven trigger on `qlikSyncCheck`; 15 minutes costs three Drive
-lookups when nothing has changed.
+press twice.
 
-`qlikSyncCheck` skips a source whose file has not moved since it was last synced.
-**`qlikSyncNow` deliberately does not** — somebody running it by hand is there *because* the
-sheet is wrong and the file did not move (a bad write, a header renamed in the workbook, a
-cleared cache), so the trigger's optimisation must not reach them.
+**Set one time-driven trigger on each of `qlikSyncAggregates`, `qlikSyncReadyMix` and
+`qlikSyncSegment`, a few minutes apart.** Fifteen minutes suits all three. Each compares its
+own export's modified time against the one it last synced and does nothing at all if it has
+not moved, so an ordinary firing is **one** Drive lookup.
+
+**It used to be one trigger on `qlikSyncCheck`, and that is what the timeouts were.** The
+three exports together are about seven minutes of work — Aggregates 52,538 rows, Ready-Mix
+82,200, Product Segment small, plus three conversions and three reads — and an Apps Script
+execution is six. One firing could never hold the job however it was arranged: it did as much
+as fitted and armed a one-shot for the rest, so the tail of the work went round a retry chain
+and the sheets ran a pipeline behind. Each export in its own execution is two to three minutes
+against six, with the settle, the read and the write all inside one page's own limit and
+nothing to defer. `qlikSyncCheck` is still there, and only so that a trigger set on it before
+the split does not fail silently — **replace it.**
+
+**The lock is script-wide, which is why they are staggered.** `LockService` has no named
+locks, so two of these firing across each other means the second waits five seconds, gives up,
+and returns without writing or stamping anything; its next firing picks the export up. Nothing
+is damaged and nothing is half-written — it costs that export one interval, and all three
+exports rarely move at once.
+
+(These are three of the suite's *five* time-driven triggers — the Inventory Report's mail
+watch and TP01's are the others, both below. None of the five is created in code; all are set
+by hand in the Apps Script UI, which is why `script.gs` §11 exists. There is **exactly one**
+`ScriptApp.newTrigger` in the codebase and it is none of them — a run whose export fails its
+checks arms a **one-shot retry** five minutes out, pointed at `qlikSyncRetry`, which deletes
+it when it fires. Do not add a trigger for that one by hand.)
+
+The timers skip a source whose file has not moved since it was last synced. **`qlikSyncNow`
+deliberately does not** — somebody running it by hand is there *because* the sheet is wrong
+and the file did not move (a bad write, a header renamed in the workbook, a cleared cache), so
+the timer's optimisation must not reach them. It takes a page id, a source key, or `'all'`;
+prefer one at a time, because `'all'` is the seven minutes that does not fit six.
 
 **Columns are paired on the figure and the period, never on the literal header** — see §7. The
 sync writes data under the headers the workbook already has and never rewrites a header row,
@@ -465,14 +491,31 @@ it if all three miss.
 
 **A refused run is never recorded as the baseline.** Recording it would move the standard down
 to the broken export, and the same broken export sent again would sail through — the gate would
-report a fault once and then adopt it. `tests/qliksync.js` gates that specifically, and it is
-the one a "does the gate still fire" check cannot see.
+report a fault once and then adopt it. It is the one a "does the gate still fire" check cannot
+see, so it is written down instead: `recordShape_` is called past every check in
+`writeColumns_`, and moving it any earlier is the mistake.
 
-After the write there is a second, cheaper check: **the last row of each block is read back**,
-and a block whose final row is empty where the export's is not means the write stopped short.
-Values are deliberately *not* compared — Sheets coerces on the way in, so a cell-by-cell diff
-would fail on writes that are perfectly correct, and a check that cries wolf here is worse than
-no check.
+After the write there are three cheaper checks, and between them they answer "did the tab get
+what the export sent" in the two numbers a reader would count.
+
+- **The tab ends exactly where the export ends** — `getMaxRows()` against the first data row
+  plus the export's row count, and **both directions are faults**. Too short is a tab that
+  could not be grown to fit, which is usually the workbook's ten-million-cell limit. Too tall
+  is surplus the resize did not take out: rows below the export's last one still holding the
+  previous export's figures, and no reader can tell one of those from a row this export
+  stopped sending. That is the failure the surplus is deleted to prevent, so not reporting it
+  would defeat the delete. It costs nothing — the numbers are already in hand.
+- **Every export column either paired or is named.** Each named export column pairs with a
+  header on the tab and is written, or does not and is not, so `paired` + `unmatched` is the
+  export's whole width and both are logged on every run and returned in the result. **An
+  unmatched column is not a failure and must not become one** — it is exactly what a new
+  year's column looks like before somebody adds it to the workbook, and refusing over one
+  would stop the pipeline dead every January. What *is* a failure is a column that paired on
+  the last good run and pairs with nothing now, and the gate above has already made it one.
+- **The last row of each block is read back**, and a block whose final row is empty where the
+  export's is not means the write stopped short. Values are deliberately *not* compared —
+  Sheets coerces on the way in, so a cell-by-cell diff would fail on writes that are perfectly
+  correct, and a check that cries wolf here is worse than no check.
 
 **The full-block `clearContent` before the write looks redundant and must stay.** `runs_`
 merges only strictly adjacent columns, so every column inside a block is a mapped one and the
@@ -484,8 +527,8 @@ mid-write throws nowhere this code can see — the rows simply stop arriving. Cl
 tail of that tab is **blank**: wrong, obvious, and exactly what the last-row check reads. Not
 cleared, the tail still holds the **previous export's figures** — last month's numbers under
 this month's heading, with nothing to tell them apart. This was tried the other way and
-reverted; `tests/qliksync.js` stages a short write and, without the clear, the check reads the
-old rows as evidence the write arrived and the run reports success.
+reverted: with a short write and no clear, the last-row check reads the old rows as evidence
+the write arrived and the run reports success.
 
 ### Nobody is watching a trigger, so a failed run says so
 
@@ -517,7 +560,7 @@ there.** (The Product Segment tabs are the exception and are in `'replace'` mode
 are pre-aggregated by QlikView, the tab *is* the export, and the whole of it is rewritten. Do
 not put a working column on one.)
 
-It used to take more than that, and `tests/qliksync.js` gates it now:
+It used to take more than that, and each of these is a change that has to stay made:
 
 - **The formula band was cleared whole** before the write and put back only after the *last*
   tab of the workbook — absent for the entire pass. One throw, or one execution killed at the
@@ -654,59 +697,79 @@ section is about — §9's list has it. Without it the sync still runs and runs 
 falls back to the fixed sleep and **check 0 cannot run at all**, with one `warn` per execution
 naming the fix.
 
-**One export at a time, and one workbook, because reading them whole is heavier than reading
-them truncated.** `run()` used to read every export the run needed up front and then write the
-pages out of what it held — three whole exports in one execution, something like a hundred and
-thirty thousand rows of Aggregates, Ready-Mix and Product Segment together. That wall was never
-reached while the reads were coming back short: eleven hundred rows a source costs nothing to
-hold. The first run that read all three whole died on the workbook it was writing, with
-`SpreadsheetApp` reporting the Price & Volume sheet as **"missing (perhaps it was deleted, or you
-don't have read access?)"** — a file its owner had opened successfully two minutes earlier in the
-same execution, and which `APP_verifyPermissions` opens every time. So an export is read when the
-page that needs it is about to be written and dropped as soon as the last page that needs it is
-done; the peak is one export instead of three. **The page is still the unit of the write** and has
-to be, because the array formulas are re-pointed once per workbook off an `ends` map that must
-hold every tab of it. Two things fall out of the move: a read that fails now fails **one page**
-instead of throwing into `run()`'s own catch, which reports an error and no failed tabs; and
-`openWorkbook_` asks **three times, three seconds apart**, because in the middle of a run that has
-already opened the same file, "missing" is the service refusing one call rather than a permission
-that is not there.
+**One page, one export, one execution — and that is the whole of `run()` now.** `run()` takes a
+page id, reads that page's one export and writes that page's one workbook. `openWorkbook_` still
+asks **three times, three seconds apart**, because in the middle of a run that has already opened
+the same file, `SpreadsheetApp` reporting a workbook as "missing (perhaps it was deleted, or you
+don't have read access?)" is the service refusing one call rather than a permission that is not
+there — that happened to a file its owner had opened successfully two minutes earlier in the same
+execution.
 
-**And a page that cannot be STARTED inside the budget is refused rather than killed halfway.**
-Apps Script kills an execution at six minutes without running a `finally` or throwing anywhere the
-code can see — the rows simply stop arriving, the tab is blank below wherever it got to, and the
-caller has no failure to report, so it stamps the export as read and nothing looks at that tab
-again. Past a five-minute mark `run()` refuses the remaining pages **as retryable**: nothing is
-opened, nothing is written, the stamp is withheld and the one-shot retry is armed with a whole
-six minutes of its own for what is left.
+**The page is the unit and cannot be split further**, because the array formulas are re-pointed
+once per workbook off an `ends` map that must hold every tab of it. A read that fails fails **one
+page**, by tab name, instead of throwing into `run()`'s own catch, which reports an error and no
+failed tabs — and it is flagged retryable, so an export nothing could read is never stamped as
+read.
 
-**The whole job does not fit in six minutes, so it is meant to take more than one.** Measured on
-the run that finally read and wrote everything whole: Aggregates is 52,538 rows and takes about
-80 seconds to write, Ready-Mix is 82,200 and takes about 165, Product Segment is small, and the
-three conversions and reads cost another ~70 seconds on top. That is roughly seven minutes of
-work inside a six-minute limit, and no amount of tuning closes a gap that shape. **It is spread
-across executions instead, and the retry is the mechanism.**
+**What went with the split is most of what used to be here.** `run()` took `'all'`, walked a
+`byPage` map, read each export on first use and dropped it when the last page needing it was
+done, refused a page it could not *start* inside the budget, armed a retry for the pages that
+were left, and stamped the pages that finished so the retry would not redo them. Every piece of
+that existed to fit three exports into one execution and to make the leftovers converge across
+firings. One export per execution needs none of it.
 
-What made that circle rather than converge was the retry being armed for **the scope that was
-asked for**. A run of `'all'` that wrote Aggregates whole and ran out of time on Ready-Mix armed
-a retry for `'all'` — which re-converts, re-reads and re-writes the 52,000 rows that already
-landed before it reaches the work that did not, and then runs out in the same place. Three things
-fix that, and they only work together:
+**The budget check that is left is per TAB, and it is still the important one.** Apps Script kills
+an execution at six minutes without running a `finally` or throwing anywhere the code can see —
+the rows simply stop arriving, the tab is blank below wherever it got to, and the caller has no
+failure to report, so it stamps the export as read and nothing looks at that tab again. Past a
+five-minute mark `run()` refuses the remaining tabs **as retryable**: nothing is opened, nothing
+is written, the stamp is withheld and the one-shot is armed with a whole six minutes of its own.
 
-- **Failures name their page.** Every `failed` record carries `page`, so the retry is armed for
-  the pages that failed and nothing else. Each attempt is strictly smaller than the one before.
-- **A clean page is stamped and cleared even when a sibling failed.** `qlikSyncNow` used to
-  withhold every export stamp if any tab anywhere was gated, because a `{ tab, error }` record
-  could not say which source its tab came from. It can now, so Aggregates is stamped and
-  Ready-Mix is not — and the page that worked is dropped from the retry list rather than being
-  redone.
-- **The clock retries under a higher ceiling than a broken export does.** One retry is the right
-  number for a file that failed its checks: a second failure means the export is wrong and asking
-  again only delays saying so. Running out of time is the other kind — nothing is wrong with
-  anything — and because each attempt is smaller, the chain converges. `QLIK_RETRY_MAX_BUDGET`
-  is 5, and it is a ceiling rather than a licence: a page whose own write cannot fit six minutes
-  would otherwise retry for ever. The ceiling is **per page**, and a page with one genuine check
-  failure among its clock failures is a one-retry page again.
+**And the retry is one attempt for both kinds of failure now.** It used to be one for a broken
+export and up to five for the clock, and the reason for the second number was convergence: a run
+of `'all'` retried only the *pages* that failed, so every attempt was strictly smaller than the
+one before it. A run is one page now, so there is nothing left to shrink — a page that ran out of
+time retries by doing the same page again, and five identical attempts are five ways of not saying
+that the page does not fit. With one export to an execution it should not happen at all.
+
+**A retry that works records the export as read.** The failure that armed it withheld the stamp
+on purpose; without this the stamp stays withheld, the next firing of that export's timer sees a
+file it has never synced, and re-does the minutes of work that have just been done. The time
+recorded is the one the run itself read — off `QLIK_LAST_SYNC`, not whatever is in Drive when the
+retry finishes, because QlikView dropping a new export mid-retry is exactly the case where the
+second of those marks a file as read that nothing has looked at.
+
+**And a parked band is READ, never put back first — that one cost a whole run.** The band is
+taken off the tab for the write because leaving it there makes the sheet recalculate the whole
+LOOKUP KEY column between one block and the next. It is parked in a script property so a killed
+execution has something to put back, and `unpark_` used to be the first line of `writeColumns_`:
+it wrote the band home, and forty lines later the same band was read, parked and cleared again.
+**Putting six `ARRAYFORMULA`s back onto a 47,845-row tab is exactly the recalculation the band is
+taken out to avoid**, and the sheet was still doing it when the write asked for the tab. On 08-24
+that came back as `Service timed out: Spreadsheets` on *both* Aggregates tabs — about 150 seconds
+producing nothing — and Ready-Mix and Product Segment then ran out of execution time behind it.
+
+The park is a copy of the band; reading it is free. `readPark_` returns it and the write puts it
+back at the end the way it puts back one it lifted out itself. **The park carries the first data
+row and that is not a convenience**: `firstDataRow_` finds that row by looking for a formula in a
+column the export does not feed, and with the band off the tab there is none on the first data
+row — so it finds the next row down of a foreign column that *is* filled down and answers one row
+too low, and every row of the export lands one row out. The unpark had been hiding that by
+putting the band back before the row was looked for. Three things have to stay true together:
+`readPark_` READS the park and does not write it back, the first data row comes out of the park
+when there is one, and the band cells are still cleared — because a kill between `park_` and
+the clear leaves the band on the tab.
+
+**One export per firing was argued against once, on 08-24, and the argument was wrong.** It ran:
+all three exports rarely move at once, so deferring work that would have fitted turns a single run
+into three spread across fifteen minutes; and three timers serialise on the script-wide lock
+anyway, so a collision costs a whole interval instead of five minutes. Both halves are true and
+neither is the point. **The common case is one export moving**, and that case is now one short
+execution instead of a firing that has to decide what to defer — the collision it worried about
+needs two exports to move inside one run's length, which is the rare case, and it costs that
+export one interval rather than leaving the pipeline a lap behind. What actually settled it is
+that seven minutes of work does not fit six however it is arranged: the old shape did not avoid
+the cost, it moved it into a retry chain.
 
 Because it happens every time, **`sweepTemps_` clears the strays**. The copy is trashed in a
 `finally`, which covers every way the read can fail except the runtime limit — Apps Script
@@ -1751,9 +1814,12 @@ the banner still stood for four chunks. **Read the code, not the label.**
 | | |
 |---|---|
 | `qlikSyncCheck` | **Load-bearing.** The time-driven trigger target; the whole data pipeline runs through it |
-| `qlikMarkCurrent` | Run once from the editor after the trigger is set up, so the first firing has stamps to compare. Needed again any time the trigger is rebuilt |
-| `qlikSyncNow(scope)` | The only manual recovery path when the trigger misfires or a sync has to be forced |
-| `qlikStamps` | A diagnostic worth having, and firmer than that: `tests/qliksync.js` exercises it in **three** checks. Deleting it fails a green harness |
+| `park_`'s `firstData` | Looks like a field nothing reads back. It is the first data row, and it is the only correct answer available to a run that finds a parked band: with the band off the tab `firstDataRow_` answers one row too low, and the export lands one row out |
+| `qlikSyncAggregates` / `qlikSyncReadyMix` / `qlikSyncSegment` | **The data pipeline.** One hand-set time-driven trigger each, and nothing in the repo points at any of them. Deleting one stops that page's figures updating for ever, silently, while the other two keep going — which reads as a fault in the page rather than in the timer |
+| `qlikSyncCheck` | The pre-split target, kept only so a trigger set on it before 2026-08-25 does not fail silently. It runs all three exports in one execution, which is the seven minutes that does not fit six. Delete the *trigger*, not the function, and set the three above |
+| `qlikMarkCurrent` | Run once from the editor after the timers are set up, so the first firing of each has a stamp to compare. Needed again any time they are rebuilt |
+| `qlikSyncNow(scope)` | The only manual recovery path when a timer misfires or a sync has to be forced |
+| `qlikStamps` | What each timer will compare on its next firing, and what it will do. With five hand-set triggers and no harness left, the diagnostics are how this pipeline is inspected at all |
 | `clearRetiredOverrides` | Its own comment says "run from the Apps Script editor", and it is idempotent. An editor tool, not dead code |
 | `getSaskRatesStatus` | Its comment says "so the Settings screen **(and a quick manual run)** can check the sheet" — that parenthetical is the editor-tool criterion. The Settings screen never calls it; wiring it would be a behaviour change, not a cleanup |
 | `DECK_status` | A real deck build has still never run against the live deployment, and that is what decides whether the Publish stage needs it. **Do not delete before then** |
@@ -1853,41 +1919,33 @@ elapsed ms; and no `APP_log` may sit inside a per-row loop.
 
 ### Testing
 
-31 Node harnesses in `tests/`. `npm install playwright chart.js jsdom` at the repo root gets
-everything; Chromium is already at `/opt/pw-browsers`. Start with `tests/README.md` — it says
-what each one claims and, for the comparison harnesses, exactly how much of that claim still
-holds.
+**There is no test harness in this repo any more.** The 31 Node gates that lived in `tests/`
+were removed on 2026-08-25, at the point where the QlikView sync was rewritten around one
+export per execution and most of what `tests/qliksync.js` gated no longer existed. They are in
+git history and `git checkout <commit> -- tests/` brings any of them back.
 
-**When a comparison stops being wholly true, narrow what it claims to exactly what is still
-provable and say so — do not soften the comparison itself.** `gsparity.js` and `modparity.js`
-carried declared edits for exactly that reason while they lived: each deliberate change listed
-with its rationale, every other byte still proved verbatim.
+**So the checks are the ones in the code, and they are the ones to keep working:**
 
-**And when the claim stops being true at all, delete the harness rather than weaken it.** Both
-of those said so in their own headers, and both are now gone: the CY/PY header work changed
-code inside moved regions of `script.gs` and `app.html` on purpose, so neither file is a copy
-of anything and no version of those gates could pass honestly. What they protected — that a
-region sliced out of either file is the code that actually runs — is protected now by the
-harnesses that run that code.
+- `node --check` on a copy of `script.gs` at a `.js` path. `node` will not accept a `.gs`
+  extension, so copy first.
+- **`APP_verifyPermissions` (§4)** — run it in the editor after any change to the sync, the
+  triggers or `appsscript.json`. Its `ScriptApp` row is the only report the project has of
+  which of the five hand-set triggers are actually armed, and its Sheets REST row is the only
+  thing that catches the Sheets API being switched off in the Cloud project.
+- **`qlikStamps()`** — what each timer will compare on its next firing and what it will do.
+- **`qlikRetryStatus()`** — whether a retry is waiting, and why.
+- **The gate in `checkSource_`** is the real test of an export, and it runs on every sync
+  rather than on demand. §5's "nothing is written until the export has been checked" is what
+  it does and why each check is there.
 
-**A gate whose second side has to be assembled by hand is a gate that stops running.**
-`regress.js` and `pvcheck.js` were deleted for that: they wanted pre-extraction pages staged
-into a directory from commits this repo no longer reaches, and the newest copies it does reach
-delegate straight back to the modules under test — a comparison that passes whatever either
-side does. `apphtml.js` stages from a *commit*, and still works.
+**If you write a new harness, mutation-test it before trusting it.** Every gate that used to
+be here was — and `pageparity.js` passed clean on its first run **for the wrong reason**: both
+sides had died identically. A harness that has never failed has not been tested. And **do not
+anchor one on a spelled-out line ending**; that broke `rmxcost.js` once and the failure read as
+though the code had moved.
 
-**A harness that has never failed has not been tested.** Every gate here was mutation-tested
-before being trusted — unscoping one rule for `merge.js`, renaming a column header and
-disabling a click handler for `pageparity.js`, restoring the year literal for `yearroll.js`.
-`pageparity.js` passed clean on its first run **for the wrong reason**: both sides had died
-identically. That is exactly the bug this rule exists to catch.
-
-**Add your page's case to `pageparity.js` before you touch the page**, so you find out on the
-first run rather than the last. And **do not anchor a harness on a spelled-out line ending** —
-that broke `rmxcost.js` once, and the failure read as though the code had moved.
-
-**Nothing in `tests/` is uploaded to Apps Script.** `.claspignore` is what stops `clasp push`
-carrying it into the script project.
+**Nothing outside the three project files is uploaded to Apps Script.** `.claspignore` is what
+stops `clasp push` carrying anything else into the script project.
 
 ---
 
@@ -1956,3 +2014,5 @@ or was forgotten.**
 | 2026-08-24 | **The write, not the read — and it was the formula band, put back the wrong way on 08-23.** A screenshot settled it: the tab is at **full height with the sync's columns cleared to the bottom**, ~1,113 rows written, and **one half-written row at the boundary** (`A` and `B` filled, everything right of them blank). So the read is whole now and the resize ran; what does not finish is the WRITE, and a half-written row is a flush that was cut off rather than an exception. The cause is the change made on 08-23: leaving the formula band on the tab during the write, on the reasoning that clearing it "bought nothing". What it bought is the **recalculation** — the LOOKUP KEY array formula reads `B3:B47634`, so every `setValues` into a mapped column re-evaluates ~140,000 string operations plus six full-column sums before the next block can go in, dozens of times over. The run dies partway with `SpreadsheetApp` calling the workbook **"missing"** at ~3½ minutes, nowhere near the six-minute limit — the generic shape of the Sheets backend refusing a request that took too long. **So the band comes out whole again, and both halves are kept**: it goes back the moment *that tab* is written rather than after the last tab of the workbook, and it is **parked in a script property first**, so a killed execution cannot lose it — `unpark_` restores it before anything reads that tab's formulas again. A band too big to park is not taken out at all and the write is merely slow. Two guards beside it: the chunk loop **stops itself past five minutes with a retryable throw**, because being killed mid-flush is the same tab in the same state minus the failure record, the mail and the armed retry; and the workbook pass still re-points the whole band at the end, since a sibling-tab reference cannot be resolved until every height is final | ☐ |
 | 2026-08-24 | **Aggregates is right, and what is left is arithmetic.** The band coming out fixed the write: `read=47845 holds=47845`, 52,538 rows written in ~80 s, tab whole. Ready-Mix then stopped 10,000 rows into a 23,794-row tab and Product Segment was never started — both reported cleanly by the guards rather than being killed mid-flush, which is the guards doing their job. The measurement it produced is the point: **~135,000 rows and three conversions is about seven minutes of work inside a six-minute limit.** No tuning closes a gap that shape, so the job is spread across executions and **the retry is the mechanism** — which needed three fixes to converge rather than circle. Failures now **name their page**, so a retry is armed for the pages that failed instead of for the scope that was asked for (a retry of `'all'` re-wrote the 52,000 Aggregates rows that had already landed before reaching the work that had not, then ran out in the same place). `qlikSyncNow` **stamps per page**: it used to withhold every stamp when any tab anywhere was gated, on the reasoning that a `{ tab, error }` record does not say which source its tab came from — it does now. And **the clock gets a higher ceiling than a broken export**: one retry is right for a file that failed its checks, because a second failure means the export is wrong, while running out of time means nothing is wrong at all and each attempt is strictly smaller than the last. `QLIK_RETRY_MAX_BUDGET` is 5, **per page**, and a page carrying one genuine check failure among its clock failures is a one-retry page again | ☐ |
 | 2026-08-25 | **The Overview’s "+ Add these rows" was asking about a different list than the one it was showing.** Reported as a form that opened on **"Add 0 rows to the lookup · Nothing left to add here."** underneath a section listing **1,116** Ready-Mix mixes with no `PRODUCT MASTER` row. Both lists were real and neither was wrong: the section’s comes from the **month cube**, which is the live report **plus the closed-year books**, every row of it resolved against the **live** `PRODUCT MASTER` — so a mix that traded in a closed year and has since been dropped from the master is on that list **and on no live one**. The form called `getRmxSuggestions({})`, whose miss list is the live report’s own. **There was no way for that to come out right**: a clean live report gave a form with nothing in it, and a dirty one gave rows the section had not listed, because the client answered an empty filter with `if(!list.length) list=r.product` — a fallback that silently changes the question. `getSuggestions` now takes the caller’s `values` and classifies **those**: `sgProductRow_` parses the description and reads no report at all, so the Overview’s add-rows click stopped pulling the 14 MB bundle as a side effect. Deduped **by product code**, since that is the column `applyRows` keys on and two descriptions sharing a code are one row in the tab; codes the tab already carries are dropped rather than proposed again and counted as `already`, so the empty form can say **which** empty it is — "all of these are in `PRODUCT MASTER` already, the count above it is the cube’s" is a different fact from "nothing matched", and the cube being minutes behind the tab is normal. The model gained the code set for that (`SG_CACHE_VER` → `sg3`). **The form is capped at `LK_BATCH` = 200**: 1,116 proposals is 1,116 × five controls, three of them selects carrying the whole master vocabulary, built inside the Apps Script frame before anything appears — the section is sorted by revenue, so a batch is the biggest ones and the note says how many are waiting. The Ready-Mix page’s own dialog is untouched: it asks with no `values`, its section and its form read the one live list, and that is why it never showed this. `tests/lookupadd.js` is the new gate — the server half over the three lookup tabs, the client half by slicing `lkOpen` out of `app.html` and stubbing `google.script.run`; mutation-tested by reverting each half alone (14 cases fail without the server, 8 without the client). All 31 harnesses pass | ✅ |
+| 2026-08-25 | **`Service timed out: Spreadsheets` was the unpark, and the band it put back was one it was about to take off again.** The 22:12 run is the whole story: at 22:13:03 `unpark_` — the first line of `writeColumns_` — wrote a parked band home, and forty lines later that same band was read, parked and cleared again. **Putting six `ARRAYFORMULA`s back onto a 47,845-row tab is exactly the full-column recalculation §5b takes the band out to avoid**, and the sheet was still doing it when the write asked for the tab: `Service timed out: Spreadsheets` on BOTH Aggregates tabs, about 150 seconds producing nothing, and Ready-Mix (30,000 of 44,246 rows) and Product Segment ran out of execution time behind it. The park is a copy of the band, so `readPark_` reads it and the write puts it back at the end the way it puts back one it lifted out itself. **Removing the unpark exposed what it had been hiding**: `firstDataRow_` finds the first data row by looking for a formula in a column the export does not feed, and with the band off the tab there is none on that row — it finds the next row down of a foreign column that IS filled down and answers **one row too low**, so every row of the export lands one row out on every run following a killed one. The park carries `firstData` and that is now what is read; the harness caught it on the fixture's deliberate untouched column M. **The 08-25 one-export-per-firing change is reverted**, and the reasoning it was built on was wrong twice over: the `scope=all tries=1` line that was read as a stale build was a stale READING — the code and the mail were current — and deferring an export that would have fitted makes the common case worse, turning one run into three across fifteen minutes when all three exports rarely move together. `run()` already refuses a PAGE it cannot start and arms the one-shot for what is left, so a firing is one execution's worth of work rather than one export's. Kept from that change: the three park fixes (the drop moved to the restore pass that always runs, `putBand_` reporting whether the band actually went back, and its catch no longer silent), the stamp read/write folded into one helper each, and `logging.js` green again. **A number-format skip was written and dropped**: `getNumberFormat` on a range answers for the top-left cell only, so a column pasted over in the middle would keep the wrong format and Bill Month would come back as a date in the rows nobody looks at — the wrong trade for one write. Six mutations, every one caught. `qliksync.js`'s two `settle_` cases are still red and still deliberate. **What is left is arithmetic and it is tight**: about 320–350 seconds of work against a 360-second limit with the budget guard at 300, so the biggest remaining lever is the write itself — `values.batchUpdate` over the Sheets REST API the poll already uses, which would also blind every write-path gate in the harness and is its own piece of work | ☐ |
+| 2026-08-25 | **One export per execution, three timers, and most of `run()` went with it.** The job is about seven minutes — Aggregates 52,538 rows and ~80 s to write, Ready-Mix 82,200 and ~165 s, Product Segment small, three conversions and reads another ~70 s — and an Apps Script execution is six. **No arrangement of one firing holds that**, which is what every timeout since 08-23 has been: the old `run('all')` did as much as fitted and pushed the rest into a retry chain, so the tail of the work ran a lap behind. `run()` takes a PAGE now — one export, one workbook, one execution, two to three minutes against six — and §11 sets **one time-driven trigger per export** (`qlikSyncAggregates`, `qlikSyncReadyMix`, `qlikSyncSegment`), a few minutes apart because the lock is script-wide and `LockService` has no named ones. `qlikSyncCheck` stays as the pre-split target only so an existing trigger on it does not fail silently; `APP_TRIGGER_TARGETS` is five entries now and `APP_verifyPermissions` is still the only report of which are armed. **What went is the point**: the `byPage` walk, the read-on-first-use/drop-on-last-use bookkeeping, the per-page budget refusal, the per-page retry fan-out and `QLIK_RETRY_MAX_BUDGET` all existed to fit three exports into one execution and make the leftovers converge across firings — with one page a firing there is nothing left to shrink, so a clock failure retries **once**, like a broken export, and five identical attempts were five ways of not saying that a page does not fit. **Two holes closed on the way**: a page whose export could not be READ kept its stamp, marking a file as read that nothing had opened, so the next firing skipped it — it is flagged retryable now; and a retry that SUCCEEDED never wrote a stamp, so the next firing re-did the minutes of work it had just done, and it now records the modified time the run itself read off `QLIK_LAST_SYNC` rather than whatever is in Drive when the retry finishes. **The two counts the business reconciles against Qlik are checked out loud after the write**: the tab must end at `firstData + rows - 1` exactly and **both directions throw** (too tall is surplus still holding the previous export's figures, which is the failure deleting the surplus exists to prevent), and paired-vs-unmatched columns are logged on every run and returned — unmatched deliberately **not** a failure, because that is what a new year's column looks like before somebody adds it to the workbook and refusing would stop the pipeline every January. The shrink allowance on a period roll is untouched, and so is the rule that the sync owns only the columns it pairs. **`tests/` is deleted** — 31 harnesses, 500 KB — rather than rewritten around a `run()` that no longer has the shape they gated; they are in git history, and every `tests/…` reference left in this document is now marked historical at the top. `node --check` and `APP_verifyPermissions` are what is left | ☐ |

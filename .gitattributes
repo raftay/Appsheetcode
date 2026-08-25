@@ -13,8 +13,6 @@ script.gs        text eol=lf
 app.html         text eol=lf
 appsscript.json  text eol=lf
 
-# Everything else keeps whatever it has: the harnesses read deleted files out
-# of git and normalise line endings themselves, and re-encoding history would
-# change what they compare against.
+# Everything else keeps whatever it has. Re-encoding history would change what
+# a `git show` of an older revision compares against.
 *.md             text
-tests/*.js       text
