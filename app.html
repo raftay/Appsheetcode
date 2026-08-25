@@ -18719,6 +18719,7 @@ AMR.page('overview', {
         } else if(winMode()){
           renderWinRmx();
           scheduleRxf();         // keeps the cross-filter option lists warm
+          scheduleWext();        // Extras & VAP by type, for this window's months
         } else {
           /* paint from the cached cross-report (or getOverview on the first view),
              then fetch. Every Ready-Mix panel below is fed by one payload. */
@@ -18968,16 +18969,17 @@ AMR.page('overview', {
          draws it either way, and the all-in overlay (extras per month) is left
          off because that comes from the server report, for the server's period */
       renderTrendPanel('rmx', null, null);
-      /* Extras BY TYPE comes off the cross-report, fetched for THIS window
-         (rxfWinScope) rather than for the server period - the extra type lives
-         on rows the fact table does not carry, it carries their money, so the
-         cube can sum the streams (the build-up above) and cannot split them.
-         Ready-Mix fuel recovery has no such route: the per-load surcharge is
-         not a column anywhere the window can reach, so it stays off. */
-      renderWinExtras(rxfData(), RXF_ERR[rxfSig()]);
+      /* Extras BY TYPE comes off RMX_getExtrasByMonths, asked for THIS window's
+         own months - the extra type lives on rows the fact table does not carry,
+         it carries their money, so the cube can sum the streams (the build-up
+         above) and cannot split them. Ready-Mix fuel recovery has no such route:
+         the per-load surcharge is not a column anywhere the window can reach, so
+         it stays off. */
+      renderWinExtras();
       hidePanel('rmxFuelBody');
       $('footRmx').innerHTML=esc(winScopeWord())
-        +' · computed in your browser from the month fact table, not the server report.';
+        +' · computed in your browser from the month fact table, not the server report'
+        + ' — except Extras &amp; VAP by type, which is fetched for these same months.';
     }
 
     /* Both carry a toggle of their own, so both have to be repaintable without
@@ -19014,12 +19016,29 @@ AMR.page('overview', {
        which is exactly what this panel is: three revenue streams over ONE
        denominator, total concrete m³. So it is summed rather than skipped. What
        it cannot do is split those streams BY EXTRA TYPE — the type is not a
-       column — which is why the Extras & VAP panel below is not shown. */
+       column — which is what the Extras & VAP panel below asks the server for.
+
+       BOTH COLUMNS WERE STRUCTURALLY ZERO UNTIL script.gs ovcRmxFoldExtras_. They
+       were in the cube's shape from v2 and nothing ever wrote to them, so every
+       Extras and VAP row here read $0.00 and All-in equalled Base. They are
+       folded in now from the same extras facts the panel below reads, which is
+       what makes the two agree. A month whose extras source has not been read
+       still contributes nothing here — the note under the panel below is where
+       that is said, once, rather than on both. */
     function renderWinRmxAsp(){
       clearCH('rasp');
       /* every row here is a $/m3 and every column is a year-on-year move; past
          twelve months there is neither a price nor a comparison to report */
       if(volRev()){ hidePanel('rmxAspBody'); return; }
+      /* THE SAME REFUSAL THE SERVER PATH MAKES, and it matters more here than it
+         looks. A Strength or Product Class filter puts the extras out of reach —
+         they carry a plant and a material, not a product mix — and the fold puts
+         their money on the BLANK mix, which buckets as "Others". So a mix filter
+         does not narrow Extras and VAP, it ZEROES them, and the build-up would
+         show All-in equal to Base with nothing saying why. renderRmxAsp drops
+         the whole panel on `asp.ok:false`; this is that decision, taken from the
+         page's own filter state. */
+      if(rxfMixFiltered()){ hidePanel('rmxAspBody'); return; }
       var g=cubeTotal('rmx');
       if(!g){ showPanel('rmxAspBody'); winWaiting('rmxAspBody'); return; }
       if(!(g.cyVol||g.pyVol)){ hidePanel('rmxAspBody'); return; }
@@ -19041,13 +19060,16 @@ AMR.page('overview', {
     }
     /* ---- Extras & VAP by type, in window mode ------------------------------
        One decision, taken in one place, so the paint that runs before the fetch
-       and the paint that runs when it lands cannot disagree. A window the server
-       cannot answer for - a closed book year, or one straddling two - has no
-       by-type answer at all, so the panel goes rather than showing the book
-       year's months under the window's heading. */
-    function renderWinExtras(d, err){
-      if(!rxfWinScope()){ clearCH('ext'); hidePanel('extBody'); return; }
-      renderExtrasPanel(d, err);
+       and the paint that runs when it lands cannot disagree. wextSig() is that
+       decision: empty means there is nothing to ask for yet (the Ready-Mix
+       blocks have not landed), and the panel waits rather than showing a total
+       that is missing months. It is never dropped for being in a closed year any
+       more - see the block comment on wextSig for what that restriction actually
+       was. */
+    function renderWinExtras(){
+      var sig=wextSig();
+      if(!sig){ clearCH('ext'); hidePanel('extBody'); return; }
+      renderExtrasPanel(wextReport(), WEXT_ERR[sig]);
     }
     /* the Ready-Mix dimension table is a plain table (its painter is bound to the
        cross-report's own row shape), so window mode renders it directly */
@@ -19747,41 +19769,14 @@ AMR.page('overview', {
     function rxfActive(){ for(var f in RXF){ if(RXF[f].length) return true; } return false; }
     function rxfFilters(){ var o={}; RXF_FIELDS.forEach(function(f){ o[f]=RXF[f].slice(); }); return o; }
     function rxfMarket(){ return isAll() ? '__ALL__' : (selRmxName()||'__ALL__'); }
-    /* ---- THE MONTH SCOPE THE CROSS-REPORT IS ASKED FOR --------------------
-       null on the MTD / YTD path: the server answers for its own reporting
-       month exactly as it always has, and nothing on that path moves.
-
-       In WINDOW MODE it returns the span the slider is showing, as two 1-12
-       month numbers, and the report is fetched FOR THAT SPAN. That is what lets
-       Extras & VAP stay on the page for the two Prev-month picks and for a
-       dragged window - it is the one Ready-Mix panel the month cube cannot
-       rebuild, because the fact table carries the extras MONEY (ex / va, which
-       is what the ASP build-up sums) and not the extra TYPE.
-
-       IT IS NULL AGAIN FOR A WINDOW OUTSIDE THE LIVE BOOK YEAR, and that is the
-       whole of the restriction. These rows carry a month and a cy/py pair with
-       no year of their own, so "March" means March of the live export's current
-       year against March of its prior year - ask it for March 2024 and it would
-       answer for March of the book year without saying so. A window in a closed
-       year, or one straddling two, therefore has no by-type answer and the panel
-       is not shown, the same rule the surcharge panels follow (winFscOk).
-
-       THE BOOK YEAR IS THE READY-MIX LINE'S OWN, not the slider's last month.
-       The slider spans the UNION of the two lines, so its newest month can be
-       the Aggregates line's - and when Aggregates has rolled into a new year and
-       Ready-Mix has not, the union says 2027 while this report still answers for
-       2026. Asking cube().months('rmx') asks the line the report is about. */
-    function rxfWinScope(){
-      if(!winMode() || !winReady()) return null;
-      var C0=cube(), ms=(C0 && C0.months) ? (C0.months('rmx')||[]) : [];
-      if(!ms.length) return null;
-      var bookY=Math.floor(ms[ms.length-1]/100);
-      if(Math.floor(WIN.from/100)!==bookY || Math.floor(WIN.to/100)!==bookY) return null;
-      return { from: WIN.from%100, to: WIN.to%100 };
-    }
+    /* THE CROSS-REPORT IS A PERIOD REPORT AND NOTHING ELSE ASKS IT FOR A WINDOW.
+       A month SPAN was briefly sent from here so Extras & VAP could stay on the
+       page for a dragged window. It could only ever answer inside the live book
+       year - one workbook holds two - and the by-type panel now has an endpoint
+       of its own (wext* below) that reaches the closed books as well, so this
+       signature is the plain period one again. */
     function rxfSig(){
-      var sc=rxfWinScope();
-      var parts=[STATE.period, sc?('w'+sc.from+'-'+sc.to):'m0', rxfMarket()];
+      var parts=[STATE.period, rxfMarket()];
       RXF_FIELDS.forEach(function(f){ if(RXF[f].length) parts.push(f+'='+RXF[f].slice().sort().join('\u2016')); });
       return parts.join('|');
     }
@@ -19942,13 +19937,9 @@ AMR.page('overview', {
     /* ---- loader: one call feeds every Ready-Mix panel ---- */
     function scheduleRxf(){ if(rxfTimer) clearTimeout(rxfTimer); rxfTimer=setTimeout(loadRxf, 200); }
     /* The request, in one place, so the signature above and the call below
-       cannot describe two different reports. monthFrom/monthTo are only ever
-       sent for a window the server can answer - see rxfWinScope. */
+       cannot describe two different reports. */
     function rxfArg(){
-      var a={ period:STATE.period, market:rxfMarket(), filters:rxfFilters() };
-      var sc=rxfWinScope();
-      if(sc){ a.monthFrom=sc.from; a.monthTo=sc.to; }
-      return a;
+      return { period:STATE.period, market:rxfMarket(), filters:rxfFilters() };
     }
     function loadRxf(){
       if(!STATE.data || (STATE.data.errors && STATE.data.errors.rmx)) return;
@@ -19982,18 +19973,13 @@ AMR.page('overview', {
     }
     function paintRxfPanels(){
       var sig=rxfSig(), d=RXF_CACHE[sig], err=RXF_ERR[sig];
-      /* Same rule as the Aggregates side: in window mode every panel below
-         belongs to the cube, and the cross-report must not paint over a window
-         with a period's numbers.
-
-         EXTRAS & VAP IS THE ONE EXCEPTION, and it is one because the report is
-         no longer answering for the wrong thing: rxfWinScope sends the window's
-         own months, so this panel is fetched for exactly the span the heading
-         names. It is here rather than in the cube because the extra TYPE is not
-         a column in the month fact table - only its money is, which is what the
-         ASP build-up above it sums. renderWinExtras takes the same decision on
-         the paint that runs before this fetch lands. */
-      if(winMode()){ renderWinExtras(d, err); return; }
+      /* Same rule as the Aggregates side, with no exception left in it: in
+         window mode every Ready-Mix panel belongs to the cube or to the extras
+         endpoint, and this report - which was fetched for STATE.period - must
+         not paint over a window with a period's numbers. It is still FETCHED in
+         window mode, because its per-field option lists are what the filter
+         drop-downs offer; it just paints nothing. */
+      if(winMode()) return;
       renderRmxKpiStrip(d);
       renderRmxBreakdown(d, err);
       renderRmxDims(d, err);
@@ -20005,6 +19991,118 @@ AMR.page('overview', {
     function rxfWait(err, what){
       if(err) return '<div class="ov-notice">Could not load '+esc(what)+': '+esc(err)+'</div>';
       return '<div class="ov-mini">'+(IS_LIVE?'Loading \u2026':'Loads in the live web app.')+'</div>';
+    }
+
+
+    /* ================= EXTRAS & VAP FOR A WINDOW =========================
+       The one Ready-Mix panel a window fetches from the server, and the only
+       thing on this page that does.
+
+       WHY IT IS NOT THE CUBE'S. The month fact table carries the extras MONEY
+       (ex / va, which is what the ASP build-up above it sums) and not the extra
+       TYPE - the type is a mat_descr on a different tab, at a grain the fact
+       table has no column for. So the split by type comes from the server.
+
+       WHY IT IS NOT THE CROSS-REPORT'S EITHER, which is what it used to be. That
+       report reads the LIVE workbook, and one workbook holds two book years; it
+       could answer for a dragged window only while the window stayed inside
+       them, and for everything older the panel was simply dropped. That was read
+       once as "extras have no year", which is not so - Bill Month carries the
+       year on every one of these rows, on the live book and on every closed one.
+       What was missing is that nothing had ever READ the closed books' extras
+       tabs. RMX_getExtrasByMonths does, so the panel now answers for any span
+       the slider can reach, and says which months no book has been read for
+       rather than quietly totalling the ones that have.
+
+       IT ASKS FOR THE CUBE'S OWN MONTHS. winCy('rmx') is the same list every
+       other panel on this tab is computed over, so the revenue and the m3 it is
+       divided by cover exactly the same months. And it returns REVENUE only:
+       the denominator is total concrete m3, the browser already holds it, and a
+       second copy from the server would be a second answer to one question. */
+    var WEXT_CACHE={}, WEXT_PEND={}, WEXT_ERR={}, wextTimer=null;
+
+    /* null whenever there is nothing to ask for yet - not in window mode, or the
+       Ready-Mix blocks have not landed. One gate, so the fetch and every paint
+       agree about whether this panel exists at all. */
+    function wextMonths(){
+      if(!winMode() || !winReady()) return null;
+      var cy=winCy('rmx');
+      return (cy && cy.length) ? cy : null;
+    }
+    function wextSig(){
+      var ms=wextMonths(); if(!ms) return '';
+      var parts=[rxfMarket(), ms[0]+'>'+ms[ms.length-1]+'#'+ms.length];
+      RXF_FIELDS.forEach(function(f){ if(RXF[f].length) parts.push(f+'='+RXF[f].slice().sort().join('\u2016')); });
+      return parts.join('|');
+    }
+    function scheduleWext(){ if(wextTimer) clearTimeout(wextTimer); wextTimer=setTimeout(loadWext, 200); }
+    function loadWext(){
+      var sig=wextSig(); if(!sig) return;
+      if(!WEXT_CACHE[sig] && window.AmrCache){
+        var v=AmrCache.get('wext:'+sig);
+        if(v) WEXT_CACHE[sig]=v;
+      }
+      if(WEXT_CACHE[sig]){ renderWinExtras(); return; }
+      if(!IS_LIVE){ renderWinExtras(); return; }
+      if(WEXT_PEND[sig]) return;
+      WEXT_PEND[sig]=true;
+      renderWinExtras();                                  // loading state
+      try{
+        google.script.run
+          .withSuccessHandler(function(d){
+            WEXT_PEND[sig]=false;
+            if(d && (d.ok || d.reason)){
+              WEXT_CACHE[sig]=d; delete WEXT_ERR[sig];
+              if(d.ok && window.AmrCache) AmrCache.set('wext:'+sig, d);
+            } else WEXT_ERR[sig]='The extras report came back empty.';
+            /* the window or a filter may have moved while this was out. Only
+               this panel repaints: the ASP build-up above it reads the cube's
+               own ex / va and does not wait on this call. */
+            if(sig===wextSig() && STATE.tab!=='agg') renderWinExtras();
+          })
+          .withFailureHandler(function(err){
+            WEXT_PEND[sig]=false;
+            WEXT_ERR[sig]=(err&&err.message)||String(err);
+            if(sig===wextSig() && STATE.tab!=='agg') renderWinExtras();
+          })
+          .RMX_getExtrasByMonths({ market:rxfMarket(), filters:rxfFilters(),
+                                   cyMonths:wextMonths() });
+      }catch(e){ WEXT_PEND[sig]=false; WEXT_ERR[sig]=String(e&&e.message||e); renderWinExtras(); }
+    }
+    function wextData(){ var sig=wextSig(); return sig ? (WEXT_CACHE[sig]||null) : null; }
+
+    /* MONTHS NOBODY HAS READ AN EXTRAS TAB FOR. A closed book carries its months
+       in the cube as soon as its Main Raw Data has been read; its extras tabs are
+       a second read and may not have happened yet. Those months are not zero
+       extras and this panel does not let them look like it. */
+    function wextGapNote(){
+      var d=wextData(); if(!d || !d.ok) return '';
+      var n=(d.uncovered||[]).length + (d.uncoveredPy||[]).length;
+      if(!n) return '';
+      var all=(d.uncovered||[]).concat(d.uncoveredPy||[]).sort();
+      return '<div class="ov-mini" style="margin-top:10px">'
+        + esc(n===1 ? 'One month of this window has no extras source yet ('
+                    : n+' months of this window have no extras source yet (')
+        + esc(all.slice(0,6).map(ymShort).join(', ')+(all.length>6?' …':'')+')')
+        + '. Those months are missing from the figures above rather than zero — '
+        + 'the closed book they belong to has had its volumes read but not its '
+        + 'Extra Raw Data. It is picked up on its own in the background.</div>';
+    }
+
+    /* The server sends revenue; the $/m3 are taken here, on the SAME total
+       concrete m3 every other figure in this window uses, which is what keeps
+       the rows addable and keeps them agreeing with the ASP build-up above. */
+    function wextReport(){
+      var d=wextData(); if(!d) return null;
+      if(!d.ok) return d;                                  // a refusal travels whole
+      var g=cubeTotal('rmx'); if(!g) return null;
+      var volCY=g.cyVol||0, volPY=g.pyVol||0;
+      return { ok:true, note:wextGapNote(),
+        byType:(d.byType||[]).map(function(r){
+          var cy=volCY?r.cyRev/volCY:0, py=volPY?r.pyRev/volPY:0;
+          return { label:r.label, stream:r.stream, cyRev:r.cyRev, pyRev:r.pyRev,
+                   aspCY:cy, aspPY:py, aspChg:cy-py, revPct:r.revPct };
+        }) };
     }
 
     /* ---- KPI strip: cross-report totals when they exist, getOverview otherwise ---- */
@@ -20442,6 +20540,10 @@ AMR.page('overview', {
       rxfSubSet('extSub','By extra type \u00b7 ',
         ' \u00b7 '+(winMode()?winScopeWord():periodLabel())+' \u00b7 $/m\u00b3 on total concrete.');
       if(!d){ body.innerHTML=rxfWait(err,'extras'); return; }
+      /* A refusal is not an empty answer. `reason:'mix'` is the server saying a
+         Strength or Product Class filter cannot reach these rows, which is a
+         different thing from this selection having no extras in it. */
+      if(d.ok===false){ hidePanel('extBody'); return; }
       if(!d.byType){ hidePanel('extBody'); return; }
       var rows=d.byType;
       if(!rows.length){ hidePanel('extBody'); return; }
@@ -20488,6 +20590,7 @@ AMR.page('overview', {
         +'<table class="ov-table"><thead><tr>'
         +'<th>Extra type</th><th>Rev CY</th><th>Rev PY</th><th>Rev %</th><th>$/m\u00b3 CY</th><th>$/m\u00b3 PY</th><th>$ chg</th>'
         +'</tr></thead><tbody>'+block('EXTRAS')+block('VAP')+grandTotal()+'</tbody></table>'
+        +(d.note||'')
         +'<div style="margin-top:12px"><a class="linkbtn" href="'+(window.APP_URL||'')+'?page=rmx" target="_top">Open RMX - Price &amp; Volume for the applied-m\u00b3 detail \u2192</a></div>';
       if(withRev.length){
         custDonut('ext', $('ext_pie'),
@@ -21139,7 +21242,15 @@ AMR.page('overview', {
         list.forEach(function(e){
           var g=byId[e.id];
           if(!g){ g=byId[e.id]={ id:e.id, label:e.label||e.id, lines:{} }; out.push(g); }
-          g.lines[l]={ linked:!!e.linked, built:!!e.built };
+          /* A READY-MIX BOOK IS TWO READS. `built` is its Main Raw Data - the
+             months, the volumes, the PPI grain. `extras` is its Extra Raw Data
+             and Associate Raw Data tabs, parked separately because Main is
+             ~58,000 rows and neither part should ever cost the other's time. A
+             manifest that predates the split carries no `extras` key and is read
+             as "nothing more to fetch", which is exactly how it used to behave. */
+          g.lines[l]={ linked:!!e.linked, built:!!e.built,
+                       xLinked:!!(e.extras && e.extras.linked),
+                       xBuilt: (e.extras ? !!e.extras.built : true) };
         });
       });
       return out;
@@ -21150,9 +21261,15 @@ AMR.page('overview', {
       var out=[];
       histEras().forEach(function(e){
         ['agg','rmx'].forEach(function(l){
-          var st=e.lines[l];
-          if(st && st.linked && !st.built && !HIST.done[e.id+'|'+l])
+          var st=e.lines[l]; if(!st || !st.linked) return;
+          if(!st.built && !HIST.done[e.id+'|'+l])
             out.push({ era:e.id, label:e.label, line:l });
+          /* the extras half, asked for in its own right. It is queued behind the
+             months of the same book by the order of these two tests, which is
+             the order that matters: the slider cannot reach a year until its
+             volumes are in, and the extras panel divides by those volumes. */
+          if(st.xLinked && !st.xBuilt && !HIST.done[e.id+'|'+l+'|extras'])
+            out.push({ era:e.id, label:e.label, line:l, part:'extras' });
         });
       });
       return out;
@@ -21162,14 +21279,17 @@ AMR.page('overview', {
       var out=[];
       histEras().forEach(function(e){
         ['agg','rmx'].forEach(function(l){
-          var st=e.lines[l];
-          if(st && st.linked) out.push({ era:e.id, label:e.label, line:l });
+          var st=e.lines[l]; if(!st || !st.linked) return;
+          out.push({ era:e.id, label:e.label, line:l });
+          if(st.xLinked) out.push({ era:e.id, label:e.label, line:l, part:'extras' });
         });
       });
       return out;
     }
+    function histJobKey(j){ return j.era+'|'+j.line+(j.part?('|'+j.part):''); }
     function histJobName(j){
-      return (j.line==='agg'?'Aggregates':'Ready-Mix')+' '+j.label;
+      return (j.line==='agg'?'Aggregates':'Ready-Mix')
+           + (j.part==='extras'?' extras':'')+' '+j.label;
     }
     /* state -> { cls, short, long }. The pill hides itself entirely once
        everything is in and nothing has gone wrong: no chrome for a solved
@@ -21344,7 +21464,7 @@ AMR.page('overview', {
       function step(){
         if(i>=jobs.length){ finish(); return; }
         var j=jobs[i++];
-        HIST.done[j.era+'|'+j.line]=true;           // attempted, whatever comes back
+        HIST.done[histJobKey(j)]=true;              // attempted, whatever comes back
         HIST.msg='Reading the '+histJobName(j)+' book\u2026';
         renderPill();
         google.script.run
@@ -21353,7 +21473,7 @@ AMR.page('overview', {
             step();
           })
           .withFailureHandler(function(e){ fail((e&&e.message)||String(e)); })
-          .CUBE_rebuildHistory({ line:j.line, era:j.era });
+          .CUBE_rebuildHistory({ line:j.line, era:j.era, part:j.part||'main' });
       }
       step();
     }
@@ -22775,6 +22895,9 @@ AMR.page('overview', {
       CACHE={}; CUST_CACHE={}; RAW_CUST={}; FSC_DATA=null;
       XF_CACHE={}; XF_PEND={}; XF_ERR={};
       RXF_CACHE={}; RXF_PEND={}; RXF_ERR={};
+      /* the extras endpoint answers off the EXTRAS LOOKUP and PLANT LOOKUP the
+         write just changed, so its answers are stale in exactly the same way */
+      WEXT_CACHE={}; WEXT_PEND={}; WEXT_ERR={};
       DIMS_CACHE={}; DIMS_ERR={}; DIMS_PEND={};
       PM_CACHE={}; PM_ERR={}; PM_PEND={};
       XDATA={}; XDATA_PEND={};
