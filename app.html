@@ -47,8 +47,9 @@
    §D   RUNTIME ............... AMR core: logging, lib loader, nav, modals,
                                 the QlikView guide, the page registry.
    §E   SHARED MODULES ........ AmrProgress, AmrBoot, AmrFresh, AmrStamp,
-                                AmrSlide, AmrFuelExec. Each one arrives with the
-                                first page that exercises it, never before.
+                                AmrSlide, AmrFuelExec, AmrHover, AmrSugChip.
+                                Each one arrives with the first page that
+                                exercises it, never before.
    §P   PAGES ................. one <template> + one registration per page.
 
  HOW A PAGE WORKS HERE
@@ -957,11 +958,51 @@ body.rmx-yellow .rmx-export-block tr.subtotal td{background:#EEF3FB}
    page that does not use them pays nothing for them. */
 .sugHost td.code{font:600 12px ui-monospace,Menlo,Consolas,monospace; white-space:nowrap}
 .sugHost .sugtxt{min-width:190px}
-.sugHost .sugchip{display:inline-block; border-radius:999px; padding:2px 9px;
-  font:700 10.5px Inter; white-space:nowrap; cursor:help}
-.sugHost .sugchip.high{background:var(--blue-10); color:var(--blue-100)}
-.sugHost .sugchip.med{background:var(--blue-20); color:var(--blue-100)}
-.sugHost .sugchip.low{background:var(--neg-bg); color:var(--neg)}
+/* THE CHIP IS UNSCOPED, and that is the point: the Ready-Mix dialog is no
+   longer the only thing that shows one. The Overview's lookup editor puts the
+   same chip on the same server-side verdict, and a chip that only styled
+   itself inside .sugHost would have arrived there as bare text. Nothing else
+   in the file uses `.sugchip`, so unscoping costs the other pages nothing. */
+.sugchip{display:inline-block; border-radius:999px; padding:2px 9px;
+  font:700 10.5px Inter; white-space:nowrap; cursor:help; border:1px solid transparent}
+.sugchip .pc{opacity:.72; font-weight:800; margin-left:5px; font-variant-numeric:tabular-nums}
+.sugchip:focus-visible{outline:none; border-color:var(--blue-50); box-shadow:0 0 0 2px var(--blue-20)}
+.sugchip.high{background:var(--blue-10); color:var(--blue-100)}
+.sugchip.med{background:var(--blue-20); color:var(--blue-100)}
+.sugchip.low{background:var(--neg-bg); color:var(--neg)}
+
+/* ---- the hover card AmrHover paints ----
+   position:fixed and a child of <body>, because every surface that shows a
+   confidence chip sits inside a scroll box — .sugbox-body, .lk-body and
+   .dq-body are all `overflow:auto` — and an absolutely-positioned popup
+   inside any of them is clipped at the first edge it reaches. The z-index
+   clears the two dialogs that host it (.sugbox 61, .dq-modal 81) and the two
+   blocking overlays above them (.amr-modal 9100, .amr-stale 9200), and stays
+   under the full-screen lightboxes at 9999. */
+.amr-hov{position:fixed; z-index:9300; display:none; max-width:390px; box-sizing:border-box;
+  background:#fff; border:1px solid var(--blue-40); border-radius:11px; padding:11px 13px 12px;
+  box-shadow:0 16px 44px rgba(1,30,106,.26); pointer-events:none}
+.amr-hov.show{display:block}
+.amr-hov .hh{display:flex; align-items:center; gap:8px; margin-bottom:8px}
+.amr-hov .hh .hs{margin-left:auto; font:800 15px Inter; color:var(--blue-100); font-variant-numeric:tabular-nums}
+.amr-hov .hh .hs.low{color:var(--neg)}
+.amr-hov .hk{font:700 8.5px Archivo; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--blue-70); margin:9px 0 4px}
+.amr-hov .hk:first-child{margin-top:0}
+.amr-hov ul{margin:0; padding:0; list-style:none}
+.amr-hov li{position:relative; padding:0 0 0 12px; margin-bottom:3px;
+  font:500 11.5px Inter; color:var(--ink); line-height:1.45}
+.amr-hov li:before{content:'\2022'; position:absolute; left:2px; color:var(--blue-50)}
+.amr-hov table{width:100%; border-collapse:collapse; font:500 11px Inter; table-layout:fixed}
+.amr-hov table td{padding:3px 0; border-bottom:1px solid var(--line); vertical-align:top;
+  color:var(--ink); line-height:1.35}
+.amr-hov table tr:last-child td{border-bottom:0}
+.amr-hov table td.d{width:auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.amr-hov table td.c{width:34%; padding-left:8px; font-weight:700; color:var(--blue-100);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.amr-hov table td.s{width:52px; text-align:right; font-weight:700; color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.amr-hov .hf{margin:9px 0 0; font:500 10.5px Inter; color:var(--muted); line-height:1.45}
 /* a row whose best guess is weak — tinted, with a red spine on the tick column */
 .sugHost tr.lowrow>td{box-shadow:inset 0 0 0 99px rgba(178,58,72,.035)}
 .sugHost tr.lowrow>td.tick{box-shadow:inset 3px 0 0 0 var(--neg), inset 0 0 0 99px rgba(178,58,72,.035)}
@@ -1516,6 +1557,13 @@ body[data-page="overview"] .lk-body{padding:11px 13px 13px; max-height:340px; ov
 body[data-page="overview"] .lk-row{display:flex; flex-wrap:wrap; gap:7px; align-items:center; padding:7px 0; border-bottom:1px solid var(--line);
   content-visibility:auto; contain-intrinsic-size:auto 44px}
 body[data-page="overview"] .lk-row:last-child{border-bottom:0}
+/* A ROW THE SERVER COULD NOT CALL. The chip at the end of the row says so, but
+   this list runs to four figures and a chip is 60px of a 900px row — the spine
+   is what makes "the ones I have to read" findable while scrolling. Same red,
+   same meaning and the same server verdict as the Ready-Mix dialog's
+   `tr.lowrow`; only the shape differs, because that one is a table. */
+body[data-page="overview"] .lk-row.low{box-shadow:inset 3px 0 0 0 var(--neg); padding-left:9px}
+body[data-page="overview"] .lk-row .sugchip{flex:0 0 auto; margin-left:auto}
 body[data-page="overview"] .lk-row .k{flex:1 1 170px; font:700 11.5px Inter; color:var(--blue-100); min-width:0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 body[data-page="overview"] .lk-row .f{flex:0 1 128px; min-width:96px}
@@ -3655,7 +3703,8 @@ window.AMR = (function(){
    ----------------------------------------------------------------------------
    AmrCache, AmrProgress, AmrBoot, AmrFresh, AmrStamp, AmrTick, AmrCube,
    AmrKpi, AmrSlide, AmrDeckSource, AmrFuelExec, AmrPvSlide, AmrSegSlide,
-   AmrRmxSlide. Fourteen — AmrKpiStore was a fifteenth and did not come across.
+   AmrRmxSlide, AmrHover, AmrSugChip. Sixteen — AmrKpiStore was a seventeenth
+   and did not come across.
 
    EACH ONE HAS A PAGE THAT PROVES IT, and that is how they should be changed:
    AmrProgress / AmrBoot / AmrFresh / AmrStamp / AmrSlide / AmrFuelExec against
@@ -3665,6 +3714,14 @@ window.AMR = (function(){
    AmrTick, AmrDeckSource and AmrRmxSlide against the Deck Builder, the only
    page that calls any of them. Changing a module with no page open to show it
    is how a silent break gets committed.
+
+   AmrHover AND AmrSugChip ARE THE TWO WITH *TWO* PAGES THAT PROVE THEM, and
+   both must be looked at: Ready-Mix's "Suggested lookup rows" dialog and the
+   Overview's data-quality sheet render rows from the SAME server call
+   (getRmxSuggestions) and now show the same chip and the same hover card. A
+   change that reads well in the dialog's table can still be wrong in the
+   Overview's flex form, which is where the card had to stop being a `title`
+   and stop being clipped by a 340px scroll box.
 
    AmrStamp IS THE ONE THAT MOUNTS ITSELF. Every other module here is called by
    a page; AmrStamp is called by §D's mount() and puts its own control into
@@ -3765,6 +3822,232 @@ window.AmrTick = (function(){
     } catch (e){ /* no rAF at all: the tick above still lands */ }
   };
   return tick;
+})();
+</script>
+
+<script>
+/* ---- §E AmrHover — one hover card, painted at <body> ------------------------
+   WHY A COMPONENT AND NOT A `title` ATTRIBUTE. The confidence chips used to
+   carry their explanation in `title`, and on the rows that mattered it was the
+   EMPTY STRING: the server hard-codes `why: []` for every PRODUCT MASTER row
+   (they are parsed, not matched, so there are no neighbours to list) and sets
+   `note` only when something went wrong. A cleanly-parsed row therefore hovered
+   to nothing at all, which is what "the confidence hover doesn't show anything"
+   was. The fix is on both sides: the server now always sends the evidence
+   (§RMXSUGGEST `reasons`/`score`), and this paints it.
+
+   WHY FIXED, AT <body>. Every surface that shows a chip lives inside a scroll
+   box — the dialog's .sugbox-body, the Overview's .lk-body and .dq-body are
+   all `overflow:auto` — so an absolutely-positioned popup is clipped at the
+   first edge it reaches. A fixed card parented to <body> is clipped by nothing
+   and is placed against the chip's own viewport rect.
+
+   WHY LAZY. The Overview's mix section proposes over a thousand rows. Building
+   a card per row up front is the same mistake the option lists made before
+   lkSelect() (see the Overview's LOOKUP EDITOR banner): a source is registered
+   ONCE and asked for HTML only when a chip is actually hovered.
+
+       AmrHover.source('rmxsug', function(id, el){ return htmlOrEmpty; });
+       <span data-hov="rmxsug" data-hov-id="7" tabindex="0">…</span>
+
+   Delegated from document, so a re-render never needs re-wiring — which is the
+   other half of why it suits these two callers: both rebuild their whole list
+   on every tick of a checkbox.                                              */
+window.AmrHover = (function(){
+  var SOURCES = {}, el = null, open = null;
+
+  function card(){
+    if (el && el.parentNode) return el;
+    el = document.createElement('div');
+    el.className = 'amr-hov';
+    el.setAttribute('role', 'tooltip');
+    document.body.appendChild(el);
+    return el;
+  }
+
+  /* Below the chip and left-aligned to it by preference; flipped above when
+     there is no room below, and pulled back inside on either edge. Measured
+     after the HTML is in, because the card's height depends on it. */
+  function place(target){
+    var c = card(), r = target.getBoundingClientRect();
+    var vw = document.documentElement.clientWidth,
+        vh = document.documentElement.clientHeight;
+    c.style.left = '0px'; c.style.top = '0px';        // measure unconstrained
+    var w = c.offsetWidth, h = c.offsetHeight, PAD = 8;
+    var left = Math.min(Math.max(PAD, r.left), Math.max(PAD, vw - w - PAD));
+    var top  = r.bottom + 6;
+    if (top + h > vh - PAD) top = Math.max(PAD, r.top - h - 6);
+    c.style.left = Math.round(left) + 'px';
+    c.style.top  = Math.round(top) + 'px';
+  }
+
+  function hide(){
+    open = null;
+    if (el) el.classList.remove('show');
+  }
+
+  function show(target){
+    var name = target.getAttribute('data-hov'), fn = SOURCES[name];
+    if (!fn) return hide();
+    var html = '';
+    try { html = fn(target.getAttribute('data-hov-id'), target) || ''; }
+    catch (e){ try { AMR.log('warn', 'AmrHover', 'a hover source threw', { source: name }); } catch (e2){} }
+    if (!html) return hide();
+    var c = card();
+    c.innerHTML = html;
+    c.classList.add('show');
+    open = target;
+    place(target);
+  }
+
+  function chipFor(t){
+    return (t && t.closest) ? t.closest('[data-hov]') : null;
+  }
+
+  document.addEventListener('mouseover', function(e){
+    var t = chipFor(e.target);
+    if (t){ if (t !== open) show(t); }
+    else if (open) hide();
+  }, true);
+  /* focus reaches the card by keyboard; blur and Escape both close it */
+  document.addEventListener('focusin',  function(e){ var t = chipFor(e.target); if (t) show(t); else if (open) hide(); });
+  document.addEventListener('focusout', function(){ hide(); });
+  document.addEventListener('keydown',  function(e){ if (e.key === 'Escape' && open) hide(); });
+  /* A card placed against a viewport rect goes stale the moment anything
+     moves, and the chips sit in scroll boxes. Capture, so an inner scroller
+     counts as much as the window.
+
+     IT RE-PLACES RATHER THAN HIDING, and that is not only nicer to read while
+     scrolling a long list — hiding raced. A browser dispatches scroll on the
+     next frame, so a pointer that arrives on a chip during a scroll that is
+     already settling had the card shown and then immediately hidden by the
+     queued event, which reads as a hover that does nothing. Re-placing has no
+     such ordering to get wrong. The card is only dropped once its chip has
+     genuinely gone — detached, or scrolled out of the viewport. */
+  var pending = false;
+  function reflow(){
+    if (!open) return;
+    if (pending) return;
+    pending = true;
+    var run = function(){
+      pending = false;
+      if (!open) return;
+      var r = open.getBoundingClientRect();
+      var gone = !open.isConnected || (r.width === 0 && r.height === 0)
+              || r.bottom < 0 || r.top > document.documentElement.clientHeight
+              || r.right < 0 || r.left > document.documentElement.clientWidth;
+      if (gone) hide(); else place(open);
+    };
+    if (window.requestAnimationFrame) requestAnimationFrame(run); else run();
+  }
+  document.addEventListener('scroll', reflow, true);
+  window.addEventListener('resize', reflow);
+
+  return {
+    source: function(name, fn){ SOURCES[name] = fn; },
+    hide: hide
+  };
+})();
+</script>
+
+<script>
+/* ---- §E AmrSugChip — the confidence chip, and what it says ------------------
+   TWO PAGES SHOW THE SAME VERDICT, so one place decides how it reads: the
+   Ready-Mix page's "Suggested rows" dialog and the Overview's lookup editor
+   both render rows straight out of getRmxSuggestions, and before this only the
+   dialog showed a chip at all — the Overview's form offered a Category or a
+   Strength with nothing to say how sure the server was about it.
+
+   THE NUMBER IS NOT A SECOND OPINION. `band` is the verdict and `score` is the
+   same verdict spread across that band's own slice of 0-100 (see the server's
+   `sgBandSpan_`), so the chip's word and its percentage can never disagree.
+   The card underneath states which evidence produced it — always, and for both
+   kinds of row:
+
+     PRODUCT MASTER rows are PARSED. There is nothing to list as a neighbour,
+       so the card lists the four reads that made the row: the key, the brand,
+       the strength and the class.
+     EXTRAS LOOKUP rows are MATCHED. The card lists the same four-line reasoning
+       plus the three closest rows already in the tab, with how alike each is —
+       which is the thing that lets a reader overrule a Review row in one look.
+
+   A row from a server that predates `reasons` still renders: the card falls
+   back to `note` and `why`, and to the band's own plain-English meaning, so it
+   is never empty again.                                                     */
+window.AmrSugChip = (function(){
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+
+  var WORD = { High:'Confident', Med:'Check', Low:'Review' };
+  /* SURFACE-NEUTRAL WORDING. The same card is painted in the Ready-Mix dialog,
+     which pre-ticks its Confident rows, and in the Overview's form, which has
+     no ticks at all — it saves every row that has not been crossed out. So the
+     sentence describes the EVIDENCE, never what the surface did with it. */
+  var MEAN = {
+    High:'Every part of this row was read straight off the text, or agreed on by the rows already in the tab.',
+    Med :'Most of it is clear, but one part is not — read the reasons above before you save it.',
+    Low :'There is not enough evidence to call it. The safe default is filled in — set it yourself, or leave the row out.'
+  };
+  function band(r){ return (r && WORD[r.band]) ? r.band : 'Low'; }
+  function pct(r){
+    if (r && typeof r.score === 'number') return Math.round(r.score);
+    /* older payload: the extras rows carried a similarity and nothing else */
+    if (r && typeof r.sim === 'number' && r.sim > 0) return Math.round(r.sim * 100);
+    return null;
+  }
+
+  /* The chip itself. `scope` is the AmrHover source the page registered and
+     `id` is whatever that source needs to find the row again — an index in
+     practice, since both callers re-render from an array. */
+  function chip(scope, id, r){
+    var b = band(r), p = pct(r);
+    return '<span class="sugchip ' + b.toLowerCase() + '" tabindex="0"'
+      + ' data-hov="' + esc(scope) + '" data-hov-id="' + esc(id) + '"'
+      + ' aria-label="' + esc(WORD[b] + (p == null ? '' : ' — ' + p + '% confident')) + '">'
+      + WORD[b] + (p == null ? '' : '<span class="pc">' + p + '%</span>')
+      + '</span>';
+  }
+
+  /* The card. Never returns '' for a row that exists — an empty hover is the
+     bug this component was written to end. */
+  function card(r){
+    if (!r) return '';
+    var b = band(r), p = pct(r), out = '';
+
+    out += '<div class="hh"><span class="sugchip ' + b.toLowerCase() + '">' + WORD[b] + '</span>'
+         + (p == null ? '' : '<span class="hs' + (b === 'Low' ? ' low' : '') + '">' + p + '%</span>')
+         + '</div>';
+
+    var lines = (r.reasons && r.reasons.length) ? r.reasons
+              : (r.note ? String(r.note).split('; ') : []);
+    if (lines.length){
+      out += '<div class="hk">How this row was worked out</div><ul>'
+           + lines.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('')
+           + '</ul>';
+    }
+
+    if (r.why && r.why.length){
+      out += '<div class="hk">Closest rows already in the tab</div><table>'
+           + r.why.map(function(w){
+               return '<tr><td class="d" title="' + esc(w.d) + '">' + esc(w.d) + '</td>'
+                    + '<td class="c" title="' + esc(w.c) + '">' + esc(w.c) + '</td>'
+                    + '<td class="s">' + Math.round((w.s || 0) * 100) + '%</td></tr>';
+             }).join('')
+           + '</table>';
+    }
+
+    out += '<p class="hf">' + esc(MEAN[b]) + '</p>';
+    return out;
+  }
+
+  /* Register the page's row lookup under a scope name, once. `rowAt` is handed
+     the id from the chip and returns the row object (or null). */
+  function mount(scope, rowAt){
+    if (!window.AmrHover) return;
+    AmrHover.source(scope, function(id){ return card(rowAt(id)); });
+  }
+
+  return { chip: chip, card: card, mount: mount, word: WORD };
 })();
 </script>
 
@@ -15420,14 +15703,26 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
   function sugTxt(kind,i,field,val){
     return '<input class="sugtxt" type="text" data-k="'+kind+'" data-i="'+i+'" data-f="'+field+'" value="'+esc(val||'')+'">';
   }
-  function sugChip(r){
-    var lbl = r.band==='High' ? 'Confident' : (r.band==='Med' ? 'Check' : 'Review');
-    var why = (r.why&&r.why.length)
-      ? ('Closest existing rows:\n' + r.why.map(function(w){ return '  \u2022 '+w.d+'  \u2192 '+w.c+'  ('+Math.round(w.s*100)+'% alike)'; }).join('\n'))
-      : '';
-    var t = [r.note||'', why].filter(Boolean).join('\n\n');
-    return '<span class="sugchip '+r.band.toLowerCase()+'" title="'+esc(t)+'">'+lbl+'</span>';
+  /* THE CHIP, AND WHY IT IS NO LONGER A `title`.
+     It was: `title` carried r.note and r.why, and on a PRODUCT MASTER row both
+     are empty by construction — the server hard-codes `why: []` for parsed
+     rows and only fills `note` when something went wrong — so hovering a
+     cleanly-parsed row produced an empty tooltip, i.e. nothing. The evidence
+     now comes down the wire as `reasons`/`score` for BOTH kinds of row, and
+     AmrSugChip paints it into AmrHover's card, which is not clipped by the
+     dialog's scroll box the way an in-flow popup would be. */
+  function sugChip(kind,i,r){
+    return window.AmrSugChip ? AmrSugChip.chip('rmxsug', kind+':'+i, r)
+                             : '<span class="sugchip '+String(r.band||'Low').toLowerCase()+'">'+esc(r.band||'')+'</span>';
   }
+  /* One source for both tabs; the id is "<kind>:<index>" because the dialog
+     re-renders its whole list on every tick and the row object is only ever
+     found through STATE. */
+  if(window.AmrSugChip) AmrSugChip.mount('rmxsug', function(id){
+    var p=String(id||'').split(':'), M=SUGMETA[p[0]];
+    if(!M || !STATE.sug) return null;
+    return (STATE.sug[M.list]||[])[+p[1]] || null;
+  });
   function sugTick(kind,i,r){
     if(r._pick===undefined) r._pick = (r.band==='High');   // pre-select the confident ones
     return '<input type="checkbox" data-sugtick="'+kind+'" data-i="'+i+'"'+(r._pick?' checked':'')+'>';
@@ -15461,7 +15756,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
               +'<td>'+sugSel(kind,i,'strength',r.strength,o.strength)+'</td>'
               +'<td>'+sugSel(kind,i,'cls',r.cls,o.cls)+'</td>'
               +'<td>'+sugSel(kind,i,'app',r.app,o.app)+'</td>'
-              +'<td>'+sugChip(r)+'</td></tr>';
+              +'<td>'+sugChip(kind,i,r)+'</td></tr>';
           });
         } else {
           head='<th class="tick"></th><th>Material (mat_descr)</th><th>Catergory</th><th>mat_prod_hier_3</th><th>Confidence</th>';
@@ -15470,7 +15765,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
               +'<td class="val">'+esc(r.value)+'</td>'
               +'<td>'+sugSel(kind,i,'category',r.category,o.category,[r.guess])+'</td>'
               +'<td>'+sugSel(kind,i,'hier3',r.hier3,o.hier3,r.hier3All)+'</td>'
-              +'<td>'+sugChip(r)+'</td></tr>';
+              +'<td>'+sugChip(kind,i,r)+'</td></tr>';
           });
         }
         inner='<div class="tbl-scroll"><table class="sugtbl"><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
@@ -23040,6 +23335,35 @@ AMR.page('overview', {
       return '<div class="f"><span class="fl">'+esc(label)+'</span>'+html+'</div>';
     }
 
+    /* ---- HOW SURE THE SERVER WAS, ON THE ROW ITSELF ----
+       This form has always shown the server's ANSWER — a Category, a Strength,
+       a Product class — and never how sure it was of it. The Ready-Mix page's
+       dialog shows exactly that, on rows from exactly this call, so the chip
+       and its hover card are shared rather than re-invented: AmrSugChip owns
+       the wording and AmrHover paints the card at <body>, which is what stops
+       .lk-body's 340px scroll box clipping it.
+
+       Both matter more here than they do in the dialog. This form opens on the
+       CUBE's miss list — 1,116 mixes on a bad day, every one of them proposed
+       and none of them pre-ticked away — so "which of these do I actually need
+       to read" is the whole question, and a Review row that looks identical to
+       a Confident one is how a defaulted Strength gets saved into PRODUCT
+       MASTER unread. The chip answers it at a glance and the card says why. */
+    function lkChip(secId, i, sug){
+      if(!sug || !sug.band || !window.AmrSugChip) return '';
+      return AmrSugChip.chip('ovlk', secId+'#'+i, sug);
+    }
+    function lkLow(sug){ return (sug && sug.band==='Low') ? ' low' : ''; }
+    /* One source for every section: the id carries which. Registered once, and
+       asked for a card only when a chip is hovered — the same reason lkSelect
+       leaves its options out until the select is touched. */
+    if(window.AmrSugChip) AmrSugChip.mount('ovlk', function(id){
+      var p=String(id||'').split('#'), st=LK[p[0]];
+      if(!st || !st.rows) return null;
+      var r=st.rows[+p[1]];
+      return (r && r.sug) || null;
+    });
+
     /* ---- the option lists, ONCE, and put into a select when it is touched ----
        This is what makes the cap above unnecessary. A vocabulary rendered into
        every row is the same twenty strings a thousand times over, and it is the
@@ -23117,10 +23441,11 @@ AMR.page('overview', {
         body='<div class="lk-body">'+rows.map(function(r,i){
           if(r.skip) return '';
           var p=r.sug||{};
-          return '<div class="lk-row" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
+          return '<div class="lk-row'+lkLow(p)+'" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
             +lkField('Category', lkSelect('category', p.category||'', OE.category, 'v_cat'))
             /* no shared key: hier3All is this row's own handful of hierarchies */
             +lkField('mat_prod_hier_3', lkSelect('hier3', p.hier3||'', (p.hier3All&&p.hier3All.length)?p.hier3All:OE.hier3))
+            +lkChip(secId,i,p)
             +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
         }).join('')+'</div>';
       }else{
@@ -23128,12 +23453,13 @@ AMR.page('overview', {
         body='<div class="lk-body">'+rows.map(function(r,i){
           if(r.skip) return '';
           var p=r.sug||{};
-          return '<div class="lk-row" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
+          return '<div class="lk-row'+lkLow(p)+'" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
             +lkField('Code','<input type="text" data-f="code" value="'+esc(p.code||'')+'">')
             +lkField('New description','<input type="text" data-f="newD" value="'+esc(p.newD||'')+'">')
             +lkField('Strength', lkSelect('strength', p.strength||'Others', O.strength, 'v_strength'))
             +lkField('Product class', lkSelect('cls', p.cls||'Others', O.cls||O.category, 'v_cls'))
             +lkField('Application', lkSelect('app', p.app||'Others', O.app, 'v_app'))
+            +lkChip(secId,i,p)
             +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
         }).join('')+'</div>';
       }

@@ -11741,6 +11741,34 @@ function sgModelCached_(force){
   return m;
 }
 
+/* =================== how sure, as a number ===================
+ * THE BAND IS THE VERDICT; THE SCORE IS THE SAME VERDICT SPREAD OUT.
+ * A reader who has 1,116 proposed rows in front of them cannot act on three
+ * buckets — "Check" covers a row that nearly made High and one that nearly
+ * fell to Low, and those are not the same row. The score separates them.
+ *
+ * Each band owns its own slice of 0-100 and nothing may leave its slice, so
+ * the number can NEVER contradict the chip printed beside it: a Review row
+ * cannot score 81 and a Confident one cannot score 54. Inside the slice the
+ * position is the evidence's own strength — the nearest row's similarity for
+ * a matched suggestion, the parts that were readable for a parsed one.
+ *
+ * The score is presentation, not a threshold: nothing branches on it, and the
+ * bands (which were validated against the tabs) are untouched. */
+function sgBandSpan_(band){
+  return band === 'High' ? [80, 100] : (band === 'Med' ? [55, 79] : [15, 54]);
+}
+/* t is 0..1 — where inside the band's own slice this row sits. */
+function sgScoreIn_(band, t){
+  var sp = sgBandSpan_(band);
+  return Math.round(sp[0] + (sp[1] - sp[0]) * Math.max(0, Math.min(1, t)));
+}
+/* A score built by deductions, held inside the band's slice. */
+function sgScoreClamp_(band, v){
+  var sp = sgBandSpan_(band);
+  return Math.max(sp[0], Math.min(sp[1], Math.round(v)));
+}
+
 /* Jaccard between the query token set and one candidate's token array. */
 function sgJaccard_(qMap, qLen, arr){
   var inter = 0;
@@ -11755,7 +11783,9 @@ function sgJaccard_(qMap, qLen, arr){
  * pool if nothing rarer produced candidates. */
 function sgClassify_(M, name, fallback){
   var q = sgTokens_(name);
-  if (!q.length) return { value: fallback, band: 'Low', sim: 0, why: [] };
+  if (!q.length) return { value: fallback, band: 'Low', sim: 0, why: [], score: sgScoreIn_('Low', 0),
+    reasons: ['there is no word in this description to match on',
+              'left as \u201c' + fallback + '\u201d rather than guessing'] };
   var qMap = {}; for (var a = 0; a < q.length; a++) qMap[q[a]] = 1;
 
   var byRarity = q.slice().sort(function(x, y){
@@ -11777,7 +11807,9 @@ function sgClassify_(M, name, fallback){
     var s = sgJaccard_(qMap, q.length, r.t);
     if (s > 0) best.push({ s: s, c: r.c, d: r.d });
   }
-  if (!best.length) return { value: fallback, band: 'Low', sim: 0, why: [] };
+  if (!best.length) return { value: fallback, band: 'Low', sim: 0, why: [], score: sgScoreIn_('Low', 0),
+    reasons: ['no row already in this tab shares a single word with it',
+              'left as \u201c' + fallback + '\u201d rather than guessing'] };
   best.sort(function(x, y){ return y.s - x.s; });
   var top = best.slice(0, 3);
 
@@ -11789,6 +11821,33 @@ function sgClassify_(M, name, fallback){
   else if (top[0].s >= 0.70) band = 'High';
   else band = 'Low';
 
+  /* HOW MANY OF THE CLOSEST ROWS AGREE, counted the way the bands count it —
+     down from the top until one disagrees. Counting every match in the top 3
+     instead would let a row read "2 of 3 agree" while its chip said Review,
+     because the bands only ever look at CONSECUTIVE neighbours. */
+  var agree = 1;
+  for (var t3 = 1; t3 < top.length; t3++){ if (top[t3].c === top[0].c) agree++; else break; }
+
+  var pct = Math.round(top[0].s * 100);
+  var reasons = [];
+  reasons.push(
+    agree >= 3   ? ('the three closest rows all say \u201c' + top[0].c + '\u201d')
+  : agree === 2  ? ('the two closest rows both say \u201c' + top[0].c + '\u201d')
+  : top.length === 1
+                 ? ('only one row in this tab is anything like it, and it says \u201c' + top[0].c + '\u201d')
+                 : ('the closest row says \u201c' + top[0].c + '\u201d, the next one disagrees'));
+  reasons.push('closest row is ' + pct + '% alike \u2014 ' + q.length +
+               ' word' + (q.length === 1 ? '' : 's') + ' compared');
+  if (band === 'Low')
+    reasons.push('too weak to call, so it is left as \u201c' + fallback +
+                 '\u201d \u2014 the closest match is offered in the list');
+
+  /* Position inside the band is the top neighbour's similarity, measured
+     across the range that band can actually be reached with. */
+  var tPos = (band === 'High') ? (top[0].s - 0.50) / 0.50
+           : (band === 'Med')  ? (top[0].s - 0.34) / 0.36
+                               : (top[0].s / 0.70);
+
   /* A Low row defaults to the catch-all rather than guessing — but the closest
      match still travels with it, so the UI can offer it as a one-click option.
      (Measured: the raw guess is right 77.5% of the time on Low rows, the
@@ -11798,6 +11857,8 @@ function sgClassify_(M, name, fallback){
     guess: top[0].c,
     band:  band,
     sim:   Math.round(top[0].s * 100) / 100,
+    score: sgScoreIn_(band, tPos),
+    reasons: reasons,
     why:   top.map(function(x){ return { d: x.d, c: x.c, s: Math.round(x.s * 100) / 100 }; })
   };
 }
@@ -11901,9 +11962,44 @@ function sgProductRow_(productMix){
   }
   if (br.eco && band === 'High') band = 'Med';
 
+  /* WHY, ONE LINE PER DECISION, AND ALWAYS ALL FOUR.
+     There is no nearest-neighbour evidence to show here — a PRODUCT MASTER row
+     is PARSED, not matched — so the honest answer to "why is this Confident?"
+     is the four reads that produced it: the key, the brand, the strength and
+     the class. They are stated whether they succeeded or not, because "no
+     retired brand in the text" is the answer to the question just as much as
+     a conversion is, and a hover that says nothing on a clean row is the bug
+     this replaces: `why` was hard-coded to [] for every product row and `note`
+     is empty on exactly the rows that parsed cleanly, so the tooltip on a
+     Confident row was the empty string. */
+  var reasons = [];
+  reasons.push(sp.code
+    ? ('code \u201c' + code + '\u201d split off the front \u2014 that is the column the tab is keyed on')
+    : 'no \u201c - \u201d separator, so the whole value is used as the code');
+  reasons.push(br.eco
+    ? '\u201cECO WEATHERMIX\u201d compound \u2014 read as ECOTECT + TEMP; check which brand leads'
+    : (br.oldD ? ('retired brand renamed \u2014 \u201c' + br.newD + '\u201d')
+               : 'no retired brand in the text, so the description is used as written'));
+  reasons.push(st.how === 'explicit'
+    ? ('a number against an MPa marker \u2192 ' + st.band +
+       (st.typo ? ' \u2014 but it is spelled \u201cMP\u201d/\u201cMA\u201d, so fix the text' : ''))
+    : 'no number against an MPa marker \u2014 strength stays Others (a bare number in a name does not count)');
+  reasons.push(cls === 'Others'
+    ? 'no -TECT brand token \u2014 class Others, and the application follows it'
+    : ('\u201c' + cls + '\u201d is the first -TECT token \u2014 application is class + strength = ' + app));
+
+  /* Deductions off a clean parse, held inside the band's slice by
+     sgScoreClamp_ so the number can never disagree with the chip. */
+  var ded = 0;
+  if (st.how !== 'explicit') ded += 52;      // the strength was defaulted
+  if (st.typo)               ded += 28;      // it was read, but off a misspelling
+  if (br.eco)                ded += 34;      // two brands in one name
+  if (!sp.code)              ded += 6;       // the key is the whole string
+
   return { code: code, oldD: br.oldD, newD: br.newD,
            strength: st.band, cls: cls, app: app,
-           band: band, note: notes.join('; ') };
+           band: band, note: notes.join('; '),
+           score: sgScoreClamp_(band, 100 - ded), reasons: reasons };
 }
 
 /* The caller's own list of Product Mix values, classified.
@@ -11931,7 +12027,8 @@ function sgFromValues_(values, M){
     product.push({ value: v, rows: 0, markets: [],
                    code: s.code, oldD: s.oldD, newD: s.newD,
                    strength: s.strength, cls: s.cls, app: s.app,
-                   band: s.band, note: s.note, why: [] });
+                   band: s.band, note: s.note, why: [],
+                   score: s.score, reasons: s.reasons });
   }
   return { ok: true, product: product, extras: [],
            options: M.options, asked: asked, already: already,
@@ -11968,6 +12065,7 @@ function sgExtrasFromValues_(values, M){
     out.push({ value: v, rows: 0, markets: [],
                category: c.value, guess: c.guess, hier3: '', hier3All: [],
                band: c.band, sim: c.sim, why: c.why,
+               score: c.score, reasons: c.reasons,
                note: c.band === 'Low' ? 'no close match \u2014 defaulted' : '' });
   }
   return { ok: true, product: [], extras: out,
@@ -12007,7 +12105,8 @@ function getSuggestions(opts){
     return { value: r.value, rows: r.rows, markets: r.markets,
              code: s.code, oldD: s.oldD, newD: s.newD,
              strength: s.strength, cls: s.cls, app: s.app,
-             band: s.band, note: s.note, why: [] };
+             band: s.band, note: s.note, why: [],
+             score: s.score, reasons: s.reasons };
   });
 
   var extras = (un.extras || []).map(function(r){
@@ -12016,6 +12115,7 @@ function getSuggestions(opts){
     return { value: r.value, rows: r.rows, markets: r.markets,
              category: c.value, guess: c.guess, hier3: h3, hier3All: r.hier3 || [],
              band: c.band, sim: c.sim, why: c.why,
+             score: c.score, reasons: c.reasons,
              note: c.band === 'Low' ? 'no close match \u2014 defaulted' : '' };
   });
 
