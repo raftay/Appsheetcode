@@ -547,6 +547,16 @@ tfoot td:first-child{text-align:left}
 .amr-load-mark.done{border:0; background:var(--pos); animation:none; position:relative}
 .amr-load-mark.done::after{content:"\2713"; position:absolute; inset:0; color:#fff;
   font:700 19px/34px Inter; text-align:center}
+/* A THIRD SETTLED STATE. `done` is finished, `bad` is broken, and `warn` is
+   neither: the page works and something about it is not current — today, a
+   closed-year book that has been edited since the parked copy was read. It has
+   to look settled (no spinner: nothing is running) and it has to stay up, which
+   is the whole point of it — see histState()'s stale branch. */
+.amr-load-mark.warn{border:0; background:#B45309; animation:none; position:relative}
+.amr-load-mark.warn::after{content:"!"; position:absolute; inset:0; color:#fff;
+  font:700 18px/34px Inter; text-align:center}
+.amr-load.warn .amr-load-text{color:#B45309}
+.amr-load.corner .amr-load-mark.warn::after{font:700 12px/16px Inter}
 .amr-load-mark.bad{border:0; background:var(--neg); animation:none; position:relative}
 .amr-load-mark.bad::after{content:"!"; position:absolute; inset:0; color:#fff;
   font:700 20px/34px Inter; text-align:center}
@@ -2930,7 +2940,23 @@ window.AMR = (function(){
         var m = String(s.img || '').match(/[-\w]{25,}/);
         return m ? m[0] : '';
       });
-      if (LIVE){
+
+      /* THE SCREENSHOTS ARE FETCHED WHEN THE GUIDE IS OPENED, NOT WHEN THE PAGE
+         IS. This ran on mount - which is on every open of every page that has a
+         guide, for a panel that starts CLOSED and that most opens never touch.
+         It is not a cheap call either: getGuideImages reads each screenshot out
+         of Drive and base64s it, and it was measured at 6.2 and 6.5 seconds on
+         two consecutive opens on 26 Aug 2026. Apps Script runs one user's calls
+         END TO END (§D), so those six seconds were not happening alongside the
+         opening batch - they were happening IN FRONT OF IT, on a page that had
+         not drawn a number yet, to fill in pictures behind a closed panel.
+         Once per page load, still: FETCHED is latched before the call goes out,
+         so opening and closing the guide twice does not ask twice. */
+      var FETCHED = false;
+      function fetchImages(){
+        if (FETCHED) return;
+        FETCHED = true;
+        if (!LIVE){ ids.forEach(function(_, i){ slot(i, ''); }); return; }
         google.script.run
           .withSuccessHandler(function(uris){ (uris || []).forEach(function(u, i){ slot(i, u); }); })
           .withFailureHandler(function(e){
@@ -2938,11 +2964,12 @@ window.AMR = (function(){
             ids.forEach(function(_, i){ slot(i, ''); });
           })
           .getGuideImages(ids);
-      } else {
-        ids.forEach(function(_, i){ slot(i, ''); });
       }
 
-      fab.addEventListener('click', function(){ aside.classList.toggle('open'); });
+      fab.addEventListener('click', function(){
+        aside.classList.toggle('open');
+        if (aside.classList.contains('open')) fetchImages();
+      });
       aside.querySelector('#qgHide').addEventListener('click', function(){ aside.classList.remove('open'); });
       document.addEventListener('click', function(e){
         if (!aside.classList.contains('open')) return;
@@ -6879,11 +6906,17 @@ window.AmrProgress = (function(){
        o:{ now:true }  the page-boot screen (AmrBoot) - the page is empty behind
                        it, so waiting would just show a blank
        cls:'bad'       a failure, which must never be swallowed by the timer
+       cls:'warn'      a standing notice - nothing is running, so there is no
+                       stutter to protect against and waiting GRACE ms only
+                       delays it. It is also the one class that can be set on a
+                       page that has finished booting, where the timer has long
+                       since disarmed and a render that is declined never comes
+                       back.
      ------------------------------------------------------------------- */
   var GRACE = 400, timer = null, armed = false;
 
   function anyNow(){
-    for (var k in jobs) if (jobs[k].now || jobs[k].cls === 'bad') return true;
+    for (var k in jobs) if (jobs[k].now || jobs[k].cls === 'bad' || jobs[k].cls === 'warn') return true;
     return false;
   }
   function schedule(){
@@ -6984,7 +7017,7 @@ window.AmrProgress = (function(){
   }
 
   var api = {
-    /* o: { text, pct (null|0-100), cls ('', 'bad', 'done'), note, order } */
+    /* o: { text, pct (null|0-100), cls ('', 'bad', 'warn', 'done'), note, order } */
     set: function(key, o){
       o = o || {};
       var prev = jobs[key];
@@ -21234,24 +21267,55 @@ AMR.page('overview', {
       ['agg','rmx'].forEach(function(l){
         var m=C0 && C0.manifest(l); if(!m) return;
         var list=(m.eras && m.eras.length) ? m.eras
-               : [{ id:'h1', label:'history', linked:true, built:!!m.history }];
+               : [{ id:'h1', label:'history', linked:true, built:!!m.history, first:!m.history }];
         list.forEach(function(e){
           var g=byId[e.id];
           if(!g){ g=byId[e.id]={ id:e.id, label:e.label||e.id, lines:{} }; out.push(g); }
-          g.lines[l]={ linked:!!e.linked, built:!!e.built };
+          g.lines[l]={ linked:!!e.linked, built:!!e.built, stale:!!e.stale, first:!!e.first,
+                       why:e.why||'' };
         });
       });
       return out;
     }
-    /* Books with a sheet link and no built file, newest first. A book drops off
-       this list the moment it is attempted, so a read that fails cannot loop. */
+    /* Books this browser will read FOR ITSELF, newest first, and it is a much
+       shorter list than it was.
+       ------------------------------------------------------------------------
+       IT IS `first` NOW AND NOT `!built`, WHICH IS THE WHOLE OF THE MORNING
+       FIX. A parked file written against an older OVCUBE_SHAPE_VER_ is read as
+       absent on purpose (never misread), so bumping that version used to make
+       all four books look never-built at once — and the first person to open
+       the Overview after a deploy read all four, thirty seconds each, in the
+       foreground, with the cube being thrown away and rebuilt between them
+       because every read moves ovcHistTok_. Five minutes of loading screen for
+       whoever got there first, and nothing wrong anywhere.
+       The server now says which of the two it is (§8 ovcHistWhy_). `first` is a
+       book NOBODY HAS EVER READ, which happens on the day somebody links one
+       and is therefore the one case where a person is by definition sitting
+       there waiting for it. Everything else — the shape moved, the workbook
+       changed — is stale, and stale belongs to the warm-cache trigger (§11) and
+       to the Reload button, not to a page load.
+       A book still drops off this list the moment it is attempted, so a read
+       that fails cannot loop. */
     function histPending(){
       var out=[];
       histEras().forEach(function(e){
         ['agg','rmx'].forEach(function(l){
           var st=e.lines[l];
-          if(st && st.linked && !st.built && !HIST.done[e.id+'|'+l])
+          if(st && st.linked && st.first && !HIST.done[e.id+'|'+l])
             out.push({ era:e.id, label:e.label, line:l });
+        });
+      });
+      return out;
+    }
+    /* Books that ARE built and no longer match their workbook. Nothing here is
+       read automatically — this is what the pill offers Reload for, and what
+       the hourly warm-cache trigger clears on its own overnight. */
+    function histStale(){
+      var out=[];
+      histEras().forEach(function(e){
+        ['agg','rmx'].forEach(function(l){
+          var st=e.lines[l];
+          if(st && st.linked && st.built && st.stale) out.push({ era:e.id, label:e.label, line:l });
         });
       });
       return out;
@@ -21300,6 +21364,23 @@ AMR.page('overview', {
         long:'<b>Reading the '+esc(pend[0].label)+' book\u2026</b><br>'
             +esc(span||'The live sheet')+' is in and usable. Earlier months are being added in '
             +'the background and the slider will grow when they land.' };
+      /* A BOOK THAT HAS CHANGED IS SAID, NOT SILENTLY ACTED ON. Reading it
+         would move ovcHistTok_ and throw away the cube this page is running on,
+         so the page never does it by itself — the hourly warm-cache trigger
+         (§11) clears it overnight, and until then this is here so a stale book
+         is a visible thing with a button rather than figures quietly built off
+         a superseded export. */
+      var stale=histStale();
+      if(stale.length){
+        var names={}; stale.forEach(function(x){ names[x.label]=1; });
+        var which=Object.keys(names).join(', ');
+        return { cls:'warn', short:'History book updated \u00b7 '+esc(which),
+          long:'<b>A closed-year book has changed since it was last read.</b><br>'
+              +esc(which)+' has been edited, so the months it covers are still being '
+              +'shown from the copy taken before that edit. This is refreshed automatically '
+              +'within the hour; press <b>Reload history</b> to do it now \u2014 it re-reads '
+              +'the books, which takes about half a minute each and rebuilds the month cube.' };
+      }
       return { cls:'done', hide:true, short:'History loaded',
         long:'<b>History loaded.</b><br>'+esc(span)+' is available on both lines. '
             +'Reload only if one of the history books changes.' };
@@ -21347,14 +21428,20 @@ AMR.page('overview', {
         return;
       }
       if(s.cls!=='done') PILL_DONE=false;   // a reload starts the cycle again
-      if(s.cls === 'bad'){
-        /* the server path still works, so this is not a failure - but the boot step
-           has to be answered either way, or the screen never lifts */
+      /* SETTLED, EITHER WAY, AND BOOT HAS TO BE TOLD. `bad` is a fault the
+         server path works around; `warn` is a book that has changed and will be
+         re-read by the hourly trigger. Neither is going to move again on its
+         own, so both have to answer the boot step or the opening screen waits
+         for ever on a job that has finished. That was the exact shape of the
+         hang §D's call guard was written for, and it is worth not re-creating
+         it one class at a time. */
+      var settled = (s.cls === 'bad' || s.cls === 'warn');
+      if(settled){
         if(window.AmrBoot) AmrBoot.done('month history');
       }
       /* During boot this rides the ONE screen as a percentage rather than becoming
          a screen of its own. */
-      if(window.AmrBoot && !AmrBoot.finished() && s.cls !== 'bad'){
+      if(window.AmrBoot && !AmrBoot.finished() && !settled){
         AmrProgress.set('boot', { pct:(s.pct!=null?s.pct:null), order:0, now:true,
                                   note:s.short || 'Month history' });
         return;
@@ -21382,7 +21469,7 @@ AMR.page('overview', {
         html: function(job){
           if(job.key!=='cube') return '';
           var s=histState();
-          return ((s.cls==='bad') ? (s.long||'') : '')
+          return ((s.cls==='bad' || s.cls==='warn') ? (s.long||'') : '')
             +'<div class="acts">'
             +'<button type="button" data-act="settings">\u2699 Data sheet</button>'
             +'<button type="button" data-act="build"'+(HIST.busy?' disabled':'')+'>Reload history</button>'
