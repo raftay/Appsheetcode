@@ -2229,6 +2229,15 @@ function getDataVersions(pages) {
  * Everything it does not reach is marked `skipped`, which is not an error: the
  * browser re-issues those on their own — see AMR.batch in app.html — and each
  * then gets a full ceiling of its own, exactly as before the batch existed.
+ *
+ * AND LOOKING BACKWARDS IS ONLY HALF OF IT, because a call that has STARTED is
+ * no longer the dispatcher's to bound — it can spend the whole ceiling and the
+ * loop above will not hear about it until it returns. One thing in this file
+ * does exactly that on purpose: the cube's single-flight wait sleeps for up to
+ * two minutes rather than build a second copy of what somebody else is already
+ * building. So the batch publishes its deadline in APP_BATCH_UNTIL_ below and
+ * that wait trims itself to fit; nothing else reads it, and outside a batch it
+ * is 0.
  * ========================================================================== */
 /* How long the dispatcher may keep starting new calls. §1's tunable list points
    here. Four minutes leaves a slow last call most of two before the ceiling. */
@@ -2236,6 +2245,31 @@ var APP_BATCH_BUDGET_MS = 240000;
 /* The platform kills an execution at six minutes. Five is where this stops
    starting work that its own evidence says would run into that. */
 var APP_BATCH_CEILING_MS = 300000;
+
+/* WHEN THIS EXECUTION'S BATCH RUNS OUT OF ROOM — a timestamp, or 0 when this
+   execution is not a batch at all.
+   ---------------------------------------------------------------------------
+   The two numbers above bound the DISPATCHER, which is only half the promise.
+   The other half is that nothing a dispatched call does may quietly spend the
+   whole ceiling, and there is exactly one thing in this file that can: the
+   cube's single-flight wait (§8 ovcBuild_), which SLEEPS for up to two minutes
+   when another execution is already building the line. On its own that is the
+   right trade — waiting costs less than a second copy of the same build. Inside
+   a batch it is two minutes of the batch's five spent asleep, after which the
+   remaining slots are `skipped` and re-issued as separate calls, so a wait that
+   was supposed to SAVE an execution costs one instead. Two lines waiting in one
+   CUBE_getManifest is four minutes of it.
+
+   So the deadline is published rather than passed: ovcBuild_ is three call
+   layers below the dispatcher and threading a budget through CUBE_getManifest
+   and CUBE_getChunks would put a batch-shaped argument on two client-callable
+   functions that have no business knowing what a batch is. A caller that has
+   no opinion reads 0 and behaves exactly as it did before this existed. */
+var APP_BATCH_UNTIL_ = 0;
+/* What ovcBuild_ leaves itself when it decides how long it may wait: a cold
+   manifest was measured at 34 s and the worst observed cube call at 114 s, so
+   this is "enough to build it here if the wait does not pay off". */
+var APP_BATCH_BUILD_RESERVE_MS = 120000;
 
 /* EVERY FUNCTION THE BROWSER MAY REACH THROUGH APP_batch, and no others.
    Reads only — see the banner above. Adding a name here makes it callable by
@@ -2268,6 +2302,20 @@ function APP_batch(req) {
   var calls = (req && req.calls) || [];
   if (!calls.length) return { ok: true, results: [], ms: 0 };
 
+  /* SAY WHEN THIS EXECUTION RUNS OUT, so the one thing below the dispatcher
+     that can sleep knows how much of the ceiling is its to spend. Cleared in
+     the finally: a global left set would tell the NEXT call in this execution
+     — a warm trigger firing, an editor run — that it is inside a batch whose
+     deadline is already in the past. */
+  APP_BATCH_UNTIL_ = t0 + APP_BATCH_CEILING_MS;
+  try {
+    return APP_batchRun_(calls, t0);
+  } finally {
+    APP_BATCH_UNTIL_ = 0;
+  }
+}
+
+function APP_batchRun_(calls, t0) {
   var results = [], ran = 0, failed = 0, skipped = 0, worst = 0;
   for (var i = 0; i < calls.length; i++) {
     var c = calls[i] || {};
@@ -3061,8 +3109,9 @@ function APP_verifyPermissions() {
         var tok = ScriptApp.getOAuthToken();
 
         /* THE SIX TRIGGERS, WHICH NOTHING ELSE IN THE PROJECT CAN SEE. Every
-           one is added BY HAND (§11) — the single newTrigger in the codebase
-           arms §5's one-shot sync retry and nothing else — so a trigger that
+           one is added BY HAND (§11) — the two newTrigger call sites in the
+           codebase arm one-shots on their own handlers, §5's sync retry and
+           §11's APP_warmNow, and neither is one of these — so a trigger that
            was never added, or was deleted, leaves no trace anywhere: that
            export just stops syncing, the two mail watches just never arrive,
            and the warm-cache timer's absence is not visible at all — it is a
@@ -5728,10 +5777,12 @@ var QLIKSYNC = (function () {
    * genuinely broken export is not fixed by asking again and the mail has
    * already gone out either way.
    *
-   * THIS IS THE ONLY ScriptApp.newTrigger IN THE CODEBASE, and §11's banner —
-   * which said there were none — says so now. It is a one-shot: it arms itself
-   * here and deletes itself when it fires, and arming it clears any spent one
-   * first, so these cannot accumulate against the per-script trigger limit.
+   * THIS IS ONE OF THE TWO ScriptApp.newTrigger CALL SITES IN THE CODEBASE —
+   * §11's banner, which said there were none, names both — and the other one
+   * (APP_warmSoon_) is this same shape for the same reason. It is a one-shot:
+   * it arms itself here and deletes itself when it fires, and arming it clears
+   * any spent one first, so these cannot accumulate against the per-script
+   * trigger limit.
    * ================================================================== */
   var QLIK_RETRY_KEY = 'QLIK_RETRY', QLIK_RETRY_MAX = 1, QLIK_RETRY_MINS = 5;
 
@@ -8386,6 +8437,11 @@ function applyRows(payload){
                   { error: String(e), fallback: String(e2) });
         }
       }
+      /* AND SOMETHING HAS TO REBUILD THEM — see §11 APP_warmSoon_. A plant
+         typed in here re-labels every closed year too (§8 ovcLookupsAgg_ opens
+         the LIVE workbook), so this write is a cube rebuild whether or not
+         anybody asks for one. */
+      APP_warmSoon_('pv lookup rows');
     }
 
     return { ok: true, added: out.length, skipped: skipped.length, skippedValues: skipped,
@@ -12067,6 +12123,11 @@ function applyRows(payload){
       t.sh.getRange(at, 1, out.length, width).setValues(out);
       SpreadsheetApp.flush();
       RMX_NS.bumpGeneration();          // every cached lookup/data key is now unreachable
+      /* AND SOMETHING HAS TO REBUILD THEM. Left alone that is whoever opens a
+         page next, in the foreground — and after an approval that is this same
+         person, thirty seconds from now, looking for what the row changed. See
+         §11 APP_warmSoon_ for the measurement. */
+      APP_warmSoon_('rmx lookup rows: ' + target);
     }
     return { ok: true, added: out.length, skipped: skipped.length, skippedValues: skipped };
 
@@ -14921,6 +14982,30 @@ var OVCUBE_LEAD_TTL_S = 300;     // a marker outlives any build and expires on i
 var OVCUBE_WAIT_MS_   = 120000;
 var OVCUBE_POLL_MS_   = 2000;
 
+/* HOW LONG THIS CALLER MAY WAIT, WHICH IS NOT ALWAYS THE NUMBER ABOVE.
+   ---------------------------------------------------------------------------
+   The cap is set beyond a build because a wait that expires is the worst
+   outcome there is — and that reasoning holds for a call that owns its whole
+   six minutes. Inside APP_batch it does not: the batch has ONE ceiling for
+   every slot in it, so two minutes asleep here is two minutes the slots behind
+   this one do not get, and they come back `skipped` and are re-issued as
+   separate executions. A wait meant to save an execution then costs one.
+
+   So a batch publishes its deadline (§3 APP_BATCH_UNTIL_) and this trims the
+   wait to fit inside it, keeping back enough to build the line here if the wait
+   does not pay off. Outside a batch APP_BATCH_UNTIL_ is 0 and nothing changes.
+   Below one poll interval there is no wait worth starting, so it returns 0 and
+   the caller builds — which is what it would have done at the end of a wait it
+   never had room for. */
+function ovcWaitBudget_(){
+  var cap = OVCUBE_WAIT_MS_;
+  if (APP_BATCH_UNTIL_){
+    var room = APP_BATCH_UNTIL_ - Date.now() - APP_BATCH_BUILD_RESERVE_MS;
+    if (room < cap) cap = room;
+  }
+  return (cap < OVCUBE_POLL_MS_) ? 0 : cap;
+}
+
 function ovcBuild_(line){
   var gen = ovcGen_(), key = 'ovc|' + gen + '|' + line;
   var cached = APP_cacheGet_(key + '|man');
@@ -14938,9 +15023,14 @@ function ovcBuild_(line){
 
   if (c && !leading) {
     /* Somebody else is building this line. Wait for their answer rather than
-       starting a second copy of the same work. */
-    var t0 = Date.now(), waited = 0;
-    while (Date.now() - t0 < OVCUBE_WAIT_MS_) {
+       starting a second copy of the same work — for as long as this caller can
+       actually afford to, which inside a batch is less than the full cap. */
+    var t0 = Date.now(), waited = 0, budget = ovcWaitBudget_();
+    if (!budget) {
+      APP_log('debug', 'CUBE.build', 'another execution is building it and there is no room to wait — building it here',
+              { line: line, until: APP_BATCH_UNTIL_ });
+    }
+    while (Date.now() - t0 < budget) {
       Utilities.sleep(OVCUBE_POLL_MS_);
       waited = Date.now() - t0;
       cached = APP_cacheGet_(key + '|man');
@@ -14964,8 +15054,11 @@ function ovcBuild_(line){
         break;
       }
     }
-    APP_log('warn', 'CUBE.build', 'waited on another build and it did not land — building it here',
-            { line: line, waitedMs: waited });
+    /* Only when a wait was actually SPENT. With no budget the line above has
+       already said so at debug, and warning that a wait of zero did not land
+       would report a fault where there was only a full batch. */
+    if (budget) APP_log('warn', 'CUBE.build', 'waited on another build and it did not land — building it here',
+                        { line: line, waitedMs: waited, budgetMs: budget });
     try { c.put(mk, '1', OVCUBE_LEAD_TTL_S); } catch (e) {}
   }
 
@@ -19547,10 +19640,14 @@ var IRMAIL = (function () {
  *
  * THIS IS WHY THE SECTION EXISTS. ALL SIX of the timers above are configured
  * by hand in the Apps Script UI, so nothing in the repo points at any of them.
- * (There is exactly one ScriptApp.newTrigger in the codebase and it is not one
- * of these: §5 arms a ONE-SHOT retry five minutes out when an export fails its
- * checks, pointed at qlikSyncRetry below, which deletes it when it fires. Do
- * not add a trigger for that one by hand.) Ctrl+F "§11" is the substitute for
+ * (There are exactly TWO ScriptApp.newTrigger call sites in the codebase and
+ * neither is one of these. Both arm a ONE-SHOT pointed at its own handler,
+ * which deletes it when it fires: §5's qlikSyncRetry, five minutes out when an
+ * export fails its checks, and APP_warmNow, a minute out when a lookup row is
+ * written — see APP_warmSoon_ beside APP_warmCaches. Do not add a trigger for
+ * either of those by hand, and in particular do not point one at APP_warmNow:
+ * it deletes every trigger on its own handler as it fires, so a timer there
+ * would remove itself on its first firing.) Ctrl+F "§11" is the substitute for
  * that missing reference, and APP_verifyPermissions (§4) is the substitute for
  * looking: its ScriptApp row names all six and says which of them the account
  * running it has actually armed.
@@ -20286,6 +20383,107 @@ function APP_warmCaches(){
           deferred ? 'warmed what fitted; the rest goes to the next firing' : 'warmed',
           { ms: out.ms, booksRead: moved, deferred: deferred, gen: out.gen });
   return out;
+}
+
+
+/* ==========================================================================
+ * THE SAME WARM, ON THE ONE OCCASION AN HOUR IS TOO LONG TO WAIT.
+ * --------------------------------------------------------------------------
+ * THE CASE THIS EXISTS FOR, WHICH IS THE ONE THE TIMER ABOVE CANNOT COVER.
+ * A lookup row is a WRITE TO A SOURCE WORKBOOK. Drive moves that workbook's
+ * modified time, APP_getGen_ is that modified time, and every cached answer in
+ * this project is keyed on it — so approving three mixes in the Ready-Mix
+ * suggester makes the Ready-Mix bundle, both Overview payloads, both cube
+ * manifests and every cube chunk unreachable in the same instant, on the
+ * server and in every browser. That is correct: the mapping the row adds
+ * re-labels every year, closed ones included (§8), and an answer computed
+ * before it is now wrong.
+ *
+ * WHAT WAS WRONG WAS WHO PAID FOR IT. Nothing rebuilt any of that except the
+ * next person to open a page, in the foreground, under a loading screen — and
+ * the next person is almost always THE PERSON WHO JUST APPROVED THE ROW, who
+ * approves it precisely so they can go and look at what it changed. Measured
+ * on 26 Aug 2026: applyRmxLookupRows at 14:08:34, and the Executive Overview
+ * opened at 14:09:59 spent 59.7 s in one APP_batch, 79 s in the next, and hit
+ * AmrBoot's 150-second watchdog with a cube that was still building. The page
+ * had said "the counts here update when it finishes"; what it did was sit
+ * blank until somebody reloaded it, which only added to the queue.
+ *
+ * So the write arms the warm above, once, a minute out. The hourly firing is
+ * unchanged and this is not a second timer: it is a ONE-SHOT that deletes
+ * itself when it fires, exactly as QLIKSYNC's retry does (§5), and arming it
+ * clears any spent one first so they cannot accumulate against the per-script
+ * trigger limit.
+ *
+ * WHY A MINUTE AND NOT AT ONCE. The write returns to a page that immediately
+ * re-reads its own counts — RMX_getKeys and RMX_getUnmapped, ~15 s each in the
+ * log above — and a warm firing that lands in front of those puts a cube build
+ * in front of the answer somebody is watching for. A minute is past them and
+ * still well short of anyone walking to the Overview.
+ *
+ * WHY IT IS ITS OWN HANDLER NAME AND MUST STAY THAT WAY. The one-shot has to
+ * delete the trigger that fired it, and the only handle it has on it is the
+ * handler function's NAME. Point the one-shot at APP_warmCaches and the first
+ * firing deletes the HOURLY trigger with it — the app is then entirely correct
+ * and permanently slow, which is §5's "the one trigger whose absence is
+ * invisible" arrived at deliberately. APP_warmNow is that name, it is not on
+ * APP_TRIGGER_TARGETS, and it must never be given a timer of its own.
+ * ======================================================================== */
+var APP_WARM_SOON_FN = 'APP_warmNow';
+/* Past the page's own follow-up reads, short of anybody reaching a page that
+   would have to rebuild. */
+var APP_WARM_SOON_MS = 60000;
+
+/* Every one-shot this account has armed for the handler below, gone.
+   getProjectTriggers() sees only the CALLER'S OWN triggers, which is the
+   platform's rule — so this clears what this account armed, which is the only
+   thing it could have armed. It matches on APP_WARM_SOON_FN and nothing else,
+   which is the whole reason that name is not APP_warmCaches. */
+function APP_dropWarmSoonTriggers_(){
+  var gone = 0;
+  try {
+    ScriptApp.getProjectTriggers().forEach(function(t){
+      if (t.getHandlerFunction() === APP_WARM_SOON_FN){ ScriptApp.deleteTrigger(t); gone++; }
+    });
+  } catch (e){
+    APP_log('warn', 'APP.warmSoon', 'could not clear the spent one-shot triggers',
+            { error: String(e) });
+  }
+  return gone;
+}
+
+/* Arm it. Called by the lookup writers after a write that actually added rows.
+   CLEAR AND MAKE ONE: several approvals in a row are one rebuild, not one per
+   approval, and dropping first also replaces a trigger that somehow outlived
+   its own firing — which counting the existing ones would mistake for the one
+   about to fire. Returns 'armed' | 'unarmed'. */
+function APP_warmSoon_(why){
+  APP_dropWarmSoonTriggers_();
+  try {
+    ScriptApp.newTrigger(APP_WARM_SOON_FN).timeBased().after(APP_WARM_SOON_MS).create();
+    APP_log('info', 'APP.warmSoon', 'armed a one-shot warm', { why: String(why || ''), inMs: APP_WARM_SOON_MS });
+    return 'armed';
+  } catch (e){
+    /* NOT FATAL AND NOT SILENT. The rows are written and every cache key has
+       already moved; without this the rebuild falls back to whoever opens a
+       page next, which is what happened before this existed. The hourly firing
+       still repairs it within the hour. */
+    APP_log('warn', 'APP.warmSoon', 'could not arm the one-shot warm — the next page open pays for the rebuild',
+            { why: String(why || ''), error: String(e) });
+    return 'unarmed';
+  }
+}
+
+/* THE ONE-SHOT'S HANDLER. A spent trigger is NOT removed by the platform — it
+   stays in the project, doing nothing, counting against the per-script limit —
+   so it deletes itself, and it does that FIRST because APP_warmCaches can throw
+   and a trigger deleted in a finally is one more thing to get wrong. Arming
+   clears them too, so this is the case where nobody writes another lookup row
+   for a month. Whatever this firing does not reach is deferred to the hourly
+   one exactly as any other firing's is. */
+function APP_warmNow(){
+  APP_dropWarmSoonTriggers_();
+  return APP_warmCaches();
 }
 
 /* WHAT THE NEXT FIRING WOULD DO, AND NONE OF IT. NO WORKBOOK IS OPENED, no cube
