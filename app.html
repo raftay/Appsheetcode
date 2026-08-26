@@ -1809,13 +1809,23 @@ body[data-page="deckbuilder"] .db-row.sel{background:#EAF1FB}
   body[data-page="deckbuilder"] .db-row.arr > .db-ar-row2{grid-column:4 / 6}
   body[data-page="deckbuilder"] .db-row .db-layout, body[data-page="deckbuilder"] .db-row .db-kpi-wrap, body[data-page="deckbuilder"] .db-row .db-kpi-none, body[data-page="deckbuilder"] .db-row .db-thumb{display:none} }
 
-/* the per-row Region picker, on slides that carry a KPI strip */
+/* the per-row Region READ-OUT, on slides that carry a KPI strip. It is not a
+   control: the region is the arrangement's, chosen in the Arrange drawer and
+   saved for everybody, so this says which one is in force and whether anybody
+   chose it. `.moved` is the shared-choice state and matches the layout picker
+   beside it, which colours itself the same way once a row is off its recipe
+   default; the plain state is the workbook's first sheet by default. */
 body[data-page="deckbuilder"] .db-kpi{width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:7px;
   background:#F4F7FC; padding:5px 7px; font:600 11px Inter; color:var(--ink); cursor:pointer}
 body[data-page="deckbuilder"] .db-kpi:hover{border-color:var(--blue-40)}
+body[data-page="deckbuilder"] .db-kpi.ro{cursor:default; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+body[data-page="deckbuilder"] .db-kpi.ro:hover{border-color:var(--line)}
+body[data-page="deckbuilder"] .db-kpi.moved{border-color:var(--blue-40); background:#EAF1FB}
+body[data-page="deckbuilder"] .db-kpi.ro.moved:hover{border-color:var(--blue-40)}
 body[data-page="deckbuilder"] .db-kpi-none{font:500 10.5px Inter; color:var(--muted); font-style:italic}
 body[data-page="deckbuilder"] .db-kpi-wrap{display:flex; flex-direction:column; gap:3px; min-width:0}
 body[data-page="deckbuilder"] .db-kpi-cap{font:700 8.5px Archivo; letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+body[data-page="deckbuilder"] .db-kpi-cap.moved{color:var(--blue-70)}
 body[data-page="deckbuilder"] .db-row.off{opacity:.45}
 body[data-page="deckbuilder"] .db-num{font:600 11px Inter; color:var(--muted); text-align:right}
 body[data-page="deckbuilder"] .db-ttl{font:600 12.5px Inter; color:var(--ink); overflow:hidden; text-overflow:ellipsis;
@@ -6670,41 +6680,26 @@ var AmrPvSlide = (function(){
   }
 
   /* =======================================================================
-   * KPI region sheets — shared with the Price & Volume page, on purpose
+   * KPI region sheets — the arrangement's answer, and nothing else
    * ----------------------------------------------------------------------
-   * Which EBITDA region sheet a market's KPI cards read is a PER-DEVICE
-   * choice, remembered in localStorage under 'pvKpiViewMap' and keyed by the
-   * page view (filterField:filterValue). The Deck Builder reads and writes
-   * THE SAME map, so a market someone has already set up on the Price &
-   * Volume page comes out right in the deck with nothing to redo — and a
-   * change made in the deck shows up on that page too.
+   * Which EBITDA region sheet a deck slide's KPI cards read USED TO BE A
+   * PER-DEVICE CHOICE, remembered in localStorage under 'pvKpiViewMap'. It is
+   * gone from here. Everything else the Deck Builder saves is shared, and a
+   * region that was not meant a colleague building from the same arrangement
+   * could publish different KPI numbers with nothing on screen saying so.
+   *
+   * TWO ANSWERS ARE LEFT AND BOTH ARE THE SAME ON EVERY DEVICE: the region the
+   * arrangement chose for this slide's scope, and — when no rung of its
+   * ladder has chosen one — the first region sheet of the workbook that
+   * slide's market reads. The Arrange drawer names whichever of the two is in
+   * force, so a default nobody picked is readable rather than silent.
+   *
+   * THE PRICE & VOLUME PAGE KEEPS ITS OWN per-view memory (Page_PriceVolume's
+   * KPI.map, still 'pvKpiViewMap'). That is a report page remembering where
+   * you were last looking, which is a different question from what a published
+   * slide shows — nothing in this module reads or writes it any more.
    * ===================================================================== */
-  var KPI_MAP_KEY = 'pvKpiViewMap';
 
-  function kpiLoadMap(){
-    try { return JSON.parse(localStorage.getItem(KPI_MAP_KEY) || '{}'); }
-    catch(e){ return {}; }
-  }
-  function kpiSaveMap(map){
-    try { localStorage.setItem(KPI_MAP_KEY, JSON.stringify(map || {})); } catch(e){}
-  }
-  /* ONE SLOT PER VIEW, AND LAND / DOCKS ARE THEIR OWN VIEWS.
-     This is the report page's own rule, copied exactly (Page_PriceVolume's
-     kpiViewKey): the market makes the base key and a refine adds a segment on
-     top, so Southwest, Southwest·Land and Southwest·Docks each remember a
-     different region sheet. The deck used to drop the refine on the floor, so
-     all three of a market's rows shared one slot — set the region on Southwest
-     and Land and Docks moved with it — and the two refined rows also read a
-     different slot from the one the report page had written for them.
-
-     The PERIOD is deliberately NOT in the key. MTD and YTD of the same view
-     read the same region sheet in two places on it, so they move together, and
-     that is the one bit of sharing that is wanted. */
-  function kpiViewKeyFor(filterField, filterValue, refine){
-    var base = (filterField||'') + ':' + (filterValue||'__ALL__');
-    var r = String(refine || '').trim() || '__ALL__';
-    return (r === '__ALL__') ? base : (base + ':' + r);
-  }
   /* Every region sheet the shared workbook offers. [] when no workbook has
      been uploaded, which is exactly when the KPI row is omitted.
 
@@ -6722,31 +6717,23 @@ var AmrPvSlide = (function(){
     var list = window.AmrKpi ? AmrKpi.plantIndex(vals, book) : [];
     return (list || []).map(function(e){ return e.label; });
   }
-  /* Assemble the ctx.kpi a slide needs: the shared values, the sheet chosen
-     for this market, and the index kpiExtract() looks the sheet up in.
-     `book` scopes BOTH the offered sheets and the fallback default, so the
-     remembered-or-first choice can never land on the other workbook. */
-  function kpiFor(vals, filterField, filterValue, override, book, refine){
+  /* Assemble the ctx.kpi a slide needs: the shared values, the region the
+     ARRANGEMENT chose for this slide, and the index kpiExtract() looks that
+     sheet up in. `book` scopes BOTH the offered sheets and the fallback
+     default, so neither the chosen region nor the first-sheet default can
+     land on the other workbook.
+
+     AN `override` THIS BOOK HAS NO SHEET FOR IS IGNORED rather than trusted -
+     that is a scope whose region was chosen before somebody changed the row's
+     market, and a sheet name from the other EBITDA workbook means nothing
+     here. Falling back to the book's own first sheet is at least a region of
+     the right workbook, and the Arrange drawer says which one is in force. */
+  function kpiFor(vals, override, book){
     var list = window.AmrKpi ? (AmrKpi.plantIndex(vals, book) || []) : [];
     var index = {}, sheets = [];
     list.forEach(function(e){ index[e.label] = e; sheets.push(e.label); });
-    var map = kpiLoadMap();
-    /* its own slot first; the market's, if it has never been given one; and
-       only then the first sheet on the list. A refined view that has not been
-       chosen yet should follow its market rather than jump to whatever region
-       happens to sort first - that is a real region sheet, silently the wrong
-       one, and it looks identical to a deliberate choice. */
-    var remembered = map[kpiViewKeyFor(filterField, filterValue, refine)];
-    if(remembered === undefined) remembered = map[kpiViewKeyFor(filterField, filterValue)];
-    var sheet = (override && sheets.indexOf(override) !== -1) ? override
-              : (remembered && sheets.indexOf(remembered) !== -1) ? remembered
-              : (sheets[0] || '');
-    return { vals:vals || null, sheet:sheet, index:index, sheets:sheets, map:map };
-  }
-  function kpiRemember(filterField, filterValue, sheet, refine){
-    var map = kpiLoadMap();
-    map[kpiViewKeyFor(filterField, filterValue, refine)] = sheet;
-    kpiSaveMap(map);
+    var sheet = (override && sheets.indexOf(override) !== -1) ? override : (sheets[0] || '');
+    return { vals:vals || null, sheet:sheet, index:index, sheets:sheets };
   }
 
   /* =======================================================================
@@ -6760,8 +6747,6 @@ var AmrPvSlide = (function(){
 
     kpiSheets: kpiSheets,
     kpiFor: kpiFor,
-    kpiRemember: kpiRemember,
-    kpiViewKeyFor: kpiViewKeyFor,
 
     /* used by the report page's own live rendering */
     waterfall: waterfall,
@@ -7026,20 +7011,21 @@ var AmrPvSlide = (function(){
     }]).then(function(d){ CUST[key] = d; return d; });
   }
 
-  /* WHICH REGION SHEET THIS SLIDE'S KPI CARDS READ, in precedence order.
-     The SHARED choice is on top: it is a property of the monthly pack, saved
-     with the arrangement, and a colleague building from that arrangement has
-     to get the same numbers. Under it the per-device memory, which is what
-     the Price & Volume page writes and what everybody had before the scope
-     existed; under that the first sheet on the row's own workbook.
+  /* WHICH REGION SHEET THIS SLIDE'S KPI CARDS READ. One answer now: the
+     region the ARRANGEMENT chose for the rung of this row's scope ladder that
+     answers for it, which the page has already resolved onto spec.kpi. '' when
+     no rung chose one, and kpiFor then falls back to the first sheet of this
+     row's own workbook.
 
-     kpiFor already puts its `override` argument first, so the whole of the
-     change is which value is handed to it - spec.kpiSheet, which the page
-     fills from the resolved scope and no longer deletes off every row. */
+     THE PER-DEVICE MEMORY THAT USED TO SIT BETWEEN THE TWO IS GONE. It was
+     the Price & Volume page's localStorage map, so a colleague building from
+     the same shared arrangement could publish different KPI numbers with
+     nothing on screen saying so - and the region is not a thing you can see
+     is wrong on a finished slide. With it went spec.kpiSheet, a per-row pin
+     nothing had assigned since the shared scope arrived. */
   function kpiSheetOf(spec){
     var k = spec && spec.kpi;
-    if(k && k.sheet) return k.sheet;
-    return spec && spec.kpiSheet;
+    return (k && k.sheet) || '';
   }
   function kpiOffFor(spec){
     var k = spec && spec.kpi;
@@ -7049,8 +7035,7 @@ var AmrPvSlide = (function(){
   /* The ctx a slide is rendered with. */
   function ctxFor(spec, d){
     var fv = filterValueOf(spec.market);
-    var kpi = AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET', fv, kpiSheetOf(spec),
-                                bookOf(spec), spec.refine);
+    var kpi = AmrPvSlide.kpiFor(KPIVALS.vals, kpiSheetOf(spec), bookOf(spec));
     /* off is carried IN the kpi object rather than beside it, so the module
        reads one thing and the page's own ctx - which never sets it - is
        untouched. */
@@ -7137,15 +7122,16 @@ var AmrPvSlide = (function(){
        Manitoba and Saskatchewan are the ones on the second file. */
     kpiPicker: {
       sheets: function(spec){ return AmrPvSlide.kpiSheets(KPIVALS.vals, bookOf(spec)); },
+      /* WHAT THIS ROW WOULD ACTUALLY BE BUILT WITH - the scope's region, or
+         this workbook's first sheet when no scope has chosen one. It is what
+         the row's read-only Region cell shows and what the render stamps, so
+         "is this picture stale?" stays a comparison and not a guess. */
       current: function(spec){
-        return AmrPvSlide.kpiFor(KPIVALS.vals, 'MARKET',
-          filterValueOf(spec.market), kpiSheetOf(spec), bookOf(spec), spec.refine).sheet;
+        return AmrPvSlide.kpiFor(KPIVALS.vals, kpiSheetOf(spec), bookOf(spec)).sheet;
       },
-      /* keyed by market AND refine, so this dropdown is this row's - and its
-         MTD / YTD twin's, which reads the same sheet - and nobody else's */
-      choose: function(spec, sheet){
-        AmrPvSlide.kpiRemember('MARKET', filterValueOf(spec.market), sheet, spec.refine);
-      },
+      /* NO choose(). The region is the arrangement's, saved for everybody
+         through DECK_setTables from the Arrange drawer; there is no per-device
+         memory left for a picker to write. */
       book: bookOf,
       hasBook: function(spec){
         return !(window.AmrKpi && AmrKpi.hasBook)
@@ -24734,21 +24720,34 @@ AMR.page('deckbuilder', {
     'whatever has been loaded stays loaded for as long as this tab is open, and Render skips '+
     'any slide that already has a picture — so without the check, a sheet updated mid-session '+
     'would leave you with a deck that builds perfectly and is quietly out of date.</p>'+
-    '<h3>The Region dropdown</h3><p>Slides with a KPI strip read one region sheet of an EBITDA '+
+    '<h3>The Region column</h3><p>Slides with a KPI strip read one region sheet of an EBITDA '+
     'workbook, and there are two workbooks: Manitoba and Saskatchewan are on their own, '+
     'everything else is on the main one. Each row is only offered the regions from ITS workbook. '+
     'A row whose workbook has not been uploaded says <i>no workbook</i> instead — upload it on '+
-    'the Price &amp; Volume page and the dropdown appears there on its own.</p>'+
-    '<p>Set it <b>before you press Render</b> and that slide is photographed with it first time. '+
-    'You can also change it <b>while a render is running</b>: a slide the render has not reached '+
-    'yet simply picks it up when its turn comes, and one already photographed is put back in the '+
-    'queue and rebuilt before the run ends — you do not have to press Render again. The choice is '+
-    'remembered per market, in the same place the Price &amp; Volume page reads it, so it also '+
-    'corrects every other slide for that market.</p>'+
-    '<p><b>It is remembered on this device only</b>, which is why Arrange can set one for '+
-    'everybody instead. When it has, this dropdown greys out and says so — a colleague '+
-    'building from a saved arrangement has to get the same numbers as you, and a control '+
-    'that visibly moves and changes nothing is worse than one that will not move.</p>'+
+    'the Price &amp; Volume page and the region appears here on its own.</p>'+
+    '<p><b>The Region on the row is a read-out, not a picker.</b> It says which region sheet '+
+    'that slide will be built from, and whether anybody chose it: <i>Region &middot; shared</i> '+
+    'is a choice saved for everybody, <i>Region &middot; default</i> is the first region sheet '+
+    'of that market&rsquo;s workbook, which is a real region nobody picked.</p>'+
+    '<p><b>Choose one in Arrange.</b> Press <b>Tables</b> on the slide and use the <b>KPI '+
+    'strip</b> column on the right of the panel. It is offered on the market&rsquo;s rung — '+
+    '<i>Southwest only</i> — and, for the Southwest, on <i>Southwest &middot; Land only</i> and '+
+    '<i>Southwest &middot; Docks only</i> as well, because those read different region sheets '+
+    'from the whole market. It is not offered on <i>All Price &amp; Volume slides</i>, where a '+
+    'sheet name from one market&rsquo;s workbook would be handed to every other market, nor on '+
+    '<i>This slide only</i>, where it would settle the MTD slide and leave its YTD twin '+
+    'disagreeing with it.</p>'+
+    '<p>Set it <b>before you press Render</b> and those slides are photographed with it first '+
+    'time. You can also change it <b>while a render is running</b>: a slide the render has not '+
+    'reached yet simply picks it up when its turn comes, and one already photographed is put '+
+    'back in the queue and rebuilt before the run ends — you do not have to press Render '+
+    'again.</p>'+
+    '<p><b>Like everything else in Arrange, it is saved for everybody</b> — it used to be '+
+    'remembered on your own device, which meant a colleague building from the same saved '+
+    'arrangement could publish different KPI numbers on the same slide with nothing on screen '+
+    'saying so. The Price &amp; Volume page still remembers its own Region for its own screen; '+
+    'that is where you were last looking, and it no longer has any say in what a deck slide '+
+    'shows.</p>'+
     '<h3>Rendering with the tab in the background</h3><p>Fine, and normal — nobody watches forty '+
     'slides go by. The render keeps going when this tab is not the one you are looking at. It may '+
     'run slower there, because browsers deliberately slow hidden tabs down; it will not stop.</p>'+
@@ -25227,7 +25226,7 @@ AMR.page('deckbuilder', {
      changing a slide's Region mid-render a dead end - the slide was dropped back
      to "pending" and then quietly never rebuilt, so the only way out was to wait
      for the whole pass and press Render again. Keeping the queue and its cursor
-     on the page means dbPickKpi can push a row back on and have it rebuilt in
+     on the page means dbRestale can push a row back on and have it rebuilt in
      this pass, whether it has been photographed already or not. */
   var RQ = null;                       // { list:[rows], i:cursor } while rendering
 
@@ -25498,13 +25497,20 @@ AMR.page('deckbuilder', {
   }
 
   /* Some slides carry a KPI strip whose numbers come from ONE region sheet of
-     the EBITDA workbook. Which sheet is a per-device choice, normally made on
-     the report page. Showing the picker here too means a market whose region
-     was never set — or was set wrong — can be fixed without leaving the Deck
-     Builder, and the choice is remembered in the same place the report page
-     reads, so it is not a second setting to keep in sync.
-     The source declares the picker; this page stays generic. */
-  function kpiPickerHtml(r, i){
+     the EBITDA workbook, and this cell says WHICH — it does not choose it.
+
+     IT WAS A LIVE DROPDOWN AND IT WROTE A PER-DEVICE MEMORY. Everything else
+     the Deck Builder saves is shared, so that one control could send two
+     people building from the same arrangement away with different KPI numbers
+     on the same slide, and a region is not a thing you can see is wrong on a
+     finished picture. The region is the arrangement's now, chosen in the
+     Arrange drawer at the market's rung or — where a market has Land / Docks —
+     at the refine's, and saved for everybody.
+
+     So the cell READS OUT what this row will actually be built with, and says
+     whether that is a choice somebody made or the workbook's first sheet by
+     default. The source still declares the picker; this page stays generic. */
+  function kpiPickerHtml(r){
     var src = window.AmrDeckSource ? AmrDeckSource.get(r.spec.source) : null;
     var p = src && src.kpiPicker;
     if(!p) return '<div></div>';
@@ -25528,41 +25534,32 @@ AMR.page('deckbuilder', {
       return '<div class="db-kpi-none" title="'+esc(missing
           ? 'This slide\u2019s KPI cards come from the ' + name + ' workbook, which '+
             'has not been uploaded yet. Upload it on the Price & Volume page and '+
-            'the region dropdown appears here.'
+            'the region appears here and in the Arrange stage.'
           : 'The ' + name + ' workbook is uploaded but has no region sheet for '+
             'this market.')+'">'+
         esc(missing ? 'no workbook' : 'no region')+'</div>';
     }
+    /* THE TWO STATES THE REGION CAN BE IN, and they are not allowed to read
+       the same. `chosen` is a rung of this row's ladder having said so, shared
+       with everybody; anything else is the first sheet of this row's own
+       workbook, which is a real region sheet that nobody picked — the exact
+       shape that once put an Ontario region on a Manitoba slide. Both are the
+       same on every device, and `cur` is what the row will be built with
+       either way, so it is also what the render stamps. */
     var cur = '';
     try { cur = p.current(r.spec) || ''; } catch(e){}
+    var chosen = (r.spec.kpi && r.spec.kpi.sheet) || '';
 
-    /* A SHARED REGION OUTRANKS THIS DROPDOWN, so when one is set the dropdown
-       says so and does nothing. It used to be the only place the region could
-       be chosen and it wrote a PER-DEVICE memory; the arrangement can now set
-       one for a whole scope, shared, because a colleague building from your
-       saved arrangement has to get your numbers. Leaving the control live
-       under that would be a dropdown that visibly moves and changes nothing —
-       the same silent failure as a slide built from last week's figures.
-
-       THE MARKUP IS UNCHANGED WHERE NOTHING IS SHARED, which is the default.
-       Same shape as the layout picker beside it, which also only grows its
-       "changed" caption once a row has been moved off its recipe default. */
-    var pinned = (r.spec.kpi && r.spec.kpi.sheet) || '';
-    if(pinned){
-      return '<div class="db-kpi-wrap"><span class="db-kpi-cap moved">Region \u00b7 shared</span>'+
-        '<select class="db-kpi moved" disabled title="'+esc('This market\u2019s region is set '+
-          'for everybody in the Arrange stage, so it is the same on every device. Change it '+
-          'there.')+'">'+
-        '<option selected>'+esc(pinned)+'</option></select></div>';
-    }
-
-    return '<div class="db-kpi-wrap"><span class="db-kpi-cap">Region</span>'+
-      '<select class="db-kpi" title="Which region sheet the KPI cards read. '+
-        'Set it before Render, or during one - a slide not yet reached picks it up on its turn." '+
-      'data-db-kpi="'+i+'">'+
-      sheets.map(function(s){
-        return '<option value="'+esc(s)+'"'+(s===cur?' selected':'')+'>'+esc(s)+'</option>';
-      }).join('')+'</select></div>';
+    return '<div class="db-kpi-wrap">'+
+      '<span class="db-kpi-cap'+(chosen ? ' moved' : '')+'">Region'+
+        (chosen ? ' \u00b7 shared' : ' \u00b7 default')+'</span>'+
+      '<div class="db-kpi ro'+(chosen ? ' moved' : '')+'" title="'+esc(chosen
+        ? 'Set for everybody in the Arrange stage, so it is the same on every '+
+          'device. Change it there — Tables, then the KPI strip column.'
+        : 'Nobody has chosen a region for this slide, so its KPI cards read the '+
+          'first region sheet of the workbook this market uses. Choose one in the '+
+          'Arrange stage — Tables, then the KPI strip column.')+'">'+
+      esc(cur)+'</div></div>';
   }
 
   /* Which region sheet a row's picture was actually taken with. Stamped at
@@ -25605,9 +25602,10 @@ AMR.page('deckbuilder', {
   /* =========================================================================
    * A CHANGED SELECTION DROPS EXACTLY THE PICTURES IT CHANGED
    * -------------------------------------------------------------------------
-   * This was dbPickKpi's, and it is shared rather than copied because the
-   * shape is the point: a change made HERE is not a re-render, it is a
-   * correction made BEFORE the slide is photographed. So
+   * This was the per-row Region dropdown's, and it is one shared function
+   * rather than a copy per control because the shape is the point: a change
+   * made HERE is not a re-render, it is a correction made BEFORE the slide is
+   * photographed. So
    *   · a slide this pass has not reached yet needs nothing at all — it will
    *     be built with the new selection when its turn comes;
    *   · a slide already photographed has its picture dropped and is put BACK
@@ -25644,44 +25642,16 @@ AMR.page('deckbuilder', {
       : (n.ahead ? ' · will be used when those slides render' : '');
   }
 
-  /* CHOOSING A REGION IS NOT A RE-RENDER.
-     The whole point of the dropdown being here is to get the region right BEFORE
-     the slide is photographed. So:
-       • a slide this pass has not reached yet needs nothing at all - it will be
-         built with the new region when its turn comes, and the line below says
-         when that is;
-       • a slide already photographed has its picture dropped and is put BACK ON
-         THE LIVE QUEUE, so it is rebuilt at the end of this pass instead of being
-         left "pending" for somebody to notice.
-     The choice is remembered per MARKET, where the report page reads it, so it
-     lands on every other row for the same market too - and those rows' pictures
-     are just as stale. Each is checked against what it was rendered with rather
-     than assumed. */
-  function dbPickKpi(i, sheet){
-    var r = ROWS[i];
-    var src = window.AmrDeckSource ? AmrDeckSource.get(r.spec.source) : null;
-    if(src && src.kpiPicker && src.kpiPicker.choose){
-      try { src.kpiPicker.choose(r.spec, sheet); } catch(e){}
-    }
-    /* choose() has written the source's own memory, and that memory is keyed by
-       VIEW - market and refine - so it is the only thing that knows which rows
-       this applies to. A kpiSheet pinned on a row would outrank it and go stale
-       the moment its twin was changed instead, so the pins come off and every row
-       reads the memory.
-
-       THE SHARED CHOICE IS NOT A PIN AND IS NOT TOUCHED. spec.kpi comes from
-       the arrangement's scope, it outranks the device memory deliberately, and
-       it belongs to every device rather than this one. A row that has one does
-       not reach this function at all - the dropdown is disabled and says where
-       the value comes from - so deleting it here would only be a way to lose it
-       on some path nobody meant to take. */
-    ROWS.forEach(function(row){ if(row.spec) delete row.spec.kpiSheet; });
-
-    var n = dbRestale();
-    redraw();
-    prog('Region set to ' + sheet + dbRestaleNote(n));
-    setBusy(BUSY);                 // recompute the buttons; do not end a render
-  }
+  /* dbPickKpi WAS HERE, and it went with the per-device region it existed to
+     write: it called the source's kpiPicker.choose(), which wrote the
+     localStorage map, then stripped spec.kpiSheet off every row so they all
+     re-read that map. Nothing else ever called choose() and nothing has ever
+     ASSIGNED spec.kpiSheet - both were the device memory's own machinery.
+     Choosing a region is still not a re-render, and that has not moved: the
+     Arrange drawer saves it through arrStoreScope, which calls the same
+     dbRestale() below, so a slide this pass has not reached is simply built
+     with the new region when its turn comes, and one already photographed has
+     its picture dropped and goes back on the live queue. */
 
   /* WHICH TEMPLATE SLIDE THIS ROW IS BUILT FROM.
      DECK_RECIPE names one; this offers every report layout the template
@@ -25740,8 +25710,8 @@ AMR.page('deckbuilder', {
      full-width slot is the wrong shape for a half-width one, and nothing
      downstream would notice — the deck would just come out with a stretched or
      letterboxed table on that slide. So a row that already has a PNG has it
-     dropped and goes back on the live queue, exactly as dbPickKpi does for a
-     region change.
+     dropped and goes back on the live queue, exactly as dbRestale does for a
+     table or region change.
 
      THE SAVE IS OPTIMISTIC ON SCREEN AND CHECKED ON THE SERVER. The row
      repaints immediately, because waiting on a round trip to show a dropdown
@@ -25885,6 +25855,43 @@ AMR.page('deckbuilder', {
      them" IS the market. */
   function marketRung(sp){
     return (sp.source && sp.market) ? sp.source + '|' + sp.market : '';
+  }
+  /* The rung under it, and only for a row that HAS a refine — which today
+     means Southwest Land and Southwest Docks and nothing else. Same string
+     scopeLadder_ builds on the server; ladderFor() builds it here. */
+  function refineRung(sp){
+    return (sp.source && sp.market && sp.refine)
+      ? sp.source + '|' + sp.market + '|' + sp.refine : '';
+  }
+  /* WHICH RUNGS MAY BE ASKED FOR A KPI REGION: the two that are one view of
+     one market. See the drawer's own note for why the source rung and the row
+     rung are not among them. */
+  function kpiRungOk(sp, key){
+    return !!key && (key === marketRung(sp) || key === refineRung(sp));
+  }
+  /* WHAT THIS RUNG WOULD ANSWER IF IT SAID NOTHING — the same walk
+     arrApplyScopes and the server's resolveScope_ do, started one step further
+     down the ladder. FIRST RUNG WITH A kpi ENTRY WINS AND ITS ENTRY WINS
+     WHOLE, exactly as resolveScope_ does it: `kpi` is one value in the store,
+     not two fields resolved apart, so a rung that says { on:false } answers
+     the region question too.
+
+     Two things need it. The drawer's "not set here" option has to NAME the
+     answer it is deferring to — with the per-device memory gone the only
+     alternatives left are a broader rung's choice and the workbook's own first
+     sheet, and neither should have to be guessed at. And arrKpiPatch has to
+     know what this rung would inherit before it can tell a real override from
+     an entry that says nothing. */
+  function arrKpiBelow(r, key){
+    var L = r.spec.scopeLadder || ladderFor(r.spec), at = L.indexOf(key);
+    for(var i = at + 1; i < L.length; i++){
+      var e = scopeEntry(L[i]);
+      if(!e || e.kpi === undefined) continue;
+      if(e['for'] && e['for'] !== r.spec.source) continue;
+      return { on: e.kpi.on === undefined ? true : !!e.kpi.on,
+               sheet: e.kpi.sheet || '', scope: L[i] };
+    }
+    return { on:true, sheet:'', scope:'' };
   }
   function arrDefaultScope(sp){
     var ladder = sp.scopeLadder || [], m = marketRung(sp);
@@ -26129,20 +26136,37 @@ AMR.page('deckbuilder', {
       html += '<p class="db-note" style="margin-top:0">This page’s slide carries no KPI ' +
         'strip, so there is nothing to configure.</p>';
     } else {
+      /* THE TICK BOX SHOWS THE ANSWER IN FORCE, not this rung's own half of
+         it. `!ke || ke.on !== false` read the rung's entry alone, so a rung
+         that stores nothing drew a ticked box over a strip a broader rung had
+         switched OFF — and ticking it then wrote nothing, because the entry
+         it produced equalled the "on with no region" the store collapses. The
+         box was reachable at every rung already; what makes it worth fixing
+         now is that the refine rung has a reason to be opened. */
       var ke = (scopeEntry(key) && scopeEntry(key).kpi) || null;
-      var kon = !ke || ke.on !== false;
+      var below = arrKpiBelow(r, key);
+      var kon = ke ? ke.on !== false : below.on;
       html += '<div class="db-kpi-line"><input type="checkbox"' + (kon ? ' checked' : '') +
         ' data-db-kpion="1"> Show the KPI strip on these slides</div>';
-      /* THE REGION IS A PROPERTY OF THE MARKET, so it is only offered on the
-         market's own rung. A sheet name picked out of Central Canada's EBITDA
-         workbook means nothing on the source rung — it would be handed to
-         every other market's slides as well — and on the row rung it settles
-         one slide while its twin in the other period still asks the device.
-         Both were reachable, and both read as a choice the panel had offered.
-         The strip's on/off is not gated with it: THAT question is meaningful
-         at every rung, and switching the strip off across a source is a real
-         thing to want. */
-      if(src.kpiPicker && key === marketRung(sp)){
+      /* THE REGION IS A PROPERTY OF ONE VIEW OF ONE MARKET, so it is offered
+         on the two rungs that ARE one: the market's, and — where the market
+         has a Land / Docks split — the refine's. A sheet name picked out of
+         Central Canada's EBITDA workbook means nothing on the source rung; it
+         would be handed to every other market's slides as well. On the row
+         rung it settles one slide while its twin in the other period still
+         reads the market's, which is the same figure in two places on the
+         same pack disagreeing.
+
+         THE REFINE RUNG IS NOT A NICETY. Southwest Land and Southwest Docks
+         read different region sheets from whole-market Southwest, and the
+         only place that difference used to live was the per-device memory —
+         which is gone. Without this rung there is now no way at all to give
+         Land its own region, which is exactly the report the page produced.
+
+         The strip's on/off is not gated with either: THAT question is
+         meaningful at every rung, and switching the strip off across a whole
+         source is a real thing to want. */
+      if(src.kpiPicker && kpiRungOk(sp, key)){
         var sheets = [];
         try { sheets = src.kpiPicker.sheets(sp) || []; } catch(e){ sheets = []; }
         if(!sheets.length){
@@ -26150,9 +26174,18 @@ AMR.page('deckbuilder', {
             'uploaded yet, so there is no region to choose.</p>';
         } else {
           var cur = (ke && ke.sheet) || '';
+          /* WHAT "NOT SET HERE" ACTUALLY MEANS, spelled out rather than left
+             to be guessed. It used to say "each person's own choice", which
+             was true while a per-device memory sat under this control; there
+             is none now, so the honest answer is either the rung below that
+             HAS chosen one, or the first sheet of this row's workbook — a
+             real region sheet nobody picked, which is worth naming. */
+          var fall = below.sheet
+            ? '— not set here · ' + below.sheet + ' from ' + scopeLabel(below.scope, r) + ' —'
+            : '— not set · ' + sheets[0] + ', this workbook’s first region —';
           html += '<label class="db-lbl">Region — shared</label>' +
             '<select class="db-in" data-db-kpisheet="1">' +
-            '<option value="">— each person’s own choice —</option>' +
+            '<option value="">' + esc(fall) + '</option>' +
             sheets.map(function(x){
               return '<option value="' + esc(x) + '"' + (x === cur ? ' selected' : '') + '>' +
                 esc(x) + '</option>';
@@ -26598,15 +26631,27 @@ AMR.page('deckbuilder', {
   }
   /* The KPI entry is written WHOLE, so the half that is not being changed is
      carried rather than dropped: turning the strip off must not also forget
-     the region somebody chose for it. */
+     the region somebody chose for it. The half it carries is THIS RUNG'S when
+     the rung has an entry and THE ONE IT INHERITS when it does not — reading
+     an absent entry as {} instead meant unticking the box under a broader
+     rung's region quietly dropped that region as well. */
   function arrKpiPatch(change){
-    var e = scopeEntry(arrScopeKey()), cur = (e && e.kpi) || {};
-    var out = { on: (change.on !== undefined) ? change.on
+    var r = selRow(), key = arrScopeKey();
+    if(!r || !key) return null;
+    var e = scopeEntry(key), own = (e && e.kpi) || null;
+    var below = arrKpiBelow(r, key), cur = own || below;
+    var out = { on: (change.on !== undefined) ? !!change.on
                   : (cur.on === undefined ? true : !!cur.on),
                 sheet: (change.sheet !== undefined) ? change.sheet : (cur.sheet || '') };
-    /* on with no region is the same as nothing stored, and nothing stored is
-       what keeps an untouched scope out of the store entirely */
-    if(out.on && !out.sheet) return null;
+    /* AN ENTRY THAT SAYS NOTHING THIS RUNG DOES NOT ALREADY INHERIT IS NO
+       ENTRY — rule 1 of the store, and what keeps an untouched scope out of it
+       entirely. The test was `out.on && !out.sheet`, which is the same thing
+       only while nothing below can say off: under a broader rung's { on:false }
+       it deleted a deliberate "on here" and let the tick box spring straight
+       back. A no-sheet entry is worth keeping ONLY for an `on` that differs;
+       clearing the region while the strip agrees with the rung below hands the
+       question back to that rung, which is what "not set here" says it does. */
+    if(out.on === below.on && !out.sheet) return null;
     return out;
   }
 
@@ -26686,7 +26731,7 @@ AMR.page('deckbuilder', {
       '<div class="db-num">'+(i+1)+'</div>'+
       main+
       layoutPickerHtml(r, i)+
-      kpiPickerHtml(r, i)+
+      kpiPickerHtml(r)+
       '<div class="db-st '+stCls(r.status)+'">'+stTxt(r.status)+'</div>'+
       '<div class="db-thumb'+(r.png?'':' empty')+'" id="dbThumb'+i+'" '+
         'data-db-lb="'+i+'" title="Click for a full-size look"></div>'+
@@ -26905,8 +26950,11 @@ AMR.page('deckbuilder', {
     var list = document.getElementById('dbList');
     list.addEventListener('change', function(e){
       var t = e.target;
-      if (t.hasAttribute && t.hasAttribute('data-db-kpi'))    dbPickKpi(Number(t.getAttribute('data-db-kpi')), t.value);
-      else if (t.hasAttribute && t.hasAttribute('data-db-layout')) dbPickLayout(Number(t.getAttribute('data-db-layout')), t.value);
+      /* NO data-db-kpi BRANCH. The per-row Region dropdown was the only thing
+         that wrote a per-device region and it is a read-out now; the region is
+         chosen in the Arrange drawer, saved shared, and lands here through
+         arrApplyScopes like every other scope setting. */
+      if (t.hasAttribute && t.hasAttribute('data-db-layout')) dbPickLayout(Number(t.getAttribute('data-db-layout')), t.value);
       else if (t.hasAttribute && t.hasAttribute('data-db-toggle')) dbToggle(Number(t.getAttribute('data-db-toggle')), t.checked);
     });
     list.addEventListener('click', function(e){
