@@ -398,8 +398,13 @@ var APP_CONFIG = {
         ASSOC:     'Associate Raw Data',
         PLANT:     'PLANT LOOKUP',
         PRODUCT:   'PRODUCT MASTER',
-        EXTRASLU:  'EXTRAS LOOKUP',
-        CUSTOMFLAG:'CUSTOM FLAG LOOKUP'
+        /* THREE LOOKUP TABS, NOT FOUR. CUSTOM FLAG LOOKUP is gone: it keyed on
+           mat_descr and bucketed it, which is what EXTRAS LOOKUP does, and the
+           two had drifted into disagreeing about the same materials. Both
+           Extras tables had already been moved onto EXTRAS LOOKUP; the flag was
+           still being read, still being reported as a fourth thing to maintain,
+           and displayed nowhere. One tab, one classification. */
+        EXTRASLU:  'EXTRAS LOOKUP'
       }
     },
 
@@ -515,16 +520,15 @@ var APP_CONFIG = {
       defaultSpreadsheetId: '',      // \u2190 paste the sheet id here, or set it in \u2699 Settings
       SHEETS: {
         MAIN:    'Main Raw Data',
-        /* The two extras tabs. part:'extras' reads them (ovcHistRmxExtras_) and
-           part:'main' does not, which is why they are parked in a file of their
-           own - see CUBE.FILES.rmxExtras. */
+        /* The two extras tabs, read in the SAME pass as Main Raw Data and parked
+           in the same file - see ovcRmxAcc_. Neither is required: a book that
+           ships only Main Raw Data carries its months and reports no extras. */
         EXTRA:   'Extra Raw Data',
         ASSOC:   'Associate Raw Data'
         /* NO LOOKUP TABS, for the reason spelled out on histagg above:
-           ovcLookupsRmx_ reads PLANT LOOKUP and PRODUCT MASTER from the LIVE
-           Ready-Mix workbook, and RMX_NS.extraResolver() supplies EXTRAS LOOKUP
-           and CUSTOM FLAG for the extras tabs below. A closed book's own copies
-           are never opened. */
+           ovcLookupsRmx_ reads PLANT LOOKUP, PRODUCT MASTER and EXTRAS LOOKUP
+           from the LIVE Ready-Mix workbook every time. A closed book's own
+           frozen copies are never opened. */
       }
     },
 
@@ -561,13 +565,15 @@ var APP_CONFIG = {
       defaultSpreadsheetId: '',      // paste the sheet id here, or set it in the Data sheet panel
       SHEETS: {
         MAIN:    'Main Raw Data',
+        /* The two extras tabs, read in the SAME pass as Main Raw Data and parked
+           in the same file - see ovcRmxAcc_. Neither is required: a book that
+           ships only Main Raw Data carries its months and reports no extras. */
         EXTRA:   'Extra Raw Data',
         ASSOC:   'Associate Raw Data'
         /* NO LOOKUP TABS, for the reason spelled out on histagg above:
-           ovcLookupsRmx_ reads PLANT LOOKUP and PRODUCT MASTER from the LIVE
-           Ready-Mix workbook, and RMX_NS.extraResolver() supplies EXTRAS LOOKUP
-           and CUSTOM FLAG for the extras tabs below. A closed book's own copies
-           are never opened. */
+           ovcLookupsRmx_ reads PLANT LOOKUP, PRODUCT MASTER and EXTRAS LOOKUP
+           from the LIVE Ready-Mix workbook every time. A closed book's own
+           frozen copies are never opened. */
       }
     }
   },
@@ -601,12 +607,10 @@ var APP_CONFIG = {
     CHUNKS_PER_CALL: 3,
     BYTES_PER_CALL:  6000000,
     HIST_FOLDER_ID: '',                    // '' -> falls back to KPI_FOLDER_ID
-    /* `rmxExtras` is the SECOND part of a Ready-Mix book - its Extra Raw Data
-       and Associate Raw Data tabs - parked separately from `rmx` so that the
-       58,000-row Main tab and the extras tabs are never read for each other's
-       sake. It is what lets Extras & VAP by type answer for a closed year. */
-    FILES: { agg: 'cube_hist_agg.json', rmx: 'cube_hist_rmx.json',
-             rmxExtras: 'cube_hist_rmx_extras.json' },
+    /* ONE PARKED FILE PER BOOK PER LINE. A Ready-Mix book's Extra Raw Data and
+       Associate Raw Data rows live in the `rmx` file beside its Main Raw Data
+       rows, because they are rows of the same line - see ovcRmxAcc_. */
+    FILES: { agg: 'cube_hist_agg.json', rmx: 'cube_hist_rmx.json' },
 
     /* ------------------------------------------------------------------
      * ERAS - the closed-year books, NEWEST FIRST.
@@ -2178,8 +2182,7 @@ var APP_BATCH_ALLOW_ = {
   RMX_getUnmapped:1, RMX_prepare:1, getRmxSuggestions:1, getRmxCrossReport:1,
   getRmxFscFacts:1, getRmxFuelData:1, getCrossReport:1,
   /* the Overview and its month cube (§8) */
-  getOverview:1, CUBE_getManifest:1, CUBE_getChunk:1, CUBE_getChunks:1,
-  RMX_getExtrasByMonths:1
+  getOverview:1, CUBE_getManifest:1, CUBE_getChunk:1, CUBE_getChunks:1
 };
 
 /* calls: [{ fn:'getOverview', arg:{…} }, …]  ->  { ok, results:[…] }
@@ -8246,15 +8249,15 @@ function getPvUnmapped(opts) {
           { upload: !!(opts && opts.upload), force: !!(opts && opts.force) });
   try {
     var out = PVLOOK.getUnmapped(opts);
-    /* The three lists ARE the answer — one row per distinct unmapped value —
-       so their sizes are the size §7 asks for, not the bytes behind them. */
+    /* THE LIST IS THE ANSWER - one row per distinct plant REGION LOOKUP has no
+       row for - so its size is what is worth logging, not the bytes behind it.
+       This used to log `product` / `extras` / `flag`, which are §7's field names
+       and have never existed on this payload: every line of it read 0. */
     APP_log('info', 'PVLOOK.getUnmapped', 'ok',
             { ms: Date.now() - t0,
-              rows: ((out && out.product) || []).length + ((out && out.extras) || []).length +
-                    ((out && out.flag) || []).length,
-              product: ((out && out.product) || []).length,
-              extras:  ((out && out.extras)  || []).length,
-              flag:    ((out && out.flag)    || []).length });
+              rows:   ((out && out.region) || []).length,
+              total:  (out && out.regionTotal) || 0,
+              capped: !!(out && out.regionTotal > ((out.region || []).length)) });
     return out;
   } catch (err) {
     APP_log('error', 'PVLOOK.getUnmapped', 'failed',
@@ -9340,7 +9343,12 @@ var CONFIG = {
   APPLIED_BASE_PY: null,   // null => total PY concrete m3 across all markets (≈947,519).
   MAX_DIMS: 24,            // effectively unlimited (only 4 breakdowns exist); grouping happens client-side
   CACHE_TTL: 21600,        // 6 hours
-  CACHE_VER: 'v18',  // bumped: RMX_prepare warms every selection off ONE bundle read,
+  CACHE_VER: 'v19',  // bumped: CUSTOM FLAG LOOKUP is gone, so the lookups object has
+                     // no customFlag and stream rows carry no `flag`; and the
+                     // unmapped bag now carries `checked` (how many distinct values
+                     // each tab was asked about). A v18 bundle answers the mapping
+                     // check with a count it does not have.
+                     // v18: RMX_prepare warms every selection off ONE bundle read,
                      // and the per-selection key is built in one place (selKey_).
                      // v17: getKeys / getExtras / getSlideTables cache their own
                      // FINISHED payload per market+period+month (selCached_), the way
@@ -9541,10 +9549,25 @@ function selCached_(parts, opts, build){
 /* =================== unmapped-row collector ===================
  * Every lookup miss is recorded once per distinct cell value, with a row
  * count and totals, so the Mapping check card can show exactly what needs
- * adding to PRODUCT MASTER / EXTRAS LOOKUP / CUSTOM FLAG. Collected inside
- * the loaders, so it costs no extra sheet reads and rides along on the
- * cached bundle (uploaded QlikView files included). */
-function newUnmapped_(){ return { product:{}, extras:{}, flag:{} }; }
+ * adding to PRODUCT MASTER or EXTRAS LOOKUP. Collected inside the loaders, so
+ * it costs no extra sheet reads and rides along on the cached bundle (uploaded
+ * QlikView files included). */
+function newUnmapped_(){ return { product:{}, extras:{}, seen:{ product:{}, extras:{} } }; }
+
+/* EVERY VALUE THE LOOKUP WAS ASKED ABOUT, matched or not.
+ * ---------------------------------------------------------------------------
+ * Without this the card can only ever say "all matched", and that sentence is
+ * indistinguishable from "nothing was examined" - which is the state a mapping
+ * check lands in when the column it reads is missing, when the tab it walks is
+ * empty, or when the population it walks is not the population on screen.
+ * Every version of this panel that has ever been wrong looked exactly like a
+ * clean one. So the count of DISTINCT values tested travels with the misses,
+ * and the card states it. */
+function noteSeen_(bag, kind, value){
+  if (!bag) return;
+  var v = String(value == null ? '' : value).trim();
+  if (v) bag.seen[kind][norm_(v)] = 1;
+}
 
 function noteUnmapped_(bag, kind, value, market, nums, hier3){
   if (!bag) return;
@@ -9571,7 +9594,9 @@ function finishUnmapped_(bag){
       return (Math.abs(b.cyRev)+Math.abs(b.pyRev)) - (Math.abs(a.cyRev)+Math.abs(a.pyRev));
     });
   }
-  return { product:list(bag.product), extras:list(bag.extras), flag:list(bag.flag) };
+  return { product:list(bag.product), extras:list(bag.extras),
+           checked: { product: Object.keys(bag.seen.product).length,
+                      extras:  Object.keys(bag.seen.extras).length } };
 }
 
 /* =================== lookups (cached) =================== */
@@ -9610,14 +9635,7 @@ function buildLookups_(){
       if (kShort && !(kShort in extras)) extras[kShort] = { type: bucket };
     }
   }
-  var customFlag = {};
-  var cf = readSheet_(CONFIG.SHEETS.CUSTOMFLAG, ['mat_descr','custom flag']);
-  var cfDescr=col_(cf,'mat_descr'), cfFlag=col_(cf,'custom flag');
-  for (var k3=cf.hdr+1;k3<cf.values.length;k3++){
-    var cr=cf.values[k3], d=String(cr[cfDescr]||'').trim(); if(!d) continue;
-    customFlag[norm_(d)] = String(cr[cfFlag]||'').trim() || 'Other';
-  }
-  return { plant: plant, product: product, extras: extras, customFlag: customFlag };
+  return { plant: plant, product: product, extras: extras };
 }
 
 function getLookupsCached_(force){
@@ -9748,6 +9766,10 @@ function loadMain_(LK, src, bag){
     var row=s.values[i]; var plant=String(row[cPlant]||'').trim(); if(!plant) continue;
     var pd=dimsForPlant_(LK, plant), pr=dimsForProduct_(LK, row[cMix]);
     var mix = String(row[cMix]==null?'':row[cMix]).trim();
+    /* what the lookup was ASKED about. A blank or "0" mix is "Others" outright
+       (dimsForProduct_) and never reaches PRODUCT MASTER, so counting it would
+       inflate the denominator the card prints. */
+    if (mix !== '' && mix !== '0') noteSeen_(bag, 'product', mix);
     var pyV=toNum_(row[cPyV]), pyR=toNum_(row[cPyR]), cyV=toNum_(row[cCyV]), cyR=toNum_(row[cCyR]);
     // PRODUCT MASTER miss -> log the WHOLE Product Mix cell, e.g.
     // "RMXCXFORDRS1 -  30 MPA NA 40MM HR1 W"
@@ -9787,20 +9809,18 @@ function loadStream_(LK, sheetName, src, bag){
     var row=s.values[i]; var plant=String(row[cPlant]||'').trim(); if(!plant) continue;
     var pd=dimsForPlant_(LK, plant); var h3=String(row[cH3]||'').trim();
     var descr = (cDescr===-1) ? '' : String(row[cDescr]||'').trim();
+    noteSeen_(bag, 'extras', descr);           // asked about, matched or not
     var lu = extrasLookup_(LK, descr);          // v2: bucket by mat_descr, not hier3
-    var flagHit = LK.customFlag[norm_(descr)];  // undefined = not in CUSTOM FLAG at all
-    var flag = flagHit || 'Other';
     var pyR=toNum_(row[cPyR]), cyR=toNum_(row[cCyR]), pyM=toNum_(row[cPyM]), cyM=toNum_(row[cCyM]);
     var nums = { cyVol:cyM, pyVol:pyM, cyRev:cyR, pyRev:pyR };
-    if (lu.miss)  noteUnmapped_(bag, 'extras', descr, pd.market, nums, h3);  // EXTRAS LOOKUP miss -> hier3 + mat_descr
-    if (!flagHit) noteUnmapped_(bag, 'flag',   descr, pd.market, nums);   // CUSTOM FLAG miss  -> mat_descr
+    if (lu.miss) noteUnmapped_(bag, 'extras', descr, pd.market, nums, h3);  // EXTRAS LOOKUP miss -> hier3 + mat_descr
     out.push({ month: (cMo===-1?0:monthOrd_(row[cMo])),
       plant: plant,                               // NEW: lets the Overview cross-filter
                                                   // follow a Plant / Submarket selection.
                                                   // Additive only - getExtras rolls up on
                                                   // type/flag and never reads it.
       market: pd.market, submarket: pd.submarket, segment: row[cSeg],
-      hier3: h3, descr: descr, flag: flag, type: lu.type, stream: streamLabel,
+      hier3: h3, descr: descr, type: lu.type, stream: streamLabel,
       pyRev: pyR, cyRev: cyR, pyM3: pyM, cyM3: cyM });
   }
   out.cyYear = rY.cy || mY.cy;
@@ -10474,9 +10494,12 @@ function prepareAll(opts){
    the pages show in a side panel, on EVERY page load. prepareAll fills this
    entry while it already has the bundle open, which makes it free. */
 function unmappedOf_(bundle){
-  var u = (bundle && bundle.unmapped) || { product:[], extras:[], flag:[] };
-  return { ok:true, product:u.product, extras:u.extras, flag:u.flag,
-           total: u.product.length + u.extras.length + u.flag.length,
+  var u = (bundle && bundle.unmapped) || { product:[], extras:[] };
+  return { ok:true, product:u.product, extras:u.extras,
+           /* how many DISTINCT values each tab was asked about - see noteSeen_.
+              A card that can only say "all matched" cannot be checked. */
+           checked: u.checked || null,
+           total: u.product.length + u.extras.length,
            generation: generation_() };
 }
 function getUnmapped(opts){
@@ -10583,17 +10606,16 @@ function getExtras(opts){
  * these AND its segment table in ONE round trip (getSlideTables below) rather
  * than computing the same rows twice. `main` must already be month-scoped.
  *
- * BOTH TABLES NOW GROUP ON THE EXTRAS LOOKUP CATEGORY.
- * The detail table used to group on CUSTOM FLAG LOOKUP (mat_descr -> Custom
- * Flag). It does not any more: EXTRAS LOOKUP is the ONE classification both
- * tables read, so a material moves in both places at once and there is a single
- * tab to maintain. The two tables carry the same labels on purpose - what
- * differs is the BASE: the by-type table prices on total concrete m3, the
- * detail table prices on applied m3 and prints penetration next to it.
+ * BOTH TABLES GROUP ON THE EXTRAS LOOKUP CATEGORY, and it is now the only
+ * classification in the suite that does. The detail table used to group on
+ * CUSTOM FLAG LOOKUP (mat_descr -> Custom Flag), a second tab keyed on the same
+ * column, bucketing the same materials, kept in step by hand and drifting. That
+ * tab is gone - from Config, from the lookups, from the miss lists and from the
+ * add-rows dialog - so a material moves in one place and moves everywhere.
  *
- * The rows still carry `flag` and the mapping / suggestion cards still report
- * CUSTOM FLAG misses, so nothing else in the suite breaks - but nothing
- * DISPLAYS a flag any more. Pull that plumbing when the mapping card goes.
+ * The two tables carry the same labels on purpose. What differs is the BASE:
+ * the by-type table prices on total concrete m3, the detail table prices on
+ * applied m3 and prints penetration next to it.
  */
 function extrasPayload_(bundle, main, market, month){
   var extras = bundle.extras.filter(function(e){return mktOk_(e.market, market) && inMonth_(e.month, month);});
@@ -10623,7 +10645,7 @@ function extrasPayload_(bundle, main, market, month){
 
   function rollup(stream, field){
     var map={}, order=[];
-    stream.forEach(function(e){ var label = field==='type'? e.type : field==='flag'? e.flag : e.hier3;
+    stream.forEach(function(e){ var label = (field==='type') ? e.type : e.hier3;
       if(!map[label]){ map[label]={label:label, cyRev:0,pyRev:0,cyM3:0,pyM3:0}; order.push(label); }
       var g=map[label]; g.cyRev+=e.cyRev; g.pyRev+=e.pyRev; g.cyM3+=e.cyM3; g.pyM3+=e.pyM3; });
     return order.map(function(l){ return finalizeExtra_(map[l], baseCY, basePY); });
@@ -10648,7 +10670,7 @@ function extrasPayload_(bundle, main, market, month){
   var byTypeVp = onVolList_(rollup(assoc,  'type'));
   var byType   = onVolList_(rollup(all,    'type'));   // kept flat for the Overview page
 
-  /* EXTRAS LOOKUP, not CUSTOM FLAG - see the note above this function. */
+  /* EXTRAS LOOKUP - the one classification, see the note above this function. */
   var exDetail = rollup(extras,'type').sort(byRev_);
   var vpDetail = rollup(assoc,'type').sort(byRev_);
 
@@ -10905,9 +10927,9 @@ function getCrossReport(opts){
      bundle holds — and every other half of this payload (base metrics, PPI, the
      dimension tables) is scoped the same way, so a span reaching further back
      would have produced a report with one correct block and eight wrong ones.
-     The window now asks RMX_getExtrasByMonths (§8), which answers for an
-     explicit ym list off the extras facts and can therefore reach the closed
-     books as well. One question, one endpoint.
+     The window does not ask the server at all any more: extras and VAP are rows
+     of the month cube (§8), so the browser groups them by type itself for
+     whatever span the slider is on, out of the fact table it already holds.
 
      The single inScope_ below is what that attempt left behind and is worth
      keeping: every month test in this report goes through it, so no two halves
@@ -11152,23 +11174,25 @@ function getCrossReport(opts){
        the sheet itself and adds nothing to any page load. Read-only. */
     dataBundle:     function(){ return loadDataCached_(false); },
     lookups:        function(){ return getLookupsCached_(false); },
-    /* ONE lookup read, then a pure function per field. §8's extras facts are
-       FACTS — plant, segment and mat_descr — and get their market, extra type
-       and custom flag from the LIVE lookups every time they are read, exactly
-       the way the month cube resolves a history plant. Editing EXTRAS LOOKUP
-       therefore re-labels every closed year at once, with no rebuild.
+    /* ONE READ, THEN A PURE FUNCTION. The month cube carries mat_descr as a
+       FACT and resolves the extra type from the LIVE EXTRAS LOOKUP at build
+       time, exactly the way it resolves a history plant or mix — so an edit to
+       that tab re-labels every closed year at once, with no re-export and no
+       rebuild of the parked files.
 
-       It has to come from in here rather than being written out again next to
-       the caller: RMX's norm_ is the strictest in the suite (§7's banner says
-       why) and extrasLookup_ falls back on stripping the "SAP# - " prefix. A
-       second copy of either would bucket a handful of rows differently from
-       the live page and nothing would report a disagreement. */
-    extraResolver:  function(){
+       It is handed out from in here rather than written again next to the
+       caller because this file owns the rule: norm_ is the strictest in the
+       suite (§7's banner says why) and extrasLookup_ falls back on stripping
+       the "SAP# - " prefix. A second copy of either would bucket a handful of
+       materials differently from this page's own Extras tables and nothing
+       would report the disagreement. A MISS COMES BACK AS '' rather than as a
+       label: what an unmatched material is called, and whether it is reported,
+       is the caller's decision and not this function's. */
+    extraTypes:     function(){
       var LK = getLookupsCached_(false);
-      return {
-        plant: function(p){ return dimsForPlant_(LK, p); },
-        type:  function(d){ return extrasLookup_(LK, d).type; },
-        flag:  function(d){ return LK.customFlag[norm_(d)] || 'Other'; }
+      return function(descr){
+        var hit = extrasLookup_(LK, descr);
+        return hit.miss ? '' : hit.type;
       };
     }
   };
@@ -11258,15 +11282,18 @@ function uploadRmxData(p) { return RMX_NS.uploadData(p); }
  * proposes the row that should be added, shows how confident it is, and (once
  * the user ticks and approves) appends the rows to the lookup tabs.
  *
- * THREE INDEPENDENT MODELS — one per lookup. They never inform each other.
+ * TWO INDEPENDENT MODELS — one per lookup. They never inform each other.
  *
  *   PRODUCT MASTER      deterministic parse of the Product Mix text
  *                       (MPa -> Strength Class, -TECT token -> Product Class,
  *                        Application derived, retired brand -> Old/New Desc)
- *   CUSTOM FLAG LOOKUP  nearest-neighbour on mat_descr wording
  *   EXTRAS LOOKUP       nearest-neighbour on mat_descr wording
  *                       (mat_prod_hier_3 is carried through from the raw data,
  *                        never predicted — it's the user's column)
+ *
+ * There were three. CUSTOM FLAG LOOKUP keyed on the same mat_descr and bucketed
+ * it the same way, and the two tabs had drifted; it is gone, along with its
+ * model, its miss list and its add-rows form.
  *
  * WHY NEAREST-NEIGHBOUR AND NOTHING CLEVERER
  * So: no training, no weights, no probability tables. Just "which existing
@@ -11294,7 +11321,8 @@ var RMXSUGGEST = (function () {
 /* =================== config =================== */
 function sgSheets_(){ return APP_CONFIG.PAGES.rmx.SHEETS; }
 
-var SG_CACHE_VER = 'sg3';          // bumped: model shape (codes) + strength rule changed
+var SG_CACHE_VER = 'sg4';          // bumped: no flag model; extras rows carry `full`
+                                   // sg3: model shape (codes) + strength rule changed
 var SG_LOCK_MS   = 30000;
 
 /* Retired -> current brand names (PRODUCT MASTER only).
@@ -11433,18 +11461,6 @@ function sgFallback_(options){
 function sgBuildModel_(){
   var S = sgSheets_();
 
-  /* ---- CUSTOM FLAG LOOKUP : mat_descr -> Custom Flag ---- */
-  var cf = sgTable_(S.CUSTOMFLAG, ['mat_descr','custom flag']);
-  var cfD = sgCol_(cf, 'mat_descr'), cfF = sgCol_(cf, 'custom flag');
-  var flagRows = [];
-  for (var i = cf.hdr + 1; i < cf.values.length; i++){
-    var d = String(cf.values[i][cfD] || '').trim(),
-        v = String(cf.values[i][cfF] || '').trim();
-    if (!d || !v) continue;
-    var nm = sgSplit_(d).name;
-    flagRows.push({ t: sgTokens_(nm), c: v, d: nm });
-  }
-
   /* ---- EXTRAS LOOKUP : mat_descr -> Catergory  (hier_3 kept for the UI) ---- */
   var el = sgTable_(S.EXTRASLU, ['material (mat_descr)']);
   var elC = sgFirstCol_(el, ['category','catergory','new bucket']);
@@ -11460,7 +11476,13 @@ function sgBuildModel_(){
     }
     if (!em || !ec) continue;
     var enm = sgSplit_(em).name;
-    extraRows.push({ t: sgTokens_(enm), c: ec, d: enm });
+    /* `d` is the bare name, which is what the nearest-neighbour match reads;
+       `full` is the cell as written ("SAP# - NAME"). BOTH are kept because
+       §7's extrasLookup_ matches on either — it tries the whole mat_descr and
+       then the name with the SAP prefix stripped — so "is this already in the
+       tab" has to be asked the same two ways or the form proposes a row the
+       lookup would already have found. */
+    extraRows.push({ t: sgTokens_(enm), c: ec, d: enm, full: em });
   }
 
   /* ---- PRODUCT MASTER : only its existing vocabulary is needed, because the
@@ -11484,11 +11506,9 @@ function sgBuildModel_(){
   }
 
   return {
-    flag:   { rows: flagRows,  idx: sgIndexRows_(flagRows)  },
     extras: { rows: extraRows, idx: sgIndexRows_(extraRows) },
     codes:  codes,
     options: {
-      flag:     sgDistinct_(flagRows),
       category: sgDistinct_(extraRows),
       hier3:    Object.keys(hier3Seen).sort(),
       strength: Object.keys(strengthSet).sort(),
@@ -11697,42 +11717,74 @@ function sgFromValues_(values, M){
                    strength: s.strength, cls: s.cls, app: s.app,
                    band: s.band, note: s.note, why: [] });
   }
-  return { ok: true, product: product, extras: [], flag: [],
+  return { ok: true, product: product, extras: [],
            options: M.options, asked: asked, already: already,
            total: product.length };
+}
+
+/* The caller's own list of mat_descr values, classified against EXTRAS LOOKUP.
+ * The same shape and the same reason as sgFromValues_ above: the Overview's
+ * miss list is the MONTH CUBE's, which is the live workbook plus every closed
+ * book, so a material that traded in 2024 and is not in EXTRAS LOOKUP is on
+ * that list and on no live one. Answering it from the live report would hand
+ * back rows it had not asked about and drop the ones it had.
+ *
+ * Deduped and dropped on the tab's own key - the mat_descr - because that is
+ * what applyRows keys on, so a value already in the tab is counted as `already`
+ * rather than proposed a second time. */
+function sgExtrasFromValues_(values, M){
+  var fb = sgFallback_(M.options.category), have = {}, seen = {};
+  (M.extras.rows || []).forEach(function(r){
+    have[sgNorm_(r.d)] = 1;
+    if (r.full) have[sgNorm_(r.full)] = 1;
+  });
+  var out = [], asked = 0, already = 0;
+  for (var i = 0; i < values.length; i++){
+    var v = String(values[i] == null ? '' : values[i]).trim();
+    if (!v) continue;
+    asked++;
+    var k = sgNorm_(v);
+    if (!k || seen[k]) continue;
+    seen[k] = 1;
+    var name = sgSplit_(v).name;
+    if (have[k] || have[sgNorm_(name)]){ already++; continue; }
+    var c = sgClassify_(M.extras, name, fb);
+    out.push({ value: v, rows: 0, markets: [],
+               category: c.value, guess: c.guess, hier3: '', hier3All: [],
+               band: c.band, sim: c.sim, why: c.why,
+               note: c.band === 'Low' ? 'no close match \u2014 defaulted' : '' });
+  }
+  return { ok: true, product: [], extras: out,
+           options: M.options, asked: asked, already: already, total: out.length };
 }
 
 /* =================== public: suggestions ===================
  * TWO CALLERS, TWO SOURCES FOR THE MISS LIST.
  *
- *   · The Ready-Mix page asks with no `values`. Its Mapping check and this
- *     call read the SAME live report, so the list on screen and the list the
- *     dialog offers are the same list, and all three tabs are answered at once.
+ *   · The Ready-Mix page asks with no `values`. Its Mapping check and this call
+ *     read the SAME live report, so the list on screen and the list the dialog
+ *     offers are the same list, and both tabs are answered at once.
  *
- *   · The Overview asks with `values` — the mixes ITS mapping check listed.
- *     Those come from the month cube, which is the live report PLUS the
- *     closed-year books resolved against the LIVE PRODUCT MASTER. A mix that
- *     traded in a closed year and has since been dropped from the master is on
- *     that list and on no live one, so answering the Overview from the live
- *     report handed back rows it had not asked about — and, when the live
- *     report was clean, handed back nothing at all while 1,116 mixes sat on
- *     screen. Classifying the values it hands in is the whole fix, and it
- *     costs no report read: sgProductRow_ parses the text and nothing else.
- *
- * Only PRODUCT MASTER can be answered this way. EXTRAS and CUSTOM FLAG are
- * matched on a description the cube does not carry, so their miss lists still
- * come from the report, and a `values` call returns them empty rather than
- * pretending otherwise.
+ *   · The Overview asks with `values` — the mixes or the materials ITS mapping
+ *     check listed, with `kind` saying which. Those come from the month cube,
+ *     which is the live report PLUS every closed-year book resolved against the
+ *     LIVE lookups. A value that traded in a closed year and has since been
+ *     dropped from the lookup is on that list and on no live one, so answering
+ *     the Overview from the live report handed back rows it had not asked about
+ *     — and, when the live report was clean, handed back nothing at all while
+ *     1,116 mixes sat on screen. Classifying the values it hands in is the whole
+ *     fix, and it costs no report read.
  */
 function getSuggestions(opts){
   opts = opts || {};
   var M = sgModelCached_(!!opts.force);
-  if (opts.values && opts.values.length) return sgFromValues_(opts.values, M);
+  if (opts.values && opts.values.length){
+    return (opts.kind === 'extras') ? sgExtrasFromValues_(opts.values, M)
+                                    : sgFromValues_(opts.values, M);
+  }
 
   var un = RMX_NS.getUnmapped({ upload: opts.upload, force: !!opts.force });
-
-  var fbFlag = sgFallback_(M.options.flag);
-  var fbCat  = sgFallback_(M.options.category);
+  var fbCat = sgFallback_(M.options.category);
 
   var product = (un.product || []).map(function(r){
     var s = sgProductRow_(r.value);
@@ -11740,13 +11792,6 @@ function getSuggestions(opts){
              code: s.code, oldD: s.oldD, newD: s.newD,
              strength: s.strength, cls: s.cls, app: s.app,
              band: s.band, note: s.note, why: [] };
-  });
-
-  var flag = (un.flag || []).map(function(r){
-    var c = sgClassify_(M.flag, sgSplit_(r.value).name, fbFlag);
-    return { value: r.value, rows: r.rows, markets: r.markets,
-             flag: c.value, guess: c.guess, band: c.band, sim: c.sim, why: c.why,
-             note: c.band === 'Low' ? 'no close match \u2014 defaulted' : '' };
   });
 
   var extras = (un.extras || []).map(function(r){
@@ -11758,9 +11803,9 @@ function getSuggestions(opts){
              note: c.band === 'Low' ? 'no close match \u2014 defaulted' : '' };
   });
 
-  return { ok: true, product: product, extras: extras, flag: flag,
+  return { ok: true, product: product, extras: extras,
            options: M.options, asked: product.length, already: 0,
-           total: product.length + extras.length + flag.length };
+           total: product.length + extras.length };
 }
 
 /* =================== public: links to the tabs themselves ===================
@@ -11768,7 +11813,7 @@ function getSuggestions(opts){
  * A tab that can't be opened comes back as '' and the link is simply hidden. */
 function getUrls(){
   var S = sgSheets_(), out = {};
-  [['product', S.PRODUCT], ['extras', S.EXTRASLU], ['flag', S.CUSTOMFLAG]].forEach(function(p){
+  [['product', S.PRODUCT], ['extras', S.EXTRASLU]].forEach(function(p){
     try {
       var sh = sgSheet_(p[1]);
       out[p[0]] = sh.getParent().getUrl() + '#gid=' + sh.getSheetId();
@@ -11812,17 +11857,6 @@ function applyRows(payload){
         ],
         keyOf: function(r){ return String(r.code || '').trim().toUpperCase(); },
         existing: function(v){ return String(v || '').trim().toUpperCase(); }
-      };
-    } else if (target === 'flag'){
-      t = sgTable_(S.CUSTOMFLAG, ['mat_descr','custom flag']);
-      plan = {
-        key:  sgCol_(t, 'mat_descr'),
-        cols: [
-          { c: sgCol_(t, 'mat_descr'),    f: function(r){ return r.value; } },
-          { c: sgCol_(t, 'custom flag'),  f: function(r){ return r.flag || ''; } }
-        ],
-        keyOf: function(r){ return sgNorm_(r.value); },
-        existing: function(v){ return sgNorm_(v); }
       };
     } else if (target === 'extras'){
       t = sgTable_(S.EXTRASLU, ['material (mat_descr)']);
@@ -13335,12 +13369,15 @@ function ovNorm_(s){
  *             the live sheets itself and adds nothing to any page load.
  *   history — the two closed-year workbooks (Config: histagg / histrmx), read
  *             ONCE by CUBE_rebuildHistory() and parked as JSON in Drive.
- *   extras  — the same books' Extra Raw Data and Associate Raw Data tabs, read
- *             and parked separately (part:'extras'). They are not a line of the
- *             cube: they fill the rmx line's ex / va columns and they answer
- *             RMX_getExtrasByMonths. See the EXTRAS / VAP FACTS banner below
- *             for why they are not a third line and what "book year only" was
- *             actually about.
+ *
+ * EXTRAS AND VAP ARE ROWS OF THE READY-MIX LINE, not a thing beside it. Extra
+ * Raw Data and Associate Raw Data are read in the same pass as Main Raw Data,
+ * live and history alike, and land in the same rows under a fourth dimension
+ * (`extra`, the raw mat_descr) resolved through EXTRAS LOOKUP exactly as `mix`
+ * is resolved through PRODUCT MASTER. So the browser builds the ASP build-up
+ * AND the by-extra-type table from the fact table it already holds, for any
+ * span the slider can reach, with no server call and nothing extra to build.
+ * See ovcRmxAcc_ for why the money sits in its own two columns.
  *
  * LOOKUPS ALWAYS COME FROM THE CURRENT-YEAR BOOKS.
  * The history workbooks carry their own REGION LOOKUP / PLANT LOOKUP /
@@ -13388,19 +13425,22 @@ function ovNorm_(s){
    column changes, which is the half this comment used to leave out and which
    cost a whole release. It goes into ovcGen_(), so every cached chunk built
    against the old columns becomes unreachable instead of being served as if it
-   were current. v2 = soldTo + fv on agg, ex + va on rmx.
+   were current — and every parked history file whose `dims` no longer match is
+   read as ABSENT (ovcHistShapeOk_) and rebuilt once, rather than misread.
+   v2 = soldTo + fv on agg, ex + va on rmx.
    v3 = calendar-year chunk blocks and the era list in the manifest, neither of
    which an already-cached v2 manifest carries.
-   v4 = ex / va are FILLED (ovcRmxFoldExtras_). The columns did not move, so the
+   v4 = ex / va filled for the first time. The columns did not move, so the
    layout was unchanged and this constant was left alone — and that is exactly
-   why the fix never appeared. A chunk is cached server-side under ovcGen_() and
-   again in the browser's IndexedDB under the same token, and the browser only
-   wipes when the token MOVES; every client therefore went on replaying the
-   pre-fold blocks, in which ex and va are zero, and the ASP build-up kept
-   reporting $0.00 Extras against a correct Base with the corrected code
-   deployed and running underneath it. A behaviour change that cannot be seen
-   is not shipped. */
-var OVCUBE_SHAPE_VER_ = 'v4';
+   why that fix never appeared: a chunk is cached server-side under ovcGen_()
+   and again in the browser's IndexedDB under the same token, and the browser
+   only wipes when the token MOVES. Every client went on replaying the older
+   blocks, in which ex and va are zero. A behaviour change that cannot be seen
+   is not shipped.
+   v5 = `extra` is a dimension of the rmx line (the raw mat_descr), so the
+   extras and VAP rows ride the same rows, the same chunks and the same parked
+   file as Main Raw Data. */
+var OVCUBE_SHAPE_VER_ = 'v5';
 
 var OVCUBE_TOK_PROP_ = 'cube_hist_tok';   // bumped by CUBE_rebuildHistory()
 
@@ -13413,16 +13453,20 @@ var OVCUBE_SHAPE_ = {
   agg: { dims: ['plant','material','plantType','matFam','prodClass','prodApp',
                 'custSeg','custParent','soldTo'],
          vals: ['v','r','fsc','fv'] },
-  /* ex / va = extras and VAP revenue, so the Ready-Mix page can build its
-     all-in ASP without a server call. Strength, product class and application
-     already arrive through mixMap and are NOT dims.
+  /* THE FOURTH DIM IS THE EXTRA. `mix` is the raw Product Mix and PRODUCT
+     MASTER turns it into strength / class / application (mixMap); `extra` is
+     the raw mat_descr and EXTRAS LOOKUP turns it into the extra type
+     (extraMap). Neither derived label is a dim - both are side-tables resolved
+     from the LIVE lookup at build time, so editing either tab re-labels every
+     closed year at once.
 
-     THEY ARE NOT FILLED BY EITHER ROLL. ovcRmxRoll_ handles Main Raw Data, which
-     carries no extras at all; both columns are written afterwards by
-     ovcRmxFoldExtras_, off the extras facts. They were in this shape from v2
-     with nothing writing to them, which is exactly how the window-mode ASP
-     build-up came to report $0.00 of Extras and VAP against a correct Base. */
-  rmx: { dims: ['plant','mix','segment'], vals: ['v','r','ex','va'] }
+     A row is one or the other. Concrete: a mix, a blank extra, volume in `v`
+     and base revenue in `r`. Extras: a blank mix, an extra, and its money in
+     `ex` (Extra Raw Data) or `va` (Associate Raw Data) with no volume at all -
+     the charge is per load, not per m3. That is what lets the browser build the
+     all-in ASP and the by-extra-type table from the fact table it already holds,
+     with no server call for either. See ovcRmxAcc_. */
+  rmx: { dims: ['plant','mix','segment','extra'], vals: ['v','r','ex','va'] }
 };
 
 /* Positional offsets derived from the shape, so adding a dim never again means
@@ -13510,7 +13554,12 @@ function ovcDicts_(line, seed){
 
 /* Unmapped collector — same shape as RMX's finishUnmapped_, so "add these rows
    to the lookup" works identically for history. */
-function ovcBag_(){ return { plant:{}, mix:{}, revType:{} }; }
+/* `n` is HOW MANY DISTINCT VALUES WERE TESTED, per kind. Without it a section
+   reporting "all matched" is indistinguishable from a section that examined
+   nothing at all, and those two have looked identical on screen through every
+   version of this panel that has ever been wrong. Set by the sides, which are
+   the only things that know what they iterated over. */
+function ovcBag_(){ return { plant:{}, mix:{}, extra:{}, revType:{}, n:{} }; }
 function ovcNote_(bag, kind, value, vol, rev, ym){
   if (!bag) return;
   var v = ovcStr_(value); if (!v) return;          // a blank cell isn't a mapping problem
@@ -13527,8 +13576,10 @@ function ovcBagOut_(bag){
                firstMonth:+mo[0] || null, lastMonth:+mo[mo.length - 1] || null };
     }).sort(function(a, b){ return Math.abs(b.rev) - Math.abs(a.rev); });   // biggest money first
   }
-  var out = { plant:list(bag.plant), mix:list(bag.mix), revType:list(bag.revType) };
-  out.any = !!(out.plant.length || out.mix.length || out.revType.length);
+  var out = { plant:list(bag.plant), mix:list(bag.mix),
+              extra:list(bag.extra), revType:list(bag.revType),
+              checked: bag.n || {} };
+  out.any = !!(out.plant.length || out.mix.length || out.extra.length || out.revType.length);
   return out;
 }
 
@@ -13613,7 +13664,17 @@ function ovcLookupsRmx_(){
                       cls:      ovcStr_(pm.values[j][cCl]) || 'Others',
                       app:      ovcStr_(pm.values[j][cA])  || 'Others' };
   }
-  return { plant: plant, product: product };
+  /* THE EXTRAS RULE IS NOT COPIED HERE, IT IS BORROWED. §7 owns "which extra
+     type is this mat_descr": its norm_ is the strictest in the suite (its own
+     banner says why) and extrasLookup_ falls back on stripping the "SAP# - "
+     prefix when the full string misses. A second parse of EXTRAS LOOKUP on this
+     side would bucket a handful of materials differently from the Ready-Mix
+     page's own tables and nothing anywhere would report the disagreement — so
+     the cube resolves through the same function the page does, against the same
+     cached read. Returns '' for a material the tab has no row for; ovcRmxSides_
+     is what decides that an unmatched material is called "Unclassified" and
+     reports it, exactly as it does a mix PRODUCT MASTER has no row for. */
+  return { plant: plant, product: product, extraType: RMX_NS.extraTypes() };
 }
 
 
@@ -13688,55 +13749,153 @@ function ovcAggRoll_(t, c, volHi, volLo, yMax, yMin, live, seed){
   return { line:'agg', rows: order.map(function(k){ return acc[k]; }), dict: dict, skipped: skipped };
 }
 
-function ovcRmxRoll_(t, c, byYear, live, cyYear, seed){
+/* ONE ACCUMULATOR, THREE TABS, ONE LINE OF THE CUBE.
+ * ---------------------------------------------------------------------------
+ * Main Raw Data, Extra Raw Data and Associate Raw Data all go in HERE, into the
+ * same rows, the same dictionaries and the same parked file, because they are
+ * the same shape of fact: a plant, a month, a thing sold and the money it made.
+ * What differs is only which lookup names the thing.
+ *
+ *   Main Raw Data    Product Mix  ->  PRODUCT MASTER  ->  strength / class / app
+ *   Extra + Assoc    mat_descr    ->  EXTRAS LOOKUP   ->  extra type
+ *
+ * So `extra` is a DIMENSION of this line exactly as `mix` is, it holds the raw
+ * mat_descr exactly as `mix` holds the raw Product Mix, and ovcRmxSides_
+ * resolves it through the LIVE lookup exactly as it resolves a mix. A concrete
+ * row carries a mix and a blank extra; an extras row carries a blank mix and an
+ * extra. Nothing else about the cube changes: same chunks, same manifest, same
+ * generation, one build, one parked file per book.
+ *
+ * WHY THE MONEY IS IN ITS OWN TWO COLUMNS. `v` / `r` are concrete volume and
+ * base revenue and an extras row has neither - the charge is per load, and its
+ * "M3 Applied To" counts the same pour once under every extra it carries, so it
+ * is not addable across types and is deliberately not read. Extras money lands
+ * in `ex` (Extra Raw Data) or `va` (Associate Raw Data) instead, which is what
+ * those two columns have been declared for since shape v2 and what nothing ever
+ * filled. A plant x mix pair of zeroes fails the browser's "> 0" coverage test,
+ * so no PPI or CPI moves; every grouped view tests volume or base revenue before
+ * it renders a row, so an extras-only group cannot appear as a line of zeroes.
+ */
+function ovcRmxAcc_(seed){
   var D = ovcDicts_('rmx', seed), acc = {}, order = [], skipped = 0;
   var IX = ovcIx_('rmx');
+  /* ONE SEPARATOR for the whole composite key. Every part of it is an
+     integer, so a control character can never collide with one. */
+  var K = '\u0001';
 
-  function push(ym, p, mx, sg, v, r, ex, va){
-    ex = ex || 0; va = va || 0;
+  function push(ym, p, mx, sg, xt, v, r, ex, va){
     if (!ym || (!v && !r && !ex && !va)) return;
-    var k = ym + '\u0001' + p + '\u0001' + mx + '\u0001' + sg;
+    var k = ym + K + p + K + mx + K + sg + K + xt;
     var a = acc[k];
-    if (!a){ a = acc[k] = [ym, p, mx, sg, 0, 0, 0, 0]; order.push(k); }
+    if (!a){ a = acc[k] = [ym, p, mx, sg, xt, 0, 0, 0, 0]; order.push(k); }
     a[IX.val.v] += v; a[IX.val.r] += r; a[IX.val.ex] += ex; a[IX.val.va] += va;
   }
+  return {
+    skip: function(){ skipped++; },
+    /* Main Raw Data: concrete. Blank extra. */
+    base: function(ym, plant, mix, seg, v, r){
+      push(ym, D.plant.idx(plant), D.mix.idx(mix), D.segment.idx(seg), D.extra.idx(''),
+           v || 0, r || 0, 0, 0);
+    },
+    /* Extra / Associate Raw Data. Blank mix - see dimsForProduct_: a blank mix
+       is "Others" outright and never reaches PRODUCT MASTER, so an extras row
+       can never report itself as a PRODUCT MASTER miss. `vap` picks the column. */
+    extra: function(ym, plant, seg, descr, rev, vap){
+      push(ym, D.plant.idx(plant), D.mix.idx(''), D.segment.idx(seg), D.extra.idx(descr),
+           0, 0, vap ? 0 : (rev || 0), vap ? (rev || 0) : 0);
+    },
+    out: function(){
+      var dict = {};
+      OVCUBE_SHAPE_.rmx.dims.forEach(function(f){ dict[f] = D[f].list; });
+      return { line:'rmx', rows: order.map(function(k){ return acc[k]; }),
+               dict: dict, skipped: skipped };
+    }
+  };
+}
 
+/* Main Raw Data -> the accumulator. `t` is a read tab (history), or null with
+   `live` supplying section 7's already-enriched rows. */
+function ovcRmxMain_(A, t, c, byYear, live, cyYear){
   if (t){
     for (var i = t.hdr + 1; i < t.values.length; i++){
       var row = t.values[i];
       if (!ovcStr_(row[c.plant])) continue;
       var ym = ovcBillYm_(row[c.bill]);
-      if (!ym){ skipped++; continue; }
-
+      if (!ym){ A.skip(); continue; }
       /* Bill Month ("Jul-26") names its own year, and that is the one year the
          row feeds. Each month therefore arrives twice — once per year — and
          push() sums the two into the same ym bucket. */
-      var mo = ym % 100, yr = Math.floor(ym / 100);
-      var col = byYear[yr];
-      if (!col){ skipped++; continue; }        // year outside this workbook's two
-      /* ex / va ARE NOT READ HERE, and never were. This is Main Raw Data: it has
-         a volume column and a net-sales column and no extras of any kind. The
-         zeroes are what the two arguments have always been - byYear is built
-         from the volume and net-sales headers alone, so col.ex has never
-         existed - and ovcRmxFoldExtras_ is what fills them now. */
-      push(yr * 100 + mo, D.plant.idx(row[c.plant]), D.mix.idx(row[c.mix]),
-           D.segment.idx(row[c.seg]), ovcNum_(row[col.v]), ovcNum_(row[col.r]), 0, 0);
+      var col = byYear[Math.floor(ym / 100)];
+      if (!col){ A.skip(); continue; }        // year outside this workbook's two
+      A.base(ym, row[c.plant], row[c.mix], row[c.seg],
+             ovcNum_(row[col.v]), ovcNum_(row[col.r]));
     }
-  } else {
-    for (var j = 0; j < live.length; j++){
-      var e = live[j];
-      if (!e.month){ skipped++; continue; }
-      var pi = D.plant.idx(e.plant), mi = D.mix.idx(e.mix), si = D.segment.idx(e.segment);
-      /* Same again on the live side: these are §7's Main Raw Data rows and
-         cyExRev / pyVaRev were never fields on them, so the two arguments only
-         ever evaluated to 0. ovcRmxFoldExtras_ owns those columns. */
-      push(cyYear * 100 + e.month,       pi, mi, si, e.cyVol, e.cyRev, 0, 0);
-      push((cyYear - 1) * 100 + e.month, pi, mi, si, e.pyVol, e.pyRev, 0, 0);
-    }
+    return;
   }
-  var dict = {};
-  OVCUBE_SHAPE_.rmx.dims.forEach(function(f){ dict[f] = D[f].list; });
-  return { line:'rmx', rows: order.map(function(k){ return acc[k]; }), dict: dict, skipped: skipped };
+  for (var j = 0; j < live.length; j++){
+    var e = live[j];
+    if (!e.month){ A.skip(); continue; }
+    A.base(cyYear * 100 + e.month,       e.plant, e.mix, e.segment, e.cyVol, e.cyRev);
+    A.base((cyYear - 1) * 100 + e.month, e.plant, e.mix, e.segment, e.pyVol, e.pyRev);
+  }
+}
+
+/* Does this workbook carry a tab by that name? ovcReadTab_ throws when it does
+   not, and "this export has no Associate Raw Data" is not a failure — VAP is
+   simply absent from that year. */
+function ovcHasTab_(ss, name){
+  var want = ovcH_(name), hit = false;
+  ss.getSheets().forEach(function(sh){ if (ovcH_(sh.getName()) === want) hit = true; });
+  return hit;
+}
+
+/* One extras tab -> the accumulator. Returns false when the book has no such
+   tab, so the caller can tell "no VAP in this export" from "no VAP revenue".
+ *
+ * THE ROWS DATE THEMSELVES. Bill Month carries the year here exactly as it does
+ * on Main Raw Data ("Jan-25"), so the year comes off the DATA and the header is
+ * only ever asked WHICH COLUMN belongs to which year - which is what makes
+ * "- CY / - PY" and "- 2024 / - 2025" the same tab to this reader. This is the
+ * half that got written down wrongly once: these rows were said to carry no
+ * year, and they always have.
+ *
+ * THE HEADER PROBE IS DELIBERATELY JUST plant + mat_descr. Those two are on
+ * every export of this tab. Major Project Segment is read when it is there and
+ * left blank when it is not: a probe naming a column an older book spells
+ * differently finds no header row at all and then reads row 1 as one, which is
+ * the silent-corruption shape rather than an error. */
+function ovcRmxExtraTab_(A, ss, tab, vap){
+  if (!tab || !ovcHasTab_(ss, tab)) return false;
+  var t = ovcReadTab_(ss, tab, ['plant', 'mat_descr']);
+  var cBill = ovcCol_(t, 'bill month');
+  if (cBill < 0) cBill = ovcCol_(t, 'billmonth');
+  if (cBill < 0) cBill = ovcCol_(t, 'bill_month');
+  if (cBill < 0) throw new Error('Ready-Mix extras: "' + tab
+    + '" has no "Bill Month" column (the export spells it "bill_month").');
+  var cPlant = ovcCol_(t, 'plant'),
+      cDescr = ovcCol_(t, 'mat_descr'),
+      cSeg   = ovcCol_(t, 'major project segment');
+  if (cPlant < 0 || cDescr < 0) throw new Error('Ready-Mix extras: "' + tab
+    + '" needs a "Plant" and a "mat_descr" column.');
+
+  var cyBill = APP_dataCyYear_(t.values, cBill, t.hdr + 1);
+  var rcols = ovcYearCols_(t, 'total revenue', cyBill);
+  if (rcols.length < 2) throw new Error('Ready-Mix extras: "' + tab
+    + '" needs two "Total Revenue" columns ("- CY" / "- PY", or "- ####").');
+  var byYear = {};
+  rcols.forEach(function(x){ byYear[x.y] = x.i; });
+
+  for (var i = t.hdr + 1; i < t.values.length; i++){
+    var row = t.values[i];
+    if (!ovcStr_(row[cPlant])) continue;
+    var ym = ovcBillYm_(row[cBill]);
+    if (!ym){ A.skip(); continue; }
+    var ci = byYear[Math.floor(ym / 100)];
+    if (ci == null){ A.skip(); continue; }        // a year this tab has no column for
+    A.extra(ym, row[cPlant], ovcStr_(cSeg < 0 ? '' : row[cSeg]),
+            ovcStr_(row[cDescr]), ovcNum_(row[ci]), vap);
+  }
+  return true;
 }
 
 
@@ -13780,6 +13939,7 @@ function ovcAggSides_(cube, LK, bag){
   });
 
   ['market','sm1','sm2','mb','revType'].forEach(function(f){ cube.dict[f] = M[f].list; });
+  if (bag){ bag.n.plant = cube.dict.plant.length; bag.n.revType = Object.keys(rt).length; }
   cube.plantMap = pm;
   cube.revType  = rt;
   return cube;
@@ -13787,13 +13947,19 @@ function ovcAggSides_(cube, LK, bag){
 
 function ovcRmxSides_(cube, LK, bag){
   var M = { market: ovcDict_(), submarket: ovcDict_(),
-            strength: ovcDict_(), cls: ovcDict_(), app: ovcDict_() };
-  var pm = { market: [], submarket: [] }, mm = { strength: [], cls: [], app: [] };
+            strength: ovcDict_(), cls: ovcDict_(), app: ovcDict_(),
+            extraType: ovcDict_() };
+  var pm = { market: [], submarket: [] }, mm = { strength: [], cls: [], app: [] },
+      xm = { extraType: [] };
   var vol = {}, rev = {};
   var RX = ovcIx_('rmx');
   cube.rows.forEach(function(r){
+    /* All three revenue columns, because a plant that sells only extras still
+       needs PLANT LOOKUP row and would otherwise be reported at $0 — which
+       reads as "nothing to fix" for the one case where nothing else says so. */
     vol[r[RX.dim.plant]] = (vol[r[RX.dim.plant]] || 0) + r[RX.val.v];
-    rev[r[RX.dim.plant]] = (rev[r[RX.dim.plant]] || 0) + r[RX.val.r];
+    rev[r[RX.dim.plant]] = (rev[r[RX.dim.plant]] || 0)
+                         + r[RX.val.r] + r[RX.val.ex] + r[RX.val.va];
   });
 
   cube.dict.plant.forEach(function(name, i){
@@ -13826,9 +13992,49 @@ function ovcRmxSides_(cube, LK, bag){
     mm.app.push(M.app.idx(hit.app));
   });
 
-  ['market','submarket','strength','cls','app'].forEach(function(f){ cube.dict[f] = M[f].list; });
+  /* THE EXTRA IS A MIX WITH A DIFFERENT LOOKUP, and it is resolved here for the
+     same reason and in the same shape: the dictionary holds the raw mat_descr,
+     the side-table holds what the LIVE EXTRAS LOOKUP calls it, and a material
+     the tab has no row for is REPORTED and bucketed as "Unclassified" — never
+     silently merged into a neighbouring type.
+
+     THIS IS WHAT MAKES THE MAPPING CHECK HONEST ACROSS HISTORY. The extras miss
+     list used to be read off the live workbook alone, so a material that traded
+     in a closed year and is not in EXTRAS LOOKUP was invisible: the panel said
+     "all matched" while the by-type table quietly dropped its revenue. Every era
+     in the cube passes through here, so the count on screen now covers every
+     month the slider can reach.
+
+     Code 0 is the blank extra every CONCRETE row carries. It is not a material
+     and is not a miss; ovcNote_ ignores a blank value anyway, and the guard is
+     here so the read is obvious rather than incidental. */
+  var xrev = {};
+  cube.rows.forEach(function(r){
+    var xc = r[RX.dim.extra];
+    xrev[xc] = (xrev[xc] || 0) + r[RX.val.ex] + r[RX.val.va];
+  });
+  var typeOf = LK.extraType || function(){ return ''; };
+  (cube.dict.extra || []).forEach(function(descr, i){
+    var d = ovcStr_(descr);
+    if (!d){ xm.extraType.push(M.extraType.idx('')); return; }   // a concrete row
+    var t = typeOf(d);
+    if (!t){
+      ovcNote_(bag, 'extra', descr, 0, xrev[i] || 0);
+      t = 'Unclassified';                       // kept separate from every real type
+    }
+    xm.extraType.push(M.extraType.idx(t));
+  });
+
+  ['market','submarket','strength','cls','app','extraType'].forEach(function(f){ cube.dict[f] = M[f].list; });
+  if (bag){
+    bag.n.plant = cube.dict.plant.length;
+    bag.n.mix   = cube.dict.mix.length;
+    /* the blank extra is not a material and was never tested against the tab */
+    bag.n.extra = (cube.dict.extra || []).filter(function(d){ return !!ovcStr_(d); }).length;
+  }
   cube.plantMap = pm;
   cube.mixMap   = mm;
+  cube.extraMap = xm;
   return cube;
 }
 
@@ -13924,542 +14130,27 @@ function ovcHistRmx_(page){
   rcols.forEach(function(x){ (byYear[x.y] = byYear[x.y] || {}).r = x.i; });
   var c = { bill: cBill, plant: ovcCol_(t, 'plant'),
             mix: ovcCol_(t, 'product mix'), seg: ovcCol_(t, 'major project segment') };
-  return ovcRmxRoll_(t, c, byYear, null, 0, null);
-}
 
+  /* ONE READ, ONE FILE, ALL THREE TABS. The book's extras go into the same
+     accumulator as its Main Raw Data because they are the same line of the same
+     cube — see ovcRmxAcc_. This is what makes a closed year's Extras & VAP
+     arrive with its volumes instead of behind a second build nobody triggered,
+     and it is why there is no separate extras endpoint, extras file or extras
+     shape version any more.
 
-
-
-/* ========================================================================
- * EXTRAS / VAP FACTS - the one thing the month fact table cannot carry
- * ------------------------------------------------------------------------
- * WHAT THE PROBLEM ACTUALLY IS, because it has been written down wrongly once.
- *
- * The Extra Raw Data and Associate Raw Data tabs DO carry a year: it is on
- * their Bill Month ("Jan-25"), and it is what decides which of the tab's two
- * money columns a row fills. The pair is headed "- CY" / "- PY" on the live
- * book and "- 2024" / "- 2025" on a closed one, and that difference costs
- * nothing at all - APP_yearCols_ normalises both into the same year -> column
- * map, which is the whole reason that helper exists.
- *
- * WHAT IS MISSING IS NEITHER THE MONTH NOR THE YEAR. It is that
- *   1. §7's loadStream_ reads the month ordinal ALONE (monthOrd_ takes the
- *      first three letters and throws the year away, deliberately - see its
- *      banner), so a row the live page holds is a 1-12 month against whichever
- *      cy/py pair THAT WORKBOOK happens to carry; and
- *   2. one workbook only ever holds two book years. Anything older lives in the
- *      closed-year books, and until this block nothing read their extras tabs
- *      at all - ovcHistRmx_ takes Main Raw Data and stops.
- *
- * So "Extras & VAP, book year only" was never a statement about MONTHS. Months
- * were always there. It was the live workbook's two years, and this block is
- * what removes it: the closed books' extras tabs are read once, parked in Drive
- * beside the month cube's own history, and merged with the live tab into one
- * ym-keyed fact table every book can answer from.
- *
- * FACTS ONLY, exactly like the month cube's history (see its banner). A parked
- * row carries plant, Major Project Segment and mat_descr and nothing derived:
- * market, submarket, the extra TYPE and the custom flag are all resolved from
- * the LIVE lookups at read time through RMX_NS.extraResolver(), so fixing an
- * EXTRAS LOOKUP row re-labels every closed year at once, with no re-export and
- * no rebuild.
- *
- * WHY THIS IS NOT A THIRD LINE OF THE MONTH CUBE. The cube's rmx line is keyed
- * plant x mix x segment and its client half is built around volume, revenue and
- * a PPI pooled at plant x mix. Extras rows carry no product mix - the charge is
- * per load, not per mix - and no volume, and what the panel wants out of them is
- * a split by a dimension (the type) the cube has no column for. A line whose
- * every measure and every dimension differed from both existing ones would mean
- * a second decoder, a second query path and an IndexedDB version bump, to carry
- * a table that is a few hundred rows once it is grouped. It stays on the server,
- * and the browser asks for it the way it already asks for the cross-report.
- *
- * TWO CONSUMERS, ONE SOURCE.
- *   - RMX_getExtrasByMonths - the Overview's Extras & VAP panel, by type.
- *   - ovcRmxFoldExtras_ - the `ex` / `va` columns of the rmx cube line, which is
- *     what the ASP build-up sums. Those two columns have been in the shape since
- *     v2 and NOTHING HAS EVER WRITTEN TO THEM: the live roll reads e.cyExRev off
- *     Main Raw Data rows that have never had such a field, and the history roll
- *     reads col.ex out of a byYear map built from the volume and net-sales
- *     columns alone. Every Extras and VAP row of the window-mode ASP build-up
- *     has therefore been $0.00, with All-in equal to Base, for as long as that
- *     panel has existed. Folding both halves in from HERE is what makes the
- *     build-up agree with the by-type table underneath it by construction
- *     rather than by coincidence.
- * ==================================================================== */
-
-/* Bump when the parked extras layout changes. Separate from OVCUBE_SHAPE_VER_
-   on purpose: an extras change must not make the month cube's own history files
-   stale, and vice versa. It reaches the clients through ovcHistTok_, which
-   CUBE_rebuildHistory moves whichever part it just built. */
-var OVX_SHAPE_VER_ = 'x1';
-var OVX_STREAM_ = ['EXTRAS', 'VAP'];          // st: 0 / 1, the two tabs
-/* [ym, plant, segment, descr, st, rev, m3] over its own three dictionaries. */
-var OVX_DIMS_ = ['plant', 'segment', 'descr'];
-var OVX_K_ = '|';    // every key part below is an integer, so a pipe is unambiguous
-
-function ovcYmAdd_(ym, n){
-  var y = Math.floor(ym / 100), m = ym % 100 + n;
-  y += Math.floor((m - 1) / 12); m = ((m - 1) % 12 + 12) % 12 + 1;
-  return y * 100 + m;
-}
-/* rxfLbl_'s rule, on this side of the file: a blank dimension value is its own
-   bucket and is spelled the same way here as it is in the cross-report, so a
-   Segment chip picked on one path still matches on the other. */
-function ovcXLbl_(v){ return ovcStr_(v) || '(blank)'; }
-
-/* One accumulator, used by both the live and the history reads, so the two
-   halves cannot be grouped differently. */
-function ovcXAcc_(){
-  var D = { plant: ovcDict_(), segment: ovcDict_(), descr: ovcDict_() };
-  var acc = {}, order = [], skipped = 0, lo = 0, hi = 0;
-  return {
-    skip: function(){ skipped++; },
-    push: function(ym, plant, segment, descr, st, rev, m3){
-      if (!ym){ skipped++; return; }
-      /* The span is recorded for every READABLE row, including one worth
-         nothing. "This month had no extras" and "nobody has read this month"
-         are different answers and the panel has to be able to tell them apart. */
-      if (!lo || ym < lo) lo = ym;
-      if (!hi || ym > hi) hi = ym;
-      if (!rev && !m3) return;
-      var p = D.plant.idx(plant), s = D.segment.idx(segment), d = D.descr.idx(descr);
-      var k = ym + OVX_K_ + p + OVX_K_ + s + OVX_K_ + d + OVX_K_ + st;
-      var a = acc[k];
-      if (!a){ a = acc[k] = [ym, p, s, d, st, 0, 0]; order.push(k); }
-      a[5] += rev; a[6] += m3;
-    },
-    out: function(){
-      var rows = order.map(function(k){ return acc[k]; });
-      rows.sort(function(a, b){ return a[0] - b[0]; });
-      return { rows: rows, skipped: skipped, from: lo, to: hi,
-               dict: { plant: D.plant.list, segment: D.segment.list, descr: D.descr.list } };
-    }
-  };
-}
-
-/* ---------------------------------------------------------- history read --
- * One era's two extras tabs. Same contract as ovcHistRmx_ above: the Bill Month
- * dates the row, the header only ever decides the PAIRING, and a row whose year
- * is not one of the two the tab carries is skipped rather than guessed at.
- *
- * THE HEADER PROBE IS DELIBERATELY JUST plant + mat_descr. Those two are on
- * every export of this tab. mat_prod_hier_3 and Major Project Segment are read
- * when they are there and left blank when they are not - a probe naming a column
- * an older book spells differently finds no header row at all, and then reads
- * row 1 as one, which is the silent-corruption shape rather than an error.
- */
-function ovcHistRmxExtras_(page){
-  page = page || 'histrmx';
-  var ss = APP_openSpreadsheet_(page);
-  var S  = APP_CONFIG.PAGES[page].SHEETS || {};
-  var A  = ovcXAcc_(), read = 0, missing = [];
-
-  [{ tab: S.EXTRA, st: 0 }, { tab: S.ASSOC, st: 1 }].forEach(function(src){
-    if (!src.tab || !ovcHasTab_(ss, src.tab)){ missing.push(src.tab || '(unnamed)'); return; }
-    var t = ovcReadTab_(ss, src.tab, ['plant', 'mat_descr']);
-    var cBill = ovcCol_(t, 'bill month');
-    if (cBill < 0) cBill = ovcCol_(t, 'billmonth');
-    if (cBill < 0) cBill = ovcCol_(t, 'bill_month');
-    if (cBill < 0) throw new Error('History Ready-Mix extras: "' + src.tab
-      + '" has no "Bill Month" column (the export spells it "bill_month").');
-
-    var cPlant = ovcCol_(t, 'plant'),
-        cDescr = ovcCol_(t, 'mat_descr'),
-        cSeg   = ovcCol_(t, 'major project segment');
-    if (cPlant < 0 || cDescr < 0) throw new Error('History Ready-Mix extras: "' + src.tab
-      + '" needs a "Plant" and a "mat_descr" column.');
-
-    /* The rows date themselves, so the year pair comes from THEM and the header
-       is only asked which column belongs to which year. That is what makes
-       "- CY / - PY" and "- 2024 / - 2025" the same tab to this reader. */
-    var cyBill = APP_dataCyYear_(t.values, cBill, t.hdr + 1);
-    var rcols = ovcYearCols_(t, 'total revenue', cyBill);
-    var mcols = ovcYearCols_(t, 'm3 applied to', cyBill);
-    if (rcols.length < 2) throw new Error('History Ready-Mix extras: "' + src.tab
-      + '" needs two "Total Revenue" columns ("- CY" / "- PY", or "- ####").');
-    var byYear = {};
-    rcols.forEach(function(x){ (byYear[x.y] = byYear[x.y] || {}).r = x.i; });
-    mcols.forEach(function(x){ (byYear[x.y] = byYear[x.y] || {}).m = x.i; });
-
-    for (var i = t.hdr + 1; i < t.values.length; i++){
-      var row = t.values[i];
-      var plant = ovcStr_(row[cPlant]); if (!plant) continue;
-      var ym = ovcBillYm_(row[cBill]);
-      if (!ym){ A.skip(); continue; }
-      var col = byYear[Math.floor(ym / 100)];
-      if (!col){ A.skip(); continue; }              // a year this tab has no column for
-      A.push(ym, plant, ovcStr_(cSeg < 0 ? '' : row[cSeg]), ovcStr_(row[cDescr]), src.st,
-             (col.r != null && col.r >= 0) ? ovcNum_(row[col.r]) : 0,
-             (col.m != null && col.m >= 0) ? ovcNum_(row[col.m]) : 0);
-    }
-    read++;
-  });
-
-  /* ONE tab is a complete answer; NEITHER is not. A book that carries Extra Raw
-     Data and no Associate Raw Data is a real export - VAP is simply absent from
-     that year - and refusing it would cost the extras of every year in the book
-     to report a tab nobody sent. Neither tab present is a different thing: it
-     means this book cannot answer the question at all, and saying so is what
-     keeps a parked file of zero rows from looking like a year with no extras. */
-  if (!read) throw new Error('History Ready-Mix extras: this book has neither an '
-    + '"Extra Raw Data" tab nor an "Associate Raw Data" one (looked for: '
-    + missing.join(', ') + ').');
+     A BOOK WITH NO EXTRAS TABS IS STILL A BOOK. Neither tab is required: an
+     export that ships only Main Raw Data parks its months and reports no extras,
+     which is the truthful answer and not a failure. */
+  var A = ovcRmxAcc_(null);
+  ovcRmxMain_(A, t, c, byYear, null, 0);
+  var gotEx = ovcRmxExtraTab_(A, ss, S.EXTRA, false);
+  var gotVa = ovcRmxExtraTab_(A, ss, S.ASSOC, true);
   var out = A.out();
-  out.missingTabs = missing;
+  out.extraTabs = { extra: gotEx, assoc: gotVa };
   return out;
 }
 
-/* Does this workbook carry a tab by that name? ovcReadTab_ throws when it does
-   not, and "the Associate tab is not in this export" is not a failure. */
-function ovcHasTab_(ss, name){
-  var want = ovcH_(name), hit = false;
-  ss.getSheets().forEach(function(sh){ if (ovcH_(sh.getName()) === want) hit = true; });
-  return hit;
-}
 
-/* ------------------------------------------------------------ persistence --
- * Its own file per era, beside the month cube's. Keeping it separate is what
- * lets the extras be read WITHOUT re-reading a 58,000-row Main Raw Data tab,
- * and lets a book whose extras tab is missing still carry its months. */
-function ovcXName_(eraId){
-  var base = ((ovcCfg_().FILES || {}).rmxExtras) || 'cube_hist_rmx_extras.json';
-  var eras = ovcEras_(), first = eras.length ? eras[0].id : '';
-  if (!eraId || eraId === first) return base;
-  return base.replace(/\.json$/i, '') + '_' + eraId + '.json';
-}
-function ovcXWrite_(eraId, obj){
-  var name = ovcXName_(eraId), folder = ovcFolder_();
-  var it = folder.getFilesByName(name);
-  while (it.hasNext()) it.next().setTrashed(true);
-  folder.createFile(name, JSON.stringify({
-    rows: obj.rows, dict: obj.dict, skipped: obj.skipped || 0,
-    from: obj.from || 0, to: obj.to || 0,
-    shape: OVX_SHAPE_VER_, dims: OVX_DIMS_
-  }), MimeType.PLAIN_TEXT);
-}
-/* A file whose layout does not match this code is ABSENT, never data - the same
-   rule, for the same reason, as ovcHistShapeOk_. */
-function ovcXFile_(eraId){
-  try {
-    var it = ovcFolder_().getFilesByName(ovcXName_(eraId));
-    if (!it.hasNext()) return null;
-    var o = JSON.parse(it.next().getBlob().getDataAsString());
-    if (!o || !o.rows || !o.dict) return null;
-    if (o.shape !== OVX_SHAPE_VER_) return null;
-    if (!o.dims || o.dims.join('|') !== OVX_DIMS_.join('|')) return null;
-    return o;
-  } catch (e){ return null; }
-}
-
-/* ------------------------------------------------------------- live read --
- * The live tabs come off the bundle §7 already built, so this opens no sheet.
- * Those rows are a 1-12 month and a cy/py pair; the bundle says which two years
- * they are, and that is what puts them on the same ym axis as the parked ones. */
-function ovcXLive_(){
-  var b = RMX_NS.dataBundle();
-  var cy = Number(b.cyYear) || 0, py = Number(b.pyYear) || (cy ? cy - 1 : 0);
-  var A = ovcXAcc_();
-  if (!cy) return A.out();                      // a bundle that cannot date itself
-  [{ list: b.extras || [], st: 0 }, { list: b.assoc || [], st: 1 }].forEach(function(src){
-    src.list.forEach(function(e){
-      if (!e.month){ A.skip(); return; }
-      var pl = ovcStr_(e.plant), seg = ovcStr_(e.segment), d = ovcStr_(e.descr);
-      A.push(cy * 100 + e.month, pl, seg, d, src.st, e.cyRev || 0, e.cyM3 || 0);
-      if (py) A.push(py * 100 + e.month, pl, seg, d, src.st, e.pyRev || 0, e.pyM3 || 0);
-    });
-  });
-  return A.out();
-}
-
-/* ----------------------------------------------------------------- merge --
- * THE SAME ONE LINE THE MONTH CUBE MERGES ON: history first, the newest book
- * wins a month two books both carry, and the live tabs win over the lot.
- * Written out here rather than shared with ovcMerge_ because the row shape and
- * the dictionaries differ; the RULE is deliberately identical, and if one of
- * them is ever changed the other has to change with it or the ASP build-up and
- * the by-type table underneath it will disagree about who owns a month.
- *
- * CODES, NOT LABELS, ON THE WAY OUT, over ONE master dictionary the sources are
- * translated into as they are taken - the same remap the month cube does at read
- * time and for the same two reasons. Each parked file is built on its own with
- * no shared seed, so plant 7 in one is not plant 7 in another and concatenating
- * their rows would silently relabel half of them; and this table is cached
- * whole, so writing a mat_descr out on every row would put megabytes of repeated
- * strings through CacheService on a payload that is a few hundred rows once it
- * has been grouped. Both consumers resolve per dictionary ENTRY, not per row. */
-function ovcXRead_(){
-  var D = { plant: ovcDict_(), segment: ovcDict_(), descr: ovcDict_() };
-  var rows = [], seen = {}, srcs = [], skipped = 0, spans = [];
-
-  function take(id, label, f){
-    var mine = {}, kept = 0, i;
-    /* one translation array per dimension per source: a label is looked up once
-       per distinct value rather than once per row */
-    var mp = {};
-    OVX_DIMS_.forEach(function(k){
-      var src = (f.dict && f.dict[k]) || [], arr = new Array(src.length);
-      for (var j = 0; j < src.length; j++) arr[j] = D[k].idx(src[j]);
-      mp[k] = arr;
-    });
-    for (i = 0; i < f.rows.length; i++){
-      var r = f.rows[i], ym = r[0];
-      mine[ym] = true;
-      if (seen[ym]) continue;                   // a newer source already owns this month
-      rows.push([ym, mp.plant[r[1]], mp.segment[r[2]], mp.descr[r[3]], r[4], r[5], r[6]]);
-      kept++;
-    }
-    Object.keys(mine).forEach(function(k){ seen[k] = true; });
-    var ms = Object.keys(mine).map(Number).sort(function(a, b){ return a - b; });
-    skipped += f.skipped || 0;
-    if (f.from && f.to) spans.push({ from: f.from, to: f.to });
-    srcs.push({ id: id, label: label, rows: kept, months: ms.length,
-                from: f.from || ms[0] || null, to: f.to || ms[ms.length - 1] || null });
-  }
-
-  take('live', 'live book', ovcXLive_());
-
-  ovcEras_().forEach(function(era){
-    var f = ovcXFile_(era.id);
-    if (!f) return;
-    take(era.id, era.label || era.id, f);
-  });
-
-  rows.sort(function(a, b){ return a[0] - b[0]; });
-  return { rows: rows,
-           dict: { plant: D.plant.list, segment: D.segment.list, descr: D.descr.list },
-           sources: srcs, skipped: skipped, spans: spans };
-}
-
-/* Cached under the cube's own generation, so a sync, a lookup edit or a rebuilt
-   extras book all reach it and nothing else does. */
-function ovcXFacts_(){
-  var key = 'ovx|' + ovcGen_();
-  var hit = APP_cacheGet_(key);
-  if (hit) return hit;
-  var out = ovcXRead_();
-  APP_cachePut_(key, out);
-  return out;
-}
-
-/* Is this ym inside a month somebody has actually READ? A month nobody has read
-   and a month that carried no extras are different answers. */
-function ovcXCovers_(spans, ym){
-  for (var i = 0; i < (spans || []).length; i++)
-    if (ym >= spans[i].from && ym <= spans[i].to) return true;
-  return false;
-}
-
-/* ---------------------------------------------------- fold into the cube --
- * `ex` / `va` on the rmx line, from the SAME facts the by-type panel reads.
- *
- * Extras rows carry no product mix - the charge is per load - so they are folded
- * onto the BLANK mix, which dimsForProduct_ already buckets as "Others". They
- * bring no volume and no base revenue with them, and that is what makes this
- * safe rather than merely convenient:
- *   - a plant x mix pair of zeroes fails the "> 0" coverage test the browser
- *     applies before it weighs anything, so no PPI and no CPI moves;
- *   - every grouped view filters on cyVol / pyVol / cyRev / pyRev before it
- *     renders a row, so a group that is ONLY extras cannot appear as a line of
- *     zeroes in a breakdown or a dimension table;
- *   - and the one panel that does read these two columns divides them by the
- *     window's total concrete m3, which comes from the volume rows beside them.
- *
- * It runs BEFORE ovcRmxSides_, so a plant that trades only extras still gets its
- * market resolved and still reports itself unmapped when PLANT LOOKUP has no
- * row for it. */
-function ovcRmxFoldExtras_(cube){
-  var X = ovcXFacts_();
-  /* WHICH EXTRAS SOURCES ANSWERED, carried on the cube so ovcEraStat_ can say
-     which books still owe their extras WITHOUT opening Drive. It runs inside
-     every manifest build, which is the same reason ovcEraLinked_ reads Script
-     Properties and nothing else. */
-  cube.xSources = (X && X.sources) || [];
-  if (!X || !X.rows.length) return cube;
-  var IX = ovcIx_('rmx'), nv = OVCUBE_SHAPE_.rmx.vals.length;
-  var back = {};
-  ['plant', 'mix', 'segment'].forEach(function(f){
-    if (!cube.dict[f]) cube.dict[f] = [];
-    var listF = cube.dict[f], m = back[f] = {};
-    for (var i = 0; i < listF.length; i++) if (!(listF[i] in m)) m[listF[i]] = i;
-  });
-  function idx(f, v){
-    var s = ovcStr_(v), hit = back[f][s];
-    if (hit === undefined){ hit = cube.dict[f].length; cube.dict[f].push(s); back[f][s] = hit; }
-    return hit;
-  }
-  var mixBlank = idx('mix', '');
-  /* extras code -> cube code, once per distinct plant and segment */
-  var pTo = (X.dict.plant || []).map(function(v){ return idx('plant', v); });
-  var sTo = (X.dict.segment || []).map(function(v){ return idx('segment', v); });
-
-  var at = {}, i, r;
-  for (i = 0; i < cube.rows.length; i++){
-    r = cube.rows[i];
-    at[r[0] + OVX_K_ + r[1] + OVX_K_ + r[2] + OVX_K_ + r[3]] = r;
-  }
-  var added = [];
-  X.rows.forEach(function(x){
-    if (!x[5]) return;                                   // applied m3 alone moves no money
-    var p = pTo[x[1]], sg = sTo[x[2]];
-    if (p == null || sg == null) return;
-    var k = x[0] + OVX_K_ + p + OVX_K_ + mixBlank + OVX_K_ + sg;
-    var row = at[k];
-    if (!row){
-      row = [x[0], p, mixBlank, sg];
-      for (var j = 0; j < nv; j++) row.push(0);
-      at[k] = row; added.push(row);
-    }
-    row[x[4] ? IX.val.va : IX.val.ex] += x[5];
-  });
-  if (added.length){
-    cube.rows = cube.rows.concat(added);
-    cube.rows.sort(function(a, b){ return a[0] - b[0]; });
-  }
-  return cube;
-}
-
-/* ==================================================================== *
- * EXTRAS & VAP BY TYPE, FOR AN EXPLICIT LIST OF MONTHS
- * --------------------------------------------------------------------
- * What the Overview's Months slider asks for. `cyMonths` is a ym LIST - the
- * window's own months, the same ones the browser hands AmrCube.query - and each
- * is compared against the same month a year earlier, which is what every other
- * figure on that page does.
- *
- * IT RETURNS REVENUE, NOT $/m3. The denominator is total concrete m3 for the
- * window and the browser already holds it, exactly as it does for the rest of
- * the panel. Sending a second copy from here would be two answers to one
- * question, and they would part company the moment a filter reached one of them
- * and not the other.
- *
- * `uncovered` is the honest half. A window month no book has been read for is
- * NOT zero extras, and the panel says so rather than publishing a total that
- * quietly stops at the oldest era anybody has built.
- * ==================================================================== */
-function RMX_getExtrasByMonths(opts){
-  opts = opts || {};
-  var market = opts.market || '__ALL__';
-
-  var cy = [], seenY = {};
-  (opts.cyMonths || []).forEach(function(v){
-    var ym = Math.round(Number(v) || 0), mo = ym % 100;
-    if (ym < 190001 || ym > 210012 || mo < 1 || mo > 12) return;
-    if (seenY[ym]) return;
-    seenY[ym] = true; cy.push(ym);
-  });
-  cy.sort(function(a, b){ return a - b; });
-  if (!cy.length) return { ok:false, reason:'months', error:'No months were asked for.' };
-
-  /* The fields these rows carry. STRENGTH and CLASS come off PRODUCT MASTER
-     through Product Mix and extras rows have no mix at all, so a selection on
-     either is REFUSED rather than silently ignored - the same answer, in the
-     same words, that getCrossReport gives. */
-  var f = opts.filters || {};
-  function list(k){
-    var v = f[k] || [];
-    return (Object.prototype.toString.call(v) === '[object Array]' ? v : [v])
-      .map(function(x){ return String(x == null ? '' : x).trim(); })
-      .filter(function(x){ return !!x; });
-  }
-  if (list('STRENGTH').length || list('CLASS').length)
-    return { ok:false, reason:'mix',
-             why:'Extras and VAP are recorded per plant and material, with no product '
-               + 'mix, so a Strength Class or Product Class filter cannot be applied to '
-               + 'them. Base ASP and PPI are unaffected.' };
-  var want = {}, sigParts = [];
-  ['SUBMARKET', 'SEGMENT', 'PLANT'].forEach(function(k){
-    var v = list(k);
-    if (!v.length){ want[k] = null; return; }
-    var set = {}; v.forEach(function(x){ set[x] = true; });
-    want[k] = set;
-    sigParts.push(k + '=' + v.slice().sort().join('\u2016'));
-  });
-
-  var ck = 'ovxr|' + ovcGen_() + '|' + market + '|' + (sigParts.join('&') || 'none')
-         + '|' + cy.join('.');
-  var hit = APP_cacheGet_(ck); if (hit) return hit;
-
-  var X = ovcXFacts_(), R = RMX_NS.extraResolver();
-
-  var slot = {}, uncovered = [], uncoveredPy = [];
-  cy.forEach(function(ym){ slot[ym] = 1; });
-  cy.forEach(function(ym){
-    var pym = ovcYmAdd_(ym, -12);
-    /* A CY month is never also read as a PY one. A window longer than twelve
-       months overlaps itself, and CY is the side that wins - the same rule
-       AmrCube.query applies to its cySlot / pySlot. */
-    if (slot[pym] === undefined) slot[pym] = -1;
-    if (!ovcXCovers_(X.spans, ym)) uncovered.push(ym);
-    if (!ovcXCovers_(X.spans, pym)) uncoveredPy.push(pym);
-  });
-
-  /* ONE PASS PER DICTIONARY ENTRY, then integer work per row. The market, the
-     submarket, the extra type and the two chip tests are all functions of a
-     dimension VALUE, so they are answered once for each distinct plant and each
-     distinct mat_descr rather than tens of thousands of times over. */
-  var pOk = (X.dict.plant || []).map(function(name){
-    var a = R.plant(name);
-    return mktOkX_(a.market, market)
-      && (!want.SUBMARKET || !!want.SUBMARKET[ovcXLbl_(a.submarket)])
-      && (!want.PLANT     || !!want.PLANT[name]);
-  });
-  var sOk = (X.dict.segment || []).map(function(v){
-    return !want.SEGMENT || !!want.SEGMENT[ovcXLbl_(v)];
-  });
-  var dType = (X.dict.descr || []).map(function(v){ return R.type(v); });
-
-  var tmap = {}, torder = [], nRows = 0;
-  X.rows.forEach(function(x){
-    var side = slot[x[0]];
-    if (side === undefined) return;
-    if (!pOk[x[1]] || !sOk[x[2]]) return;
-    var stream = OVX_STREAM_[x[4]] || OVX_STREAM_[0];
-    var type = dType[x[3]] || 'Unclassified';
-    var k = stream + '\u2016' + type;
-    var g = tmap[k];
-    if (!g){ g = tmap[k] = { label: type, stream: stream,
-                             cyRev:0, pyRev:0, cyM3:0, pyM3:0 }; torder.push(k); }
-    if (side > 0){ g.cyRev += x[5]; g.cyM3 += x[6]; }
-    else         { g.pyRev += x[5]; g.pyM3 += x[6]; }
-    nRows++;
-  });
-
-  var byType = torder.map(function(k){
-    var g = tmap[k];
-    g.revPct = g.pyRev ? (g.cyRev - g.pyRev) / Math.abs(g.pyRev) : 0;
-    return g;
-  }).sort(function(a, b){ return b.cyRev - a.cyRev; });
-
-  var out = {
-    ok: true, market: market, gen: ovcGen_(),
-    cyMonths: cy, pyMonths: cy.map(function(ym){ return ovcYmAdd_(ym, -12); }),
-    byType: byType,
-    /* The two stream totals, so the ASP build-up never has to re-derive them
-       from the table and land on a different rounding. */
-    streams: { EXTRAS: ovcXSum_(byType, 'EXTRAS'), VAP: ovcXSum_(byType, 'VAP') },
-    /* WHICH MONTHS NOBODY HAS READ AN EXTRAS TAB FOR - not the same thing as a
-       month with no extras, and the caller has to be able to tell them apart. */
-    uncovered: uncovered, uncoveredPy: uncoveredPy,
-    sources: X.sources, rows: nRows, skipped: X.skipped || 0
-  };
-  APP_cachePut_(ck, out);
-  return out;
-}
-function ovcXSum_(rows, stream){
-  var t = { cyRev:0, pyRev:0, cyM3:0, pyM3:0, types:0 };
-  rows.forEach(function(r){
-    if (r.stream !== stream) return;
-    t.cyRev += r.cyRev; t.pyRev += r.pyRev; t.cyM3 += r.cyM3; t.pyM3 += r.pyM3; t.types++;
-  });
-  t.revPct = t.pyRev ? (t.cyRev - t.pyRev) / Math.abs(t.pyRev) : 0;
-  return t;
-}
-/* §7's mktOk_ lives inside the RMX namespace; this is the same one line, for the
-   same sentinel, on this side of the file. */
-function mktOkX_(rowMarket, sel){
-  return sel === '__ALL__' || String(rowMarket == null ? '' : rowMarket) === String(sel);
-}
 
 
 /* ========================================================================
@@ -14489,9 +14180,28 @@ function ovcLiveRmxYear_(){
   if (!best) throw new Error('Could not read the current year from the Ready-Mix volume headers.');
   return best;
 }
+/* The live half of the same line. Main Raw Data, Extra Raw Data and Associate
+   Raw Data all come off the bundle section 7 already built and cached, so this
+   opens no sheet at all — and the extras it folds in are the SAME rows the
+   Ready-Mix page's own Extras / VAP tables are built from, resolved through the
+   same EXTRAS LOOKUP, so the two cannot disagree.
+
+   §7 reads those rows at a 1-12 month against a CY/PY pair; the bundle says
+   which two years those are, and that is what puts them on the same ym axis as
+   a closed book's. */
 function ovcLiveRmx_(seed){
   var b = RMX_NS.dataBundle();
-  return ovcRmxRoll_(null, null, null, b.main || [], b.cyYear || ovcLiveRmxYear_(), seed);
+  var cy = b.cyYear || ovcLiveRmxYear_();
+  var A = ovcRmxAcc_(seed);
+  ovcRmxMain_(A, null, null, null, b.main || [], cy);
+  [{ list: b.extras || [], vap: false }, { list: b.assoc || [], vap: true }].forEach(function(src){
+    src.list.forEach(function(e){
+      if (!e.month){ A.skip(); return; }
+      A.extra(cy * 100 + e.month,       e.plant, e.segment, e.descr, e.cyRev, src.vap);
+      A.extra((cy - 1) * 100 + e.month, e.plant, e.segment, e.descr, e.pyRev, src.vap);
+    });
+  });
+  return A.out();
 }
 
 
@@ -14689,23 +14399,14 @@ function ovcHistRead_(line){
    have a sheet link, and which of those have actually been built. `linked` is
    read fresh from Script Properties; saving a sheet id runs syncAll(), which
    moves the generation on, so a manifest can never sit on a stale answer. */
-function ovcEraStat_(line, hist, xSources){
-  var built = {}, xBuilt = {};
+function ovcEraStat_(line, hist){
+  var built = {};
   ((hist && hist.eras) || []).forEach(function(e){ built[e.id] = e; });
-  (xSources || []).forEach(function(e){ xBuilt[e.id] = e; });
   return ovcEras_().map(function(e){
-    var b = built[e.id], linked = ovcEraLinked_(e, line);
-    var out = { id: e.id, label: e.label || e.id,
-                linked: linked, built: !!b,
-                months: b ? b.months : 0, from: b ? b.from : null, to: b ? b.to : null };
-    /* A READY-MIX BOOK HAS TWO PARTS AND THEY ARE BUILT SEPARATELY. Main Raw
-       Data is ~58,000 rows and is what `built` above is about; the two extras
-       tabs are their own read and their own parked file, so a book can carry its
-       months without yet carrying its extras, and the browser can go and get the
-       second part without paying for the first again. Absent on the Aggregates
-       line, which has no extras tabs at all. */
-    if (line === 'rmx') out.extras = { linked: linked, built: !!xBuilt[e.id] };
-    return out;
+    var b = built[e.id];
+    return { id: e.id, label: e.label || e.id,
+             linked: ovcEraLinked_(e, line), built: !!b,
+             months: b ? b.months : 0, from: b ? b.from : null, to: b ? b.to : null };
   });
 }
 function ovcHistTok_(){
@@ -14754,19 +14455,18 @@ function ovcCovTok_(){
 /* THE CUBE'S GENERATION. Everything a cached chunk was built from has to be in
    this string, because it is the ONLY thing either cache compares: CacheService
    on the server, and IndexedDB in the browser, which wipes when and only when
-   this token changes.
-   `-x` IS THE ONE THAT WAS MISSING. The rmx line's ex / va columns are folded in
-   from the extras facts (ovcRmxFoldExtras_), so the cube now DEPENDS on the
-   extras layout — and OVX_SHAPE_VER_ was deliberately kept out of here on the
-   grounds that an extras change must not make the month files stale. That is
-   still true of the PARKED HISTORY FILES, which is what that rule is about and
-   which key on OVX_SHAPE_VER_ separately (ovcXFile_). It is not true of the
-   CHUNKS, which now carry extras money in two of their columns. Leaving it out
-   is what let a rebuilt extras layout be served through cube blocks built
-   before it existed. */
+   this token changes. The two source stamps cover the data and the lookups, the
+   history token covers a rebuilt closed-year book, the shape version covers the
+   columns AND what is written into them, and the coverage token covers the
+   thresholds that travel inside the payload.
+
+   THE ONE THAT KEEPS BEING LEARNED THE HARD WAY: a change that alters what a
+   column CONTAINS without moving any column is still a change, and leaving the
+   shape version alone for it ships a fix that no warm device can ever receive.
+   OVCUBE_SHAPE_VER_'s own comment carries the two occasions. */
 function ovcGen_(){
   return APP_getGen_('pricevolume') + '-' + APP_getGen_('rmx') + '-h' + ovcHistTok_()
-       + '-s' + OVCUBE_SHAPE_VER_ + '-x' + OVX_SHAPE_VER_ + '-c' + ovcCovTok_();
+       + '-s' + OVCUBE_SHAPE_VER_ + '-c' + ovcCovTok_();
 }
 
 
@@ -14811,13 +14511,6 @@ function ovcBuild_(line){
                               : ovcLiveRmx_(hist ? hist.dict : null);
   var cube = ovcMerge_(hist, live);
 
-  /* EX / VA, from the extras facts - live tabs plus every closed book that has
-     been read. It has to happen HERE, between the merge and the sides: a plant
-     that trades only extras is a new dictionary entry, and the sides are what
-     put a market on it and what report it unmapped when PLANT LOOKUP has no row
-     for it. Both halves of the line therefore land in one dictionary, once. */
-  if (line === 'rmx') ovcRmxFoldExtras_(cube);
-
   /* every label resolved here, from the CURRENT-YEAR lookups */
   var bag = ovcBag_();
   if (line === 'agg') ovcAggSides_(cube, ovcLookupsAgg_(), bag);
@@ -14847,7 +14540,8 @@ function ovcBuild_(line){
     dims: SH.dims, vals: SH.vals,
     chunks: plan.map(function(c){ return { i:c.i, from:c.from, to:c.to, rows:c.rows }; }),
     dict: cube.dict, plantMap: cube.plantMap,
-    mixMap: cube.mixMap || null, revType: cube.revType || null,
+    mixMap: cube.mixMap || null, extraMap: cube.extraMap || null,
+    revType: cube.revType || null,
     /* the line's floors, plus \u00a71's CPI coverage block, so the browser gates CPI
        on exactly the rule the server does */
     coverage: (function(){
@@ -14864,7 +14558,7 @@ function ovcBuild_(line){
     perCall: ovcCfg_().CHUNKS_PER_CALL || 3,
     /* which closed-year books exist, which are linked, which are built - the
        browser drives the background reads off this and needs no second call */
-    eras: ovcEraStat_(line, hist, cube.xSources),
+    eras: ovcEraStat_(line, hist),
     floor: ovcCfg_().FLOOR || 0,
     unmapped: ovcBagOut_(bag)
   };
@@ -14978,19 +14672,18 @@ function CUBE_getChunks(opts){
 function CUBE_rebuildHistory(opts){
   opts = opts || {};
   var line = (opts.line === 'rmx') ? 'rmx' : 'agg';
-  /* THE SECOND PART OF A READY-MIX BOOK. `part:'extras'` reads that book's Extra
-     Raw Data and Associate Raw Data tabs instead of its Main Raw Data one, and
-     parks them in a file of their own. Two reads rather than one because Main is
-     ~58,000 rows on its own and neither part should ever cost the other's time:
-     a book whose months are already in can gain its extras without being read
-     end to end again, and a book with no extras tabs still carries its months.
-     Meaningless on the Aggregates line, which has no such tabs, so it is ignored
-     there rather than failing. */
-  var part = (line === 'rmx' && opts.part === 'extras') ? 'extras' : 'main';
+  /* ONE READ PER BOOK PER LINE, and a Ready-Mix book's extras come with it.
+     They were briefly a second call of their own (`part:'extras'`, its own file,
+     its own shape version) on the grounds that Main Raw Data is ~58,000 rows and
+     the two should not cost each other's time. That saved one read and cost a
+     whole mechanism: a second thing to queue, a second thing to fail, a second
+     thing to forget, and a closed year that carried its volumes with no extras
+     against them for as long as nobody triggered the other half. The extras tabs
+     are a fraction of Main's size; they are read in the same pass now. */
   var era  = ovcEra_(opts.era) || ovcEras_()[0];       // no era named -> the newest book
   var page = ovcEraPage_(era, line);
   var what = (line === 'agg' ? 'Aggregates' : 'Ready-Mix')
-           + (part === 'extras' ? ' extras' : '') + ' history (' + (era.label || era.id) + ')';
+           + ' history (' + (era.label || era.id) + ')';
   var t0 = new Date().getTime();
 
   /* Fail with something a non-technical user can act on. Without this the
@@ -14998,20 +14691,15 @@ function CUBE_rebuildHistory(opts){
      does not say WHICH sheet is missing or where to set it. */
   var sid = '';
   try { sid = page ? getSpreadsheetIdForPage_(page) : ''; } catch (e) { sid = ''; }
-  if (!sid) return { ok:false, line:line, era:era.id, part:part,
+  if (!sid) return { ok:false, line:line, era:era.id,
     error: 'The ' + what + ' sheet has not been chosen yet. '
          + 'Open \u2699 Data sheet, paste its link, save, then press Load history again.' };
 
   var cube;
-  try {
-    cube = (part === 'extras') ? ovcHistRmxExtras_(page)
-         : (line === 'agg')    ? ovcHistAgg_(page)
-         :                       ovcHistRmx_(page);
-  }
-  catch (e){ return { ok:false, line:line, era:era.id, part:part,
+  try { cube = (line === 'agg') ? ovcHistAgg_(page) : ovcHistRmx_(page); }
+  catch (e){ return { ok:false, line:line, era:era.id,
                       error: (e && e.message) ? e.message : String(e) }; }
-  if (part === 'extras') ovcXWrite_(era.id, cube);
-  else                   ovcHistWrite_(line, era.id, cube);
+  ovcHistWrite_(line, era.id, cube);
   try {
     PropertiesService.getScriptProperties()
       .setProperty(OVCUBE_TOK_PROP_, String(parseInt(ovcHistTok_(), 10) + 1));
@@ -15023,8 +14711,11 @@ function CUBE_rebuildHistory(opts){
   }
   var s = {}; cube.rows.forEach(function(r){ s[r[0]] = true; });
   var ym = Object.keys(s).map(Number).sort(function(a, b){ return a - b; });
-  return { ok:true, line:line, era:era.id, part:part, label:era.label || era.id,
+  return { ok:true, line:line, era:era.id, label:era.label || era.id,
            rows:cube.rows.length, skipped:cube.skipped || 0,
+           /* which of the two extras tabs this book actually carried, so a year
+              with no VAP is distinguishable from a year nobody read */
+           extraTabs: cube.extraTabs || null,
            months:ym.length, from:ym[0] || null, to:ym[ym.length - 1] || null,
            seconds: Math.round((new Date().getTime() - t0) / 100) / 10 };
 }
