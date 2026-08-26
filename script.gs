@@ -7871,16 +7871,25 @@ var XF_DATA_CAP = 8 * 1024 * 1024;   // ~8MB JSON
 function getCrossData(opts) {
   opts = opts || {};
   var period = (opts.period === 'YTD') ? 'YTD' : 'MTD';
+  /* THE ONE REPORT ON THIS FILE THAT DID NOT TAKE A MONTH, and the local
+     cross-filter path is computed from it — so an Overview pinned to the anchor
+     month got its filtered panels back on the REPORT month, and the server
+     fallback (getCrossReport) agreed with it, which is what made the two look
+     right beside each other and wrong beside the page. Same contract as every
+     other report here: 1-12 pins it, 0 or absent lets the data decide. */
+  var monthSel = Number(opts.month) || 0;
+  if (monthSel < 1 || monthSel > 12) monthSel = 0;
   /* The payload CARRIES the cpi coverage block (below), so the token belongs in the
      key that stores it — same rule and the same reason as ovcGen_ (§8). Without
      it a threshold edit is invisible here for the cache's six hours. Scoped to
      this one key rather than folded into gk_: nothing else under gk_ carries a
      coverage threshold, and widening it would throw away every PV cache for a
-     change that touches one payload. */
-  var ck = gk_('xfdata:' + period + '|c' + ovcCovTok_());
+     change that touches one payload. The month rides in the same key for the
+     same reason: the payload is FOR a month, so the key has to say which. */
+  var ck = gk_('xfdata:' + period + '|m' + monthSel + '|c' + ovcCovTok_());
   var hit = cacheGet_(ck); if (hit) return hit;
 
-  var data = buildPivot_(period, true, null), H = data.header;
+  var data = buildPivot_(period, true, null, monthSel), H = data.header;
   var ix = {
     pyVol: colIndex_(H, 'PY Volume'), cyVol: colIndex_(H, 'CY Volume'),
     pyRev: colIndex_(H, 'PY REV'), cyRev: colIndex_(H, 'CY REV'),
@@ -7936,6 +7945,11 @@ function getCrossData(opts) {
   });
 
   var payload = { ok: true, period: period, n: cols.MARKET.length,
+                  /* the month this dataset is for, and the months the sheet
+                     holds — the same echo every other report sends, so a page
+                     can tell it was answered for what it asked for */
+                  month: data.month || 0, months: data.months || { all: [], cy: [] },
+                  latestMonth: data.reportMonth || 0,
                   dicts: dicts, cols: cols, nums: nums,
                   /* \u00a71's CPI coverage block, so the local path gates CPI on exactly
                      the rule the server does. null travels as null: a payload
@@ -7945,7 +7959,8 @@ function getCrossData(opts) {
   var size = 0;
   try { size = JSON.stringify(payload).length; } catch (e) { size = XF_DATA_CAP + 1; }
   if (size > XF_DATA_CAP) {
-    var verdict = { ok: false, tooBig: true, size: size, generation: generation_() };
+    var verdict = { ok: false, tooBig: true, size: size, month: data.month || 0,
+                    generation: generation_() };
     cachePutBig_(ck, verdict);
     return verdict;
   }
@@ -13121,8 +13136,29 @@ function getOverview(opts){
        Sending the month makes one of them the anchor and it is this one: it
        comes from the DATA (pvReportMonth_ reads the months the rows actually
        carry) and it is the month every server-fed panel on the page is already
-       showing. 0 when the report could not be read. */
-    reportMonth: 0
+       showing. 0 when the report could not be read.
+
+       reportMonth IS NOT "the month this answer is for" ANY MORE, and the two
+       had better not be confused again: since the Overview started passing an
+       anchor, the month a report LANDS ON and the month the data would have
+       chosen for itself are different numbers, and it is the first one a page
+       has to check its own request against. So both travel:
+         month     - the month the Aggregates half was built for (what was asked)
+         rmxMonth  - the same for the Ready-Mix half
+         reportMonth - what the DATA's own default resolves to, unchanged
+       A page that asked for 8 and is handed month 8 with rmxMonth 7 knows
+       exactly which half of itself to disbelieve. */
+    reportMonth: 0,
+    month: monthSel,
+    rmxMonth: 0,
+    /* AND WHICH MONTHS EACH SOURCE ACTUALLY HOLDS, per line. Being answered
+       for the month you asked for is not the same as that month having any
+       rows in it: a book that has not been exported yet answers with a real,
+       correct, all-zero report, and zero is the one figure that looks like
+       data. Both reports already carry the list; forwarding it is what lets
+       the page tell those two apart. */
+    months:    { all: [], cy: [] },
+    rmxMonths: { all: [], cy: [] }
   };
 
   /* ---------------- Aggregates (Price & Volume) ---------------- */
@@ -13139,6 +13175,8 @@ function getOverview(opts){
     /* pvStampMonth_ puts the month this report landed on onto every PV answer.
        Forwarded verbatim - the page anchors its month window on it. */
     out.reportMonth = rep.latestMonth || 0;
+    out.month       = rep.month || monthSel;      // what this half was BUILT for
+    out.months      = rep.months || { all: [], cy: [] };
 
     /* the SAME bridges the Price & Volume report draws (all markets) */
     out.bridges.all = { rev: rep.revenueBridge || null, asp: rep.priceBridge || null };
@@ -13189,6 +13227,12 @@ function getOverview(opts){
       try {
         var r1 = PV.getReport({
           period: period,
+          /* THE SAME MONTH THE TABLE ABOVE WAS BUILT FOR. Without it the
+             all-markets bridge answered for monthSel and every per-market one
+             for the report month, so picking a single market put a revenue
+             waterfall and an ASP waterfall from two different months side by
+             side in one card. */
+          month: monthSel,
           dimensions: ['MARKET'],
           filterField: 'MARKET',
           filterValue: m.pv
@@ -13204,7 +13248,12 @@ function getOverview(opts){
   try {
     markets.forEach(function(m){
       try {
-        var k = RMX_NS.getKeys({ period: period, market: m.rmx });
+        /* AND THE READY-MIX HALF TAKES IT TOO. This is the half that was
+           missed: the Aggregates report four lines up has been passed monthSel
+           since the anchor moved, and this one was still answering for the
+           REPORT month - so one payload carried two months, and every Ready-Mix
+           panel fed from it sat a month behind the Market summary underneath. */
+        var k = RMX_NS.getKeys({ period: period, month: monthSel, market: m.rmx });
         var s = { cyVol:0, pyVol:0, baseCY:0, basePY:0 };
         /* VOL and BASE revenue come from the KEY rows (exact). PPI does NOT —
            it is indexed at Qlik's plant x mix grain, which the key rows cannot
@@ -13267,6 +13316,10 @@ function getOverview(opts){
             };
           }).sort(function(a, b){ return b.cyVol - a.cyVol; });
         }
+        /* every getKeys answer carries the month it landed on; one is enough,
+           they are all the same request bar the market */
+        if (!out.rmxMonth) out.rmxMonth = Number(k.month) || 0;
+        if (!out.rmxMonths.cy.length && k.months && k.months.cy) out.rmxMonths = k.months;
         var dims = {};
         RMX_DIMS.forEach(function(D){ dims[D.key] = dimRowsOf(D.key); });
         var subRows = dims.SUBMARKET;
