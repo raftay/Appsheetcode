@@ -18291,7 +18291,12 @@ AMR.page('overview', {
       var d=STATE.data.pv;
       if(isAll() && STATE.data.aggAll){
         var a=STATE.data.aggAll;
+        /* cyRev / pyRev TRAVEL. They are on the payload and this used to copy
+           seven fields past them, which forced revCY() down to its ASP x
+           volume fallback - the lossy form that whole reader exists to
+           replace. See the revenue bridge below. */
         return { present:true, cyVol:a.cyVol, pyVol:a.pyVol, volPct:a.volPct,
+                 cyRev:a.cyRev, pyRev:a.pyRev,
                  cyAsp:a.cyAsp, pyAsp:a.pyAsp, aspPct:a.aspPct, ppi:a.ppi };
       }
       var cyVol=0,pyVol=0,cyRev=0,pyRev=0,num=0,den=0,any=false;
@@ -18300,6 +18305,7 @@ AMR.page('overview', {
       if(!any) return { present:false };
       var cyAsp=cyVol?cyRev/cyVol:0, pyAsp=pyVol?pyRev/pyVol:0;
       return { present:true, cyVol:cyVol, pyVol:pyVol, volPct:pyVol?(cyVol-pyVol)/pyVol:0,
+               cyRev:cyRev, pyRev:pyRev,
                cyAsp:cyAsp, pyAsp:pyAsp, aspPct:pyAsp?(cyAsp-pyAsp)/pyAsp:0,
                ppi: den?num/den:0 };
     }
@@ -18310,6 +18316,7 @@ AMR.page('overview', {
       if(!any) return { present:false };
       var cyAsp=s.cyVol?s.baseCY/s.cyVol:0, pyAsp=s.pyVol?s.basePY/s.pyVol:0;
       return { present:true, cyVol:s.cyVol, pyVol:s.pyVol, volPct:s.pyVol?(s.cyVol-s.pyVol)/s.pyVol:0,
+               baseCY:s.baseCY, basePY:s.basePY,          // revCY() / revPY() read these
                cyAsp:cyAsp, pyAsp:pyAsp, aspPct:pyAsp?(cyAsp-pyAsp)/pyAsp:0,
                ppi:s.rfiBase?s.facBase/s.rfiBase:0 };
     }
@@ -18351,7 +18358,19 @@ AMR.page('overview', {
        cube row, nothing is attached and hasCpi() drops the column. An absent
        column is a fact about the source; a half-filled one would be a fact about
        the join, and the reader cannot tell those apart from the table. */
+    /* AND WHAT IT WROTE LAST TIME IS CLEARED FIRST. The rows handed in live in
+       DIMS_CACHE, and this writes onto them in place - so an early `return
+       false` used to leave the PREVIOUS window's CPI sitting on them, hasCpi()
+       still found it, and the column was drawn again from a window the reader
+       had already left. Only what this function attached is removed: a payload
+       that answered for its own CPI (the cross-filter report carries sold-to)
+       keeps it, and is not overwritten either. */
     function joinCpi(rows, total, line, field){
+      rows=rows||[];
+      var i;
+      for(i=0;i<rows.length;i++){ if(rows[i] && rows[i]._cpiJoined){ delete rows[i].cpi; delete rows[i]._cpiJoined; } }
+      if(total && total._cpiJoined){ delete total.cpi; delete total._cpiJoined; }
+      for(i=0;i<rows.length;i++){ if(rows[i] && rows[i].cpi!=null) return true; }   // the report answered for itself
       if(!field || !winReady() || !cube()) return false;
       if(windowPeriod()!==STATE.pick) return false;   // handles dragged off the period
       var g=cubeGroups(line, field);
@@ -18359,9 +18378,9 @@ AMR.page('overview', {
       var m={}, got=false;
       g.forEach(function(r){ if(r.cpi!=null){ m[String(r.key)]=r.cpi; got=true; } });
       if(!got) return false;
-      for(var i=0;i<rows.length;i++){ if(!(String(rows[i].label) in m)) return false; }
-      rows.forEach(function(r){ r.cpi=m[String(r.label)]; });
-      if(total){ var t=cubeWinTotals(line); if(t && t.cpi!=null) total.cpi=t.cpi; }
+      for(i=0;i<rows.length;i++){ if(!(String(rows[i].label) in m)) return false; }
+      rows.forEach(function(r){ r.cpi=m[String(r.label)]; r._cpiJoined=true; });
+      if(total){ var t=cubeWinTotals(line); if(t && t.cpi!=null){ total.cpi=t.cpi; total._cpiJoined=true; } }
       return true;
     }
     function serverCpi(line){
@@ -18730,7 +18749,10 @@ AMR.page('overview', {
       showPanel('bridgeBody');
       $('bridgeSub').textContent = 'How revenue and price moved vs last year · '+scopeLabel();
 
-      drawRevBridge(t.pyAsp*t.pyVol, t.cyAsp*t.cyVol, t.pyAsp, t.cyVol, t.pyVol);
+      /* revPY / revCY, not ASP x volume: aggTotals carries the exact figures
+         now, and a market with dollars on no volume was being dropped from
+         this waterfall by the multiplication. */
+      drawRevBridge(revPY(t), revCY(t), t.pyAsp, t.cyVol, t.pyVol);
 
       /* the report's own bridge where the server has one — all markets, or a
          single market — and the cube's otherwise, which covers every subset */
@@ -20166,6 +20188,7 @@ AMR.page('overview', {
       if(d && d.totals){
         var t=d.totals;
         renderKpiRow('kpiRmx', { present:t.present, cyVol:t.cyVol, pyVol:t.pyVol, volPct:t.volPct,
+          baseCY:t.baseCY, basePY:t.basePY,          // revCY() / revPY() read these
           cyAsp:t.aspBaseCY, pyAsp:t.aspBasePY, aspPct:t.aspIncBase, ppi:t.ppiBase }, 'm\u00b3', fAsp);
         return;
       }
@@ -20279,7 +20302,16 @@ AMR.page('overview', {
             var g=acc[r.label];
             if(!g){ g=acc[r.label]={label:r.label,cyVol:0,pyVol:0,baseCY:0,basePY:0,rfiBase:0,facBase:0}; order.push(r.label); }
             g.cyVol+=r.cyVol; g.pyVol+=r.pyVol;
-            g.baseCY+=(r.aspBaseCY||0)*r.cyVol; g.basePY+=(r.aspBasePY||0)*r.pyVol;
+            /* THE EXACT FIGURE, NOT ASP x VOLUME. Every one of these rows
+               already carries baseCY / basePY (script.gs dimRowsOf) and this
+               re-derived them - which drops a row with dollars on no volume,
+               and, because the re-derivation was then left OFF the row emitted
+               below, made revCY() fall through to an undefined cyAsp and print
+               $0 in the Rev columns for every row of this table. The ASP form
+               stays as the fallback for a payload cached before baseCY
+               existed, which is the same rule revCY() itself follows. */
+            g.baseCY+=(r.baseCY!=null?r.baseCY:(r.aspBaseCY||0)*r.cyVol);
+            g.basePY+=(r.basePY!=null?r.basePY:(r.aspBasePY||0)*r.pyVol);
             g.rfiBase+=r.rfiBase||0; g.facBase+=r.facBase||0;
           });
         });
@@ -20288,6 +20320,13 @@ AMR.page('overview', {
           var aCY=g.cyVol?g.baseCY/g.cyVol:0, aPY=g.pyVol?g.basePY/g.pyVol:0;
           return { label:g.label, cyVol:g.cyVol, pyVol:g.pyVol,
                    volPct:g.pyVol?(g.cyVol-g.pyVol)/g.pyVol:0,
+                   /* revCY() / revPY() read these; without them the Rev CY,
+                      Rev PY and Rev % columns of this table were $0, $0 and a
+                      dash - transient normally, permanent whenever the
+                      cross-report failed, because rows is non-null by then and
+                      renderRmxDims never reaches its own error path */
+                   baseCY:g.baseCY, basePY:g.basePY,
+                   aspBaseCY:aCY, aspBasePY:aPY,
                    aspIncBase:aPY?(aCY-aPY)/aPY:0,
                    ppiBase:g.rfiBase?g.facBase/g.rfiBase:0 };
         }).sort(function(a,b){ return b.cyVol-a.cyVol; });
