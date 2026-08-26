@@ -19399,10 +19399,16 @@ AMR.page('overview', {
        They are the closed month's statement, which is the reporting month, which
        is now what the Period buttons anchor on (anchorMonth) - so naming it here
        makes the two agree out loud instead of by coincidence. */
+    /* AND IT IS AN EXPECTATION, NOT A READING. AmrKpi carries no month at all -
+       these cards show whatever workbook was last uploaded - so naming a month
+       flatly asserted something nobody had checked, which is the failure the
+       label was added to prevent, one step further back. kpiMonth() is what the
+       month SHOULD be if the upload is current, and the wording now says only
+       that. */
     function kpiPeriodLabel(){
       var a=(WIN.months.length>1) ? kpiMonth() : null;
       var half=periodLabel();
-      return a ? (ymLong(a)+' \u00b7 '+half) : half;
+      return a ? (half+' \u00b7 the closed month, expected '+ymLong(a)) : half;
     }
 
     function scheduleDims(){ if(dimsTimer) clearTimeout(dimsTimer); dimsTimer=setTimeout(loadDims, 220); }
@@ -20472,7 +20478,7 @@ AMR.page('overview', {
       if(RFUEL || RFUEL_PEND) return;
       if(window.AmrCache){
         var v=AmrCache.get('rfsc:facts');
-        if(v && v.rows){ RFUEL=v; renderRmxFuel(); return; }
+        if(v && v.rows){ RFUEL=v; RFUEL_CYMO=null; renderRmxFuel(); return; }
       }
       if(!IS_LIVE) return;
       RFUEL_PEND=true;
@@ -20481,7 +20487,7 @@ AMR.page('overview', {
           .withSuccessHandler(function(d){
             RFUEL_PEND=false;
             if(d && d.rows && d.rows.length){
-              RFUEL=d; RFUEL_ERR=null;
+              RFUEL=d; RFUEL_ERR=null; RFUEL_CYMO=null;
               if(window.AmrCache) AmrCache.set('rfsc:facts', d);
             } else RFUEL_ERR='The fuel surcharge data came back empty.';
             if(STATE.tab!=='agg') renderRmxFuel();
@@ -20498,6 +20504,17 @@ AMR.page('overview', {
        Returns { rows, total, groupBy } or null. Grouped by market normally, by
        submarket once the selection is down to a single market - the same instinct
        as the breakdown panel's MARKET / SUBMARKET toggle. */
+    /* Which CURRENT-YEAR months these facts actually carry. Scanned once per
+       payload rather than per repaint, and held beside RFUEL rather than on it,
+       so the device copy is never written to. */
+    var RFUEL_CYMO=null;
+    function rfuelCyMonths(F){
+      if(RFUEL_CYMO) return RFUEL_CYMO;
+      var C={}; F.cols.forEach(function(c,i){ C[c]=i; });
+      var seen={};
+      for(var i=0;i<F.rows.length;i++){ var r=F.rows[i]; if(r[C.year]===F.cyYear) seen[r[C.month]]=1; }
+      RFUEL_CYMO=seen; return seen;
+    }
     function rfuelSlice(){
       var F=RFUEL; if(!F) return null;
       var C={}; F.cols.forEach(function(c,i){ C[c]=i; });
@@ -20525,7 +20542,14 @@ AMR.page('overview', {
         return !okSeg || okSeg[String(s).trim().toLowerCase()];
       });
 
-      var last=F.latestMonth, lo = (STATE.period==='YTD') ? 1 : last;
+      /* THE ANCHOR MONTH WHEN THESE FACTS CARRY IT. This table used to slice on
+         F.latestMonth - the surcharge sheet's own newest month, a fourth idea of
+         "this month" on one screen. It is asked for the page's month now, and
+         falls back to its own only when the sheet has not reached it, because a
+         month with no rows in it is not a report. */
+      var want=loadMonth();
+      var last=(want && rfuelCyMonths(F)[want]) ? want : F.latestMonth;
+      var lo = (STATE.period==='YTD') ? 1 : last;
       var g={}, order=[];
       function cell(name){
         var c=g[name];
@@ -20690,11 +20714,12 @@ AMR.page('overview', {
     function renderExtrasPanel(d, err){
       var body=$('extBody');
       clearCH('ext');
-      /* the heading names the span the numbers are for, and in window mode that
-         is the window - the report was fetched for it, so saying "month to date"
-         here would be the one line on the panel that is untrue */
+      /* THE SERVER PATH ONLY. paintRxfPanels returns before this in window
+         mode - renderWinExtras owns the panel there and writes its own heading -
+         so the winMode() arm of this line was a second, unreachable answer to
+         "which span is this panel for". One answer, in one place. */
       rxfSubSet('extSub','By extra type \u00b7 ',
-        ' \u00b7 '+(winMode()?winScopeWord():periodLabel())+' \u00b7 $/m\u00b3 on total concrete.');
+        ' \u00b7 '+periodLabel()+' \u00b7 $/m\u00b3 on total concrete.');
       if(!d){ body.innerHTML=rxfWait(err,'extras'); return; }
       /* A refusal is not an empty answer. `reason:'mix'` is the server saying a
          Strength or Product Class filter cannot reach these rows, which is a
@@ -20956,10 +20981,17 @@ AMR.page('overview', {
       [].forEach.call(seg.querySelectorAll('button'), function(b){
         var k=b.dataset.period;
         b.setAttribute('aria-pressed', String(k===p));
-        /* the two server periods always work; the Prev-month pair needs the cube
-           to hold a month before the newest one */
-        var needsCube=(k==='PMTD'||k==='PYTD');
-        b.disabled = needsCube && !periodSpan(k);
+        /* ALL FOUR NEED THE CUBE, and only two of them used to admit it. Period
+           and the slider are one control - pressing a button MOVES THE HANDLES -
+           so the handler bails on any pick whose span cannot be resolved yet,
+           which on a cold open is every one of them. Marking only the
+           Prev-month pair disabled left "This month" and "Year to date"
+           looking pressable, being pressable, and doing nothing at all for the
+           first seconds of every open, with nothing saying why. */
+        var span=periodSpan(k);
+        b.disabled = !span;
+        if(span) b.removeAttribute('title');
+        else b.title='Waiting for the month history \u2014 Period and the Months slider are one control.';
       });
     }
     function winSpan(){
@@ -20972,6 +21004,15 @@ AMR.page('overview', {
        survives a rebuild — only the parts that fell outside the new range move. */
     function syncWindow(){
       var ms=winMonths(), wrap=$('winWrap');
+      /* THE OLD NEWEST MONTH, READ BEFORE THE LIST IS REPLACED. The re-pin test
+         below means "was the window's end what used to be the newest month",
+         and it used to ask WIN.months[length-2] AFTER the reassignment - the new
+         second-newest, which is a different month entirely. Blocks arrive one
+         calendar year at a time, NEWEST FIRST, so they extend the list at the
+         FRONT and the newest month does not move: the test fired on windows
+         that were never pinned to anything and dragged their end handle
+         forward. */
+      var prevLast=WIN.months.length ? WIN.months[WIN.months.length-1] : null;
       var grew=(ms.length!==WIN.months.length) || (ms.length && WIN.months.length && ms[0]!==WIN.months[0]);
       WIN.months=ms;
       if(!wrap) return;
@@ -20993,7 +21034,7 @@ AMR.page('overview', {
       }else if(grew){
         /* the window was pinned to the newest month: keep it pinned as history
            or a new month lands, instead of silently freezing in the past */
-        if(WIN.to>last || WIN.to===WIN.months[WIN.months.length-2]) WIN.to=last;
+        if(WIN.to>last || (prevLast!=null && WIN.to===prevLast)) WIN.to=last;
         if(WIN.from<first) WIN.from=first;
         if(WIN.to>last) WIN.to=last;
       }
@@ -21694,6 +21735,14 @@ AMR.page('overview', {
     }
     function mktSumData(line){
       var cy=winCy(line); if(!cy) return null;
+      /* A NAME THE CUBE HAS NEVER HEARD OF IS A FAULT, NOT AN EMPTY SELECTION.
+         trendResolve drops a filter it cannot resolve rather than masking every
+         row to zero, which is right - but cubeGroups then answers [] and this
+         table simply vanished, while the server-fed panels above it went on
+         showing that market. A mapping problem that reads as a rendering one.
+         Faults speak on this page, because they are fixable. */
+      var R0=trendResolve(line, trendFilters(line));
+      if(!isAll() && !R0.filters.market) return { rows:[], total:null, unresolved:true };
       var rows=cubeGroups(line,'market');
       if(rows===null) return null;
       function live(g){ return g.key && g.key!=='\u0001all' && (g.cyVol||g.pyVol||g.cyRev||g.pyRev); }
@@ -21713,6 +21762,13 @@ AMR.page('overview', {
       var body=$(bodyId); if(!body) return;
       var d=mktSumData(line);
       if(!d){ showPanel(bodyId); winWaiting(bodyId); return; }
+      if(d.unresolved){
+        showPanel(bodyId);
+        body.innerHTML='<div class="ov-notice"><b>The month history has no rows under that market name.</b><br>'
+          +'Nothing here can be built for '+esc(scopeLabel())+' until the name in <code>OVERVIEW.MARKETS</code> '
+          +'matches the one the source sheet uses.</div>';
+        return;
+      }
       if(!d.rows.length){ hidePanel(bodyId); return; }
       showPanel(bodyId);
       var sub=$(subId);
@@ -22517,8 +22573,8 @@ AMR.page('overview', {
          in the background because that sheet carries no version token of its
          own, which is two executions on every single open. Only on the FIRST
          load — a Period switch or a re-anchor must not fetch it again. */
-      var alsoFsc = !FSC_DATA && !FSC_CHECKED;
-      if(alsoFsc){ FSC_CHECKED=true; calls.push({ fn:'getFscData' }); }
+      var alsoFsc = !(FSC_DATA && FSC_MONTH===mo) && !FSC_CHECKED[mo];
+      if(alsoFsc){ FSC_CHECKED[mo]=1; calls.push({ fn:'getFscData', arg:{ month:mo } }); }
 
       AMR.batch(calls).then(function(res){
         if(alsoOther){
@@ -22536,9 +22592,9 @@ AMR.page('overview', {
              FSC_DATA null sends the panel down loadFsc()'s own path, which has
              the message and the link to the Fuel Surcharge page. */
           if(fd){
-            FSC_DATA=fd;
-            if(window.AmrCache) AmrCache.set('fsc', fd);
-          } else FSC_CHECKED=false;
+            FSC_DATA=fd; FSC_MONTH=mo;
+            if(window.AmrCache) AmrCache.set('fsc|m'+mo, fd);
+          } else FSC_CHECKED[mo]=0;
         }
         hideLoader();
         var d=AMR.slot(res[0]);
@@ -22553,7 +22609,7 @@ AMR.page('overview', {
         renderChips(); renderActiveTab();
       }, function(err){
         if(alsoOther) PREFETCHING[okey]=0;
-        if(alsoFsc) FSC_CHECKED=false;      // never asked: loadFsc() may still try
+        if(alsoFsc) FSC_CHECKED[mo]=0;      // never asked: loadFsc() may still try
         hideLoader();
         banner('Could not load the overview: '+((err&&err.message)||err));
       });
@@ -23503,24 +23559,33 @@ AMR.page('overview', {
     function fYoyS(v){ var x=Number(v)||0; return (x>=0?'+$':'-$')+Math.abs(x).toFixed(2); }
     function fMoneyS(n){ var v=Math.round(Number(n)||0); return (v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US'); }
 
-    var FSC_CHECKED=false;   // one background revalidate per page open
+    /* THE SURCHARGE SHEET IS A THIRD MONTH AUTHORITY, and it used to answer for
+       its own newest month while the page reported the anchor. getFscData takes
+       a month like every other report here, so it is asked for the same one -
+       and FSC_DATA, its device copy and the one-ask-per-open flag are all keyed
+       on that month, because a payload that is FOR a month cannot be cached
+       under a key that does not name it. */
+    var FSC_MONTH=null;      // the month FSC_DATA is for
+    var FSC_CHECKED={};      // month -> asked once this page open
+    function fscKey(){ return 'fsc|m'+loadMonth(); }
+    function fscFresh(){ return !!FSC_DATA && FSC_MONTH===loadMonth(); }
     function loadFsc(){
-      var body=$('fscBody');
-      if(FSC_DATA){ renderFsc(); return; }
+      var body=$('fscBody'), mo=loadMonth();
+      if(fscFresh()){ renderFsc(); return; }
       /* The FSC sheet has no data-version token (it's re-read on every call), so
          the device copy paints instantly and is then silently re-checked against
          the sheet in the background — if the numbers changed, the panel updates
          and the copy is replaced. */
       if(window.AmrCache){
-        var fdev=AmrCache.get('fsc');
-        if(fdev){ FSC_DATA=fdev; renderFsc(); revalidateFsc(); return; }
+        var fdev=AmrCache.get(fscKey());
+        if(fdev){ FSC_DATA=fdev; FSC_MONTH=mo; renderFsc(); revalidateFsc(); return; }
       }
       if(!IS_LIVE){ body.innerHTML='<div class="ov-mini">Fuel-surcharge data loads in the live web app.</div>'; return; }
       body.innerHTML='<div class="ov-mini">Loading fuel surcharge…</div>';
       try{
         google.script.run
           .withSuccessHandler(function(d){
-            FSC_DATA=d; if(window.AmrCache) AmrCache.set('fsc', d);
+            FSC_DATA=d; FSC_MONTH=mo; if(window.AmrCache) AmrCache.set('fsc|m'+mo, d);
             renderFsc();
           })
           .withFailureHandler(function(err){
@@ -23529,20 +23594,21 @@ AMR.page('overview', {
               +esc((err&&err.message)||err)
               +'<br><a class="linkbtn" href="'+(window.APP_URL||'')+'?page=fuelsurcharge" target="_top">Open Fuel Surcharge →</a></div>';
           })
-          .getFscData();
+          .getFscData({ month:mo });
       }catch(e){ body.innerHTML='<div class="ov-mini">Could not load fuel surcharge: '+esc(e&&e.message||e)+'</div>'; }
     }
     function revalidateFsc(){
-      if(FSC_CHECKED || !IS_LIVE) return;
-      FSC_CHECKED=true;
+      var mo=loadMonth();
+      if(FSC_CHECKED[mo] || !IS_LIVE) return;
+      FSC_CHECKED[mo]=1;
       try{
         google.script.run.withSuccessHandler(function(d){
-          if(!d) return;
+          if(!d || loadMonth()!==mo) return;
           if(JSON.stringify(d)!==JSON.stringify(FSC_DATA)){
-            FSC_DATA=d; if(window.AmrCache) AmrCache.set('fsc', d);
+            FSC_DATA=d; FSC_MONTH=mo; if(window.AmrCache) AmrCache.set('fsc|m'+mo, d);
             renderFsc();
           }
-        }).getFscData();
+        }).getFscData({ month:mo });
       }catch(e){}
     }
 
@@ -23552,6 +23618,9 @@ AMR.page('overview', {
          period - a background revalidate must not paint over it */
       if(winMode()) return;
       clearCH('fsc');
+      /* a payload for another month must not paint: loadFsc() is about to
+         replace it, and this sheet's figures look identical either way */
+      if(!fscFresh()){ loadFsc(); return; }
       if(!FSC_DATA || !FSC_DATA.summary){ hidePanel('fscBody'); return; }
       var rows=(FSC_DATA.summary[STATE.period]||[]);
       var mkRows=rows.filter(function(r){ return !r.isTotal; });
@@ -23560,6 +23629,9 @@ AMR.page('overview', {
       showPanel('fscBody');
       $('fscSub').textContent='All markets, always ('+(STATE.period==='MTD'?String(FSC_DATA.latestMonth||'latest month'):'year to date')+')'
         + ' \u00b7 $/applied tonne \u00b7 from Price & Volume (Combined Data CPI Raw)';
+      /* asked for a month this sheet has not been exported for: output_ answers
+         for it regardless, which is a real, correct, all-zero report */
+      var fscBehind = (Number(FSC_DATA.month)||0) > (Number(FSC_DATA.defaultMonth)||0);
 
       var LAB='font:700 9.5px Archivo;letter-spacing:.14em;text-transform:uppercase;color:var(--blue-70);margin:0 0 8px';
       var out='<p style="'+LAB+'">Share of total FSC dollars · this year</p>'
@@ -23576,6 +23648,9 @@ AMR.page('overview', {
           +'<td class="'+cls(tot.yoy)+'">'+fYoyS(tot.yoy)+'</td></tr>';
       }
       out+='</tbody></table>';
+      if(fscBehind) out+='<div class="ov-notice"><b>Combined Data CPI Raw stops at '
+        +esc(monthName(Number(FSC_DATA.defaultMonth)||0))+'</b>, so there is nothing here for '
+        +esc(monthName(Number(FSC_DATA.month)||0))+' yet \u2014 the figures above are that empty month.</div>';
       /* Applied tonnes are now READ off each row rather than inferred from a
          Market x Sold To bucket, so this rate is the charge over the tonnes it
          was actually charged on. Worth saying once: the numbers moved when the
