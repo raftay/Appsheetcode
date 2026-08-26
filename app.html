@@ -19586,18 +19586,22 @@ AMR.page('overview', {
       renderWinRmxDims();
       renderWinRmxAsp();
       /* the month/quarter trend, which paintRxfPanels normally owns - the cube
-         draws it either way, and the all-in overlay (extras per month) is left
-         off because that comes from the server report, for the server's period */
-      renderTrendPanel('rmx', null, null);
+         draws it either way, and the all-in ASP line and the build-up stack come
+         with it now: extras and VAP are fact-table columns, so the window has
+         them for the same months it has volume for */
+      renderTrendPanel('rmx');
       /* Extras BY TYPE is a local group-by now: the extra type is a dimension of
          the Ready-Mix line (extraMap, off EXTRAS LOOKUP), so the same fact table
          that sums the streams for the build-up above can split them. No fetch,
          no second scope to keep in step, and it answers for whatever span the
-         slider is on including a closed year. Ready-Mix fuel recovery has no
-         such route: the per-load surcharge is not a column anywhere the window
-         can reach, so it stays off. */
+         slider is on including a closed year. */
       renderWinExtras();
-      hidePanel('rmxFuelBody');
+      /* Fuel recovery takes its own route rather than staying off. The per-load
+         surcharge is not a cube column and never will be \u2014 but the surcharge
+         facts carry (year, month) themselves, so the window filters them
+         directly. See rfuelWinSpan for the one thing it cannot do, which is
+         compare a month that is already in the prior year. */
+      renderRmxFuel();
       $('footRmx').innerHTML=esc(winScopeWord())
         +' · computed in your browser from the month fact table, not the server report.';
     }
@@ -20652,7 +20656,7 @@ AMR.page('overview', {
       renderRmxDims(d, err);
       renderRmxAsp(d, err);
       renderExtrasPanel(d, err);
-      renderRmxTrendPanel(d, err);
+      renderRmxTrendPanel();
       renderRmxFuel();
     }
     function rxfWait(err, what){
@@ -20925,6 +20929,33 @@ AMR.page('overview', {
       for(var i=0;i<F.rows.length;i++){ var r=F.rows[i]; if(r[C.year]===F.cyYear) seen[r[C.month]]=1; }
       RFUEL_CYMO=seen; return seen;
     }
+    /* ---- what the surcharge facts can answer for a custom window ------------
+       THESE FACTS CARRY A YEAR AS WELL AS A MONTH, which is the whole reason
+       this panel does not have to sit window mode out the way it used to. Every
+       row is (plant, segment, year, month), so a window is a straight filter on
+       the pair and the same grouping runs over it unchanged \u2014 no cube, no second
+       scope, nothing to keep in step.
+
+       WHAT THEY CANNOT ANSWER IS TWO YEARS BACK. One export holds cyYear and
+       pyYear and nothing older, so the prior-year column only exists where the
+       window's own months sit in the CURRENT year: ask for last year's figure on
+       a month already in pyYear and you are asking for pyYear-1, which is not in
+       the payload. A ROLLING TWELVE MONTHS IS EXACTLY THAT WINDOW \u2014 it reaches
+       back into pyYear by construction \u2014 so it reports this year's recovery and
+       drops the comparison, rather than printing a blank column or, worse, a $0
+       prior-year rate that reads as a collapse.
+
+       Returns null when the window misses both years entirely (an older era the
+       slider can reach but this sheet cannot). */
+    function rfuelWinSpan(F){
+      if(!winMode()) return null;
+      var ms=winSpan(); if(!ms.length) return null;
+      if(Math.floor(ms[ms.length-1]/100)<F.pyYear || Math.floor(ms[0]/100)>F.cyYear) return null;
+      var inWin={}; ms.forEach(function(ym){ inWin[ym]=1; });
+      var pyOk=true;
+      for(var i=0;i<ms.length;i++){ if(Math.floor(ms[i]/100)!==F.cyYear){ pyOk=false; break; } }
+      return { inWin:inWin, pyOk:pyOk, from:ms[0], to:ms[ms.length-1] };
+    }
     function rfuelSlice(){
       var F=RFUEL; if(!F) return null;
       var C={}; F.cols.forEach(function(c,i){ C[c]=i; });
@@ -20960,6 +20991,14 @@ AMR.page('overview', {
       var want=loadMonth();
       var last=(want && rfuelCyMonths(F)[want]) ? want : F.latestMonth;
       var lo = (STATE.period==='YTD') ? 1 : last;
+      /* A WINDOW THE FACTS CANNOT REACH IS NOT A WINDOW TO FALL BACK FROM.
+         rfuelWinSpan returns null both for "not in window mode" and for a window
+         that misses cyYear and pyYear entirely, and the two must not share the
+         non-window branch below: that branch answers for the PERIOD, and a
+         period's table under a window's heading is exactly the two-months-at-once
+         fault this page has had before. */
+      var W = rfuelWinSpan(F);
+      if(!W && winMode()) return null;
       var g={}, order=[];
       function cell(name){
         var c=g[name];
@@ -20971,10 +21010,21 @@ AMR.page('overview', {
       for(var r=0;r<F.rows.length;r++){
         var row=F.rows[r], pid=row[C.plantId];
         if(!keep[pid] || !segKeep[row[C.segmentId]]) continue;
-        var mo=row[C.month]; if(mo<lo || mo>last) continue;
-        var yr=row[C.year], cy=(yr===F.cyYear);
-        if(!cy && yr!==F.pyYear) continue;
-        var c=cell(gname[pid]), pre=cy?'cy':'py';
+        var mo=row[C.month], yr=row[C.year], pre;
+        if(W){
+          /* the window decides both sides: a row is THIS year if its own ym is in
+             the window, and LAST year if the ym twelve months on from it is */
+          var ym=yr*100+mo;
+          if(W.inWin[ym]) pre='cy';
+          else if(W.pyOk && W.inWin[ym+100]) pre='py';
+          else continue;
+        }else{
+          if(mo<lo || mo>last) continue;
+          var cy=(yr===F.cyYear);
+          if(!cy && yr!==F.pyYear) continue;
+          pre=cy?'cy':'py';
+        }
+        var c=cell(gname[pid]);
         c[pre+'M3']    += row[C.m3];
         c[pre+'Gross'] += row[C.grossM3];
         c[pre+'App']   += row[C.appliedM3];
@@ -20997,19 +21047,21 @@ AMR.page('overview', {
         return c;
       }
       out.forEach(rate); rate(t);
-      return { rows:out, total:t, groupBy: single?'Submarket':'Market' };
+      return { rows:out, total:t, groupBy: single?'Submarket':'Market',
+               noPy: !!(W && !W.pyOk) };
     }
 
     /* ---- render ---- */
+    /* IT USED TO BAIL ON winMode() OUTRIGHT, on the reasoning that a window is the
+       cube's and these facts have no cube behind them. True, and beside the
+       point: they carry a year and a month of their own, so the window is a
+       filter they can answer directly (rfuelWinSpan). What the window changes is
+       how far the COMPARISON reaches, not whether the panel can be drawn. */
     function renderRmxFuel(){
       var body=$('rmxFuelBody'); if(!body) return;
-      /* a window is the cube's, and the surcharge facts are their own server
-         table with no month cube behind them - so there is nothing here to draw,
-         including any error the fetch left lying around */
-      if(winMode()){ clearCH('rfuel'); hidePanel('rmxFuelBody'); return; }
       clearCH('rfuel');
       rxfSubSet('rmxFuelSub','Surcharge recovered per m\u00b3 \u00b7 ',
-                ' \u00b7 '+periodLabel()+' \u00b7 $/m\u00b3 is over the m\u00b3 that were charged, not all m\u00b3.');
+                ' \u00b7 '+(winMode()?winLabel():periodLabel())+' \u00b7 $/m\u00b3 is over the m\u00b3 that were charged, not all m\u00b3.');
 
       if(rxfMixFiltered()){ hidePanel('rmxFuelBody'); return; }
       showPanel('rmxFuelBody');
@@ -21023,21 +21075,29 @@ AMR.page('overview', {
       var s=rfuelSlice();
       if(!s || !s.rows.length){ hidePanel('rmxFuelBody'); return; }
       showPanel('rmxFuelBody');
+      /* NO PRIOR-YEAR COLUMNS RATHER THAN EMPTY ONES. rfuelWinSpan sets this when
+         the window reaches back into pyYear and the comparison would need a year
+         the payload does not hold. A $0.00 PY rate beside a real CY one reads as
+         a collapse, and a column of dashes reads as a fault, so the two columns
+         and the last-year bars come out and the note says why. */
+      var noPy=!!s.noPy;
       function money2(v){ return (v<0?'-$':'$')+Math.abs(v).toFixed(2); }
       function line(c, isTot){
         return '<tr'+(isTot?' class="tot"':'')+'><td>'+esc(c.label)+'</td>'
           +'<td>'+fInt(c.cyApp)+'</td>'
           +'<td>'+(c.cyGross ? (c.cyCov*100).toFixed(1)+'%' : '\u2014')+'</td>'
           +'<td>'+fMoneyFull(c.cyFsc)+'</td>'
-          +'<td>'+money2(c.cyRate)+'</td><td>'+money2(c.pyRate)+'</td>'
-          +'<td class="'+cls(c.yoy)+'">'+(c.yoy>=0?'+$':'-$')+Math.abs(c.yoy).toFixed(2)+'</td></tr>';
+          +'<td>'+money2(c.cyRate)+'</td>'
+          +(noPy?'':('<td>'+money2(c.pyRate)+'</td>'
+            +'<td class="'+cls(c.yoy)+'">'+(c.yoy>=0?'+$':'-$')+Math.abs(c.yoy).toFixed(2)+'</td>'))
+          +'</tr>';
       }
       body.innerHTML=
-        '<div class="ov-block"><p class="lab">$ per charged m\u00b3, this year vs last</p>'
+        '<div class="ov-block"><p class="lab">$ per charged m\u00b3'+(noPy?'':', this year vs last')+'</p>'
         +'<div class="ov-cbox tall"><canvas id="rfuel_bar"></canvas></div></div>'
         +'<table class="ov-table"><thead><tr>'
         +'<th>'+esc(s.groupBy)+'</th><th>Charged m\u00b3</th><th>Coverage</th><th>Recovery</th>'
-        +'<th>$/m\u00b3 CY</th><th>$/m\u00b3 PY</th><th>$ chg</th>'
+        +'<th>$/m\u00b3'+(noPy?'':' CY')+'</th>'+(noPy?'':'<th>$/m\u00b3 PY</th><th>$ chg</th>')
         +'</tr></thead><tbody>'
         + s.rows.map(function(c){ return line(c,false); }).join('')
         + line(s.total, true)
@@ -21045,15 +21105,21 @@ AMR.page('overview', {
         +'<p class="ov-note">Coverage is charged m\u00b3 over delivered m\u00b3 ('
         + fInt(s.total.cyGross)+' m\u00b3). Total m\u00b3 is '+fInt(s.total.cyM3)
         +' \u2014 lower, because it is net of credits, and a credit takes m\u00b3 back out without '
-        +'reversing the surcharge the load already carried.</p>';
+        +'reversing the surcharge the load already carried.'
+        +(noPy?('<br>This window reaches back into '+RFUEL.pyYear+', and the surcharge export holds '
+          +RFUEL.pyYear+' and '+RFUEL.cyYear+' only \u2014 so there is no year to compare these months '
+          +'against and the prior-year columns are dropped rather than shown as zero.'):'')
+        +'</p>';
 
       var items=s.rows.concat([s.total]);
       CH.rfuel.push(new Chart($('rfuel_bar'),{ type:'bar',
         data:{ labels: items.map(function(c){ return c.label; }),
-               datasets:[ { label:String(RFUEL.pyYear), data:items.map(function(c){ return c.pyRate; }),
-                            backgroundColor:'#9EC5F5' },
-                          { label:String(RFUEL.cyYear), data:items.map(function(c){ return c.cyRate; }),
-                            backgroundColor:'#1B5FD9' } ] },
+               datasets:(noPy?[]:[
+                          { label:String(RFUEL.pyYear), data:items.map(function(c){ return c.pyRate; }),
+                            backgroundColor:'#9EC5F5' }
+                        ]).concat([
+                          { label:(noPy?'$/m\u00b3':String(RFUEL.cyYear)), data:items.map(function(c){ return c.cyRate; }),
+                            backgroundColor:'#1B5FD9' } ]) },
         options:{ responsive:true, maintainAspectRatio:false,
           plugins:{ legend:{ position:'bottom' },
             tooltip:{ callbacks:{ label:function(x){
@@ -21095,9 +21161,14 @@ AMR.page('overview', {
         +'</tr></thead><tbody>'
         + a.rows.map(function(r){ return line(r,false); }).join('')
         + line(a.total, true)
-        +'</tbody></table>'
-        +'<p class="ov-note">Denominator for every row: '+fInt(a.volCY)+' m\u00b3 CY / '+fInt(a.volPY)
-        +' m\u00b3 PY \u2014 total concrete, not applied m\u00b3. Applied m\u00b3 counts the same pour once per extra type and is not additive.</p>';
+        /* THE DENOMINATOR IS IN THE SUBHEADING, NOT UNDER THE TABLE. "every row
+           divided by the same total concrete m3, so the rows add to All-in" is
+           already the second half of this panel's own sub line; a note repeating
+           it with the two volumes spelled out was a third statement of one fact
+           on one screen. The rule it protects has not moved \u2014 see \u00a77, "Extras /
+           VAP": summary tables divide by total concrete m3 and detail tables by
+           applied m3, and only the detail table prints applied m3 at all. */
+        +'</tbody></table>';
       var items=a.rows.concat([a.total]);
       CH.rasp.push(new Chart($('rasp_bar'),{ type:'bar',
         data:{ labels:items.map(function(r){ return r.label; }),
@@ -21658,16 +21729,23 @@ AMR.page('overview', {
       if(STATE.pick==='PYTD') return 'Previous month, year to date \u00b7 '+winLabel();
       return 'Custom window \u00b7 '+winLabel();
     }
-    /* THE FUEL-SURCHARGE COLUMNS ARE A LIVE-BOOK FIELD. The cube carries the
-       surcharge dollars and the tonnes they were charged on, but only the live
-       Price & Volume export is guaranteed to fill them \u2014 the closed-year books
-       carry them as optional columns and older eras simply have not got them. So
-       the surcharge panels answer for windows inside the CURRENT book year and
-       are not shown for older ones, rather than drawing a real-looking zero. */
+    /* THE FUEL-SURCHARGE COLUMNS ARE A LIVE-BOOK FIELD, AND THEY START IN 2026.
+       The cube carries the surcharge dollars and the tonnes they were charged on
+       (fsc / fv), but only the Price & Volume export from 2026 on fills them:
+       the closed books that pre-date it carry the columns as optional and the
+       older eras simply have not got them. Summed over one of those months the
+       answer is $0.00 \u2014 which on a chart or in a table is indistinguishable from
+       "the surcharge collapsed". So every surcharge panel, pooled and monthly
+       alike, starts at FSC_FROM_YM rather than drawing that zero.
+
+       This is a DATE, not "the newest book year", which is what it used to be.
+       The two agree today and stop agreeing the moment 2026 closes: a window
+       spanning 2026 and 2027 is one the surcharge can answer in full, and the
+       old test hid it for containing a month outside the newest year. */
+    var FSC_FROM_YM = 202601;
     function winFscOk(){
       if(!winReady()) return false;
-      var ms=WIN.months, lastY=Math.floor(ms[ms.length-1]/100);
-      return Math.floor(WIN.from/100)>=lastY;
+      return WIN.from>=FSC_FROM_YM;
     }
 
     /* POOLED prior-year numbers stop meaning anything once the window runs past
@@ -21814,17 +21892,13 @@ AMR.page('overview', {
       b.innerHTML='<div class="ov-mini">Loading months\u2026 '+p.pct+'%</div>';
     }
 
-    /* ------------------------- the month-history pill ------------------------- */
-    function histSpan(){
-      var C0=cube(), lo=null, hi=null;
-      ['agg','rmx'].forEach(function(l){
-        var m=C0 && C0.manifest(l);
-        if(!m || !m.ym || !m.ym.length) return;
-        if(lo===null || m.ym[0]<lo) lo=m.ym[0];
-        if(hi===null || m.ym[m.ym.length-1]>hi) hi=m.ym[m.ym.length-1];
-      });
-      return (lo && hi) ? { lo:lo, hi:hi } : null;
-    }
+    /* ------------------------- the month-history pill -------------------------
+       histSpan() lived here \u2014 the cube's FULL range across both lines. Its last
+       caller was buildUpByYm, which guessed which calendar year the live
+       cross-report's bare 1-12 months belonged to; the build-up reads the cube's
+       own ym now and there is nothing left to guess. The pill has always quoted
+       loadedSpan() instead. \u00a79: client-side modules are the one place grep is
+       conclusive, and it had none. */
     /* What the browser is actually holding right now. The pill quotes THIS, not
        the server's full range, because it is the span the slider will let you
        use. */
@@ -22218,7 +22292,7 @@ AMR.page('overview', {
 
     /* ------------------------------- the charts ------------------------------- */
     function renderAggTrend(){ renderTrendPanel('agg'); }
-    function renderRmxTrendPanel(d, err){ renderTrendPanel('rmx', d, err); }
+    function renderRmxTrendPanel(){ renderTrendPanel('rmx'); }
     function renderTrendNow(){
       if(!STATE.data) return;
       renderPill();
@@ -22226,7 +22300,7 @@ AMR.page('overview', {
          so it repaints on the same signal */
       renderMktSum(STATE.tab);
       if(STATE.tab==='agg') renderAggTrend();
-      else renderRmxTrendPanel(rxfData(), RXF_ERR[rxfSig()]);
+      else renderRmxTrendPanel();
     }
     function renderTrendSoon(){
       if(trendTimer) clearTimeout(trendTimer);
@@ -22288,27 +22362,13 @@ AMR.page('overview', {
                min: mn<0 ? snapOut(mn, step, false) : undefined };
     }
 
-    /* The Extras / VAP build-up, keyed by ym. The cross-report only carries the
-       CURRENT data year (its months are 1-12, no year at all), so it is mapped
-       onto the newest year the cube holds and used for whatever part of the
-       window overlaps it. */
-    function buildUpByYm(d){
-      if(!d || !d.months || !d.months.length) return null;
-      var sp=histSpan(); if(!sp) return null;
-      var y=Math.floor(sp.hi/100), out={}, any=false;
-      d.months.forEach(function(m){
-        if(!m || !m.month) return;
-        var ym=y*100+m.month;
-        /* If the report runs past the newest month the cube holds, the cube is
-           behind the live sheet and this year guess is unsafe for those months —
-           drop them rather than plot last year's numbers under this year's label. */
-        if(ym>sp.hi) return;
-        out[ym]=m; any=true;
-      });
-      return any?out:null;
-    }
-
-    function renderTrendPanel(line, d, err){
+    /* NO CROSS-REPORT ARGUMENT ANY MORE. This panel took (line, d, err) so it
+       could overlay the live report's extras on the ASP line, which is why it
+       drew base under an all-in heading everywhere that report does not reach —
+       and drew no build-up at all in window mode, where it is never fetched.
+       Extras and VAP are cube columns; the whole panel is one source now, and
+       the callers that used to hand it a report and an error hand it nothing. */
+    function renderTrendPanel(line){
       var isAgg=(line==='agg');
       var body=$(isAgg?'aggTrendBody':'rmxTrendBody');
       var sec =isAgg?'atrend':'rtrend';
@@ -22383,6 +22443,12 @@ AMR.page('overview', {
                    cyVol:Number(g.cyVol)||0, cyRev:Number(g.cyRev)||0, cyAsp:Number(g.cyAsp)||0,
                    cyFsc:Number(g.cyFsc)||0, cyFv:Number(g.cyFv)||0,
                    pyFsc:Number(g.pyFsc)||0, pyFv:Number(g.pyFv)||0,
+                   /* extras and VAP revenue, the Ready-Mix line's own two measure
+                      slots \u2014 carried through so the build-up below is a sum over
+                      these same months rather than a second source */
+                   cyEx:Number(g.cyEx)||0, cyVa:Number(g.cyVa)||0,
+                   pyEx:(pyIn && pyVol)?(Number(g.pyEx)||0):0,
+                   pyVa:(pyIn && pyVol)?(Number(g.pyVa)||0):0,
                    pyVol:(pyIn && pyVol)?pyVol:null,
                    pyAsp:(pyIn && pyVol)?(Number(g.pyAsp)||0):null,
                    ppi:  (pyIn && pyVol)?pct(Number(g.ppi)||0):null,
@@ -22413,12 +22479,29 @@ AMR.page('overview', {
          carries both bases; its "all tonnes" table is the one this matches.)
 
          Aggregates only \u2014 the Ready-Mix fact table uses those two measure slots
-         for extras and VAP, not the surcharge. */
-      var fscCY = M.map(function(m){ return (m.cyVol>0) ? m.cyFsc/m.cyVol : null; });
-      var fscPY = M.map(function(m){ return (m.pyVol) ? m.pyFsc/m.pyVol : null; });
-      var dolCY = M.map(function(m){ return (m.cyVol>0) ? m.cyFsc : null; });
-      var dolPY = M.map(function(m){ return (m.pyVol) ? m.pyFsc : null; });
-      var hasFsc = isAgg && M.some(function(m){ return m.cyFsc || m.pyFsc; });
+         for extras and VAP, not the surcharge.
+
+         AND ONLY FROM THE MONTH THE COLUMNS EXIST. FSC_FROM_YM is not a taste
+         call about how far back to draw: the surcharge and the tonnes it was
+         charged on are a live-book field, and the closed books that pre-date it
+         carry neither. Summed over a month that never had the columns the answer
+         is a clean $0.00 \u2014 a REAL-LOOKING zero, on the same axis as real
+         recoveries, saying the surcharge collapsed rather than that nobody
+         recorded it. So the chart starts where the data does, exactly as the
+         build-up stack below starts at the first month carrying extras. */
+      var fsIx = isAgg ? M.map(function(_,i){ return i; })
+                          .filter(function(i){ return M[i].ym>=FSC_FROM_YM; })
+                       : [];
+      var fsAt  = function(f){ return fsIx.map(function(i){ return f(M[i]); }); };
+      var fscCY = fsAt(function(m){ return (m.cyVol>0) ? m.cyFsc/m.cyVol : null; });
+      var fscPY = fsAt(function(m){ return (m.pyVol)   ? m.pyFsc/m.pyVol : null; });
+      var dolCY = fsAt(function(m){ return (m.cyVol>0) ? m.cyFsc : null; });
+      var dolPY = fsAt(function(m){ return (m.pyVol)   ? m.pyFsc : null; });
+      var fsLab = fsIx.map(function(i){ return M[i].label; });
+      var hasFsc = isAgg && fsIx.some(function(i){ return M[i].cyFsc || M[i].pyFsc; });
+      /* past twelve months the prior-year side goes here too \u2014 it went from every
+         other chart in this panel and this one was quietly keeping it */
+      var fscPYon = hasFsc && !longWin && fscPY.some(function(v){ return v!=null; });
 
       /* No window recap here. Period and the Months slider are one control, so
          the KPI strip directly above this panel is ALREADY the total for exactly
@@ -22429,36 +22512,108 @@ AMR.page('overview', {
         +' \u00b7 '+ymLong(cy[0])+' \u2013 '+ymLong(cy[cy.length-1])
         +' \u00b7 each '+GW+' against the same '+GW+' a year earlier.';
 
-      /* the extras / VAP build-up is a per-MONTH cross-report, so it sits out the
-         quarter view rather than being averaged into one */
-      var BU = (isAgg || QUARTER) ? null : buildUpByYm(d);
-      var buYm = BU ? cy.filter(function(ym){ return BU[ym]; }) : [];
+      /* ---- THE ASP BUILD-UP, PER MONTH, FROM THE CUBE ----------------------
+         Extras and VAP revenue are COLUMNS of the Ready-Mix fact table (ex / va),
+         the same two the pooled build-up panel above sums, so the monthly split
+         is a local pass over the months this panel is already drawing. It
+         answers for any span the slider can reach, closed years included.
+
+         IT USED TO COME FROM THE LIVE CROSS-REPORT, and that is the bug behind
+         the heading. That report carries the CURRENT data year only and is not
+         fetched at all in window mode, so on every other span the chart headed
+         "All-in ASP" was drawing base concrete and nothing said so. All-in and
+         base are now drawn as their own lines, from one source, and a month with
+         no extras in the book simply has no all-in point.
+
+         A Strength or Product Class filter still puts the extras out of reach:
+         they carry a plant and a material, not a product mix, so the filter does
+         not narrow them, it ZEROES them. Same refusal renderWinRmxAsp makes,
+         taken from the page's own filter state.
+
+         The quarter view sits it out rather than averaging three months of it. */
+      var buOff = isAgg || QUARTER || rxfMixFiltered();
+      var BU = buOff ? null : M.map(function(m){
+        /* $0 on both streams in both years is a book that shipped no extras tab,
+           not a month that charged no extras \u2014 and drawing that as a stack whose
+           All-in equals Base is exactly the false reassurance this panel used to
+           give. No point rather than a flat one. */
+        if(!(m.cyEx || m.cyVa || m.pyEx || m.pyVa)) return null;
+        var exCY=m.cyVol?m.cyEx/m.cyVol:0, vaCY=m.cyVol?m.cyVa/m.cyVol:0;
+        var exPY=m.pyVol?m.pyEx/m.pyVol:0, vaPY=m.pyVol?m.pyVa/m.pyVol:0;
+        return { exCY:exCY, vaCY:vaCY, exPY:exPY, vaPY:vaPY,
+                 allCY:(Number(m.cyAsp)||0)+exCY+vaCY,
+                 allPY:(m.pyAsp==null)?null:(m.pyAsp+exPY+vaPY) };
+      });
+      var hasBU = !!(BU && BU.some(function(b){ return !!b; }));
+      /* THE STACK IS A YEAR'S CHART. Twelve bars of three segments each with a
+         line over them is readable; thirty-one is a wall. Past a year the two
+         ASP lines above already carry the same story, so the stack is the panel
+         that goes \u2014 the same instinct as longWin, one year later. */
+      var buIx = (hasBU && M.length<=12)
+        ? M.map(function(_,i){ return i; }).filter(function(i){ return !!BU[i]; })
+        : [];
+
+      /* ---- ALL-IN PPI ------------------------------------------------------
+         The base index re-expressed on the all-in denominator, with the extras
+         and VAP move added at what it actually was:
+
+             ppiBase x baseASP_PY  +  (extras+VAP)_CY - (extras+VAP)_PY
+             ---------------------------------------------------------
+                                 all-in ASP_PY
+
+         The numerator is the like-for-like base $ move plus the real $ move on
+         the two extra streams; the denominator is last year's all-in price. With
+         no extras in the month it collapses to ppiBase exactly, which is the
+         test that says these are one arithmetic and not two.
+
+         IT IS NOT A SECOND COVERAGE-WEIGHTED INDEX, and it cannot be. PPI is
+         pooled over plant x mix pairs; an extras row carries a plant and a
+         material and NO mix, so no pair of its own ever clears coverage (see
+         \u00a77, "a plant x mix pair of zeroes fails the browser's > 0 coverage test
+         so no PPI or CPI moves"). This is the base index carrying an extras
+         delta, which is what the reader wants to see beside it and is the only
+         honest way to put the two on one axis. */
+      var ppiAll = BU ? M.map(function(m,i){
+        var b=BU[i];
+        if(!b || m.ppi==null || m.pyAsp==null) return null;
+        if(!(b.allPY>0)) return null;
+        /* m.ppi is already in percentage points; the arithmetic is in fractions */
+        return pct(((m.ppi/100)*m.pyAsp + (b.exCY+b.vaCY) - (b.exPY+b.vaPY)) / b.allPY);
+      }) : null;
+      var hasPpiAll = !longWin && !!(ppiAll && ppiAll.some(function(v){ return v!=null; }));
 
       var notes=[];
-      /* THE CLAIM IS CONDITIONAL, because it used not to be true. This panel is
-         cube-fed on the slider's span and the strip above it was server-fed on
-         a different month, so "they add up" was the one line on the page that
-         would have caught the fault and instead concealed it. The months agree
-         now; the test stays, because a chart that quietly stops reconciling is
-         exactly what went unnoticed before. */
+      /* THE ONE CLAIM WORTH MAKING IS THE ONE THAT CAN BE FALSE. This panel is
+         cube-fed on the slider's span and the strip above it can be server-fed on
+         a different month, so a mismatch between the two is the fault that has
+         gone unnoticed here before and the note that catches it stays. The
+         reassurance for the ordinary case \u2014 "these add up, that one does not" \u2014
+         was two lines of boilerplate under every chart on the page and is gone;
+         when the spans DO differ this still says so. */
       var sameSpan = winMode() || (windowPeriod()===STATE.pick);
-      notes.push((QUARTER?'Quarterly':'Monthly')+' volume and revenue '
-        +(sameSpan
-            ? 'add up to the KPI strip above'
-            : ('cover '+esc(ymLong(cy[0]))+' \u2013 '+esc(ymLong(cy[cy.length-1]))
-               +', which is not the span the KPI strip above is reporting'))
-        +'. <b>'
-        +(QUARTER?'Quarterly':'Monthly')+' PPI does not</b> \u2014 '
-        +'coverage is decided on whatever period is collapsed, so a pair can qualify in one '+GW+' and not across the window.');
+      if(!sameSpan) notes.push((QUARTER?'Quarterly':'Monthly')+' volume and revenue cover '
+        +esc(ymLong(cy[0]))+' \u2013 '+esc(ymLong(cy[cy.length-1]))
+        +', which is <b>not the span the KPI strip above is reporting</b>.');
       if(!isAgg){
-        if(buYm.length) notes.push('The <b>ASP build-up</b> covers '+esc(ymShort(buYm[0]))+' \u2013 '+esc(ymShort(buYm[buYm.length-1]))
-          +' \u2014 extras and VAP come from the live cross-report, which only carries the current data year. '
-          +'The all-in line above is base concrete for every other month.');
-        else if(!d && !err) notes.push('Base concrete only for now \u2014 the extras and VAP build-up arrives with the live cross-report.');
-        else notes.push('Base concrete only \u2014 extras and VAP are not carried in the month history, '
-          +'and this window sits outside the current data year.');
-        if(d && d.notes && d.notes.mixFiltered) notes.push('A Strength or Product Class filter is on, so extras and VAP cannot follow it: the build-up is base only.');
+        if(hasBU && !buIx.length) notes.push('The <b>build-up stack</b> is a year\u2019s chart \u2014 this window is '
+          +M.length+' '+GW+'s, so the base and all-in lines above carry it instead.');
+        else if(buIx.length && buIx.length<M.length)
+          notes.push('Extras and VAP are carried for '+buIx.length+' of these '+M.length+' '+GW+'s ('
+            +esc(M[buIx[0]].label)+' \u2013 '+esc(M[buIx[buIx.length-1]].label)
+            +') \u2014 a book that ships no extras tab has a base price and no all-in one, '
+            +'which is the gap in the all-in line rather than a fall in it.');
+        else if(!hasBU && rxfMixFiltered())
+          notes.push('A Strength or Product Class filter is on and extras carry a plant and a material, not a product mix \u2014 '
+            +'so they cannot follow it. <b>Base concrete only.</b>');
+        else if(!hasBU && !QUARTER)
+          notes.push('<b>Base concrete only</b> \u2014 the books behind this window ship no extras tab.');
       }
+      /* the surcharge chart drew fewer months than everything above it: say which,
+         and say why, or a reader counts the bars and assumes the rest are zero */
+      if(hasFsc && fsIx.length<M.length)
+        notes.push('<b>Fuel recovery</b> starts at '+esc(M[fsIx[0]].label)
+          +' \u2014 the surcharge and the tonnes it was charged on are a live-book field, '
+          +'and the books before that do not carry them. Earlier '+GW+'s are not zero recovery, they are no record.');
       if(longWin) notes.push(pyAbsent()
         ? ('This window is the oldest year the month history holds, so there is no prior year to '
            +'compare against \u2014 every <b>same-'+GW+'-last-year</b> series has been dropped, along with '
@@ -22469,21 +22624,26 @@ AMR.page('overview', {
       if(R.dropped.length) notes.push('Ignored in this chart: <b>'
         +R.dropped.map(function(k){ return esc(CUBE_FIELD_LABEL[k]||k); }).join(', ')
         +'</b> \u2014 no matching values in the month history.');
-      if(err && !isAgg) notes.push('The live cross-report did not load ('+esc(err)+'), so the build-up is unavailable.');
 
+      /* WHAT THE HEADING SAYS IS WHAT THE CHART DRAWS. "All-in ASP" stood over a
+         base-concrete line on every span the live cross-report could not reach,
+         which was most of them. The two are separate series now, so the heading
+         names whichever is actually there. */
+      var aspHead = isAgg ? 'ASP' : (hasBU ? 'ASP \u00b7 all-in and base' : 'Base ASP');
+      var idxHead = hasCpiTrend ? 'PPI &amp; CPI' : (hasPpiAll ? 'PPI \u00b7 base and all-in' : 'PPI');
       body.innerHTML=
         '<div class="ov-block" style="margin-top:0"><p class="lab">Volume by '+GW+' \u00b7 '+unit+'</p>'
         +'<div class="ov-cbox tall"><canvas id="tr_vol_'+line+'"></canvas></div></div>'
-        +'<div class="ov-block"><p class="lab">'+(isAgg?'ASP':'All-in ASP')+' by '+GW+' \u00b7 $/'+unit+'</p>'
+        +'<div class="ov-block"><p class="lab">'+aspHead+' by '+GW+' \u00b7 $/'+unit+'</p>'
         +'<div class="ov-cbox tall"><canvas id="tr_asp_'+line+'"></canvas></div></div>'
-        +(buYm.length?('<div class="ov-block"><p class="lab">ASP build-up by month \u00b7 base, extras and VAP \u00b7 $/'+unit+'</p>'
+        +(buIx.length?('<div class="ov-block"><p class="lab">ASP build-up by month \u00b7 base, extras and VAP \u00b7 $/'+unit+'</p>'
           +'<div class="ov-cbox tall"><canvas id="tr_bu_'+line+'"></canvas></div></div>'):'')
-        +(longWin?'':('<div class="ov-block"><p class="lab">'+(hasCpiTrend?'PPI &amp; CPI':'PPI')+' by '+GW
+        +(longWin?'':('<div class="ov-block"><p class="lab">'+idxHead+' by '+GW
           +' \u00b7 vs the same '+GW+' last year</p>'
           +'<div class="ov-cbox tall"><canvas id="tr_ppi_'+line+'"></canvas></div></div>'))
         +(hasFsc?('<div class="ov-block"><p class="lab">Fuel recovery by '+GW+' \u00b7 $/'+unit+' (bars: total $, right axis)</p>'
           +'<div class="ov-cbox tall"><canvas id="tr_fsc_'+line+'"></canvas></div></div>'):'')
-        +'<p class="ov-note">'+notes.join('<br>')+'</p>';
+        +(notes.length?('<p class="ov-note">'+notes.join('<br>')+'</p>'):'');
 
       var labels=M.map(function(m){ return m.label; });
       var xTicks={ font:{size:dense?9:10,family:'Inter'}, color:C.muted,
@@ -22510,30 +22670,50 @@ AMR.page('overview', {
                    y:{ beginAtZero:true, max:volHead.max, grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
                          callback:axThousands}} } } }));
 
-      /* ASP — line, both lines, identical on the two tabs. On Ready-Mix this is
-         ALL-IN wherever the build-up exists (base + extras + VAP) and base
-         elsewhere, so the series is continuous instead of dropping a step
-         whenever it leaves the current data year. */
-      var aspCY=M.map(function(m){
-        var b=BU&&BU[m.ym];
-        if(!b) return m.cyAsp;
-        return (Number(b.aspBaseCY)||0)+(Number(b.exAspCY)||0)+(Number(b.vaAspCY)||0);
-      });
-      var aspPY=M.map(function(m){
-        var b=BU&&BU[m.ym];
-        if(!b) return m.pyAsp;
-        if(m.pyAsp==null) return null;
-        return (Number(b.aspBasePY)||0)+(Number(b.exAspPY)||0)+(Number(b.vaAspPY)||0);
-      });
+      /* ASP — BASE AND ALL-IN, EACH AGAINST ITSELF A YEAR EARLIER.
+         The old chart drew ONE pair and switched what it meant month by month:
+         all-in where the cross-report reached, base everywhere else, under an
+         "All-in ASP" heading either way. A line whose definition changes halfway
+         along is not a trend, and the step where it changed read as a price move.
+
+         Two measures, two years, four lines — and the encoding has to say which
+         is which. COLOUR IS THE MEASURE (navy base, bright blue all-in, exactly
+         as the stack below colours its Base segment navy) and DASH IS THE YEAR,
+         which is the convention the rest of this panel already uses for last
+         year. Base stays navy because base is the number reconciled against
+         Qlik; all-in is the taller line and does not need the darker ink.
+
+         A month with no extras in the book has NO all-in point rather than one
+         equal to base: spanGaps:false leaves the gap visible, which is the
+         honest shape of "not carried". */
+      var aspBaseCY=M.map(function(m){ return m.cyAsp; });
+      var aspBasePY=M.map(function(m){ return m.pyAsp; });
+      var aspAllCY =BU?M.map(function(m,i){ return BU[i]?BU[i].allCY:null; }):null;
+      var aspAllPY =BU?M.map(function(m,i){ return BU[i]?BU[i].allPY:null; }):null;
+      function aspLine(label, data, col, py){
+        return { label:label, data:data, borderColor:col, backgroundColor:col,
+                 borderWidth:py?1.8:2.4, pointRadius:dense?2:3,
+                 fill:false, spanGaps:false, tension:.25,
+                 borderDash:py?[5,4]:undefined };
+      }
+      var aspSets=[];
+      if(hasBU){
+        /* two measures: colour says WHICH, dash says WHEN */
+        if(!longWin) aspSets.push(aspLine('Base · same '+GW+' last year', aspBasePY, C.navy, true));
+        if(!longWin) aspSets.push(aspLine('All-in · same '+GW+' last year', aspAllPY, C.b40, true));
+        aspSets.push(aspLine('Base · this year', aspBaseCY, C.navy, false));
+        aspSets.push(aspLine('All-in · this year', aspAllCY, C.b40, false));
+      }else{
+        /* ONE measure, and the panel's own two-colour convention is untouched:
+           navy is this year, light blue is last year, exactly as the volume bars
+           beside it. Aggregates always lands here, and so does a Ready-Mix window
+           whose books carry no extras. */
+        if(!longWin) aspSets.push(aspLine('Same '+GW+' last year', aspBasePY, C.b30, true));
+        aspSets.push(aspLine(longWin?'ASP':'This year', aspBaseCY, C.navy, false));
+      }
       CH[sec].push(new Chart($('tr_asp_'+line),{ type:'line',
         /* same order as the bars above, which also draws this year on top */
-        data:{ labels:labels, datasets:(longWin?[]:[
-          { label:'Same '+GW+' last year', data:aspPY,
-            borderColor:C.b30, backgroundColor:C.b30, borderWidth:2, pointRadius:dense?2:3, fill:false, spanGaps:false, borderDash:[5,4], tension:.25 }
-        ]).concat([
-          { label:(longWin?'ASP':'This year'), data:aspCY,
-            borderColor:C.navy, backgroundColor:C.navy, borderWidth:2.4, pointRadius:dense?2:3, fill:false, spanGaps:false, tension:.25 }
-        ])},
+        data:{ labels:labels, datasets:aspSets },
         options:{ responsive:true, maintainAspectRatio:false,
           plugins:{ legend:LEG, datalabels:{display:false},
             tooltip:{ callbacks:{ label:function(c){
@@ -22542,22 +22722,18 @@ AMR.page('overview', {
                    y:{ grid:{color:C.line}, ticks:{font:{size:10,family:'Inter'},color:C.muted,
                          callback:axMoneyPlain}} } } }));
 
-      /* ASP build-up (Ready-Mix only, and only where the cross-report reaches).
-         Stacked bars for this year, a plain dashed line for last year's all-in.
-         The line is deliberately NOT given a stack id: on a stacked axis a
-         stacked line renders as a cumulative band, which is what made the old
-         chart unreadable. */
-      if(buYm.length){
-        var buLab=buYm.map(ymShort);
-        var vBase=buYm.map(function(ym){ return Number(BU[ym].aspBaseCY)||0; });
-        var vEx  =buYm.map(function(ym){ return Number(BU[ym].exAspCY)||0; });
-        var vVa  =buYm.map(function(ym){ return Number(BU[ym].vaAspCY)||0; });
-        var vPy  =buYm.map(function(ym){
-          var b=BU[ym];
-          var t=(Number(b.aspBasePY)||0)+(Number(b.exAspPY)||0)+(Number(b.vaAspPY)||0);
-          return t>0?t:null;
-        });
-        var buDense=buYm.length>13;
+      /* ASP build-up (Ready-Mix only, and only over the months the books carry
+         extras for). Stacked bars for this year, a plain dashed line for last
+         year's all-in. The line is deliberately NOT given a stack id: on a
+         stacked axis a stacked line renders as a cumulative band, which is what
+         made the old chart unreadable. */
+      if(buIx.length){
+        var buLab=buIx.map(function(i){ return M[i].label; });
+        var vBase=buIx.map(function(i){ return Number(M[i].cyAsp)||0; });
+        var vEx  =buIx.map(function(i){ return BU[i].exCY; });
+        var vVa  =buIx.map(function(i){ return BU[i].vaCY; });
+        var vPy  =buIx.map(function(i){ var t=BU[i].allPY; return (t>0)?t:null; });
+        var buDense=buIx.length>13;
         CH[sec].push(new Chart($('tr_bu_'+line),{ type:'bar',
           data:{ labels:buLab, datasets:[
             { label:'Base',   data:vBase, backgroundColor:C.navy, borderRadius:3, maxBarThickness:buDense?18:30, stack:'a', order:2 },
@@ -22579,21 +22755,29 @@ AMR.page('overview', {
                                 callback:axMoneyPlain}} } } }));
       }
 
-      /* PPI, and CPI beside it where the line carries sold-to.
+      /* PPI, with the ALL-IN index beside it on Ready-Mix and CPI beside it on
+         the line that carries sold-to. Never all three: an extras row has no
+         mix and no sold-to, so the two companions belong to different tabs.
+
          COLOUR IS THE SERIES, NOT THE SIGN. One index drawn green-for-up and
          red-for-down borrowed a semantic the rest of this page spends on
          growth, and green is not in the palette at all - every other paired
          chart in this panel is navy against light blue. Two indices settle it:
          with two series the colour has to say WHICH index, so PPI takes navy
          and CPI the light blue, exactly as "this year"/"last year" do above,
-         and the sign is read off the axis where it belongs. */
+         and the sign is read off the axis where it belongs. All-in takes the
+         SAME bright blue it has on the ASP chart above, so one colour means one
+         thing down the whole panel. */
       if(!longWin){
+        var twoIdx = hasCpiTrend || hasPpiAll;
         var ppiVals=M.map(function(m){ return m.ppi; });
-        var idxAll=ppiVals.concat(hasCpiTrend?cpiVals:[]);
+        var idxAll=ppiVals.concat(hasCpiTrend?cpiVals:[]).concat(hasPpiAll?ppiAll:[]);
         var sc=outlierScale(idxAll.filter(function(v){ return v!=null; }));
         var ppiHead=sc?{}:headroom(idxAll);
-        var idxSets=[{ label:'PPI', data:ppiVals, backgroundColor:C.navy,
-                       borderRadius:4, maxBarThickness:dense?(hasCpiTrend?10:18):(hasCpiTrend?16:30) }];
+        var idxSets=[{ label:(hasPpiAll?'PPI · base':'PPI'), data:ppiVals, backgroundColor:C.navy,
+                       borderRadius:4, maxBarThickness:dense?(twoIdx?10:18):(twoIdx?16:30) }];
+        if(hasPpiAll) idxSets.push({ label:'PPI · all-in', data:ppiAll, backgroundColor:C.b40,
+                       borderRadius:4, maxBarThickness:dense?10:16 });
         if(hasCpiTrend) idxSets.push({ label:'CPI', data:cpiVals, backgroundColor:C.b30,
                        borderRadius:4, maxBarThickness:dense?10:16 });
         CH[sec].push(new Chart($('tr_ppi_'+line),{ type:'bar',
@@ -22602,8 +22786,8 @@ AMR.page('overview', {
             layout:{ padding:{ top:14 } },
             /* one series keeps its value labels; two would overprint each other,
                so the pair is read off the axis and the tooltip instead */
-            plugins:{ legend:(hasCpiTrend?LEG:{display:false}),
-              datalabels:(hasCpiTrend?{display:false}
+            plugins:{ legend:(twoIdx?LEG:{display:false}),
+              datalabels:(twoIdx?{display:false}
                           :vBarLabels(ppiVals, sc, function(v){ return (v>0?'+':'')+v.toFixed(1)+'%'; }, dense)),
               tooltip:{ callbacks:{ label:function(c){
                 return c.raw==null ? c.dataset.label+': no last-year comparison'
@@ -22618,28 +22802,39 @@ AMR.page('overview', {
       /* Fuel recovery \u2014 dollars as bars on the RIGHT axis, rate as lines on the
          left. Last year is drawn first in each pair, matching the volume chart, so
          this year still lands on the right of every group. The lines are given a
-         higher draw order than the bars so the rate is never buried behind them. */
+         higher draw order than the bars so the rate is never buried behind them.
+
+         ITS OWN LABELS, NOT THE PANEL'S. This chart starts at FSC_FROM_YM and the
+         others start where the window does, so it is drawn over fsLab exactly as
+         the build-up stack is drawn over its own months. */
       if(hasFsc){
-        CH[sec].push(new Chart($('tr_fsc_'+line),{ type:'bar',
-          data:{ labels:labels, datasets:[
+        var fsDense=fsIx.length>13;
+        var fsSets=(fscPYon?[
             { label:'$ last year', data:dolPY, backgroundColor:C.b30, borderRadius:4,
-              maxBarThickness:dense?16:26, yAxisID:'y1', order:3 },
-            { label:'$ this year', data:dolCY, backgroundColor:C.b70, borderRadius:4,
-              maxBarThickness:dense?16:26, yAxisID:'y1', order:3 },
+              maxBarThickness:fsDense?16:26, yAxisID:'y1', order:3 }
+          ]:[]).concat([
+            { label:(fscPYon?'$ this year':'$ recovered'), data:dolCY, backgroundColor:C.b70, borderRadius:4,
+              maxBarThickness:fsDense?16:26, yAxisID:'y1', order:3 }
+          ]).concat(fscPYon?[
             { type:'line', label:'$/'+unit+' last year', data:fscPY,
-              borderColor:C.neg, backgroundColor:C.neg, borderWidth:2, pointRadius:dense?2:3,
-              fill:false, spanGaps:false, borderDash:[5,4], tension:.25, yAxisID:'y', order:1 },
-            { type:'line', label:'$/'+unit+' this year', data:fscCY,
-              borderColor:C.navy, backgroundColor:C.navy, borderWidth:2.4, pointRadius:dense?2:3,
+              borderColor:C.neg, backgroundColor:C.neg, borderWidth:2, pointRadius:fsDense?2:3,
+              fill:false, spanGaps:false, borderDash:[5,4], tension:.25, yAxisID:'y', order:1 }
+          ]:[]).concat([
+            { type:'line', label:'$/'+unit+(fscPYon?' this year':''), data:fscCY,
+              borderColor:C.navy, backgroundColor:C.navy, borderWidth:2.4, pointRadius:fsDense?2:3,
               fill:false, spanGaps:false, tension:.25, yAxisID:'y', order:1 }
-          ]},
+          ]);
+        CH[sec].push(new Chart($('tr_fsc_'+line),{ type:'bar',
+          data:{ labels:fsLab, datasets:fsSets },
           options:{ responsive:true, maintainAspectRatio:false,
             plugins:{ legend:LEG, datalabels:{display:false},
               tooltip:{ callbacks:{ label:function(c){
                 if(c.raw==null) return c.dataset.label+': no data';
                 return c.dataset.label+': '+(c.dataset.yAxisID==='y1' ? fMoneyFull(c.raw) : fAsp(c.raw));
               } } } },
-            scales:{ x:{ grid:{display:false}, ticks:xTicks },
+            scales:{ x:{ grid:{display:false},
+                         ticks:{font:{size:fsDense?9:10,family:'Inter'},color:C.muted,
+                                autoSkip:false, maxRotation:fsDense?60:0, minRotation:fsDense?60:0} },
                      /* the rate on the left, where every other chart in this panel
                         puts the number the reader is following */
                      y:{ position:'left', beginAtZero:true, grid:{color:C.line},
