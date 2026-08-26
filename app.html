@@ -3107,7 +3107,9 @@ window.AMR = (function(){
      while the server is still happily building it. What makes the wait bearable
      is not this number: it is that AmrBoot's own 150-second watchdog can now
      say WHICH call has not answered (see inflight()), instead of blaming the
-     page's code for a step it never got the chance to report.
+     page's code for a step it never got the chance to report — and, since it
+     can see one, hold off calling a live call a fault at all until this timer
+     has settled it.
      ========================================================================== */
   var CALL_WATCHDOG = 420000;
   var INFLIGHT = [];
@@ -3142,8 +3144,15 @@ window.AMR = (function(){
           { fn: st.fn, ms: Date.now() - st.at, waited: CALL_WATCHDOG });
       if (st.gen !== GENERATION) return;             // its page is gone anyway
       if (!st.onFail) return;                        // no handler: nothing to run
-      try { st.onFail(new Error('The server did not answer. It may still be working — '
-              + 'wait a moment and try again rather than reloading, which only adds to the queue.')); }
+      /* MARKED, because one caller has to tell this failure from every other
+         one. A call that THREW has an answer and the question was asked; a call
+         that was never answered is a call whose execution may still be running,
+         and AMR.batch's fallback — re-issue every slot on its own — is exactly
+         the wrong thing to do about that. See lost() there. */
+      var err = new Error('The server did not answer. It may still be working — '
+              + 'wait a moment and try again rather than reloading, which only adds to the queue.');
+      err.amrTimeout = true;
+      try { st.onFail(err); }
       catch (e){ log('error', 'AMR.call', 'the failure handler threw', { fn: st.fn, error: String(e) }); }
     }
 
@@ -3507,6 +3516,12 @@ window.AMR = (function(){
          back to issuing that call on its own, exactly as the page used to. So
          the worst case is the number of round trips it had before.
 
+         THERE IS A FOURTH, AND IT IS THE ONE THAT MUST NOT FALL BACK: a batch
+         the call guard gave up on after seven minutes has not failed, it has
+         VANISHED, and the execution behind it is probably still running. Every
+         slot is failed with that error instead, because re-issuing them queues
+         more executions behind the one that is already the problem. See lost().
+
      The stale guard installed above wraps google.script.run itself, so a batch
      issued by a page that has since been switched away from is dropped with
      every other callback belonging to it, and none of these promises settle.
@@ -3543,6 +3558,27 @@ window.AMR = (function(){
                 function(e){ return { ok:false, error:(e && e.message) || String(e) }; });
       }));
     }
+    /* THE ONE FAILURE THAT MUST NOT FALL BACK, AND IT IS THE EXPENSIVE ONE.
+       apart() is right for every way APP_batch can decline to run: an older
+       deployment that has no such function, a script error, a refusal. It is
+       exactly wrong for the guard's seven-minute watchdog, because that does
+       not mean the batch failed — it means the batch VANISHED, and an Apps
+       Script execution that stops reporting is usually still running. Fanning
+       three slots out then queues three more executions BEHIND the one that is
+       already the problem, each with a watchdog of its own, and every one of
+       them enters the same cold build. One slow open becomes four.
+
+       So a lost batch answers every slot with the error it already has. Each
+       caller then takes the failure path it would have taken anyway — the same
+       one it takes when its own single call is given up on — and nothing is
+       re-issued on top of an execution nobody can see. */
+    function lost(err){
+      if (!(err && err.amrTimeout)) return apart(err);
+      log('warn', 'AMR.batch', 'the batch never answered — failing every slot rather than re-issuing',
+          { calls: list.length });
+      var msg = (err && err.message) || String(err);
+      return Promise.resolve(list.map(function(){ return { ok:false, error:msg }; }));
+    }
 
     return runOne('APP_batch', { calls: list.map(function(c){
         return { fn: c.fn, arg: c.arg };
@@ -3566,7 +3602,7 @@ window.AMR = (function(){
           for (var j = 0; j < at.length; j++) out[at[j]] = got[j];
           return out;
         });
-      }, apart);
+      }, lost);
   }
 
   /* The value of one slot, or null. Saves every call site the same three lines
@@ -7148,6 +7184,18 @@ window.AmrProgress = (function(){
  * there saying nothing. That message is a bug report - if you ever see
  * it, some path forgot its done().
  *
+ * AND IT ONLY SAYS THAT WHEN NOTHING IS OUTSTANDING, which it did not
+ * used to. 150 seconds is shorter than a cold open - a sync or one
+ * lookup row makes every cached answer unreachable and the next open
+ * rebuilds all of it, measured at about five minutes - so the one open
+ * with the best reason to be slow was the one that got a red card
+ * telling the reader to reload, and reloading is the single worst thing
+ * available: it cannot cancel the execution and only queues another
+ * behind it. A call still in the air is the proof that this is the
+ * server working, so the screen keeps its colour, names the call and
+ * counts up (liveNote). The bug report is raised on two consecutive
+ * looks with nothing outstanding, which is when it is true.
+ *
  * AND WELL BEFORE IT, AT `SLOW`, THE SCREEN EXPLAINS ITSELF. Those two
  * are not the same thing and must not read as if they were. The watchdog
  * blames the code, correctly. A long open almost never IS the code: Apps
@@ -7165,13 +7213,22 @@ window.AmrBoot = (function(){
      slowNote() for what a wait this long usually is. */
   var SLOW = 12000;
   var DEFAULT_TEXT = 'Pulling from Google Sheets\u2026';
+  /* HOW OFTEN THE WATCHDOG LOOKS AGAIN once it has fired and found a call still
+     outstanding. Short enough that the seconds it prints keep moving, which is
+     the difference between "it is working" and "it is frozen" to somebody
+     reading it. */
+  var RECHECK = 15000;
   /* slowT, not `slow` — api.slow() is the harness's setter for SLOW, and one
      name for the timer and the knob that starts it reads as a bug either way. */
   var pending = {}, count = 0, over = false, started = false, wd = null, slowT = null;
-  var TEXT = DEFAULT_TEXT, late = false, shown = false;
+  var TEXT = DEFAULT_TEXT, late = false, shown = false, deep = false;
 
   function names(){
     var out = []; for (var k in pending) out.push(k); return out;
+  }
+  function outstanding(){
+    try { return (window.AMR && AMR.inflight) ? AMR.inflight() : []; }
+    catch (e) { return []; }
   }
   /* WHY AN OPEN CAN SIT HERE, AND IT IS ALMOST ALWAYS THE SAME REASON.
      Apps Script runs one user's calls end to end. A page that was part-way
@@ -7200,30 +7257,52 @@ window.AmrBoot = (function(){
      done()", nobody looks at the server, which is where the answer is.
 
      §D tracks every outstanding call now (AMR.inflight), so this can tell them
-     apart: a call still in the air names the call, and only a screen with
-     nothing outstanding blames the code. Both still say reload — but see
-     slowNote() for why that is the last resort and not the first. */
+     apart, and they are no longer the same message in two wordings: only a
+     screen with nothing outstanding blames the code, and that is the only one
+     this function writes. The other case is liveNote() below and is not a
+     failure — see it for why the difference is worth the two functions, and
+     slowNote() for why "reload" is the last resort and not the first. */
   function stuckNote(){
-    var out = [];
-    try { out = (window.AMR && AMR.inflight) ? AMR.inflight() : []; } catch (e) { out = []; }
-    if (out.length){
-      var w = out[0];
-      return 'The server has not answered ' + w.fn + ' for '
-           + Math.round(w.ms / 1000) + ' seconds'
-           + (out.length > 1 ? ' (' + out.length + ' calls are outstanding)' : '') + '. '
-           + 'Nothing is lost and it may still be working. Give it a moment before '
-           + 'reloading \u2014 a reload cannot cancel it and only adds to the queue.';
-    }
     return 'Something did not report back, and no server call is outstanding \u2014 so this '
          + 'is the page\u2019s own code. Reload, and tell whoever maintains this: a step is '
          + 'missing its AmrBoot.done().';
   }
+  /* AND THE OTHER HALF OF WHAT THE WATCHDOG USED TO SAY, WHICH IS NOT A FAULT
+     AT ALL AND MUST NOT BE PAINTED AS ONE.
+     ----------------------------------------------------------------------
+     150 seconds was chosen against a page whose steps land in seconds. It is
+     SHORTER THAN A COLD OPEN: every cached answer in this app is keyed on its
+     source workbook's modified time, so a sync — or one row typed into a lookup
+     tab — makes the cube, both manifests, every chunk and both Overview
+     payloads unreachable at once, and the next open rebuilds all of it. That
+     was measured at about five minutes. So the watchdog fired on the one open
+     that had the best possible reason to be slow, went RED, named a step, and
+     told the reader to reload — which cannot cancel the execution it is waiting
+     on and only queues another behind it. People reloaded. It got worse.
+
+     A call still in the air is the proof that this is the server working, not
+     the page failing. So the red card is now what it always claimed to be — a
+     bug report, raised only when NOTHING is outstanding, which is exactly when
+     "a step forgot its done()" is the true explanation. While a call is live
+     the screen keeps its ordinary colour, names the call, counts the seconds
+     up, and says what the wait is. §D's own seven-minute guard is what settles
+     a call that really has died, and it runs the page's failure handler. */
+  function liveNote(out){
+    var w = out[0];
+    return 'Still working. The server has not answered ' + w.fn + ' for '
+         + Math.round(w.ms / 1000) + ' seconds'
+         + (out.length > 1 ? ' (' + out.length + ' calls are outstanding)' : '') + '. '
+         + 'A first open after the source sheets or the lookup tabs change has to rebuild '
+         + 'every cached figure, which takes a few minutes. Nothing is lost, and reloading '
+         + 'cannot cancel it \u2014 it only adds to the queue.';
+  }
   function paint(){
     if (!window.AmrProgress) return;
-    var n = names();
+    var n = names(), out = deep ? outstanding() : [];
     AmrProgress.set('boot', { text: TEXT, order: 0, now: true,
-      note: late ? slowNote()
-                 : (n.length ? ('Waiting for ' + n.join(', ')) : '') });
+      note: out.length ? liveNote(out)
+                       : (late ? slowNote()
+                               : (n.length ? ('Waiting for ' + n.join(', ')) : '')) });
   }
   /* THE OPENING SCREEN COVERS AN EMPTY PAGE, AND STOPS THE MOMENT IT IS NOT
      ONE. Everything below `over` — the refcount, the watchdog, the wording —
@@ -7274,8 +7353,22 @@ window.AmrBoot = (function(){
           if (over) return;
           late = true; paint();
         }, SLOW);
-        wd = setTimeout(function(){
+        var quiet = 0;
+        wd = setTimeout(function tick(){
+          wd = null;
           if (over || !window.AmrProgress) return;
+          /* A CALL IN THE AIR IS NOT A BUG. Keep the card, name the call, and
+             look again — see liveNote(). The seconds have to keep moving or a
+             screen that is working looks exactly like a screen that is not. */
+          deep = true;
+          if (outstanding().length){ quiet = 0; paint(); wd = setTimeout(tick, RECHECK); return; }
+          /* TWO EMPTY LOOKS, NOT ONE. A page's opening is a chain — one call's
+             answer issues the next — so there is a gap between them where
+             nothing is outstanding and nothing is wrong. One look landing in
+             that gap would paint the bug report over a page that is working,
+             which is the failure this whole block exists to stop making. A
+             fault does not fill in on the second look. */
+          if (++quiet < 2){ paint(); wd = setTimeout(tick, RECHECK); return; }
           AmrProgress.fail('boot', 'Still waiting for ' + names().join(', '));
           AmrProgress.set('boot', { cls:'bad', order:0, now:true, note: stuckNote() });
         }, WATCHDOG);
@@ -7345,6 +7438,10 @@ window.AmrBoot = (function(){
     reset: function(){
       clocks();
       pending = {}; count = 0; over = false; started = false; late = false;
+      /* `deep` with them: the next page's opening has its own watchdog to run,
+         and inheriting "we are past it" would have it naming the calls of a
+         page that is gone from its very first paint. */
+      deep = false;
       /* `shown` goes with them: the next page's opening is over its OWN empty
          page, and inheriting "already painted" from the page just left would
          hand it the corner card and no opening screen at all. */
