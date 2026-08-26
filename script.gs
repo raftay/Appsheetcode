@@ -1967,13 +1967,66 @@ function getLogo() {
   return '';
 }
 
+/* The guide screenshots, as data URIs, one per Drive id.
+ *
+ * CACHED, AND FOR THE SAME REASON getLogo ABOVE IS. These are static PNGs that
+ * change when somebody replaces one and never otherwise, and reading each out of
+ * Drive and base64-ing it was measured at over six seconds for one panel — paid
+ * again by every user, on every open, for ever. Per id rather than per call, so
+ * two pages whose guides share a screenshot share the cached copy, and a new id
+ * added to one guide does not cold-start the others.
+ *
+ * The 6-hour TTL is CacheService's ceiling and is the only expiry there is; a
+ * replaced screenshot therefore takes up to six hours to appear. That is the
+ * right trade for a help panel and would be the wrong one for a figure —
+ * anything carrying a NUMBER in this file is keyed on its source workbook's
+ * modified time instead (APP_getGen_), which is the mechanism to reach for if
+ * this ever stops being a picture.
+ *
+ * A read that fails is cached as '' too — deliberately. An id that has been
+ * deleted or unshared fails for everybody, every time, and re-proving that at
+ * six seconds a go on every page open is the cost being removed here. The
+ * placeholder the browser draws for '' is the same either way. */
+/* CacheService stores strings, so "this id has no picture" cannot be stored as
+   '' — an empty value is indistinguishable from a miss and the failing read
+   would be repeated for ever. A sentence no data: URI can equal stands for it. */
+var GUIDE_NONE_ = 'no-image';
+
 function getGuideImages(ids){
-  return (ids||[]).map(function(id){
-    try{
+  var list = ids || [], keys = [], c = null;
+  try { c = CacheService.getScriptCache(); } catch (e) { c = null; }
+
+  var have = {};
+  list.forEach(function(id){ keys.push('guideimg|' + String(id || '')); });
+  if (c && keys.length) { try { have = c.getAll(keys) || {}; } catch (e) { have = {}; } }
+
+  var put = {}, misses = 0;
+  var out = list.map(function(id, i){
+    var k = keys[i], hit = have[k];
+    if (hit != null) return (hit === GUIDE_NONE_) ? '' : hit;
+    misses++;
+    var uri = '';
+    try {
       var b = DriveApp.getFileById(id).getBlob();
-      return 'data:' + b.getContentType() + ';base64,' + Utilities.base64Encode(b.getBytes());
-    }catch(e){ return ''; }
+      uri = 'data:' + b.getContentType() + ';base64,' + Utilities.base64Encode(b.getBytes());
+    } catch (e){ uri = ''; }
+    /* CacheService refuses a value over 100 KB, and a screenshot can exceed
+       that once base64 has added a third to it. Nothing is chunked here: a
+       picture too big to cache is simply re-read, which is what happened to
+       every one of them before. */
+    if (uri && uri.length < 95000) put[k] = uri;
+    else if (!uri) put[k] = GUIDE_NONE_;
+    return uri;
   });
+
+  if (c && misses) {
+    try { if (Object.keys(put).length) c.putAll(put, 21600); }
+    catch (e) {
+      APP_log('warn', 'APP.getGuideImages', 'could not cache the screenshots — every open re-reads them',
+              { ids: list.length, error: String(e) });
+    }
+  }
+  return out;
 }
 
 
@@ -2075,8 +2128,28 @@ function APP_forgetStamp_(page){
 /* CODE BUILD STAMP - bump this whenever backend LOGIC changes.
    The stamp above tracks the DATA. A code fix leaves the data untouched, so
    without this every device would keep serving figures the OLD code computed
-   and the fix would look like it did nothing. */
-var APP_CODE_BUILD = '2026-08-25a';
+   and the fix would look like it did nothing.
+
+   IT IS ALSO THE WHOLE OF "RESET EVERY CACHE", and worth knowing because there
+   is no other way to do it. CacheService cannot be enumerated, so nothing can
+   walk it and empty it; what this does instead is move every KEY, since every
+   key in the project is built from an APP_getGen_ that carries this string. One
+   edit makes every cached report, pivot, cube manifest, cube chunk and device
+   copy unreachable at once - server-side and in every browser's localStorage
+   and IndexedDB, both of which wipe when and only when the generation moves.
+   The next open is then a genuine cold load and can be timed as one.
+
+   WHAT IT DELIBERATELY DOES NOT TOUCH: the parked closed-year JSON in Drive.
+   Those are keyed by ovcHistTok_ and OVCUBE_SHAPE_VER_ (§8), neither of which
+   is this - so a reset costs a cube rebuild and never a re-read of four
+   workbooks. Bumping the SHAPE version to force a cold load would cost both,
+   which is the mistake this note exists to prevent.
+
+   2026-08-26a = the warm-cache work: history rebuilt on the book's modified
+   time rather than on a missing file, §11's APP_warmCaches, the single-flight
+   cube build, and the deferred guide screenshots. Everything a client is
+   holding was computed by the older path, so all of it moves on. */
+var APP_CODE_BUILD = '2026-08-26a';
 
 function APP_getGen_(page) {
   return (APP_sourceStamp_(page) || '0') + '.' + APP_CODE_BUILD;
@@ -2273,7 +2346,49 @@ function APP_batch(req) {
   return { ok: true, results: results, ms: Date.now() - t0 };
 }
 
-/* chunked CacheService helpers (6 h TTL) used by the Slide data below */
+/* ============================================================================
+ * THE CHUNKED CACHE, AND THE LIMIT THAT IS NOT THE ONE EVERYBODY KNOWS.
+ * ----------------------------------------------------------------------------
+ * THREE OF THE FOUR NUMBERS IN HERE ARE GOOGLE'S AND ARE REAL:
+ *   100 KB   the maximum size of one cached VALUE. CH is 90,000 characters,
+ *            which leaves ten per cent of headroom for the UTF-8 expansion of
+ *            an accented plant name — the limit is in bytes and the chunk is
+ *            counted in characters, and those are the same number only for
+ *            plain ASCII.
+ *   6 hours  the maximum expiration, which is why 21600 appears at every put in
+ *            this file and why nothing here can be relied on overnight.
+ *   250 chars  the maximum KEY length. Nothing here comes close.
+ *
+ * THE FOURTH IS THE ONE THAT BITES, AND IT IS NOT IN THE QUOTAS TABLE AT ALL:
+ * A SCRIPT CACHE HOLDS ABOUT 1,000 ITEMS. Not 1,000 keys as this file uses the
+ * word — 1,000 of the 90 KB pieces below, plus a meta key each. It is measured
+ * behaviour rather than published quota (Google documents the value size and
+ * the TTL and says nothing about a count), and the eviction is FIFO in BLOCKS:
+ * crossing the mark drops roughly the oldest hundred at once.
+ *
+ * WHAT THAT MEANS HERE, WHICH NOTHING IN THIS FILE USED TO SAY. A megabyte of
+ * cube chunk is twelve items. One line's five year-blocks plus its manifest is
+ * seventy to ninety. Both lines is most of two hundred — so a cold cube build
+ * writes a fifth of the entire cache in one go and evicts the oldest hundred
+ * items of whatever was already in it. If some of those belonged to an entry
+ * that is still being written or read, the entry survives as a hole, and that
+ * is EXACTLY the "partial" that APP_cacheGet_ below reports: its comment reads
+ * that as an entry too big to survive its own TTL, which is the right symptom
+ * and the wrong cause. The cause is the item count.
+ *
+ * SO THE CEILING BELOW IS A SHARE OF THE CACHE, NOT A SAFETY NUMBER. 250 items
+ * is a quarter of it in ONE entry, and an entry that big cannot be written
+ * without evicting a quarter of everything else — including, quite possibly,
+ * the earlier chunks of itself. It stays as the hard refusal because lowering
+ * it would make things uncacheable that are cached successfully today, and an
+ * entry that is refused is recomputed on EVERY request, which is worse. What is
+ * new is that crossing a share of the budget is now SAID at warn, with the item
+ * count in it, so "the cache is behaving strangely" has a number attached to it
+ * the first time somebody looks.
+ * ========================================================================== */
+var APP_CACHE_ITEM_BUDGET = 1000;   // measured ceiling on a script cache, FIFO, ~10% evicted at once
+var APP_CACHE_ITEM_WARN   = 100;    // one entry taking a tenth of it is worth a line
+
 function APP_cachePut_(key, obj) {
   var t0 = Date.now();
   try {
@@ -2295,8 +2410,19 @@ function APP_cachePut_(key, obj) {
     var m = {}; m[key + '__meta'] = String(n);
     for (var i = 0; i < n; i++) m[key + '__' + i] = s.substring(i * CH, (i + 1) * CH);
     CacheService.getScriptCache().putAll(m, 21600);
-    APP_log('debug', 'APP.cachePut', 'stored',
-            { cache: 'put', bytes: s.length, chunks: n, ms: Date.now() - t0, key: key });
+    /* AN ENTRY THAT IS A TENTH OF THE WHOLE CACHE IS WORTH A LINE, even though
+       it was stored and nothing failed. It is what pushes the oldest hundred
+       items out, so it is the cause of somebody else's partial read — and there
+       is no other way to see that happen. See the banner above for the count. */
+    if (n + 1 >= APP_CACHE_ITEM_WARN) {
+      APP_log('warn', 'APP.cachePut', 'a large share of the cache in one entry — this evicts other entries',
+              { cache: 'put', bytes: s.length, chunks: n,
+                shareOfBudget: Math.round((n + 1) * 100 / APP_CACHE_ITEM_BUDGET) + '%',
+                ms: Date.now() - t0, key: key });
+    } else {
+      APP_log('debug', 'APP.cachePut', 'stored',
+              { cache: 'put', bytes: s.length, chunks: n, ms: Date.now() - t0, key: key });
+    }
   } catch (e) {
     /* NOT SILENT. §7's rule is that silent is right for an optional cache READ
        and wrong for everything else — a write that throws means every later
@@ -2326,7 +2452,14 @@ function APP_cacheGet_(key) {
            to be worth storing. Reported as a miss to the caller, because that
            is what it is, and logged as its own thing because a run of these is
            an entry too big to survive its own TTL rather than a cold cache. */
-        APP_log('warn', 'APP.cacheGet', 'partial — one chunk expired, the entry is unusable',
+        /* THE CAUSE IS ALMOST NEVER THE TTL. Every piece of an entry is written
+           in one putAll with one expiry, so they cannot expire apart. What CAN
+           happen is eviction: a script cache holds about a thousand items and
+           drops the oldest hundred when it fills, so a big entry loses its
+           earliest pieces while its later ones are still there. See
+           APP_cachePut_'s banner. A run of these means the cache is over its
+           item budget, not that an entry is too slow to read. */
+        APP_log('warn', 'APP.cacheGet', 'partial — a chunk was evicted, the entry is unusable',
                 { cache: 'miss', chunks: n, missingAt: j, ms: Date.now() - t0, key: key });
         return null;
       }
@@ -2927,15 +3060,17 @@ function APP_verifyPermissions() {
         try { url = ScriptApp.getService().getUrl() || ''; } catch (e) { url = ''; }
         var tok = ScriptApp.getOAuthToken();
 
-        /* THE FIVE TRIGGERS, WHICH NOTHING ELSE IN THE PROJECT CAN SEE. Every
+        /* THE SIX TRIGGERS, WHICH NOTHING ELSE IN THE PROJECT CAN SEE. Every
            one is added BY HAND (§11) — the single newTrigger in the codebase
            arms §5's one-shot sync retry and nothing else — so a trigger that
            was never added, or was deleted, leaves no trace anywhere: that
-           export just stops syncing, and the two mail watches just never
-           arrive. Nothing errors, and that is the point. This line is the only
-           report of their existence the project has.
+           export just stops syncing, the two mail watches just never arrive,
+           and the warm-cache timer's absence is not visible at all — it is a
+           page that takes five minutes to open rather than five seconds.
+           Nothing errors, and that is the point. This line is the only report
+           of their existence the project has.
 
-           THREE OF THE FIVE ARE THE DATA PIPELINE, one per QlikView export.
+           THREE OF THE SIX ARE THE DATA PIPELINE, one per QlikView export.
            "NOT SET" on any one of them is one page's figures frozen while the
            other two keep updating, which is the shape of a fault that gets
            blamed on the page rather than on the timer.
@@ -3065,7 +3200,17 @@ function APP_verifyPermissions() {
    weekly exceptions report twice, and the seen-list makes the second send
    nothing, so the only symptom is a run that finds no new mail. */
 var APP_TRIGGER_TARGETS = ['qlikSyncAggregates', 'qlikSyncReadyMix', 'qlikSyncSegment',
-                           'inventoryReportMailCheck', 'tp01ReportMailCheck'];
+                           'inventoryReportMailCheck', 'tp01ReportMailCheck',
+                           /* THE ONE WHOSE ABSENCE IS INVISIBLE. Every other
+                              target here stops something happening when it is
+                              not set — data stops updating, a report stops
+                              arriving. With no timer on APP_warmCaches the app
+                              is entirely correct and merely slow: the first
+                              person to open a page after each sync rebuilds
+                              every cache in the foreground, which is the five
+                              minutes §11 writes up. Nothing fails, so nothing
+                              tells you, which is why it is on this list. */
+                           'APP_warmCaches'];
 
 function APP_permTriggers_() {
   var mine = ScriptApp.getProjectTriggers(), got = {}, i;
@@ -13583,8 +13728,16 @@ function ovcBagOut_(bag){
   return out;
 }
 
-/* One-shot tab read. Deliberately uncached: this runs from the Rebuild button,
-   not from a page load. getDisplayValues keeps "JUL-26" as text. */
+/* One-shot tab read, uncached. getDisplayValues keeps "JUL-26" as text.
+   IT DOES RUN FROM A PAGE LOAD, whatever this comment used to say: ovcBuildNow_
+   calls ovcLookupsAgg_ / ovcLookupsRmx_ on every COLD cube build, and a cold
+   cube build is what the first visitor after a sync pays for. It is left
+   uncached anyway, and on purpose — the lookups are the one input that must
+   never be a moment behind, because editing a lookup row is how history gets
+   re-labelled without a rebuild (see the section banner), and the whole read is
+   two tabs against the merge and the labelling it feeds. What made it expensive
+   was being reached on a page load at all; §11's warm-cache trigger is what
+   moved that off the page rather than putting a second cache in front of it. */
 function ovcReadTab_(ss, name, mustHave){
   var sh = null, want = ovcH_(name);
   ss.getSheets().forEach(function(s){ if (!sh && ovcH_(s.getName()) === want) sh = s; });
@@ -14271,7 +14424,7 @@ function ovcHistName_(line, eraId){
   if (!eraId || eraId === first) return base;
   return base.replace(/\.json$/i, '') + '_' + eraId + '.json';
 }
-function ovcHistWrite_(line, eraId, obj){
+function ovcHistWrite_(line, eraId, obj, srcStamp){
   var name = ovcHistName_(line, eraId), folder = ovcFolder_();
   var it = folder.getFilesByName(name);
   while (it.hasNext()) it.next().setTrashed(true);
@@ -14282,9 +14435,17 @@ function ovcHistWrite_(line, eraId, obj){
      revenue column, ASP collapses to zero, and nothing anywhere reports an
      error. Writing the shape here and checking it in ovcHistFile_ turns that
      silent corruption into a plain "not built yet". */
+  /* AND STAMP THE BOOK IT WAS READ FROM. `src` is APP_sourceStamp_ of the
+     era's page - the workbook's Drive modified time - taken BEFORE the read.
+     That is the whole of ovcHistStale_'s answer, and the reason a closed-year
+     book is now re-read when it CHANGES rather than whenever nothing happens
+     to be holding a copy of it. Before-the-read on purpose: a book edited
+     while it was being read is then still stale afterwards and gets re-read,
+     which is the safe direction to be wrong in. */
   var SH = OVCUBE_SHAPE_[line] || { dims: [], vals: [] };
   var out = { line: obj.line, rows: obj.rows, dict: obj.dict, skipped: obj.skipped || 0,
-              shape: OVCUBE_SHAPE_VER_, dims: SH.dims, vals: SH.vals };
+              shape: OVCUBE_SHAPE_VER_, dims: SH.dims, vals: SH.vals,
+              src: String(srcStamp || ''), builtAt: Date.now() };
   folder.createFile(name, JSON.stringify(out), MimeType.PLAIN_TEXT);
 }
 /* A file whose shape does not match the code reading it is treated as ABSENT,
@@ -14308,6 +14469,124 @@ function ovcHistFile_(line, eraId){
     if (!o || !o.rows || !o.dict) return null;
     return ovcHistShapeOk_(line, o) ? o : null;   // stale layout -> rebuild, never misread
   } catch (e){ return null; }        // not built yet -> the charts simply start later
+}
+
+/* -------------------------------------------- IS THE PARKED BOOK STALE? ----
+ * "BUILT" AND "CURRENT" ARE TWO QUESTIONS, AND ONLY ONE OF THEM USED TO BE
+ * ASKED. A closed-year book was re-read whenever no usable file was sitting in
+ * Drive for it - missing, or written against an older OVCUBE_SHAPE_VER_. That
+ * is a fine answer to "can this be read at all" and no answer at all to "does
+ * it still match the workbook", so the two occasions a book actually needs
+ * re-reading were served by accident and one occasion that needs nothing at all
+ * cost four full reads: bump the shape version and every file in Drive becomes
+ * unreadable at once, so THE NEXT PERSON TO OPEN THE OVERVIEW pays for all four
+ * books, in the foreground, at about thirty seconds each - and every one of
+ * those moves ovcHistTok_, which is in ovcGen_(), so the cube they were waiting
+ * for is thrown away and rebuilt between books. That is the morning this fixes.
+ *
+ * So staleness is now the workbook's own Drive modified time, which is the same
+ * thing APP_getGen_ has meant by "the data changed" since the counter went. A
+ * book is stale when the sheet behind it has moved since the file was written,
+ * or when the shape version has. Nothing else makes it stale, and in particular
+ * TIME DOES NOT: a file that has sat in Drive since March is current if its
+ * book has not been touched since March.
+ *
+ * THE STAMP LIVES IN SCRIPT PROPERTIES, NOT ONLY IN THE FILE. This is read
+ * inside every manifest build, and the file it describes is megabytes - opening
+ * one to find out whether it needs opening is the cost being avoided. The file
+ * carries `src` too, and that copy is the truth: ovcHistRead_ parses every file
+ * anyway, so it back-fills the property from what it finds. A property that has
+ * been lost therefore heals on the next cube build rather than provoking a
+ * re-read, which is why an UNKNOWN stamp reads as current and never as stale -
+ * guessing "stale" here is guessing four workbook reads.
+ * ------------------------------------------------------------------------ */
+var OVCUBE_SRC_PROP_ = 'cube_hist_src';        // + '|<line>|<era>'
+
+function ovcHistSrcKey_(line, eraId){ return OVCUBE_SRC_PROP_ + '|' + line + '|' + (eraId || ''); }
+/* The stamp as a single comparable string, so a shape bump and a moved
+   workbook are the same kind of difference and there is one thing to compare. */
+function ovcHistSrcTag_(srcStamp){ return OVCUBE_SHAPE_VER_ + '|' + String(srcStamp || ''); }
+
+function ovcHistSrcGet_(line, eraId){
+  try { return PropertiesService.getScriptProperties().getProperty(ovcHistSrcKey_(line, eraId)) || ''; }
+  catch (e){ return ''; }
+}
+function ovcHistSrcSet_(line, eraId, srcStamp){
+  try {
+    PropertiesService.getScriptProperties()
+      .setProperty(ovcHistSrcKey_(line, eraId), ovcHistSrcTag_(srcStamp));
+    return true;
+  } catch (e){
+    /* NOT SILENT (§7). The file is written and correct; only the note saying
+       what it was built from is missing, so the book reads as "stamp unknown"
+       until ovcHistRead_ back-fills it from the file. Nothing is wrong and
+       nothing is re-read - but a run of these means the property store is
+       refusing writes, which is worth seeing. */
+    APP_log('warn', 'CUBE.histSrc', 'the book was rebuilt but its source stamp was not recorded — ' +
+            'it reads as current until the next cube build back-fills it',
+            { line: line, era: eraId, error: String(e) });
+    return false;
+  }
+}
+/* The era's workbook as Drive has it RIGHT NOW. '' when no sheet is linked, or
+   when Drive cannot be asked - both of which mean "no comparison to make". */
+function ovcHistSrcNow_(era, line){
+  var page = ovcEraPage_(era, line);
+  if (!page) return '';
+  try { return APP_sourceStamp_(page) || ''; } catch (e){ return ''; }
+}
+/* THREE STATES, NOT TWO, AND THE THIRD IS THE ONE THAT COST A MORNING.
+ * ---------------------------------------------------------------------------
+ *   built     a file is parked and this code can read it
+ *   stale     it no longer matches the book, or the shape version moved
+ *   first     NO FILE HAS EVER BEEN WRITTEN for this book
+ *
+ * `first` used to be indistinguishable from "the shape moved", because both
+ * arrive as ovcHistFile_ returning null — a file written against an older
+ * OVCUBE_SHAPE_VER_ is deliberately read as absent (ovcHistShapeOk_) so it can
+ * never be MISREAD. Correct, and it meant the browser's own background reader
+ * saw four never-built books the morning after every shape bump and read all
+ * four in the foreground, moving ovcHistTok_ between each and throwing away the
+ * cube the page was waiting for. app.html's histPending() now asks for `first`
+ * and gets only the genuinely-new book — somebody has just linked it and is
+ * sitting there — while a shape bump is `stale`, which is the warm-cache
+ * trigger's job and the pill's Reload button, and nobody's page load.
+ *
+ * THE PROPERTY IS WHAT TELLS THEM APART, at no cost. A stamp exists if and only
+ * if a file was written at some point, so "unreadable AND a stamp" is a file
+ * from an older shape and "unreadable AND no stamp" is a book nobody has read.
+ * That is one Script Property read; asking Drive would be a metadata call per
+ * book inside every manifest build, which is the cost ovcEraLinked_ avoids for
+ * exactly the same question.                                                  */
+function ovcHistWhy_(era, line, readable){
+  var linked = ovcEraLinked_(era, line);
+  if (!linked) return { linked:false, built:!!readable, stale:false, first:false, adopt:false,
+                        why:'no sheet linked' };
+  var was = ovcHistSrcGet_(line, era.id);
+
+  if (readable){
+    /* A READABLE FILE WITH NO RECORDED STAMP — every file already in Drive on
+       the day this shipped, because the old ovcHistWrite_ wrote no `src` and
+       there is therefore nothing for ovcHistRead_ to back-fill from. It is not
+       STALE: it reads cleanly and may well be current, and calling it stale
+       would re-read four workbooks on a guess. But it can never be found stale
+       either, however much its book changes, because there is nothing to
+       compare — so it needs exactly ONE read to acquire a stamp, and after that
+       it is on the modified time like everything else.
+       That is `adopt`: the warm-cache trigger does it, once, at an hour when
+       nobody is waiting. The browser never does — histPending() asks for
+       `first` and this is not that. */
+    if (!was) return { linked:true, built:true, stale:false, first:false, adopt:true,
+                       why:'stamp unknown' };
+    var now = ovcHistSrcNow_(era, line);
+    if (!now) return { linked:true, built:true, stale:false, first:false, adopt:false,
+                       why:'book unreadable' };
+    if (was === ovcHistSrcTag_(now)) return { linked:true, built:true, stale:false, first:false,
+                                              adopt:false, why:'current' };
+    return { linked:true, built:true, stale:true, first:false, adopt:false, why:'book changed' };
+  }
+  if (was) return { linked:true, built:false, stale:true, first:false, adopt:false, why:'shape moved' };
+  return   { linked:true, built:false, stale:true, first:true,  adopt:false, why:'never built' };
 }
 
 /* -------------------------------------------------------- dictionary remap --
@@ -14361,6 +14640,19 @@ function ovcHistRead_(line){
   ovcEras_().forEach(function(era){
     var f = ovcHistFile_(line, era.id);
     if (!f) return;
+    /* THE FILE IS THE TRUTH ABOUT WHAT IT WAS BUILT FROM, and this is the one
+       place every file is parsed anyway - so the cheap Script Property copy
+       ovcHistWhy_ compares against is reconciled here, for free, rather than by
+       opening a megabyte of Drive to answer a question about opening it. A
+       property that was never written (the setProperty failed, or the file
+       predates this mechanism and carries no `src` of its own) heals on the
+       next cube build; one that DISAGREES is overwritten, because the file is
+       what actually got read. */
+    if (f.src){
+      try {
+        if (ovcHistSrcGet_(line, era.id) !== ovcHistSrcTag_(f.src)) ovcHistSrcSet_(line, era.id, f.src);
+      } catch (e){}
+    }
     var mine = {}, kept = 0, i, d;
 
     if (!M){
@@ -14404,14 +14696,49 @@ function ovcEraStat_(line, hist){
   ((hist && hist.eras) || []).forEach(function(e){ built[e.id] = e; });
   return ovcEras_().map(function(e){
     var b = built[e.id];
+    /* `stale` IS NOT `!built`, AND THE PAGE TREATS THEM DIFFERENTLY. A book
+       that has NEVER been built is the one case a browser still reads for
+       itself: it is what happens the day a new closed-year book is linked, and
+       somebody is by definition sitting there having just linked it. A book
+       that is built but no longer matches its workbook is the warm-cache
+       trigger's job (§11) and the pill's Reload button - never something a
+       page load stops to do, because a rebuild moves ovcHistTok_ and therefore
+       throws away the cube the page is waiting for. */
+    var w = ovcHistWhy_(e, line, !!b);
     return { id: e.id, label: e.label || e.id,
-             linked: ovcEraLinked_(e, line), built: !!b,
+             linked: w.linked, built: !!b, stale: w.stale, first: w.first, why: w.why,
+             /* not sent as a flag the browser acts on — it is on the manifest so
+                the ⚙ panel and a support question can see why a book is being
+                read at all when nothing about it looks wrong */
+             adopt: w.adopt,
              months: b ? b.months : 0, from: b ? b.from : null, to: b ? b.to : null };
   });
 }
 function ovcHistTok_(){
   try { return PropertiesService.getScriptProperties().getProperty(OVCUBE_TOK_PROP_) || '0'; }
   catch (e) { return '0'; }
+}
+/* MOVE THE HISTORY TOKEN ONCE, HOWEVER MANY BOOKS WERE READ.
+ * ---------------------------------------------------------------------------
+ * ovcHistTok_ is in ovcGen_(), so this makes every cached chunk of both lines
+ * unreachable - server-side in CacheService and in every browser's IndexedDB,
+ * which wipes when and only when that string changes. That is the whole point
+ * of it and it is also why it must not be done per book: reading four books and
+ * bumping after each one built and threw away the cube three times over, in the
+ * foreground, while somebody watched a loading screen. Read everything, then
+ * bump once. Returns the new token, or null when it could not be written.   */
+function CUBE_bumpHistoryToken(){
+  try {
+    var next = String(parseInt(ovcHistTok_(), 10) + 1);
+    PropertiesService.getScriptProperties().setProperty(OVCUBE_TOK_PROP_, next);
+    return next;
+  } catch (e) {
+    /* The rebuilt history is already written. Without the token bump no client
+       is told to go and get it, so the work is done and invisible. */
+    APP_log('warn', 'CUBE.bumpHistoryToken', 'history rebuilt but the token did not move — ' +
+            'clients will keep the cube they have', { error: String(e) });
+    return null;
+  }
 }
 /* ---- A TUNABLE THAT SHIPS INSIDE A CACHED PAYLOAD NEEDS TO BE IN ITS KEY ----
  * §1's COVERAGE block is not read where it is used. The browser does the
@@ -14501,11 +14828,99 @@ function ovcChunkPlan_(ymList){
   return out;
 }
 
+/* ============================ ONE BUILD, NOT ONE PER CALLER ================
+ * WHAT THIS COSTS WITHOUT IT. A cold cube build is the most expensive thing in
+ * the file: two closed-year JSON files off Drive per line, the live rows, the
+ * lookup tabs re-read uncached, the merge, the labelling and five chunk writes.
+ * It is entered from CUBE_getManifest AND from CUBE_getChunks, from every open
+ * page, and Apps Script runs DIFFERENT users concurrently - so the morning
+ * after a sync, when every cached chunk has just become unreachable at once,
+ * every one of those calls started the whole build for itself. Six people
+ * opening the Overview was six builds of the same two cubes, each slow BECAUSE
+ * of the other five, and the winner's answer was thrown away five times over.
+ *
+ * WHY NOT LockService. It has no named locks, so the only lock there is is the
+ * one the QlikView timers hold for two to three minutes at a time while they
+ * write a sheet (§5). A page load that waited on it would wait behind an
+ * export, which is the opposite of what this is for.
+ *
+ * So the flag is an ordinary cache entry and the rule is advisory: whoever
+ * finds no marker sets one and builds; whoever finds one waits for the
+ * MANIFEST KEY to appear - which ovcBuildNow_ writes LAST, after every chunk,
+ * so its arrival means the whole line is in and not that a build has started.
+ * Two callers can still both start (there is no compare-and-set in
+ * CacheService) and that is fine: the cost of the race is what everybody paid
+ * before, and it collapses the common case, which is a queue rather than a tie.
+ *
+ * A WAIT NEVER OUTLASTS THE BUILD IT IS WAITING FOR. When the marker is there
+ * but the manifest never arrives - the leader hit the six-minute limit, or its
+ * execution died - the waiter builds it itself rather than reporting nothing.
+ * The marker's own TTL is the backstop for a leader that never returns.
+ * ========================================================================== */
+var OVCUBE_LEAD_TTL_S = 300;     // a marker outlives any build and expires on its own
+/* HOW LONG A SECOND CALLER WAITS, AND WHY IT IS LONGER THAN A BUILD.
+   A wait that EXPIRES is the worst outcome there is: the waiter has spent the
+   wait and still has to build, so it pays both. A wait that SUCCEEDS costs it
+   only what the leader had left. So the cap is set beyond a build rather than
+   inside one — a cold manifest was measured at 34s and the worst observed cube
+   call at 114s — because timing out is what has to be rare, not waiting.
+   Above this the leader is presumed dead and the waiter builds. */
+var OVCUBE_WAIT_MS_   = 120000;
+var OVCUBE_POLL_MS_   = 2000;
+
 function ovcBuild_(line){
   var gen = ovcGen_(), key = 'ovc|' + gen + '|' + line;
   var cached = APP_cacheGet_(key + '|man');
   if (cached) return cached;
 
+  var mk = 'ovclead|' + gen + '|' + line, c = null;
+  try { c = CacheService.getScriptCache(); } catch (e) { c = null; }
+
+  var leading = false;
+  if (c) {
+    try {
+      if (!c.get(mk)) { c.put(mk, '1', OVCUBE_LEAD_TTL_S); leading = true; }
+    } catch (e) { leading = false; }
+  }
+
+  if (c && !leading) {
+    /* Somebody else is building this line. Wait for their answer rather than
+       starting a second copy of the same work. */
+    var t0 = Date.now(), waited = 0;
+    while (Date.now() - t0 < OVCUBE_WAIT_MS_) {
+      Utilities.sleep(OVCUBE_POLL_MS_);
+      waited = Date.now() - t0;
+      cached = APP_cacheGet_(key + '|man');
+      if (cached) {
+        APP_log('debug', 'CUBE.build', 'another execution had it', { line: line, waitedMs: waited });
+        return cached;
+      }
+      /* The marker has gone. Either the leader finished in the gap between the
+         two reads above, or it died. Read once more before concluding the
+         second: a build that landed a millisecond ago is the common reason for
+         a marker to disappear, and treating it as a death would rebuild a cube
+         that is sitting right there. */
+      var alive = true;
+      try { alive = !!c.get(mk); } catch (e) { alive = false; }
+      if (!alive) {
+        cached = APP_cacheGet_(key + '|man');
+        if (cached) {
+          APP_log('debug', 'CUBE.build', 'another execution had it', { line: line, waitedMs: waited });
+          return cached;
+        }
+        break;
+      }
+    }
+    APP_log('warn', 'CUBE.build', 'waited on another build and it did not land — building it here',
+            { line: line, waitedMs: waited });
+    try { c.put(mk, '1', OVCUBE_LEAD_TTL_S); } catch (e) {}
+  }
+
+  try { return ovcBuildNow_(line, gen, key); }
+  finally { if (c) { try { c.remove(mk); } catch (e) {} } }
+}
+
+function ovcBuildNow_(line, gen, key){
   var hist = ovcHistRead_(line);
   var live = (line === 'agg') ? ovcLiveAgg_(hist ? hist.dict : null)
                               : ovcLiveRmx_(hist ? hist.dict : null);
@@ -14563,6 +14978,33 @@ function ovcBuild_(line){
     unmapped: ovcBagOut_(bag)
   };
   APP_cachePut_(key + '|man', manifest);
+
+  /* ---- DID THE CACHE ACTUALLY KEEP WHAT WE JUST WROTE? -------------------
+     A cube is most of two hundred cache items and the cache holds about a
+     thousand, evicted FIFO in blocks of a hundred (APP_cachePut_'s banner), so
+     the back half of a build can push the front half out. When that happens
+     nothing throws: the manifest lists five blocks, the browser asks for the
+     first one, CUBE_getChunks finds it gone and calls ovcBuild_ again — which
+     rebuilds, evicts, and hands back another manifest describing blocks that
+     are already going. Measured on 26 Aug 2026 as a CUBE_getChunks that ran for
+     113.8 seconds and then FAILED, with nothing anywhere saying why.
+     One meta read per block answers it (APP_cacheBytes_ transfers nothing), and
+     it is an ERROR because a cube that cannot be held is not a slow page, it is
+     a page that cannot finish. Nothing is retried here: rebuilding into a cache
+     that has just proved too small is the loop this exists to name. */
+  var lost = [];
+  plan.forEach(function(ch){ if (!APP_cacheBytes_(key + '|c' + ch.i)) lost.push(ch.i); });
+  if (lost.length){
+    APP_log('error', 'CUBE.build', 'blocks were evicted while the cube was being written — ' +
+            'the cache cannot hold this cube and pages will rebuild it in a loop',
+            { line: line, blocks: plan.length, lost: lost.join(','), gen: gen });
+  }
+  /* NOT put on the manifest. This check has to run AFTER the manifest is
+     cached — the manifest is itself one of the larger entries and can be the
+     write that evicts — so a field set here would be on the copy returned to
+     this caller and absent from the copy every later caller reads. Two answers
+     to one question is the drift this file spends its comments avoiding; the
+     error line above is the record. */
   return manifest;
 }
 
@@ -14695,23 +15137,50 @@ function CUBE_rebuildHistory(opts){
     error: 'The ' + what + ' sheet has not been chosen yet. '
          + 'Open \u2699 Data sheet, paste its link, save, then press Load history again.' };
 
+  /* THE STAMP IS TAKEN BEFORE THE READ, and ovcHistWrite_'s comment says why.
+     It is also what `ifStale` compares, so both halves of the mechanism read
+     the workbook's modified time from the same place at the same moment. */
+  var srcNow = ovcHistSrcNow_(era, line);
+
+  /* ONLY IF IT MOVED. The warm-cache trigger (§11) walks every book on every
+     firing and would otherwise re-read four workbooks an hour to produce four
+     identical files - and each of those would move ovcHistTok_ and throw away
+     every cached cube chunk for every user. With this, an ordinary firing costs
+     one Drive lookup per book and stops, which is exactly what the QlikView
+     timers do with their exports and for exactly the same reason.
+     No caller passes ifStale by hand; the pill's Reload deliberately does not,
+     because somebody pressing it is telling you the file is wrong even though
+     the book has not moved. */
+  if (opts.ifStale){
+    var w = ovcHistWhy_(era, line, !!ovcHistFile_(line, era.id));
+    /* `adopt` reads too: a file with no recorded stamp is read once so that it
+       gets one, and is then on the modified time for ever after. */
+    if (!w.stale && !w.adopt) return { ok:true, line:line, era:era.id, label:era.label || era.id,
+                           /* `skipped` on the reply below is ROWS the read threw
+                              away, so a book that was never opened gets its own
+                              word rather than a second meaning for that one. */
+                           noop:true, why:w.why, seconds:0 };
+  }
+
   var cube;
   try { cube = (line === 'agg') ? ovcHistAgg_(page) : ovcHistRmx_(page); }
   catch (e){ return { ok:false, line:line, era:era.id,
                       error: (e && e.message) ? e.message : String(e) }; }
-  ovcHistWrite_(line, era.id, cube);
-  try {
-    PropertiesService.getScriptProperties()
-      .setProperty(OVCUBE_TOK_PROP_, String(parseInt(ovcHistTok_(), 10) + 1));
-  } catch (e) {
-    /* The rebuilt history is already written. Without the token bump no client
-       is told to go and get it, so the work is done and invisible. */
-    APP_log('warn', 'CUBE.rebuildHistory', 'history rebuilt but the token did not move — ' +
-            'clients will keep the cube they have', { line: line, era: era.id, error: String(e) });
-  }
+  ovcHistWrite_(line, era.id, cube, srcNow);
+  ovcHistSrcSet_(line, era.id, srcNow);
+
+  /* THE BUMP IS SEPARABLE BECAUSE FOUR OF THEM IN A ROW IS FOUR THROWN-AWAY
+     CUBES. Moving ovcHistTok_ makes every cached chunk of BOTH lines, on the
+     server and in every browser's IndexedDB, unreachable - which is right once
+     the books are all written and wasteful once per book. A caller reading
+     several books passes bump:false and calls CUBE_bumpHistoryToken() when it
+     has finished. Nothing passing nothing behaves as it always did. */
+  var bumped = (opts.bump === false) ? null : CUBE_bumpHistoryToken();
+
   var s = {}; cube.rows.forEach(function(r){ s[r[0]] = true; });
   var ym = Object.keys(s).map(Number).sort(function(a, b){ return a - b; });
   return { ok:true, line:line, era:era.id, label:era.label || era.id,
+           tok:bumped, src:srcNow,
            rows:cube.rows.length, skipped:cube.skipped || 0,
            /* which of the two extras tabs this book actually carried, so a year
               with no VAP is distinguishable from a year nobody read */
@@ -18982,6 +19451,21 @@ var IRMAIL = (function () {
  *                    rows behind the comparison with the customer-parent
  *                    spellings actually in the sheet, and the match rate between
  *                    the two sides. Sends nothing and marks nothing.
+ *
+ *   APP_warmCaches   THE SIXTH TRIGGER TARGET, and the only one whose absence
+ *                    breaks nothing. Set ONE hourly trigger on it. Every cached
+ *                    answer in this project is keyed on its source workbook's
+ *                    modified time, so a sync makes all of them unreachable at
+ *                    once — and with nothing rebuilding them, the FIRST PERSON
+ *                    to open a page afterwards rebuilt every one of them in the
+ *                    foreground: about five minutes of loading screen, every
+ *                    morning, for whoever got there first. This is that first
+ *                    open, done by a timer at an hour when nobody is waiting.
+ *                    A firing on unchanged data is a handful of cache reads and
+ *                    one Drive lookup per workbook.
+ *   APP_warmStatus   what that firing would do right now — which closed-year
+ *                    books are stale and why, which cubes are cold, which
+ *                    answers are missing — and none of it. Reads only.
  *   qlikAlertsOn / qlikAlertsOff
  *                    whether a failed sync MAILS anybody. Off is the default and
  *                    off is not silent — the whole report goes to the execution
@@ -19005,17 +19489,17 @@ var IRMAIL = (function () {
  * here reads another account's Drive or mail to do its job — and the TP01 one
  * SENDS as its creator too — so adding one from the wrong account gives you a
  * run that authorises cleanly and then looks at the wrong data, or at nothing,
- * or mails from the wrong name. Add all five from the account that deployed the
+ * or mails from the wrong name. Add all six from the account that deployed the
  * web app.
  *
- * THIS IS WHY THE SECTION EXISTS. ALL FIVE of the timers above are configured
+ * THIS IS WHY THE SECTION EXISTS. ALL SIX of the timers above are configured
  * by hand in the Apps Script UI, so nothing in the repo points at any of them.
  * (There is exactly one ScriptApp.newTrigger in the codebase and it is not one
  * of these: §5 arms a ONE-SHOT retry five minutes out when an export fails its
  * checks, pointed at qlikSyncRetry below, which deletes it when it fires. Do
  * not add a trigger for that one by hand.) Ctrl+F "§11" is the substitute for
  * that missing reference, and APP_verifyPermissions (§4) is the substitute for
- * looking: its ScriptApp row names all five and says which of them the account
+ * looking: its ScriptApp row names all six and says which of them the account
  * running it has actually armed.
  * ============================================================================ */
 
@@ -19510,3 +19994,283 @@ function tp01ReportMailCheck()  { return TPMAIL.run(); }
    it. It does make and trash one temporary Drive copy of the attachment, because
    there is no way to read an .xlsx without one. */
 function tp01ReportMailStatus() { return TPMAIL.status(); }
+
+
+/* ==========================================================================
+ * THE SIXTH TRIGGER: THE CACHES ARE WARM BEFORE ANYBODY OPENS THE PAGE.
+ * --------------------------------------------------------------------------
+ * Set ONE time-driven trigger on APP_warmCaches — Triggers ▸ Add trigger ▸
+ * Time-driven ▸ Hour timer ▸ every hour. Add it from the account that deployed
+ * the web app, for the reason every other trigger here carries: a trigger runs
+ * as whoever created it, and this one reads the same workbooks the pages do.
+ *
+ * WHY IT EXISTS, WHICH IS THE WHOLE OF THE MORNING PROBLEM.
+ * ----------------------------------------------------------------------
+ * Every server-side answer in this project is cached under APP_getGen_, which
+ * is the SOURCE WORKBOOK'S MODIFIED TIME. That is the right key and it has one
+ * consequence nobody had costed: the moment a QlikView sync writes a sheet,
+ * every cached report, pivot, cube manifest and cube chunk keyed on that
+ * workbook becomes unreachable AT ONCE - and CacheService's own ceiling is six
+ * hours anyway, so an overnight gap empties it regardless.
+ *
+ * Nothing rebuilt any of that except a person opening the page. So the first
+ * open after the morning sync paid for all of it, in the foreground, one
+ * six-minute execution at a time, with a loading screen up: the cube for both
+ * lines, the Overview for both Periods, the Price & Volume report, the cross
+ * dataset, the Ready-Mix bundle. Measured on 26 Aug 2026: two APP_batch
+ * executions of 57s and 144s, a CUBE_getChunks that ran 114s and then failed,
+ * a 34s manifest, and four closed-year book reads of ~29s each on top - about
+ * five minutes before the page was usable, EVERY MORNING, and the second person
+ * to open it got a warm page for free because the first one had paid.
+ *
+ * This is that first open, run by a timer at an hour when nobody is waiting.
+ *
+ * WHAT AN ORDINARY FIRING COSTS. Nothing at all when the data has not moved:
+ * each step checks the cache under the CURRENT generation and returns, so a
+ * firing on an unchanged morning is a handful of CacheService reads and a Drive
+ * lookup per workbook. It only does work in exactly the case where a user would
+ * otherwise have done that work instead - which is the same bargain the three
+ * QlikView timers make, and the reason they are cheap to run every fifteen
+ * minutes.
+ *
+ * HOURLY, AND NOT EVERY SIX HOURS. CacheService's TTL is a ceiling, not a
+ * promise: an entry can be evicted early under pressure and a chunked entry
+ * that loses ONE of its parts is unusable (APP_cacheGet_ reports that as its
+ * own kind of miss). Hourly means a cache that has been dropped is repaired
+ * within the hour instead of at the next scheduled sweep, and a firing that
+ * finds everything warm is close to free.
+ *
+ * THE ORDER IS THE POINT. Books first, then the token, then the cubes, then the
+ * pages: a closed-year book rebuilt AFTER a cube would move ovcHistTok_ and
+ * make the cube that was just built unreachable, which is precisely the
+ * cascade §8 describes and the reason the token bump is separable.
+ *
+ * IT NEVER RUNS PAST ITS BUDGET. An execution is six minutes; this stops
+ * STARTING work at APP_WARM_BUDGET_MS and refuses to start a book read without
+ * APP_WARM_BOOK_MS left, because a book is the one step that cannot be
+ * interrupted usefully. Whatever it did not reach is reported as deferred and
+ * picked up by the next firing - each firing gets the whole budget again, so a
+ * cold start after a shape change is spread over two or three firings instead
+ * of being dropped or timing out.
+ *
+ * RUN APP_warmStatus() FROM THE EDITOR FIRST. It answers what this firing would
+ * do - which books are stale and why, which cubes are cold, which page answers
+ * are missing - and does none of it.
+ * ======================================================================== */
+
+/* Stop starting new work here. Four and a half minutes leaves a slow last step
+   most of ninety seconds before the platform's own six-minute kill. */
+var APP_WARM_BUDGET_MS = 270000;
+/* A closed-year book read was measured at about thirty seconds; a minute is
+   what has to be left before starting one, so a firing never dies mid-read. */
+var APP_WARM_BOOK_MS   = 60000;
+
+/* WHAT IS WORTH WARMING IS WHAT CAN BE WARMED EXACTLY.
+ * ---------------------------------------------------------------------------
+ * A cached answer is only warm for the arguments it was computed with, and
+ * Price & Volume's getReport keys on eight of them — period, dimensions, the
+ * filter field, its value, a refine value and mode, the month and the upload
+ * token — which are the state of somebody's page and not something a timer can
+ * know. Warming a guess at that combination warms an answer nobody asks for.
+ *
+ * SO THE LIST IS THE CALLS WHOSE ARGUMENTS ARE FIXED, and the expensive layer
+ * underneath everything else is warmed directly instead. getReport, getCrossData,
+ * getCustomerReport, RMX_prepare and getRmxCrossReport all sit on ONE cached
+ * read per line — PV.rawEnriched() for Aggregates and RMX_NS.dataBundle() for
+ * Ready-Mix — and that read is the whole of their cold cost; what each of them
+ * then does on top is the two to five seconds the execution log shows, not the
+ * two minutes. Warm the two bundles and every one of those calls is a warm
+ * call, whatever arguments it arrives with.
+ *
+ * The cube build warms both bundles on its way past (ovcLiveAgg_ / ovcLiveRmx_
+ * read exactly those). They are named here anyway, because a cube that FAILS
+ * must not take the Price & Volume and Ready-Mix pages down with it — and on a
+ * firing where the cube succeeded these are two cache hits and cost nothing. */
+function APP_warmJobs_(){
+  return [
+    { fn:'getFscData',   arg:null, what:'Fuel Recovery figures' },
+    { fn:'getKpiValues', arg:null, what:'KPI workbook values' }
+  ];
+}
+
+/* The two shared reads every Aggregates and Ready-Mix answer is built on.
+   Namespace calls rather than names off globalThis, because that is what they
+   are — there is no top-level wrapper for either and there should not be one:
+   nothing in a browser has any business asking for a raw bundle. */
+function APP_warmBundles_(out, left){
+  [{ what:'Aggregates rows', run:function(){ return PV.rawEnriched(); } },
+   { what:'Ready-Mix bundle', run:function(){ return RMX_NS.dataBundle(); } }].forEach(function(j){
+    if (left() <= 0){ out.pages.push({ fn:j.what, deferred:true }); return; }
+    var t1 = Date.now();
+    try { j.run(); out.pages.push({ fn:j.what, ok:true,
+                                    seconds: Math.round((Date.now() - t1) / 100) / 10 }); }
+    catch (e){
+      out.pages.push({ fn:j.what, ok:false, error:String(e && e.message || e) });
+      APP_log('warn', 'APP.warm', 'a source bundle could not be warmed; its page pays for it once',
+              { what: j.what, error: String(e && e.message || e) });
+    }
+  });
+}
+
+/* THE ANCHOR THE OVERVIEW WILL ASK FOR. app.html's anchorYm() takes the newest
+   month either line's manifest carries, and getOverview is cached per month —
+   so warming month 0 would warm an answer nobody requests. Read it off the
+   manifests that were just built. 0 when there is no cube to read it from,
+   which is getOverview's own "let the data decide". */
+function APP_warmAnchor_(man){
+  var hi = 0;
+  ['agg', 'rmx'].forEach(function(line){
+    var m = man && man[line], ys = (m && m.ym) || [];
+    if (ys.length && ys[ys.length - 1] > hi) hi = ys[ys.length - 1];
+  });
+  return hi ? (hi % 100) : 0;
+}
+
+function APP_warmCaches(){
+  var t0 = Date.now();
+  var out = { ok:true, at:new Date().toISOString(), gen:'', books:[], cubes:[], pages:[], ms:0 };
+  function left(){ return APP_WARM_BUDGET_MS - (Date.now() - t0); }
+
+  APP_log('info', 'APP.warm', 'trigger fired', {});
+
+  /* ---- 1. the closed-year books, newest first, and ONE token bump ------- */
+  var moved = 0;
+  try {
+    ovcEras_().forEach(function(era){
+      ['agg', 'rmx'].forEach(function(line){
+        /* A BOOK WITH NO SHEET LINKED IS NOT A FAILURE OF THIS FIRING. Asking
+           CUBE_rebuildHistory for one comes back "the sheet has not been chosen
+           yet", which is a correct sentence for somebody who pressed a button
+           and a permanently red firing for a timer — an era can be configured
+           months before its workbook is pointed at, and every hour in between
+           would report a fault there is nothing to do about. Skipped here, and
+           APP_warmStatus() is where "not linked" belongs. */
+        if (!ovcEraLinked_(era, line)){
+          out.books.push({ era:era.id, line:line, ok:true, noop:true, why:'no sheet linked' });
+          return;
+        }
+        if (left() < APP_WARM_BOOK_MS){
+          out.books.push({ era:era.id, line:line, deferred:true });
+          return;
+        }
+        var r;
+        try { r = CUBE_rebuildHistory({ line:line, era:era.id, ifStale:true, bump:false }); }
+        catch (e){ r = { ok:false, error:String(e && e.message || e) }; }
+        if (r && r.ok && !r.noop) moved++;
+        if (r && !r.ok) out.ok = false;
+        out.books.push({ era:era.id, line:line, ok:!!(r && r.ok), noop:!!(r && r.noop),
+                         why:(r && r.why) || '', rows:(r && r.rows) || 0,
+                         seconds:(r && r.seconds) || 0, error:(r && r.error) || '' });
+      });
+    });
+  } catch (e){
+    out.ok = false; out.booksError = String(e && e.message || e);
+    APP_log('error', 'APP.warm', 'the closed-year books could not be checked — ' +
+            'the cubes below are warmed against whatever is already parked',
+            { error: String(e && e.message || e) });
+  }
+  /* ONE bump for however many books moved, and only if any did. Every cached
+     chunk of both lines dies here, which is why it happens BEFORE the cubes
+     are built and not once per book. */
+  if (moved) out.histTok = CUBE_bumpHistoryToken();
+
+  /* ---- 2. the cubes ---------------------------------------------------- */
+  out.gen = ovcGen_();
+  var man = {};
+  ['agg', 'rmx'].forEach(function(line){
+    if (left() <= 0){ out.cubes.push({ line:line, deferred:true }); return; }
+    var t1 = Date.now(), warmAlready = !!APP_cacheGet_('ovc|' + out.gen + '|' + line + '|man');
+    try {
+      man[line] = ovcBuild_(line);
+      out.cubes.push({ line:line, ok:true, wasWarm:warmAlready,
+                       chunks:((man[line] && man[line].chunks) || []).length,
+                       months:((man[line] && man[line].ym) || []).length,
+                       seconds: Math.round((Date.now() - t1) / 100) / 10 });
+    } catch (e){
+      out.ok = false;
+      out.cubes.push({ line:line, ok:false, error:String(e && e.message || e) });
+      APP_log('error', 'APP.warm', 'a cube could not be built — the first visitor pays for this one',
+              { line: line, error: String(e && e.message || e) });
+    }
+  });
+
+  /* ---- 3. the page answers the Overview's opening batch asks for -------- */
+  var mo = APP_warmAnchor_(man);
+  var jobs = [{ fn:'getOverview', arg:{ period:'MTD', month:mo }, what:'Overview MTD' },
+              { fn:'getOverview', arg:{ period:'YTD', month:mo }, what:'Overview YTD' }]
+             .concat(APP_warmJobs_());
+
+  APP_warmBundles_(out, left);
+
+  jobs.forEach(function(j){
+    if (left() <= 0){ out.pages.push({ fn:j.fn, deferred:true }); return; }
+    var t1 = Date.now(), fn = globalThis[j.fn];
+    if (typeof fn !== 'function'){
+      /* A name here and not in the file is a rename that took one side with it.
+         Same reasoning as APP_batch's own check, and the same log level. */
+      APP_log('error', 'APP.warm', 'allow-listed but not defined', { fn: j.fn });
+      out.pages.push({ fn:j.fn, ok:false, error:'Not defined' });
+      return;
+    }
+    try { fn(j.arg); out.pages.push({ fn:j.fn, what:j.what, ok:true,
+                                      seconds: Math.round((Date.now() - t1) / 100) / 10 }); }
+    catch (e){
+      /* ONE WARMED ANSWER FAILING IS NOT A FAILED FIRING. The page still works
+         — whoever opens it computes that one answer themselves, exactly as they
+         did before this trigger existed — so the others are still warmed and
+         out.ok is left alone. */
+      out.pages.push({ fn:j.fn, what:j.what, ok:false, error:String(e && e.message || e) });
+      APP_log('warn', 'APP.warm', 'one answer could not be warmed; the rest were',
+              { fn: j.fn, error: String(e && e.message || e) });
+    }
+  });
+
+  out.ms = Date.now() - t0;
+  var deferred = out.books.concat(out.cubes, out.pages)
+                   .filter(function(r){ return r.deferred; }).length;
+  out.deferred = deferred;
+  APP_log(out.ok ? 'info' : 'warn', 'APP.warm',
+          deferred ? 'warmed what fitted; the rest goes to the next firing' : 'warmed',
+          { ms: out.ms, booksRead: moved, deferred: deferred, gen: out.gen });
+  return out;
+}
+
+/* WHAT THE NEXT FIRING WOULD DO, AND NONE OF IT. NO WORKBOOK IS OPENED, no cube
+   is built and no answer is computed — it does parse the parked JSON in Drive,
+   because "is this file readable by today's code" has no cheaper answer and
+   that is a Drive read rather than a thirty-second sheet read. Run it from the
+   editor after setting the timer up: a stale book that never clears, or a cube
+   that is cold on every firing, shows up here in one run rather than in a timer
+   nobody is watching. */
+function APP_warmStatus(){
+  var gen = ovcGen_(), out = { gen: gen, books: [], cubes: [], pages: [] };
+  ovcEras_().forEach(function(era){
+    ['agg', 'rmx'].forEach(function(line){
+      var w;
+      try { w = ovcHistWhy_(era, line, !!ovcHistFile_(line, era.id)); }
+      catch (e){ w = { linked:false, built:false, stale:false, why:String(e && e.message || e) }; }
+      out.books.push({ era:era.id, label:era.label || era.id, line:line,
+                       linked:w.linked, built:w.built, stale:w.stale, first:w.first,
+                       adopt:w.adopt, why:w.why,
+                       willRead:!!(w.linked && (w.stale || w.adopt)) });
+    });
+  });
+  ['agg', 'rmx'].forEach(function(line){
+    var warm = !!APP_cacheGet_('ovc|' + gen + '|' + line + '|man');
+    out.cubes.push({ line:line, warm:warm, willBuild:!warm });
+  });
+  var pvG = APP_getGen_('pricevolume'), rmxG = APP_getGen_('rmx'), sbG = APP_getGen_('segment');
+  var ovGen = pvG + '-' + rmxG + '-' + sbG;
+  ['MTD', 'YTD'].forEach(function(period){
+    /* month 0 here, not the cube's anchor: this is a read-only report and
+       working the anchor out would mean building the manifests it needs. */
+    var warm = !!APP_cacheGet_('ov|g' + ovGen + '|' + period + '|m0');
+    out.pages.push({ fn:'getOverview', period:period, month:0, warm:warm });
+  });
+  out.note = 'willRead / willBuild is what APP_warmCaches would do right now. '
+           + 'A book is read only when its workbook has moved since the parked file was '
+           + 'written, when OVCUBE_SHAPE_VER_ has, or ONCE when the file carries no '
+           + 'record of what it was built from (why: "stamp unknown") — after that read '
+           + 'it has one and is on the modified time like the rest.';
+  return out;
+}

@@ -108,14 +108,15 @@ as **whoever created it in the Triggers UI** — not the script owner, not the d
 person whose browser is open. Two identities, two consent screens, two sets of Drive and Gmail
 access, and nothing anywhere reports the mismatch: if the deployer and the trigger-creator are
 different accounts, the pages serve one account's Drive while `qlikSyncAggregates` and its two
-siblings write from another's, `inventoryReportMailCheck` reads another's mail, and `tp01ReportMailCheck` reads
-another's mail **and sends the exceptions report under another's name**. **Create all three
+siblings write from another's, `inventoryReportMailCheck` reads another's mail, `tp01ReportMailCheck` reads
+another's mail **and sends the exceptions report under another's name**, and `APP_warmCaches`
+warms every page's figures out of another account's Drive. **Create all six
 triggers from the account that deployed the web app**, and if you are ever unsure which one
 that is, `APP_verifyPermissions()` prints the effective user — run it from the editor, and read
 the `ran` line of a trigger's own execution log to see who a firing actually ran as.
 
-**Whether the three triggers exist at all is the other half of that**, and until recently
-nothing in the project could answer it: none of the three is created in code (§11 — the single
+**Whether the triggers exist at all is the other half of that**, and until recently
+nothing in the project could answer it: none of them is created in code (§11 — the single
 `ScriptApp.newTrigger` in the codebase arms the sync's one-shot retry and nothing else), so a
 timer that was never added — or was deleted — leaves no trace anywhere, raises no
 error, and writes no log line, *because nothing runs*. `APP_verifyPermissions()`'s `ScriptApp`
@@ -200,7 +201,7 @@ internal file order is not something this repo controls. Entry points are prefix
 | §8 | **OVERVIEW** — the executive Overview and the month cube |
 | §9 | **DECK** — the Slides template reader, the deck writer, the recipe checker, and the three shared stores behind the Arrange stage |
 | §10 | **SMALL PAGES** — KPI workbooks; the Inventory Report and the mail watch that publishes it; and TP01, which is no longer small: `TPE` (the comparison the page and the trigger share), `TPXLSX` (an `.xlsx` written by hand), `TPAUTO` (the weekly report's settings) and `TPMAIL` (the watch that drives it), beside the mail sender that was always there |
-| §11 | **TRIGGERS** — everything reached from outside the repo |
+| §11 | **TRIGGERS** — everything reached from outside the repo, including **`APP_warmCaches`**, the hourly timer that rebuilds what a sync invalidated so the first person to open a page does not |
 
 ### Client — `app.html`, one file
 
@@ -909,6 +910,109 @@ in the middle would keep whatever that paste brought), and the poll's per-look D
 (dropping it saves one REST call in six and costs the wait its only signal when the Sheets API
 is off).
 
+### The first open of the day paid for everything, and now a timer does
+
+**Every cached answer in this project is keyed on its source workbook's modified time.** That is
+the right key and it has a consequence nobody had costed: the moment a QlikView sync writes a
+sheet, every cached report, pivot, cube manifest and cube chunk keyed on that workbook becomes
+unreachable **at once** — and `CacheService`'s ceiling is six hours anyway, so an overnight gap
+empties it regardless.
+
+Nothing rebuilt any of that except **a person opening the page**. So the first open after the
+morning sync paid for all of it, in the foreground, one six-minute execution at a time, with a
+loading screen up. Measured on 26 Aug 2026 from the execution log:
+
+| Execution | Duration |
+|---|---|
+| `APP_batch` (the Overview's opening list) | 56.9 s |
+| `APP_batch` again | **144.0 s** |
+| `CUBE_getChunks` | **113.8 s, then FAILED** |
+| `CUBE_getManifest` | 34.4 s |
+| `CUBE_rebuildHistory` × 4 | ~29 s each |
+| `getGuideImages` | 6.2 s and 6.5 s, on two consecutive opens |
+
+About five minutes before the page was usable — and the second person in got a warm page for
+free, because the first one had paid for it.
+
+**Set one hourly trigger on `APP_warmCaches` (§11), from the account that deployed the web app.**
+It is that first open, run at an hour when nobody is waiting: stale closed-year books, then one
+token bump, then both cubes, then the two source bundles and the fixed-argument page answers.
+
+- **An ordinary firing costs nothing.** Each step checks the cache under the *current*
+  generation and returns, so a firing on unchanged data is a handful of cache reads and one
+  Drive lookup per workbook. It does work only in the case where a user would otherwise have
+  done that work instead — the same bargain the three QlikView timers make.
+- **Hourly, not six-hourly.** The TTL is a ceiling, not a promise: an entry can be evicted early
+  (see §6's item ceiling) and a chunked entry that loses one part is unusable. Hourly repairs
+  that within the hour.
+- **The order is the point.** Books, then the token, then the cubes. A book rebuilt *after* a
+  cube moves `ovcHistTok_` and makes the cube that was just built unreachable — which is the
+  cascade the old code ran four times in a row, once per book.
+- **It never runs past its budget.** It stops starting work at `APP_WARM_BUDGET_MS` and refuses
+  to start a book read without `APP_WARM_BOOK_MS` left. Whatever it does not reach is reported
+  as deferred and picked up by the next firing.
+
+`APP_warmStatus()` answers what a firing would do — which books are stale and why, which cubes
+are cold — and does none of it. Run it from the editor first.
+
+**It is the one trigger whose absence is invisible.** Every other target in §11 stops something
+happening when it is not set. Without this one the app is entirely correct and merely slow,
+which is why it is on `APP_TRIGGER_TARGETS` and reported by `APP_verifyPermissions()`.
+
+### A closed-year book is re-read when it changes, not when nothing holds a copy of it
+
+`CUBE_rebuildHistory` used to be reached whenever no usable file was parked in Drive for a book —
+missing, or written against an older `OVCUBE_SHAPE_VER_`. That answers *can this be read at all*
+and says nothing about *does it still match the workbook*, so:
+
+- the two occasions a book genuinely needs re-reading were served by accident, and
+- **one occasion that needs nothing at all cost four full reads.** Bump the shape version and
+  every parked file becomes unreadable at once, so the next person to open the Overview read all
+  four books, in the foreground, at ~29 s each — with every read moving `ovcHistTok_`, throwing
+  away the cube they were waiting for and rebuilding it between books.
+
+Staleness is now **the workbook's own Drive modified time**, which is what `APP_getGen_` has
+meant by "the data changed" since the counter went. `ovcHistWrite_` stamps the parked JSON with
+`src` (taken *before* the read, so a book edited mid-read is still stale afterwards), and a copy
+goes in Script Properties so `ovcHistWhy_` can answer without opening a megabyte of Drive to
+find out whether it needs opening. `ovcHistRead_` parses every file anyway, so it back-fills
+that property from the file — the file is the truth about what it was built from.
+
+**Three states, not two**, and the third is the one that cost the morning:
+
+| | meaning | who acts |
+|---|---|---|
+| `first` | no file has **ever** been written for this book | the browser reads it — somebody has just linked it and is sitting there |
+| `stale` | built, and the book or the shape version has moved | the hourly trigger, or the pill's **Reload history** |
+| `adopt` | readable, but carries no record of what it was built from | the trigger, **once**, to give it one |
+
+The property is what tells `first` from a shape bump at no cost: a stamp exists if and only if a
+file was written at some point. **Unknown is never guessed stale** — guessing there is guessing
+four workbook reads.
+
+`CUBE_rebuildHistory` takes `ifStale` (skip a book that has not moved) and `bump:false` (leave
+the token alone, so a caller reading several books can call `CUBE_bumpHistoryToken()` **once** at
+the end instead of invalidating every cached chunk of both lines four times over).
+
+### One cube build, not one per caller
+
+A cold cube build is the most expensive thing in `script.gs`, and it is entered from
+`CUBE_getManifest` **and** from `CUBE_getChunks`, from every open page — and Apps Script runs
+*different users* concurrently. So the morning after a sync, six people opening the Overview was
+six builds of the same two cubes, each slow because of the other five, and the winner's answer
+thrown away five times.
+
+`ovcBuild_` is a gate over `ovcBuildNow_` now. **Not `LockService`**: it has no named locks, so
+the only lock available is the one the QlikView timers hold for two to three minutes at a time
+while they write a sheet, and a page load waiting on that is the opposite of the point. The flag
+is an ordinary cache entry and the rule is advisory — whoever finds no marker sets one and
+builds; whoever finds one waits for the **manifest key**, which `ovcBuildNow_` writes last, after
+every chunk, so its arrival means the whole line is in. Two callers can still both start; the
+cost of that race is what everybody paid before.
+
+The wait cap is set **beyond** a build rather than inside one, because a wait that expires is the
+worst outcome there is — the waiter spends the wait and still has to build, so it pays both.
+
 ### Per-page sheet overrides
 
 A page's workbook can be repointed at runtime from its ⚙ panel, stored as a Script Property.
@@ -1085,7 +1189,7 @@ Four layers, each with a different job:
 
 | Layer | Where | Notes |
 |---|---|---|
-| `APP_cachePut_` / `APP_cacheGet_` | Apps Script `CacheService` | chunked at 90 KB, **max 250 chunks**, 6 h TTL |
+| `APP_cachePut_` / `APP_cacheGet_` | Apps Script `CacheService` | chunked at 90 KB, **max 250 chunks**, 6 h TTL — but see the item ceiling below |
 | `cachePutBig_` | `CacheService` | the chunked writer for large payloads — required for customer reports and raw tab caches |
 | `AmrCache` | `localStorage` | per-device report cache, no expiry, keyed by generation token. **Caps near 900 KB per entry** — write one market at a time, never a whole set |
 | `AmrCube` / `AmrKpiStore` | IndexedDB | multi-MB cube data |
@@ -1102,6 +1206,44 @@ every device is stranded at once, with nothing to enumerate.
 `getDataVersions(pages)` returns several pages' tokens in one round trip. Apps Script runs one
 user's calls end to end, so the Overview's three separate calls cost most of a second of dead
 time before the page starts loading.
+
+### The `CacheService` limit that is not in the quotas table
+
+Three of the four numbers the chunked cache is written against are Google's published figures
+and are real: **100 KB per value** (so the 90,000-character chunk, which leaves ten per cent of
+headroom because the limit is in *bytes* and the chunk is counted in *characters*), **6 hours**
+maximum expiration, and **250 characters** of key. The Properties figures are real too —
+**9 KB per value, 500 KB per store** — and `DECK_CONFIG.PROP_MAX_BYTES` is deliberately written
+against the documented 9 KB rather than the larger figure the runtime is observed to accept; the
+biggest arrangement anyone has built measures 5,183 bytes, so nothing is being limited by it.
+
+**The one that bites is not published at all: a script cache holds about 1,000 items**, and
+evicts **FIFO in blocks of roughly a hundred** when it fills. Items, not keys as this repo uses
+the word — one 90 KB chunk is one item, plus a meta key per entry.
+
+What that means here had never been costed. A megabyte of cube chunk is twelve items; one
+line's year-blocks plus its manifest is seventy to ninety; both lines is most of two hundred.
+So **a cold cube build writes a fifth of the whole cache in one go** and evicts the oldest
+hundred items of whatever was in it — possibly including its own earlier chunks. That is
+exactly the *partial* `APP_cacheGet_` reports, whose comment used to read it as an entry too big
+to survive its own TTL: right symptom, wrong cause, and the pieces of one entry cannot expire
+apart because they are written in one `putAll` with one expiry.
+
+Two things follow, both now in the code. `APP_cachePut_` **warns when one entry takes a tenth
+of the budget** — it was stored, nothing failed, and it is the cause of somebody else's partial
+read. And `ovcBuildNow_` **checks its own chunks are still there** once the manifest is written,
+at one meta read per block, and logs an `error` when they are not: a cube the cache cannot hold
+is not a slow page, it is a page that rebuilds in a loop. That loop is what a `CUBE_getChunks`
+execution running **113.8 seconds and then failing** looked like from the outside, with nothing
+anywhere saying why.
+
+The 250-chunk hard refusal stays as it is. Lowering it would make things uncacheable that are
+cached successfully today, and a refused entry is recomputed on *every* request, which is worse
+than an entry that evicts its neighbours.
+
+The browser side needs no revision: `localStorage` is 5–10 MB per origin **and stores UTF-16**,
+so `AmrCache`'s conservative cap is right, and the cube is in IndexedDB precisely because it is
+not.
 
 ### One round trip, not six — and what may travel in it
 
@@ -2471,3 +2613,4 @@ or was forgotten.**
 | 2026-08-25 | **The extras fix was correct and unreachable: both caches key on a token that did not move.** The previous row's work — `ovcRmxFoldExtras_` filling `ex` / `va` from the extras facts — was deployed and running, and the window-mode ASP build-up went on reporting **Extras $0.00, VAP $0.00, All-in = Base** against a correct Base. Nothing was wrong with the fold (a Node harness over the extracted function proves it: 18 assertions covering both streams on both sides of the year, the blank-mix rule, base volume and revenue untouched, a plant the cube has never seen becoming a new dictionary entry, and an applied-m³-only row moving no money). **What was wrong is that nobody could ever receive it.** A cube chunk is cached server-side under `ovcGen_()` and again in the browser's IndexedDB under the same token, and the browser wipes **only** when that token moves. `ex` and `va` did not change POSITION, so `OVCUBE_SHAPE_` was untouched, so `OVCUBE_SHAPE_VER_` was left on `v3` — and every warm device replayed pre-fold blocks, in which those two columns are zero, for as long as it kept its IndexedDB. `OVCUBE_SHAPE_VER_` is `v4` and its comment now says *and whenever what is WRITTEN INTO a column changes*, which is the half it left out. **The structural half is `ovcGen_()` carrying `OVX_SHAPE_VER_`.** Keeping the extras shape out of the cube's generation was right when the cube did not read the extras; it stopped being right the moment the fold made two of its columns extras money. The separation survives where it belongs — the parked history FILES still key on it independently, so an extras rebuild still does not invalidate the month files. **This is the second write-up of one failure**: `ovcCovTok_`'s banner is the first, for a CPI threshold that travelled inside a cached payload whose key never noticed it and published +141.7% against Qlik's 2.86%. If a payload carries it, the key has to. **The three live workbooks were repointed** — Price & Volume, Ready-Mix and Product Segment all had 2025-vintage `defaultSpreadsheetId`s. And editing one of those is **not enough on a project that carries an override**: `getSpreadsheetIdForPage_` is `override || default`, so a link pasted into ⚙ Settings months ago outranks this file silently and for ever. **`useCodeSheets()`** deletes the override for every page that has a code default and reports what each page then resolves to; it deliberately spares the four history books, whose default is `''` by design and whose link lives nowhere but the property store. **`Combined Data CPI Other Revenue` is named in Config now** (`SHEETS.OTHER_REV`), on the live page and on both closed-year Aggregates books — it is the same export template, so the closed books carry the tab too — and `buildSpec_` reads it from there instead of spelling it a second time. **The history books' lookup tabs are gone from Config**, which is the honest statement of what was already true: `ovcLookupsAgg_` and `ovcLookupsRmx_` open the LIVE workbooks every time and a closed book's frozen `REGION LOOKUP` / `TOPLINE REV LOOKUP2` / `PLANT LOOKUP` / `PRODUCT MASTER` have never been read, so re-mapping a plant today re-labels every closed year at once. Declaring four tab names nothing reads invited exactly the wrong repair. `node --check` clean on `script.gs`; `app.html` unchanged | ✅ |
 | 2026-08-25 | **The Deck Builder is one list: Arrange stopped being a second copy of it, and Render can be stopped.** Arrange was a panel above `#dbList` with all 43 rows in a 620px scroller and a fixed 356px column beside it, so the layout picker was in one list and the arrows, the fields and the tables in the other — the complaint was scrolling between two lists to change one slide. It is a **mode of the one list** now: `rowHtml` grows the row's arrange cells (arrows, tick, editable title, the adapter-declared selects, Tables, ×) and `arrSideHtml` opens the scope panel as a **drawer under the row whose Tables button asked for it**, three columns wide instead of one narrow one. **The constraint that kept them apart was dead, not overruled**: every comment saying `#dbList` is diffed byte for byte by `pageparity.js` was written against a harness removed with the rest of `tests/` on 2026-08-25, and four of them still asserted it in the present tense — the shape §9 warns about, a comment outliving the thing that made it true. Two placement facts cost a rebuild each and are now in the CSS: the selects on a second grid line **cannot span to `-1`** or the row-spanning thumbnail is pushed into an eleventh implicit column and the title collapses to 40px, and at the 980px step they must stop at line 6 because the four narrower columns do not exist there. **Render's Stop ends the pass at the next slide, never mid-capture** — the slide in flight is finished and kept, which makes a second Render a resume rather than a restart on the rule a failed slide already used (`r.on && !r.png`); `RENDERING` is separate from `BUSY` because Plan and Publish are busy too and have nothing to stop. Checked against a throwaway Playwright harness that mounts the real page over stubbed `google.script.run` — move, add, delete, the drawer following a moved row, Done, both breakpoints, and a stop at slide 2 of 12 resuming to 12 of 12 | ✅ |
 | 2026-08-26 | **Extras and VAP are rows of the Ready-Mix line now, and the three things built to carry them separately are gone.** The last three sessions answered *the cube cannot split extras by type* by building a second structure beside it: a parked extras file per era with its own `OVX_SHAPE_VER_`, a second `CUBE_rebuildHistory` part to fill it, `ovcXAcc_` / `ovcXRead_` / `ovcXFacts_` to merge it, `ovcRmxFoldExtras_` to fold it back into the cube it had been kept out of, `RMX_getExtrasByMonths` to query it, `RMX_NS.extraResolver()` to label it, and a fetch-and-cache triple in the page to receive it. **The premise was wrong.** An extras row is a Main Raw Data row with a different lookup — same plant, same Bill Month, same Major Project Segment, same money — and the cube already knows how to carry one of those: `mix` holds the raw Product Mix and `mixMap` holds what `PRODUCT MASTER` calls it. So the rmx line has a fourth dimension, `extra`, holding the raw `mat_descr`, with `extraMap.extraType` resolved from the LIVE `EXTRAS LOOKUP` at build time exactly as `mixMap` is; `Main Raw Data`, `Extra Raw Data` and `Associate Raw Data` go into one accumulator (`ovcRmxAcc_`), in one read, live and history alike, into the same rows, the same chunks and the same parked file. `OVCUBE_SHAPE_VER_` → `v5`, which is what makes every warm device pick it up. **Everything above deletes**: one endpoint, one Drive file, one shape version, one rebuild part, one resolver, ~530 lines of §8 and the page's whole `WEXT_*` fetch path — and with it the queue that was re-reading closed books on a loop. The Overview's by-type table is `winExtrasReport()`, a group-by on the fact table already in the browser, answering for any span the slider reaches including a closed year, with no round trip and no *"this month has no extras source yet"* note to write because a book's extras land with its volumes. The ASP build-up above it and the table below it are now the same rows summed two ways. **CUSTOM FLAG LOOKUP is removed.** It keyed on the same `mat_descr` and bucketed the same materials as `EXTRAS LOOKUP`, both Extras tables had already been moved onto `EXTRAS LOOKUP`, nothing displayed a flag, and the two tabs had drifted — so it is gone from Config, `buildLookups_`, the stream rows, the miss lists, the suggester's model and both add-rows forms. §9's *still worth auditing* entry for it is closed. **And "✓ all matched" was a lie the panel could not help telling.** The extras and CUSTOM FLAG miss lists came from `getRmxSuggestions` over the LIVE workbook alone, so a material that traded in a closed year and is in no lookup was invisible — the badge said everything matched while the by-type table dropped that revenue into *Unclassified*. Those misses are collected by the cube across every era now, like `PRODUCT MASTER`'s, and `unmapped.checked` carries **how many distinct values were tested** so the section reads *"✓ all 812 matched"*: "nothing failed" and "nothing was examined" had looked identical on that line through every version of this panel that has ever been wrong. The badge asks the server for nothing at all and is right from the first paint. `node --check` clean on `script.gs` and on all 28 of `app.html`'s script blocks | ✅ |
+| 2026-08-26 | **The morning's first open was rebuilding every cache in the foreground, and now an hourly timer does it at an hour when nobody is waiting.** Reported as *five minutes to load*, and the execution log says exactly that: `APP_batch` at 56.9s then **144.0s**, a `CUBE_getChunks` that ran **113.8s and then FAILED**, a 34.4s manifest, four `CUBE_rebuildHistory` at ~29s each, and `getGuideImages` at 6.2s and 6.5s in front of all of it. **One cause, four mechanisms.** Every cached answer is keyed on its source workbook's modified time, so a sync makes all of them unreachable at once and nothing rebuilt any of it except a person opening the page — the first one in paid for everything and everyone after them got it free. **(1) `APP_warmCaches` is the sixth trigger target** (one hourly timer, §11): stale books, one token bump, both cubes, the two source bundles, the fixed-argument answers, all under a budget that refuses to start a book read it cannot finish, with `APP_warmStatus()` to say what a firing would do without doing it. A firing on unchanged data is a handful of cache reads and one Drive lookup per workbook. **(2) A closed-year book is re-read when it CHANGES.** It used to be re-read whenever no usable file was parked for it — which is a fine answer to *can this be read* and no answer to *does it still match the workbook*, and it meant bumping `OVCUBE_SHAPE_VER_` (v5, the day before) made all four files unreadable at once so the next person to open the Overview read all four, **with every read moving `ovcHistTok_` and throwing away the cube they were waiting for**. `ovcHistWrite_` stamps the file with the book's modified time, taken BEFORE the read; a copy in Script Properties lets `ovcHistWhy_` answer without opening a megabyte of Drive to decide whether to open it; and `ovcHistRead_` back-fills that property from the file, which is the truth. **Three states, not two**: `first` (never built — the browser still reads it, because somebody has just linked a book and is sitting there), `stale` (the trigger's job and the pill's Reload), and `adopt` (readable but carrying no record of what it was built from — read once, to give it one; every file in Drive on the day this shipped). The property is what tells `first` from a shape bump at no cost. `bump:false` + `CUBE_bumpHistoryToken()` makes four books one invalidation instead of four. **(3) `ovcBuild_` is single-flight.** It is entered from `CUBE_getManifest` AND `CUBE_getChunks`, from every open page, and Apps Script runs different users concurrently — six people opening the Overview was six builds of the same two cubes. NOT `LockService`: there are no named locks, so the only lock is the one the QlikView timers hold for minutes while writing a sheet. An advisory cache marker, with the wait keyed on the manifest (written LAST, after every chunk) and the cap set BEYOND a build — a wait that expires pays for the wait and the build both. **(4) The guide screenshots are fetched when the guide is OPENED**, not on mount, and cached per Drive id: six seconds of Drive reads and base64, in front of the opening batch, on every page load, to fill in pictures behind a panel that starts closed. **The quota audit found the opposite of what was asked.** 9 KB/property, 500 KB/store, 100 KB/value, 6 h TTL and 250-char keys are all real published figures and none of them is limiting anything here (the biggest deck arrangement measures 5,183 of its 9,216 bytes). **The one that bites is not in the quotas table at all: a script cache holds ~1,000 ITEMS and evicts FIFO in blocks of ~100.** A megabyte of chunk is twelve items, both cubes is most of two hundred — so a cold build writes a fifth of the cache and evicts the oldest hundred of everything else, possibly including its own earlier chunks. That is precisely the *partial* `APP_cacheGet_` reports, whose comment read it as a TTL problem: right symptom, wrong cause, and the pieces of one entry cannot expire apart because they share one `putAll`. `APP_cachePut_` now warns when one entry takes a tenth of the budget, and `ovcBuildNow_` checks its own blocks survived the write and logs an `error` when they did not — which is what the 113.8s failure was. **Not changed, and worth knowing**: `ovcBuild_` is monolithic, so the current year's block cannot arrive until 2023 has been read, remapped, merged, labelled and chunked — the current tab is held hostage by the oldest one. Warming takes that off the user's path; splitting it does not fit in this change. `APP_CODE_BUILD` → `2026-08-26a`, which strands every server and device cache for a genuine cold-load measurement **without** touching the parked history files (they key on `ovcHistTok_` and `OVCUBE_SHAPE_VER_`, so a reset costs a cube rebuild and never four workbook reads — bumping the shape version to force a cold load would have cost both). Symbol-table diff clean (13 functions and 9 constants added, nothing removed); `node --check` clean on `script.gs` and on all 28 of `app.html`'s script blocks | ✅ |
