@@ -17705,8 +17705,13 @@ AMR.page('overview', {
       for(var f in XF) o[f]=XF[f].slice();
       return o;
     }
+    /* THE MONTH IS PART OF EVERY KEY ON THIS PAGE. Only loadKey() used to
+       carry it, so the safety net in wireCube() re-fetched getOverview and left
+       the other six caches serving whatever month they were first filled for -
+       including on the device, which survives a reload. If a payload is FOR a
+       month, the key has to say so. */
     function xfSig(){
-      var fl=xfFilters(), parts=[STATE.period];
+      var fl=xfFilters(), parts=[STATE.period, 'm'+loadMonth()];
       Object.keys(fl).sort().forEach(function(f){
         if(fl[f].length) parts.push(f+'='+fl[f].slice().sort().join('\u2016'));
       });
@@ -17852,9 +17857,15 @@ AMR.page('overview', {
        dataset is still loading or when the server says it's too big. */
     var XDATA={}, XDATA_PEND={};   // period -> dataset payload | {tooBig:true} (in-memory only, by design)
 
+    /* THE DATASET IS PER PERIOD *AND* PER MONTH. It used to be keyed on the
+       period alone, which was only ever right while the page and the server
+       agreed on which month a period meant. They did not - see loadMonth() -
+       and a month-blind key is how a fix to the request survives as a stale
+       answer. */
+    function xdataKey(){ return STATE.period+'|m'+loadMonth(); }
     function prefetchXData(){
       if(!IS_LIVE) return;
-      var p=STATE.period;
+      var p=xdataKey(), per=STATE.period, mo=loadMonth();
       if(XDATA[p] || XDATA_PEND[p]) return;
       XDATA_PEND[p]=true;
       try{
@@ -17863,13 +17874,13 @@ AMR.page('overview', {
             XDATA_PEND[p]=false;
             XDATA[p]=d||{ok:false};
             /* if the user is already filtering, upgrade to local compute now */
-            if(d && d.ok && d.cols && STATE.period===p && xfActive() && STATE.tab==='agg') loadXf();
+            if(d && d.ok && d.cols && p===xdataKey() && xfActive() && STATE.tab==='agg') loadXf();
           })
           .withFailureHandler(function(){ XDATA_PEND[p]=false; })
-          .getCrossData({ period:p });
+          .getCrossData({ period:per, month:mo });
       }catch(e){ XDATA_PEND[p]=false; }
     }
-    function xdataReady(){ var d=XDATA[STATE.period]; return !!(d && d.ok && d.cols); }
+    function xdataReady(){ var d=XDATA[xdataKey()]; return !!(d && d.ok && d.cols); }
 
     /* only refine-only slices (per market, per period) are worth persisting to
        the device — everything else stays in the in-session XF_CACHE (RAM only) */
@@ -18087,7 +18098,7 @@ AMR.page('overview', {
 
       /* local path: dataset in memory -> compute in-place, no server call */
       if(xdataReady()){
-        var rep=xfComputeLocal(XDATA[STATE.period], xfFilters(), { values:XREF.values.slice(), mode:XREF.mode });
+        var rep=xfComputeLocal(XDATA[xdataKey()], xfFilters(), { values:XREF.values.slice(), mode:XREF.mode });
         XF_CACHE[sig]=rep;
         if(window.AmrCache && xfIsPrimary()) AmrCache.set('xf:'+sig, rep);
         renderXfPanels(); renderRefine(); xfDropsRefresh();
@@ -18118,7 +18129,7 @@ AMR.page('overview', {
             XF_ERR[sig]=(err&&err.message)||String(err);
             if(sig===xfSig() && xfActive() && STATE.tab==='agg') renderXfPanels();
           })
-          .getCrossReport({ period:STATE.period, filters:xfFilters(),
+          .getCrossReport({ period:STATE.period, month:loadMonth(), filters:xfFilters(),
                             refine:{ values:XREF.values.slice(), mode:XREF.mode } });
       }catch(e){ XF_PEND[sig]=false; XF_ERR[sig]=String(e&&e.message||e); }
     }
@@ -19295,7 +19306,7 @@ AMR.page('overview', {
       var m=markets().filter(function(x){return x.key===k;})[0];
       return m?m.rmxName:null;
     }
-    function dimsKey(){ return STATE.period+'|'+scopeSig(); }
+    function dimsKey(){ return STATE.period+'|m'+loadMonth()+'|'+scopeSig(); }   // the month is part of every key - see xfSig()
     function periodLabel(){ return STATE.period==='YTD'?'year to date':'month to date'; }
     /* THE KPI CARDS SAY WHICH MONTH THEY ARE. The EBITDA workbook holds exactly
        two blocks per region - an MTD one and a YTD one - for the single month it
@@ -19335,7 +19346,7 @@ AMR.page('overview', {
       }
       if(!IS_LIVE || DIMS_PEND[key]){ loadPM(); return; }
       DIMS_PEND[key]=true;
-      var params={ period:STATE.period,
+      var params={ period:STATE.period, month:loadMonth(),
                    dimensions:['SUBMARKET1','PLANT_TYPE','MATERIAL_FAM','PROD_CLASS'],   // MATERIAL_FAM kept in the fetch so existing cache keys stay valid
                    filterField:'MARKET',
                    filterValue: isAll() ? '__ALL__' : selPvName() };
@@ -19477,7 +19488,7 @@ AMR.page('overview', {
     /* ---- Plant & Material explorer (loads automatically; these are the
        biggest tables, so the first open per market/period can take a few
        seconds — after that the shared report cache serves it instantly) ---- */
-    function pmKey(){ return STATE.period+'|'+scopeSig(); }
+    function pmKey(){ return STATE.period+'|m'+loadMonth()+'|'+scopeSig(); }
     function loadPM(){
       if(!STATE.data || (STATE.data.errors&&STATE.data.errors.pv)) return;
       var key=pmKey();
@@ -19489,7 +19500,7 @@ AMR.page('overview', {
       if(PM_CACHE[key]){ if(!xfOwns()) renderExplorer(); return; }
       if(!IS_LIVE || PM_PEND[key]) return;
       PM_PEND[key]=true;
-      var params={ period:STATE.period, dimensions:['PLANT','MATERIAL'],
+      var params={ period:STATE.period, month:loadMonth(), dimensions:['PLANT','MATERIAL'],
                    filterField:'MARKET', filterValue: isAll() ? '__ALL__' : selPvName() };
       try{
         google.script.run
@@ -19927,7 +19938,7 @@ AMR.page('overview', {
        on the month cube now (winExtrasReport), which reaches every year the
        slider does, so this signature is the plain period one again. */
     function rxfSig(){
-      var parts=[STATE.period, rxfMarket()];
+      var parts=[STATE.period, 'm'+loadMonth(), rxfMarket()];
       RXF_FIELDS.forEach(function(f){ if(RXF[f].length) parts.push(f+'='+RXF[f].slice().sort().join('\u2016')); });
       return parts.join('|');
     }
@@ -20089,8 +20100,14 @@ AMR.page('overview', {
     function scheduleRxf(){ if(rxfTimer) clearTimeout(rxfTimer); rxfTimer=setTimeout(loadRxf, 200); }
     /* The request, in one place, so the signature above and the call below
        cannot describe two different reports. */
+    /* AND IT CARRIES THE MONTH. Left to itself getRmxCrossReport answers for
+       the REPORT month (last calendar month, script.gs reportMonth_), while
+       every cube-fed panel on this page answers for the anchor - so the KPI
+       strip read July above a Market summary reading August, and "Prev month"
+       reproduced the strip exactly. Same fix, same reason and the same month as
+       getOverview: see loadMonth(). */
     function rxfArg(){
-      return { period:STATE.period, market:rxfMarket(), filters:rxfFilters() };
+      return { period:STATE.period, month:loadMonth(), market:rxfMarket(), filters:rxfFilters() };
     }
     function loadRxf(){
       if(!STATE.data || (STATE.data.errors && STATE.data.errors.rmx)) return;
@@ -23130,7 +23147,7 @@ AMR.page('overview', {
     }
     function scopeSig(){ var s=pvScope(); return s==='__ALL__' ? 'ALL' : s.slice().sort().join('|'); }
     function scopeLabel(){ return isAll() ? 'All markets' : selectedKeys().map(labelOf).join(', '); }
-    function custKey(){ return STATE.period+'|'+scopeSig()+'|'+(STATE.split?'seg':'cust'); }
+    function custKey(){ return STATE.period+'|m'+loadMonth()+'|'+scopeSig()+'|'+(STATE.split?'seg':'cust'); }
     function scheduleCustomers(){ if(custTimer) clearTimeout(custTimer); custTimer=setTimeout(loadCustomers, 220); }
 
     function loadCustomers(){
@@ -23175,7 +23192,7 @@ AMR.page('overview', {
          client-side; only the transport is. */
       var params=[], keys=[], reports=[], calls=[];
       mkts.forEach(function(mk){
-        var p={ period:STATE.period, secondary:secondary, market:mk };
+        var p={ period:STATE.period, month:loadMonth(), secondary:secondary, market:mk };
         var one=JSON.stringify(p);
         params.push(p); keys.push(one);
         if(RAW_CUST[one]) reports.push(RAW_CUST[one]);
