@@ -13150,7 +13150,15 @@ function getOverview(opts){
        exactly which half of itself to disbelieve. */
     reportMonth: 0,
     month: monthSel,
-    rmxMonth: 0
+    rmxMonth: 0,
+    /* AND WHICH MONTHS EACH SOURCE ACTUALLY HOLDS, per line. Being answered
+       for the month you asked for is not the same as that month having any
+       rows in it: a book that has not been exported yet answers with a real,
+       correct, all-zero report, and zero is the one figure that looks like
+       data. Both reports already carry the list; forwarding it is what lets
+       the page tell those two apart. */
+    months:    { all: [], cy: [] },
+    rmxMonths: { all: [], cy: [] }
   };
 
   /* ---------------- Aggregates (Price & Volume) ---------------- */
@@ -13168,6 +13176,7 @@ function getOverview(opts){
        Forwarded verbatim - the page anchors its month window on it. */
     out.reportMonth = rep.latestMonth || 0;
     out.month       = rep.month || monthSel;      // what this half was BUILT for
+    out.months      = rep.months || { all: [], cy: [] };
 
     /* the SAME bridges the Price & Volume report draws (all markets) */
     out.bridges.all = { rev: rep.revenueBridge || null, asp: rep.priceBridge || null };
@@ -13310,6 +13319,7 @@ function getOverview(opts){
         /* every getKeys answer carries the month it landed on; one is enough,
            they are all the same request bar the market */
         if (!out.rmxMonth) out.rmxMonth = Number(k.month) || 0;
+        if (!out.rmxMonths.cy.length && k.months && k.months.cy) out.rmxMonths = k.months;
         var dims = {};
         RMX_DIMS.forEach(function(D){ dims[D.key] = dimRowsOf(D.key); });
         var subRows = dims.SUBMARKET;

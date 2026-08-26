@@ -18417,12 +18417,23 @@ AMR.page('overview', {
     function monthName(m){ return (m>=1 && m<=12) ? MONTH_NAMES[m-1] : ''; }
     /* '' when the answer is the month the page asked for, or when there is
        nothing to check; otherwise the sentence that names what came back. */
-    function monthWarn(d, field){
-      var want=loadMonth(), got=paidMonth(d, field);
-      if(!want || !got || got===want) return '';
-      return 'These figures are for <b>'+esc(monthName(got))+'</b>, not '
-        +esc(monthName(want))+' \u2014 the source sheet has not been exported for '
-        +esc(monthName(want))+' yet.';
+    function monthWarn(d, field, listField){
+      var want=loadMonth(); if(!want || !d) return '';
+      var got=paidMonth(d, field);
+      if(got && got!==want)
+        return 'These figures are for <b>'+esc(monthName(got))+'</b>, not '
+          +esc(monthName(want))+' \u2014 this source could not answer for '
+          +esc(monthName(want))+'.';
+      /* ANSWERED FOR THE RIGHT MONTH IS NOT THE SAME AS THAT MONTH HAVING ROWS.
+         A book the export has not reached yet answers for whatever month it is
+         handed, correctly, with nothing in it - and zero is the one figure that
+         looks like data. Every report carries the list of months it holds
+         current-year figures for, which is what tells those two apart. */
+      var cy=(d[listField||'months']||{}).cy;
+      if(cy && cy.length && cy.indexOf(want)===-1)
+        return 'This source stops at <b>'+esc(monthName(cy[cy.length-1]))+'</b>, so it has nothing for '
+          +esc(monthName(want))+' yet \u2014 the figures below are that empty month.';
+      return '';
     }
     /* WHAT THE KPI STRIP IS FOR, in the same words every other card uses. In
        window mode it is the window; on a server pick it is that pick's own
@@ -18433,16 +18444,19 @@ AMR.page('overview', {
       if(!sp) return '';
       return (sp.from===sp.to) ? ymLong(sp.to) : (ymLong(sp.from)+' \u2013 '+ymLong(sp.to));
     }
+    /* The caption belongs to the strip, not to a successful paint: a loading
+       state, a filtered slice and a missing sheet are all still a selection
+       over a span, and every one of them used to leave whatever the LAST paint
+       had written sitting above it. One writer, called from renderKpiRow and
+       from each path that puts something else in the strip. */
+    function kpiSpan(hostId){
+      var cap=$(hostId+'Span'); if(!cap) return;
+      var sp=stripLabel();
+      cap.innerHTML=esc(scopeLabel())+(sp?(' \u00b7 '+esc(sp)):'');
+    }
     function renderKpiRow(hostId, t, unit, aspFmt){
       var host=$(hostId);
-      /* set BEFORE the early returns below - "no data for this selection" is
-         still a selection, and which months it found nothing in is the first
-         thing a reader wants */
-      var cap=$(hostId+'Span');
-      if(cap){
-        var sp=stripLabel();
-        cap.innerHTML=esc(scopeLabel())+(sp?(' \u00b7 '+esc(sp)):'');
-      }
+      kpiSpan(hostId);          // before the early returns: see kpiSpan()
       host.classList.remove('two'); host.classList.remove('six');
       if(!t || !t.present){
         host.innerHTML='<div class="kpi na">No data for this selection.</div>';
@@ -18858,6 +18872,7 @@ AMR.page('overview', {
       if(STATE.tab==='agg'){
         if(STATE.data.errors && STATE.data.errors.pv){
           renderXfBar(); renderRefine();
+          kpiSpan('kpiAgg');
           $('kpiAgg').innerHTML='<div class="kpi na">Price &amp; Volume sheet not set.</div>';
           sourceNotice('aggBody','Price & Volume','pricevolume',STATE.data.errors.pv);
           clearCH('bridge'); clearCH('bd'); clearCH('dim');
@@ -18901,7 +18916,7 @@ AMR.page('overview', {
           /* FIRST, because it is about the numbers rather than about the
              mapping: the month this half was actually built for, whenever it
              is not the one the page asked for. See monthWarn(). */
-          var aw=monthWarn(STATE.data,'month'); if(aw) foot.push(aw);
+          var aw=monthWarn(STATE.data,'month','months'); if(aw) foot.push(aw);
           if(STATE.data.unmatched && STATE.data.unmatched.pv && STATE.data.unmatched.pv.length){
             foot.push('Aggregates markets in the sheet that aren\u2019t mapped on this page: <code>'
               + STATE.data.unmatched.pv.map(esc).join('</code>, <code>') + '</code>. '
@@ -18919,6 +18934,7 @@ AMR.page('overview', {
            the tab can go wrong. */
         renderProdCat();
         if(STATE.data.errors && STATE.data.errors.rmx){
+          kpiSpan('kpiRmx');
           $('kpiRmx').innerHTML='<div class="kpi na">RMX sheet not set.</div>';
           sourceNotice('rmxBody','RMX','rmx',STATE.data.errors.rmx);
           clearCH('bd');
@@ -18940,7 +18956,8 @@ AMR.page('overview', {
           /* the cross-report drives every panel on this tab; the getOverview
              half only paints until it lands, so both are checked and whichever
              is out of step says so once */
-          var rw=monthWarn(rxfData()) || monthWarn(STATE.data,'rmxMonth');
+          var rw=monthWarn(rxfData(),'month','monthOptions')
+              || monthWarn(STATE.data,'rmxMonth','rmxMonths');
           if(rw) rfoot.push(rw);
           var sg=STATE.data.seg;
           if(sg && sg.unmatched && sg.unmatched.length){
@@ -18982,7 +18999,7 @@ AMR.page('overview', {
        and those simply are not shown.                                        */
     function renderWinAgg(){
       var t=cubeWinTotals('agg');
-      if(!t){ $('kpiAgg').innerHTML='<div class="kpi na">Loading months…</div>'; winWaiting('aggBody'); winWaiting('dimBody'); return; }
+      if(!t){ kpiSpan('kpiAgg'); $('kpiAgg').innerHTML='<div class="kpi na">Loading months…</div>'; winWaiting('aggBody'); winWaiting('dimBody'); return; }
       renderKpiRow('kpiAgg', t, 't', fAsp);
 
       renderWinBreakdown();
@@ -19170,7 +19187,7 @@ AMR.page('overview', {
 
     function renderWinRmx(){
       var t=cubeWinTotals('rmx');
-      if(!t){ $('kpiRmx').innerHTML='<div class="kpi na">Loading months\u2026</div>'; winWaiting('rmxBody'); winWaiting('rmxDimBody'); return; }
+      if(!t){ kpiSpan('kpiRmx'); $('kpiRmx').innerHTML='<div class="kpi na">Loading months\u2026</div>'; winWaiting('rmxBody'); winWaiting('rmxDimBody'); return; }
       renderKpiRow('kpiRmx', t, 'm\u00b3', fAsp);
 
       renderWinRmxBreakdown();
@@ -19709,6 +19726,7 @@ AMR.page('overview', {
     }
     function renderXfKpi(d, err){
       var host=$('kpiAgg');
+      kpiSpan('kpiAgg');
       if(err){ host.innerHTML='<div class="kpi na">Could not load the filtered numbers.</div>'; return; }
       if(!d){ host.innerHTML='<div class="kpi na">Loading filtered numbers…</div>'; return; }
       renderKpiRow('kpiAgg', d.totals, 't', fAsp);
