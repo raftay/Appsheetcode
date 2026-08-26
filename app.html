@@ -4547,11 +4547,16 @@ window.AmrCube = (function(){
   var VIA_PLANT_AGG = { market:'market', submarket1:'sm1', submarket2:'sm2', mb:'mb' };
   var VIA_PLANT_RMX = { market:'market', submarket:'submarket' };
   var VIA_MIX_RMX   = { strength:'strength', cls:'cls', app:'app' };
+  /* The extras half of the Ready-Mix line: `extra` is the raw mat_descr and
+     extraMap.extraType is what EXTRAS LOOKUP calls it. Same shape as the mix
+     maps above and for the same reason — the label is a side-table so a lookup
+     edit re-labels history without a rebuild. */
+  var VIA_EXTRA_RMX = { extraType:'extraType' };
 
   function buildMasks(line, filters){
-    var man = S[line].man, out = { direct:{}, plant:null, mix:null };
+    var man = S[line].man, out = { direct:{}, plant:null, mix:null, extra:null };
     filters = filters || {};
-    var plantMasks = [], mixMasks = [];
+    var plantMasks = [], mixMasks = [], extraMasks = [];
 
     Object.keys(filters).forEach(function(k){
       var vals = filters[k];
@@ -4572,6 +4577,12 @@ window.AmrCube = (function(){
       if (viaM && man.mixMap && man.mixMap[viaM]){
         var mm = derivedMask(man, man.mixMap[viaM], viaM, vals);
         if (mm) mixMasks.push(mm);
+        return;
+      }
+      var viaX = (line === 'rmx') ? VIA_EXTRA_RMX[k] : null;
+      if (viaX && man.extraMap && man.extraMap[viaX]){
+        var xm = derivedMask(man, man.extraMap[viaX], viaX, vals);
+        if (xm) extraMasks.push(xm);
       }
     });
 
@@ -4587,6 +4598,7 @@ window.AmrCube = (function(){
     }
     out.plant = combine(plantMasks, (man.dict.plant || []).length);
     out.mix   = combine(mixMasks,   (man.dict.mix   || []).length);
+    out.extra = combine(extraMasks, (man.dict.extra || []).length);
     return out;
   }
 
@@ -4649,8 +4661,10 @@ window.AmrCube = (function(){
     else if (groupBy){
       var vP = isAgg ? VIA_PLANT_AGG[groupBy] : VIA_PLANT_RMX[groupBy];
       var vM = !isAgg ? VIA_MIX_RMX[groupBy] : null;
+      var vX = !isAgg ? VIA_EXTRA_RMX[groupBy] : null;
       if (vP) groupVia = { on:'plant', map: man.plantMap[vP], dict: man.dict[vP] };
       else if (vM) groupVia = { on:'mix', map: man.mixMap[vM], dict: man.dict[vM] };
+      else if (vX && man.extraMap) groupVia = { on:'extra', map: man.extraMap[vX], dict: man.dict[vX] };
     }
 
     eachBlock(line, function(v, n){
@@ -4671,6 +4685,7 @@ window.AmrCube = (function(){
         var p = v.plant[i];
         if (masks.plant && !masks.plant[p]) continue;
         if (masks.mix && !masks.mix[v.mix[i]]) continue;
+        if (masks.extra && v.extra && !masks.extra[v.extra[i]]) continue;
         var skip = false;
         for (var d in masks.direct){ if (!masks.direct[d][v[d][i]]){ skip = true; break; } }
         if (skip) continue;
@@ -4680,7 +4695,12 @@ window.AmrCube = (function(){
         function keyFor(s){
           if (groupVia === 'ym') return s;
           if (groupDirect) return man.dict[groupDirect][v[groupDirect][i]];
-          if (groupVia) return groupVia.dict[groupVia.map[groupVia.on === 'plant' ? p : v.mix[i]]];
+          if (groupVia){
+            var code = (groupVia.on === 'plant') ? p
+                     : (groupVia.on === 'extra') ? (v.extra ? v.extra[i] : 0)
+                     : v.mix[i];
+            return groupVia.dict[groupVia.map[code]];
+          }
           return '\u0001all';
         }
         function pairOf(g){
@@ -5160,7 +5180,8 @@ window.AmrCube = (function(){
       var m = S[line] && S[line].man;
       if (!m) return [];
       var key = m.dict[name] ? name
-        : ((line === 'rmx') ? (VIA_PLANT_RMX[name] || VIA_MIX_RMX[name]) : VIA_PLANT_AGG[name]);
+        : ((line === 'rmx') ? (VIA_PLANT_RMX[name] || VIA_MIX_RMX[name] || VIA_EXTRA_RMX[name])
+                            : VIA_PLANT_AGG[name]);
       return (key && m.dict[key]) ? m.dict[key].filter(function(x){ return x !== ''; }) : [];
     },
     unmapped: function(line){ var m = S[line] && S[line].man; return m ? m.unmapped : null; },
@@ -14282,7 +14303,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
         +'<td>4,000</td><td>5,200</td><td>300</td><td>360</td></tr></table></div>'
         +'<h3>Lookup tabs</h3>'
         +'<p><b>EXTRAS LOOKUP</b> (mat_descr → category). <b>Both</b> tables group on it — '
-        +'the by-type table and the detail table. CUSTOM FLAG LOOKUP is no longer read by either.</p>');
+        +'the by-type table and the detail table — and it is the only tab either reads.</p>');
     }
 
     $('period').addEventListener('click', segHandler('period'));
@@ -15073,11 +15094,11 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
     extras: { tab:'EXTRAS LOOKUP',      list:'extras',
               title:'Materials not found in EXTRAS LOOKUP',
               note:'These mat_descr values have no category in the EXTRAS LOOKUP tab.',
-              lands:'Unclassified' },
-    flag:   { tab:'CUSTOM FLAG LOOKUP', list:'flag',
-              title:'Materials not found in CUSTOM FLAG LOOKUP',
-              note:'These mat_descr values have no flag in the CUSTOM FLAG LOOKUP tab.',
-              lands:'Other' }
+              lands:'Unclassified' }
+    /* THERE WAS A THIRD: CUSTOM FLAG LOOKUP, keyed on the same mat_descr and
+       bucketing the same materials. Neither Extras table had read it for a
+       while and nothing displayed a flag, so it was a fourth tab to keep in
+       step with nothing depending on it. Removed everywhere at once. */
   };
 
   /* ---------- the card ---------- */
@@ -15090,22 +15111,34 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
        missed, and only ever showed up as an uncaught error in pageswitch.js. */
     var host=$('mapHost'); if(!host) return;
     if(!d){ host.style.display='none'; return; }
-    var counts = { product:(d.product||[]).length, extras:(d.extras||[]).length, flag:(d.flag||[]).length };
+    var counts = { product:(d.product||[]).length, extras:(d.extras||[]).length };
     STATE.mapCounts = counts;
-    var n = (d.total!=null) ? d.total : (counts.product+counts.extras+counts.flag);
+    var n = (d.total!=null) ? d.total : (counts.product+counts.extras);
     host.style.display='';
 
     var body;
     if(!n){
-      body = '<div class="mapclear">&#10003; Every product and material matched a lookup row.</div>';
+      /* THE POPULATION, NOT JUST THE VERDICT. "Every product and material
+         matched" and "nothing was examined" are the same sentence otherwise,
+         and the second is what a mapping check reads like when the column it
+         needs is missing or the tab it walks is empty. `checked` comes from
+         noteSeen_ and is absent on a payload built before it shipped. */
+      var ck = d.checked || null;
+      var tot = ck ? ((ck.product||0) + (ck.extras||0)) : 0;
+      body = '<div class="mapclear">&#10003; '
+        + (tot ? ('All '+fInt(ck.product||0)+' product mix'+((ck.product===1)?'':'es')+' and '
+                 +fInt(ck.extras||0)+' material'+((ck.extras===1)?'':'s')+' matched a lookup row.')
+               : (ck ? 'There was nothing to match — no product mixes and no materials were read.'
+                     : 'Every product and material matched a lookup row.'))
+        + '</div>';
     } else {
       body = '<div class="mapalert">'
         + '<span class="mapalert-i">!</span>'
         + '<div><b>'+fInt(n)+' value'+(n===1?'':'s')+' '+(n===1?'isn\u2019t':'aren\u2019t')+' in the lookup tabs.</b>'
         + '<p>Their volume and revenue are still counted, but they land in '
-        + '<b>N/A</b>, <b>Unclassified</b> and <b>Other</b>. </p></div></div>'
+        + '<b>N/A</b> and <b>Unclassified</b>. </p></div></div>'
         + '<div class="mapsecs">'
-        + ['product','extras','flag'].map(function(k){ return mapSection(d, k, counts[k]); }).join('')
+        + ['product','extras'].map(function(k){ return mapSection(d, k, counts[k]); }).join('')
         + '</div>';
     }
 
@@ -15121,9 +15154,12 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
 
   function mapSection(d, kind, n){
     var M = SUGMETA[kind], list = d[M.list] || [];
+    var seen = (d.checked || {})[kind];
     if(!n) return '<div class="mapsec ok"><span class="mapsec-tick">&#10003;</span>'
       + '<span class="mapsec-title">'+esc(M.tab)+'</span>'
-      + '<span class="mapsec-ok">all matched</span></div>';
+      + '<span class="mapsec-ok">'
+      + (seen ? ('all '+fInt(seen)+' matched') : (seen===0 ? 'nothing to check' : 'all matched'))
+      + '</span></div>';
 
     var open = !!(STATE.mapSecOpen && STATE.mapSecOpen[kind]);
     var rows = list.map(function(r){
@@ -15279,21 +15315,13 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
               +'<td>'+sugSel(kind,i,'app',r.app,o.app)+'</td>'
               +'<td>'+sugChip(r)+'</td></tr>';
           });
-        } else if(kind==='extras'){
+        } else {
           head='<th class="tick"></th><th>Material (mat_descr)</th><th>Catergory</th><th>mat_prod_hier_3</th><th>Confidence</th>';
           list.forEach(function(r,i){
             body+='<tr'+(r.band==='Low'?' class="lowrow"':'')+'><td class="tick">'+sugTick(kind,i,r)+'</td>'
               +'<td class="val">'+esc(r.value)+'</td>'
               +'<td>'+sugSel(kind,i,'category',r.category,o.category,[r.guess])+'</td>'
               +'<td>'+sugSel(kind,i,'hier3',r.hier3,o.hier3,r.hier3All)+'</td>'
-              +'<td>'+sugChip(r)+'</td></tr>';
-          });
-        } else {
-          head='<th class="tick"></th><th>mat_descr</th><th>Custom Flag</th><th>Confidence</th>';
-          list.forEach(function(r,i){
-            body+='<tr'+(r.band==='Low'?' class="lowrow"':'')+'><td class="tick">'+sugTick(kind,i,r)+'</td>'
-              +'<td class="val">'+esc(r.value)+'</td>'
-              +'<td>'+sugSel(kind,i,'flag',r.flag,o.flag,[r.guess])+'</td>'
               +'<td>'+sugChip(r)+'</td></tr>';
           });
         }
@@ -15374,8 +15402,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
     var rows = picked.map(function(r){
       if(kind==='product') return { value:r.value, code:r.code, oldD:r.oldD, newD:r.newD,
                                     strength:r.strength, cls:r.cls, app:r.app };
-      if(kind==='extras')  return { value:r.value, category:r.category, hier3:r.hier3 };
-      return { value:r.value, flag:r.flag };
+      return { value:r.value, category:r.category, hier3:r.hier3 };
     });
 
     btn.disabled=true; btn.textContent='Adding\u2026';
@@ -15397,13 +15424,12 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
   }
 
   /* Tab-separated, no header, no quoting or escaping — so it pastes straight
-     into the lookup tab. One file per list. PRODUCT MASTER and CUSTOM FLAG are
-     a single column of values; EXTRAS LOOKUP is mat_prod_hier_3 then mat_descr.
-     A mat_descr sitting under more than one hier_3 gets a line for each pair. */
+     into the lookup tab. One file per list. PRODUCT MASTER is a single column
+     of values; EXTRAS LOOKUP is mat_prod_hier_3 then mat_descr. A mat_descr
+     sitting under more than one hier_3 gets a line for each pair. */
   function mapCsv(d, kind){
     var meta = { product:['product','PRODUCT_MASTER'],
-                 extras: ['extras', 'EXTRAS_LOOKUP'],
-                 flag:   ['flag',   'CUSTOM_FLAG_LOOKUP'] }[kind];
+                 extras: ['extras', 'EXTRAS_LOOKUP'] }[kind];
     if(!meta) return;
     var list = d[meta[0]] || []; if(!list.length) return;
     // a tab or line break inside a value would break the columns: flatten it to
@@ -15737,7 +15763,7 @@ and that page can never disagree, and there are no Slide Segment / Slide Product
 <b>By extra type</b> &mdash; the EXTRAS and VAP streams by <b>Type</b>, priced on total concrete m&sup3; so the rows add to the Total.<br>
 <b>Extras &amp; VAP detail</b> &mdash; the same Types priced on <b>applied</b> m&sup3;, with volume applied and penetration rate next to it.
 Its totals show <b>revenue only</b>: applied volume can&rsquo;t be added across types, because the same m&sup3; is counted once per extra it carries.</p>
-<p>Both Extras tables group on <b>EXTRAS LOOKUP</b>. CUSTOM FLAG LOOKUP is no longer used by either &mdash; one tab to maintain, and a material moves in both tables at once.</p>
+<p>Both Extras tables group on <b>EXTRAS LOOKUP</b> &mdash; one tab to maintain, and a material moves in both tables at once.</p>
 <h3>How to use it</h3>
 <p>1. Make sure the data sheet is set (&#9881; <b>Settings</b> / <b>Data sheet</b> at the top) &mdash; it is the Ready-Mix workbook.
 2. Pick the <b>Market</b>. 3. Pick the <b>Report month</b> &mdash; it now slices the data, and only offers months the workbook holds.
@@ -15788,7 +15814,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
    *
    * THE PRODUCT TABLE IS GONE. In its place are the two Extras tables the RMX
    * page carries: BY EXTRA TYPE and EXTRAS & VAP DETAIL. Both group on the
-   * EXTRAS LOOKUP category — CUSTOM FLAG LOOKUP is no longer read by either.
+   * EXTRAS LOOKUP category — the one classification both tables read.
    *
    * The 1600x900 slide frame, the comment-band sliders and the PNG export all
    * live in the shared SlideExport.html (AmrSlide). This page only builds the
@@ -16704,7 +16730,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
         +'<td>4,000</td><td>5,200</td><td>300</td><td>360</td></tr></table></div>'
         +'<h3>Lookup tab</h3>'
         +'<p><b>EXTRAS LOOKUP</b> (mat_descr → category). <b>Both</b> tables group on it — that is the '
-        +'<b>Type</b> column. CUSTOM FLAG LOOKUP is no longer read by either table.</p>'
+        +'<b>Type</b> column, and the only lookup either table reads.</p>'
         +'<p>The two tables carry the same rows on purpose. What differs is the base: '
         +'<b>By extra type</b> prices on total concrete m³ (so the rows add to the Total), '
         +'<b>Extras &amp; VAP detail</b> prices on applied m³ and prints penetration next to it.</p>');
@@ -18768,7 +18794,6 @@ AMR.page('overview', {
         } else if(winMode()){
           renderWinRmx();
           scheduleRxf();         // keeps the cross-filter option lists warm
-          scheduleWext();        // Extras & VAP by type, for this window's months
         } else {
           /* paint from the cached cross-report (or getOverview on the first view),
              then fetch. Every Ready-Mix panel below is fed by one payload. */
@@ -19018,17 +19043,17 @@ AMR.page('overview', {
          draws it either way, and the all-in overlay (extras per month) is left
          off because that comes from the server report, for the server's period */
       renderTrendPanel('rmx', null, null);
-      /* Extras BY TYPE comes off RMX_getExtrasByMonths, asked for THIS window's
-         own months - the extra type lives on rows the fact table does not carry,
-         it carries their money, so the cube can sum the streams (the build-up
-         above) and cannot split them. Ready-Mix fuel recovery has no such route:
-         the per-load surcharge is not a column anywhere the window can reach, so
-         it stays off. */
+      /* Extras BY TYPE is a local group-by now: the extra type is a dimension of
+         the Ready-Mix line (extraMap, off EXTRAS LOOKUP), so the same fact table
+         that sums the streams for the build-up above can split them. No fetch,
+         no second scope to keep in step, and it answers for whatever span the
+         slider is on including a closed year. Ready-Mix fuel recovery has no
+         such route: the per-load surcharge is not a column anywhere the window
+         can reach, so it stays off. */
       renderWinExtras();
       hidePanel('rmxFuelBody');
       $('footRmx').innerHTML=esc(winScopeWord())
-        +' · computed in your browser from the month fact table, not the server report'
-        + ' — except Extras &amp; VAP by type, which is fetched for these same months.';
+        +' · computed in your browser from the month fact table, not the server report.';
     }
 
     /* Both carry a toggle of their own, so both have to be repaintable without
@@ -19061,19 +19086,18 @@ AMR.page('overview', {
     }
 
     /* ---- ASP build-up, from the cube -------------------------------------
-       Extras and VAP revenue are columns in the Ready-Mix fact table (ex / va),
+       Extras and VAP revenue are columns of the Ready-Mix fact table (ex / va),
        which is exactly what this panel is: three revenue streams over ONE
-       denominator, total concrete m³. So it is summed rather than skipped. What
-       it cannot do is split those streams BY EXTRA TYPE — the type is not a
-       column — which is what the Extras & VAP panel below asks the server for.
+       denominator, total concrete m³. So it is summed rather than skipped, and
+       the by-extra-type panel below is the same numbers split on the `extra`
+       dimension of the same rows — the two agree by construction, not by two
+       sources happening to land on the same figure.
 
-       BOTH COLUMNS WERE STRUCTURALLY ZERO UNTIL script.gs ovcRmxFoldExtras_. They
-       were in the cube's shape from v2 and nothing ever wrote to them, so every
-       Extras and VAP row here read $0.00 and All-in equalled Base. They are
-       folded in now from the same extras facts the panel below reads, which is
-       what makes the two agree. A month whose extras source has not been read
-       still contributes nothing here — the note under the panel below is where
-       that is said, once, rather than on both. */
+       BOTH COLUMNS WERE STRUCTURALLY ZERO FOR A LONG TIME. They were in the
+       cube's shape from v2 and nothing ever wrote to them, so every Extras and
+       VAP row here read $0.00 and All-in equalled Base, under a correct-looking
+       heading. Extra Raw Data and Associate Raw Data are read into the line
+       itself now (script.gs ovcRmxAcc_), live and history alike. */
     function renderWinRmxAsp(){
       clearCH('rasp');
       /* every row here is a $/m3 and every column is a year-on-year move; past
@@ -19108,17 +19132,52 @@ AMR.page('overview', {
       renderAspBuildUp({ rows:rows, total:total, volCY:g.cyVol, volPY:g.pyVol });
     }
     /* ---- Extras & VAP by type, in window mode ------------------------------
-       One decision, taken in one place, so the paint that runs before the fetch
-       and the paint that runs when it lands cannot disagree. wextSig() is that
-       decision: empty means there is nothing to ask for yet (the Ready-Mix
-       blocks have not landed), and the panel waits rather than showing a total
-       that is missing months. It is never dropped for being in a closed year any
-       more - see the block comment on wextSig for what that restriction actually
-       was. */
+       A GROUP-BY, NOT A FETCH. The extra type is a dimension of the Ready-Mix
+       line, so this is one more pass over the fact table already in the browser
+       — the same pass, the same filters and the same months as the build-up
+       above it, which is what makes the two add up. It answers for any span the
+       slider can reach, closed years included, and there is nothing to wait for
+       and nothing to say about months "no source has been read for": a month the
+       cube holds carries its extras with its volumes, because they were read
+       together.
+
+       IT DIVIDES BY THE SAME TOTAL CONCRETE m³ the build-up does, so every $/m³
+       in the table is addable and Extras + VAP is a straight sum. */
+    function winExtrasReport(){
+      var g=cubeTotal('rmx'); if(!g) return null;
+      var rows=cubeGroups('rmx','extraType'); if(rows===null) return null;
+      var volCY=g.cyVol||0, volPY=g.pyVol||0, out=[];
+      rows.forEach(function(r){
+        var label=String(r.key==null?'':r.key);
+        /* the blank extra is every CONCRETE row in the window; it is the base,
+           not an extra type, and belongs in neither block of this table */
+        if(!label || label.charCodeAt(0)===1) return;
+        /* WHICH COLUMN THE MONEY IS IN IS WHICH TAB IT CAME FROM: `ex` is Extra
+           Raw Data, `va` is Associate Raw Data. A type carrying both is two
+           rows, one per stream, which is what the reader expects to see. */
+        [['EXTRAS', r.cyEx||0, r.pyEx||0], ['VAP', r.cyVa||0, r.pyVa||0]].forEach(function(p){
+          if(!p[1] && !p[2]) return;
+          var cy=volCY?p[1]/volCY:0, py=volPY?p[2]/volPY:0;
+          out.push({ label:label, stream:p[0], cyRev:p[1], pyRev:p[2],
+                     aspCY:cy, aspPY:py, aspChg:cy-py,
+                     revPct:p[2]?(p[1]-p[2])/Math.abs(p[2]):0 });
+        });
+      });
+      out.sort(function(a,b){ return b.cyRev-a.cyRev; });
+      return { ok:true, byType:out };
+    }
     function renderWinExtras(){
-      var sig=wextSig();
-      if(!sig){ clearCH('ext'); hidePanel('extBody'); return; }
-      renderExtrasPanel(wextReport(), WEXT_ERR[sig]);
+      clearCH('ext');
+      if(!winReady()){ hidePanel('extBody'); return; }
+      /* THE SAME REFUSAL renderWinRmxAsp MAKES, for the same reason. Extras
+         carry a plant and a material and no product mix, so a Strength or
+         Product Class filter does not narrow them — it zeroes them. */
+      if(rxfMixFiltered()){ hidePanel('extBody'); return; }
+      var d=winExtrasReport();
+      /* the Ready-Mix blocks have not landed yet: WAIT, visibly. An empty panel
+         and a panel whose months are still arriving are different things. */
+      if(!d){ showPanel('extBody'); winWaiting('extBody'); return; }
+      renderExtrasPanel(d, null);
     }
     /* the Ready-Mix dimension table is a plain table (its painter is bound to the
        cross-report's own row shape), so window mode renders it directly */
@@ -19821,9 +19880,9 @@ AMR.page('overview', {
     /* THE CROSS-REPORT IS A PERIOD REPORT AND NOTHING ELSE ASKS IT FOR A WINDOW.
        A month SPAN was briefly sent from here so Extras & VAP could stay on the
        page for a dragged window. It could only ever answer inside the live book
-       year - one workbook holds two - and the by-type panel now has an endpoint
-       of its own (wext* below) that reaches the closed books as well, so this
-       signature is the plain period one again. */
+       year - one workbook holds two - and the by-type panel is a local group-by
+       on the month cube now (winExtrasReport), which reaches every year the
+       slider does, so this signature is the plain period one again. */
     function rxfSig(){
       var parts=[STATE.period, rxfMarket()];
       RXF_FIELDS.forEach(function(f){ if(RXF[f].length) parts.push(f+'='+RXF[f].slice().sort().join('\u2016')); });
@@ -20023,11 +20082,11 @@ AMR.page('overview', {
     function paintRxfPanels(){
       var sig=rxfSig(), d=RXF_CACHE[sig], err=RXF_ERR[sig];
       /* Same rule as the Aggregates side, with no exception left in it: in
-         window mode every Ready-Mix panel belongs to the cube or to the extras
-         endpoint, and this report - which was fetched for STATE.period - must
-         not paint over a window with a period's numbers. It is still FETCHED in
-         window mode, because its per-field option lists are what the filter
-         drop-downs offer; it just paints nothing. */
+         window mode every Ready-Mix panel belongs to the cube, and this report -
+         which was fetched for STATE.period - must not paint over a window with a
+         period's numbers. It is still FETCHED in window mode, because its
+         per-field option lists are what the filter drop-downs offer; it just
+         paints nothing. */
       if(winMode()) return;
       renderRmxKpiStrip(d);
       renderRmxBreakdown(d, err);
@@ -20040,118 +20099,6 @@ AMR.page('overview', {
     function rxfWait(err, what){
       if(err) return '<div class="ov-notice">Could not load '+esc(what)+': '+esc(err)+'</div>';
       return '<div class="ov-mini">'+(IS_LIVE?'Loading \u2026':'Loads in the live web app.')+'</div>';
-    }
-
-
-    /* ================= EXTRAS & VAP FOR A WINDOW =========================
-       The one Ready-Mix panel a window fetches from the server, and the only
-       thing on this page that does.
-
-       WHY IT IS NOT THE CUBE'S. The month fact table carries the extras MONEY
-       (ex / va, which is what the ASP build-up above it sums) and not the extra
-       TYPE - the type is a mat_descr on a different tab, at a grain the fact
-       table has no column for. So the split by type comes from the server.
-
-       WHY IT IS NOT THE CROSS-REPORT'S EITHER, which is what it used to be. That
-       report reads the LIVE workbook, and one workbook holds two book years; it
-       could answer for a dragged window only while the window stayed inside
-       them, and for everything older the panel was simply dropped. That was read
-       once as "extras have no year", which is not so - Bill Month carries the
-       year on every one of these rows, on the live book and on every closed one.
-       What was missing is that nothing had ever READ the closed books' extras
-       tabs. RMX_getExtrasByMonths does, so the panel now answers for any span
-       the slider can reach, and says which months no book has been read for
-       rather than quietly totalling the ones that have.
-
-       IT ASKS FOR THE CUBE'S OWN MONTHS. winCy('rmx') is the same list every
-       other panel on this tab is computed over, so the revenue and the m3 it is
-       divided by cover exactly the same months. And it returns REVENUE only:
-       the denominator is total concrete m3, the browser already holds it, and a
-       second copy from the server would be a second answer to one question. */
-    var WEXT_CACHE={}, WEXT_PEND={}, WEXT_ERR={}, wextTimer=null;
-
-    /* null whenever there is nothing to ask for yet - not in window mode, or the
-       Ready-Mix blocks have not landed. One gate, so the fetch and every paint
-       agree about whether this panel exists at all. */
-    function wextMonths(){
-      if(!winMode() || !winReady()) return null;
-      var cy=winCy('rmx');
-      return (cy && cy.length) ? cy : null;
-    }
-    function wextSig(){
-      var ms=wextMonths(); if(!ms) return '';
-      var parts=[rxfMarket(), ms[0]+'>'+ms[ms.length-1]+'#'+ms.length];
-      RXF_FIELDS.forEach(function(f){ if(RXF[f].length) parts.push(f+'='+RXF[f].slice().sort().join('\u2016')); });
-      return parts.join('|');
-    }
-    function scheduleWext(){ if(wextTimer) clearTimeout(wextTimer); wextTimer=setTimeout(loadWext, 200); }
-    function loadWext(){
-      var sig=wextSig(); if(!sig) return;
-      if(!WEXT_CACHE[sig] && window.AmrCache){
-        var v=AmrCache.get('wext:'+sig);
-        if(v) WEXT_CACHE[sig]=v;
-      }
-      if(WEXT_CACHE[sig]){ renderWinExtras(); return; }
-      if(!IS_LIVE){ renderWinExtras(); return; }
-      if(WEXT_PEND[sig]) return;
-      WEXT_PEND[sig]=true;
-      renderWinExtras();                                  // loading state
-      try{
-        google.script.run
-          .withSuccessHandler(function(d){
-            WEXT_PEND[sig]=false;
-            if(d && (d.ok || d.reason)){
-              WEXT_CACHE[sig]=d; delete WEXT_ERR[sig];
-              if(d.ok && window.AmrCache) AmrCache.set('wext:'+sig, d);
-            } else WEXT_ERR[sig]='The extras report came back empty.';
-            /* the window or a filter may have moved while this was out. Only
-               this panel repaints: the ASP build-up above it reads the cube's
-               own ex / va and does not wait on this call. */
-            if(sig===wextSig() && STATE.tab!=='agg') renderWinExtras();
-          })
-          .withFailureHandler(function(err){
-            WEXT_PEND[sig]=false;
-            WEXT_ERR[sig]=(err&&err.message)||String(err);
-            if(sig===wextSig() && STATE.tab!=='agg') renderWinExtras();
-          })
-          .RMX_getExtrasByMonths({ market:rxfMarket(), filters:rxfFilters(),
-                                   cyMonths:wextMonths() });
-      }catch(e){ WEXT_PEND[sig]=false; WEXT_ERR[sig]=String(e&&e.message||e); renderWinExtras(); }
-    }
-    function wextData(){ var sig=wextSig(); return sig ? (WEXT_CACHE[sig]||null) : null; }
-
-    /* MONTHS NOBODY HAS READ AN EXTRAS TAB FOR. A closed book carries its months
-       in the cube as soon as its Main Raw Data has been read; its extras tabs are
-       a second read and may not have happened yet. Those months are not zero
-       extras and this panel does not let them look like it. */
-    function wextGapNote(){
-      var d=wextData(); if(!d || !d.ok) return '';
-      var n=(d.uncovered||[]).length + (d.uncoveredPy||[]).length;
-      if(!n) return '';
-      var all=(d.uncovered||[]).concat(d.uncoveredPy||[]).sort();
-      return '<div class="ov-mini" style="margin-top:10px">'
-        + esc(n===1 ? 'One month of this window has no extras source yet ('
-                    : n+' months of this window have no extras source yet (')
-        + esc(all.slice(0,6).map(ymShort).join(', ')+(all.length>6?' …':'')+')')
-        + '. Those months are missing from the figures above rather than zero — '
-        + 'the closed book they belong to has had its volumes read but not its '
-        + 'Extra Raw Data. It is picked up on its own in the background.</div>';
-    }
-
-    /* The server sends revenue; the $/m3 are taken here, on the SAME total
-       concrete m3 every other figure in this window uses, which is what keeps
-       the rows addable and keeps them agreeing with the ASP build-up above. */
-    function wextReport(){
-      var d=wextData(); if(!d) return null;
-      if(!d.ok) return d;                                  // a refusal travels whole
-      var g=cubeTotal('rmx'); if(!g) return null;
-      var volCY=g.cyVol||0, volPY=g.pyVol||0;
-      return { ok:true, note:wextGapNote(),
-        byType:(d.byType||[]).map(function(r){
-          var cy=volCY?r.cyRev/volCY:0, py=volPY?r.pyRev/volPY:0;
-          return { label:r.label, stream:r.stream, cyRev:r.cyRev, pyRev:r.pyRev,
-                   aspCY:cy, aspPY:py, aspChg:cy-py, revPct:r.revPct };
-        }) };
     }
 
     /* ---- KPI strip: cross-report totals when they exist, getOverview otherwise ---- */
@@ -21291,15 +21238,7 @@ AMR.page('overview', {
         list.forEach(function(e){
           var g=byId[e.id];
           if(!g){ g=byId[e.id]={ id:e.id, label:e.label||e.id, lines:{} }; out.push(g); }
-          /* A READY-MIX BOOK IS TWO READS. `built` is its Main Raw Data - the
-             months, the volumes, the PPI grain. `extras` is its Extra Raw Data
-             and Associate Raw Data tabs, parked separately because Main is
-             ~58,000 rows and neither part should ever cost the other's time. A
-             manifest that predates the split carries no `extras` key and is read
-             as "nothing more to fetch", which is exactly how it used to behave. */
-          g.lines[l]={ linked:!!e.linked, built:!!e.built,
-                       xLinked:!!(e.extras && e.extras.linked),
-                       xBuilt: (e.extras ? !!e.extras.built : true) };
+          g.lines[l]={ linked:!!e.linked, built:!!e.built };
         });
       });
       return out;
@@ -21310,15 +21249,9 @@ AMR.page('overview', {
       var out=[];
       histEras().forEach(function(e){
         ['agg','rmx'].forEach(function(l){
-          var st=e.lines[l]; if(!st || !st.linked) return;
-          if(!st.built && !HIST.done[e.id+'|'+l])
+          var st=e.lines[l];
+          if(st && st.linked && !st.built && !HIST.done[e.id+'|'+l])
             out.push({ era:e.id, label:e.label, line:l });
-          /* the extras half, asked for in its own right. It is queued behind the
-             months of the same book by the order of these two tests, which is
-             the order that matters: the slider cannot reach a year until its
-             volumes are in, and the extras panel divides by those volumes. */
-          if(st.xLinked && !st.xBuilt && !HIST.done[e.id+'|'+l+'|extras'])
-            out.push({ era:e.id, label:e.label, line:l, part:'extras' });
         });
       });
       return out;
@@ -21328,17 +21261,14 @@ AMR.page('overview', {
       var out=[];
       histEras().forEach(function(e){
         ['agg','rmx'].forEach(function(l){
-          var st=e.lines[l]; if(!st || !st.linked) return;
-          out.push({ era:e.id, label:e.label, line:l });
-          if(st.xLinked) out.push({ era:e.id, label:e.label, line:l, part:'extras' });
+          var st=e.lines[l];
+          if(st && st.linked) out.push({ era:e.id, label:e.label, line:l });
         });
       });
       return out;
     }
-    function histJobKey(j){ return j.era+'|'+j.line+(j.part?('|'+j.part):''); }
     function histJobName(j){
-      return (j.line==='agg'?'Aggregates':'Ready-Mix')
-           + (j.part==='extras'?' extras':'')+' '+j.label;
+      return (j.line==='agg'?'Aggregates':'Ready-Mix')+' '+j.label;
     }
     /* state -> { cls, short, long }. The pill hides itself entirely once
        everything is in and nothing has gone wrong: no chrome for a solved
@@ -21513,7 +21443,7 @@ AMR.page('overview', {
       function step(){
         if(i>=jobs.length){ finish(); return; }
         var j=jobs[i++];
-        HIST.done[histJobKey(j)]=true;              // attempted, whatever comes back
+        HIST.done[j.era+'|'+j.line]=true;           // attempted, whatever comes back
         HIST.msg='Reading the '+histJobName(j)+' book\u2026';
         renderPill();
         google.script.run
@@ -21522,7 +21452,7 @@ AMR.page('overview', {
             step();
           })
           .withFailureHandler(function(e){ fail((e&&e.message)||String(e)); })
-          .CUBE_rebuildHistory({ line:j.line, era:j.era, part:j.part||'main' });
+          .CUBE_rebuildHistory({ line:j.line, era:j.era });
       }
       step();
     }
@@ -22458,37 +22388,21 @@ AMR.page('overview', {
        Deliberately NOT filtered by the page's market, period or window: this is
        about fixing the lookup tabs, not reading a slice.                      */
     var DQ_OPEN = {};
-    /* Ready-Mix has THREE lookup tabs and the cube can only see one of them.
-       Its RMX rows carry plant, mix and segment - there is no extras description
-       or material description in the fact table to match on - so EXTRAS LOOKUP
-       and CUSTOM FLAG misses come from the RMX report instead.
+    /* EVERY SECTION NOW COMES OUT OF THE MANIFEST, AND THAT IS THE FIX.
+       Two of them used to come from a second call (getRmxSuggestions) over the
+       LIVE workbook alone, because the fact table carried no material
+       description to match on. It does now — `extra` is a dimension of the
+       Ready-Mix line — so the extras miss list is collected while the cube
+       builds, across the live book AND every closed year, exactly like the mix
+       misses beside it.
 
-       getRmxSuggestions is a single call returning all three miss lists, a
-       classified proposal for every row, and the vocabulary each column already
-       uses, so the listing and the add-form are fed by the same fetch. */
-    var DQX = { state:'idle', product:[], extras:[], flag:[], options:{}, err:'' };
-    /* LOOKED UP, NOT ASSUMED. This call is now made from boot() as well as from
-       dqOpen(), so its answer can land after the switcher has emptied #appRoot -
-       and an unguarded $('dqModal').classList throws out of a callback nothing
-       is catching. Absent modal = nothing to repaint. */
+       That difference is the whole point. The old list could only ever see two
+       book years, so a material that traded in a closed year and is not in
+       EXTRAS LOOKUP was invisible: this panel reported "all matched" while the
+       Extras & VAP table quietly dropped that revenue into Unclassified — or,
+       when the call had not been made at all, reported nothing while the tables
+       were already wrong. One source, one count, no extra round trip. */
     function dqShown(){ var m=$('dqModal'); return !!(m && m.classList.contains('show')); }
-    function dqLoadRmx(force){
-      if(!IS_LIVE) return;
-      if(!force && (DQX.state==='loading' || DQX.state==='done')) return;
-      DQX.state='loading'; DQX.err='';
-      google.script.run
-        .withSuccessHandler(function(r){
-          if(!r || !r.ok){ DQX.state='error'; DQX.err='The RMX report could not be read.'; }
-          else { DQX.state='done'; DQX.product=r.product||[]; DQX.extras=r.extras||[];
-                 DQX.flag=r.flag||[]; DQX.options=r.options||{}; }
-          dqBadge(); if(dqShown()) renderDq();
-        })
-        .withFailureHandler(function(e){
-          DQX.state='error'; DQX.err=(e&&e.message)||String(e);
-          if(dqShown()) renderDq();
-        })
-        .getRmxSuggestions({});
-    }
 
     function dqSections(){
       var C0=cube(), out=[];
@@ -22509,36 +22423,24 @@ AMR.page('overview', {
           { k:'mix', fix:'rmxproduct', t:'Ready-Mix \u2014 mixes not in PRODUCT MASTER',
             hint:'Mixes with no PRODUCT MASTER row: they still count in volume and base revenue, but carry no strength '
                 +'class, product class or application, so the Strength and Product Class breakdowns miss them.',
+            where:'RMX - Price &amp; Volume' },
+          { k:'extra', fix:'rmxextras', t:'Ready-Mix \u2014 extras not in EXTRAS LOOKUP',
+            hint:'Extra and VAP descriptions with no EXTRAS LOOKUP row. Their revenue is still counted \u2014 in the '
+                +'ASP build-up and in the All-in figure \u2014 but it sits under \u201cUnclassified\u201d in the '
+                +'Extras & VAP table instead of under a real extra type.',
             where:'RMX - Price &amp; Volume' }
         ];
         groups.forEach(function(g){
-          var list=(u[g.k]||[]);
-          if(!list.length){ out.push({ id:line+'|'+g.k, title:g.t, ok:true }); return; }
+          var list=(u[g.k]||[]), n=(u.checked||{})[g.k];
+          /* HOW MANY WERE TESTED, not just how many failed. "all matched" and
+             "nothing was looked at" used to read the same on this line, which is
+             how a lookup that was never reaching the closed years could report
+             itself clean. `n` is the distinct values the cube put through the
+             tab; it is absent on a manifest built before this shipped. */
+          if(!list.length){ out.push({ id:line+'|'+g.k, title:g.t, ok:true, checked:n }); return; }
           out.push({ id:line+'|'+g.k, title:g.t, hint:g.hint, rows:list, fix:g.fix,
-                     where:g.where, unit:line==='agg'?'t':'m\u00b3' });
+                     checked:n, where:g.where, unit:line==='agg'?'t':'m\u00b3' });
         });
-        /* the other two Ready-Mix lookup tabs, from the RMX report */
-        if(line==='rmx'){
-          [ { k:'extras', fix:'rmxextras', t:'Ready-Mix \u2014 extras not in EXTRAS LOOKUP',
-              sug:function(r){ return r.category||''; }, sugLab:'Suggested category',
-              hint:'Extra and VAP descriptions with no EXTRAS LOOKUP row, so they cannot be put in an extra type. '
-                  +'They still count in revenue; only the by-extra-type tables miss them.' },
-            { k:'flag', fix:'rmxflag', t:'Ready-Mix \u2014 descriptions not in CUSTOM FLAG LOOKUP',
-              sug:function(r){ return r.flag||''; }, sugLab:'Suggested flag',
-              hint:'Material descriptions with no CUSTOM FLAG row, so they carry no custom flag.' }
-          ].forEach(function(g){
-            var id='rmx|'+g.k, list=DQX[g.k]||[];
-            if(DQX.state==='loading'||DQX.state==='idle'){ out.push({ id:id, title:g.t, loading:true }); return; }
-            if(DQX.state==='error'){ out.push({ id:id, title:g.t, note:DQX.err }); return; }
-            if(!list.length){ out.push({ id:id, title:g.t, ok:true }); return; }
-            out.push({ id:id, title:g.t, hint:g.hint, fix:g.fix, where:'RMX - Price &amp; Volume',
-                       simple:true, sugLab:g.sugLab,
-                       rows:list.map(function(r){
-                         return { value:r.value, rows:r.rows,
-                                  markets:(r.markets||[]).join(', '), sug:g.sug(r), band:r.band||'' };
-                       }) });
-          });
-        }
       });
       return out;
     }
@@ -22557,18 +22459,10 @@ AMR.page('overview', {
       return out;
     }
     /* One section's table. Built only for an open section — see renderDq. */
+    /* ONE SHAPE, because every section is the cube's now. There was a second
+       layout here for the two lists that used to come from getRmxSuggestions
+       (markets / proposal / confidence); nothing sets `simple` any more. */
     function dqTable(s){
-      if(s.simple){
-        return '<table><thead><tr><th>Value</th><th>Rows</th><th>Markets</th><th>'
-          +esc(s.sugLab||'Proposal')+'</th><th>Confidence</th></tr></thead><tbody>'
-          +s.rows.map(function(r){
-              return '<tr><td>'+esc(r.value||'(blank)')+'</td><td>'+fInt(r.rows)+'</td>'
-                +'<td style="text-align:left">'+esc(r.markets||'\u2014')+'</td>'
-                +'<td style="text-align:left">'+esc(r.sug||'\u2014')+'</td>'
-                +'<td>'+esc(r.band||'\u2014')+'</td></tr>';
-            }).join('')
-          +'</tbody></table>';
-      }
       return '<table><thead><tr><th>Value</th><th>Rows</th><th>Volume ('+s.unit+')</th>'
         +'<th>Revenue</th><th>Months</th></tr></thead><tbody>'
         +s.rows.map(function(r){
@@ -22589,55 +22483,60 @@ AMR.page('overview', {
       }
       var secs=dqSections(), un=dqUnmapped(), total=dqCount();
       var html='';
+      /* THE SECTIONS ARE SHOWN EVEN WHEN EVERYTHING MATCHED. A single
+         "\u2713 Everything matched" used to replace them, which is the one state
+         where the reader most needs to see WHAT was checked: a clean panel and a
+         panel that examined nothing are the same sentence otherwise, and this
+         one has been the second while looking like the first. Each section states
+         its own population; the line below is a summary, not a substitute. */
       if(!total && !un.length){
-        html='<div class="dq-clear">\u2713 Everything matched. No unmapped plants, mixes or revenue types on either line, '
-          +'and every market in the sheets is mapped on this page.</div>';
-      }else{
-        html=un.map(function(u){
-          return '<div class="dq-sec open"><div class="dq-head" style="cursor:default">'
-            +'<span class="dq-t">'+esc(u.t)+'</span><span class="dq-n2">'+u.vals.length+'</span></div>'
-            +'<div class="dq-body" style="display:block"><p class="hint">Add them to <code>OVERVIEW.MARKETS</code> '
-            +'in Config.gs to bring them onto this page.</p><p style="font:600 12px Inter;color:var(--ink)">'
-            +u.vals.map(esc).join(' \u00b7 ')+'</p></div></div>';
-        }).join('');
-        html+=secs.map(function(s){
-          if(s.loading) return '<div class="dq-sec ok"><span class="dq-t">'+esc(s.title)+'</span>'
-            +'<span class="dq-okmark" style="color:var(--muted)">reading\u2026</span></div>';
-          if(s.note) return '<div class="dq-sec ok"><span class="dq-t">'+esc(s.title)+'</span>'
-            +'<span class="dq-okmark" style="color:var(--neg)">'+esc(s.note)+'</span></div>';
-          if(s.ok) return '<div class="dq-sec ok"><span class="dq-t">'+esc(s.title)+'</span>'
-            +'<span class="dq-okmark">\u2713 all matched</span></div>';
-          var open=!!DQ_OPEN[s.id];
-          /* EVERY ROW, AND ONLY WHEN THE SECTION IS OPEN.
-             The listing used to stop at the 60 biggest by revenue and say so,
-             which on a section of 1,116 mixes is a footnote where the answer
-             should be — you cannot see what you are fixing, and the list is the
-             thing you check the fix against. The 60 was there because renderDq()
-             builds every section at once, open or shut, so five closed sections
-             of a thousand rows each was thirty thousand cells nobody had asked
-             to see. Building the table only for the section that is OPEN removes
-             the reason and the cap with it: one open section of 1,116 rows is
-             about 7,000 cells, which is nothing, and a closed one is a header. */
-          var body = open ? dqTable(s) : '';
-          return '<div class="dq-sec'+(open?' open':'')+'" data-dq="'+esc(s.id)+'">'
-            +'<button class="dq-head" type="button"><span class="chev">\u203A</span>'
-            +'<span class="dq-t">'+esc(s.title)+'</span><span class="dq-n2">'+s.rows.length+'</span></button>'
-            +'<div class="dq-body">'
-            +'<div style="display:flex;align-items:flex-start;gap:12px">'
-            +'<p class="hint" style="flex:1;margin-top:2px">'+esc(s.hint)+'</p>'
-            +'<div class="dq-act">'
-            +(s.fix?('<button class="dq-link" data-fix="'+esc(s.fix)+'" data-sec="'+esc(s.id)+'">\u002b Add these rows</button>'
-                   +'<button class="dq-link" data-open="'+esc(s.fix)+'">Open the tab \u2197</button>'):'')
-            +'</div></div>'
-            /* no append API for this tab yet, so say where to go rather than
-               offering a link that would open somebody else's lookup */
-            +(s.fix?'':('<p class="hint" style="margin-top:0">No add-rows form for this tab yet \u2014 '
-               +'fix it on the <b>'+(s.where||'source')+'</b> page, or in the sheet directly.</p>'))
-            +'<div id="lk_'+esc(s.id.replace("|","_"))+'"></div>'
-            +body
-            +'</div></div>';
-        }).join('');
+        html='<div class="dq-clear">\u2713 Everything matched. No unmapped plants, mixes, extras or revenue '
+          +'types on either line, and every market in the sheets is mapped on this page.</div>';
       }
+      html+=un.map(function(u){
+        return '<div class="dq-sec open"><div class="dq-head" style="cursor:default">'
+          +'<span class="dq-t">'+esc(u.t)+'</span><span class="dq-n2">'+u.vals.length+'</span></div>'
+          +'<div class="dq-body" style="display:block"><p class="hint">Add them to <code>OVERVIEW.MARKETS</code> '
+          +'in Config.gs to bring them onto this page.</p><p style="font:600 12px Inter;color:var(--ink)">'
+          +u.vals.map(esc).join(' \u00b7 ')+'</p></div></div>';
+      }).join('');
+      html+=secs.map(function(s){
+        if(s.ok) return '<div class="dq-sec ok"><span class="dq-t">'+esc(s.title)+'</span>'
+          +'<span class="dq-okmark">\u2713 '
+          +(s.checked ? ('all '+fInt(s.checked)+' matched')
+                      : (s.checked===0 ? 'nothing to check' : 'all matched'))+'</span></div>';
+        var open=!!DQ_OPEN[s.id];
+        /* EVERY ROW, AND ONLY WHEN THE SECTION IS OPEN.
+           The listing used to stop at the 60 biggest by revenue and say so,
+           which on a section of 1,116 mixes is a footnote where the answer
+           should be — you cannot see what you are fixing, and the list is the
+           thing you check the fix against. The 60 was there because renderDq()
+           builds every section at once, open or shut, so five closed sections
+           of a thousand rows each was thirty thousand cells nobody had asked
+           to see. Building the table only for the section that is OPEN removes
+           the reason and the cap with it: one open section of 1,116 rows is
+           about 7,000 cells, which is nothing, and a closed one is a header. */
+        var body = open ? dqTable(s) : '';
+        return '<div class="dq-sec'+(open?' open':'')+'" data-dq="'+esc(s.id)+'">'
+          +'<button class="dq-head" type="button"><span class="chev">\u203A</span>'
+          +'<span class="dq-t">'+esc(s.title)+'</span><span class="dq-n2">'+s.rows.length+'</span></button>'
+          +'<div class="dq-body">'
+          +'<div style="display:flex;align-items:flex-start;gap:12px">'
+          +'<p class="hint" style="flex:1;margin-top:2px">'+esc(s.hint)
+          +(s.checked ? (' <b>'+fInt(s.rows.length)+' of '+fInt(s.checked)
+                        +'</b> distinct values were not matched.') : '')+'</p>'
+          +'<div class="dq-act">'
+          +(s.fix?('<button class="dq-link" data-fix="'+esc(s.fix)+'" data-sec="'+esc(s.id)+'">\u002b Add these rows</button>'
+                 +'<button class="dq-link" data-open="'+esc(s.fix)+'">Open the tab \u2197</button>'):'')
+          +'</div></div>'
+          /* no append API for this tab yet, so say where to go rather than
+             offering a link that would open somebody else's lookup */
+          +(s.fix?'':('<p class="hint" style="margin-top:0">No add-rows form for this tab yet \u2014 '
+             +'fix it on the <b>'+(s.where||'source')+'</b> page, or in the sheet directly.</p>'))
+          +'<div id="lk_'+esc(s.id.replace("|","_"))+'"></div>'
+          +body
+          +'</div></div>';
+      }).join('');
       host.innerHTML=html;
       Object.keys(LK).forEach(function(id){ lkRender(id); });
     }
@@ -22645,8 +22544,9 @@ AMR.page('overview', {
        The same two write paths the AGG and RMX pages already use, reachable from
        here so an unmapped value can be fixed without leaving the Overview:
 
-         Aggregates plants -> getPvLookupForm / applyPvLookupRows   (REGION LOOKUP)
-         Ready-Mix mixes   -> getRmxSuggestions / applyRmxLookupRows (PRODUCT MASTER)
+         Aggregates plants    -> getPvLookupForm / applyPvLookupRows   (REGION LOOKUP)
+         Ready-Mix mixes      -> getRmxSuggestions / applyRmxLookupRows (PRODUCT MASTER)
+         Ready-Mix materials  -> getRmxSuggestions / applyRmxLookupRows (EXTRAS LOOKUP)
 
        Both are append-only, take a script lock, re-read the tab at write time and
        skip anything already there, and bump the page generation on success — so
@@ -22709,42 +22609,34 @@ AMR.page('overview', {
           .getPvLookupForm();
         return;
       }
-      /* EXTRAS and CUSTOM FLAG are already in hand from dqLoadRmx, so their
-         editors open with no round trip at all */
-      if(kind==='rmxextras' || kind==='rmxflag'){
-        var src=(kind==='rmxextras') ? (DQX.extras||[]) : (DQX.flag||[]);
-        var pick={}; (values||[]).forEach(function(v){ pick[String(v).trim().toUpperCase()]=1; });
-        var use=src.filter(function(r){ return pick[String(r.value).trim().toUpperCase()]; });
-        if(!use.length) use=src;
-        lkSet(secId,{ busy:false, kind:kind, opts:DQX.options||{},
-          rows:use.map(function(r){ var c={}; for(var q in r) c[q]=r[q];
-                                    return { key:r.value, sug:c, skip:false }; }) });
-        return;
-      }
-      /* RMX product: the mixes on screen are the CUBE's — the live report plus
-         the closed-year books — so the server is asked to classify exactly
-         those, rather than answering from the live report's own miss list.
-         Those two lists are not the same list: a mix that traded in a closed
-         year and has since been dropped from PRODUCT MASTER is only ever on
-         this one, and asking for the other one is what opened this form with
-         nothing in it while the section behind it listed 1,116 mixes. */
-      var send=(values||[]);
+      /* BOTH RMX FORMS CLASSIFY THE VALUES ON SCREEN, and that is deliberate.
+         The mixes and the materials listed behind this form are the CUBE's —
+         the live workbook plus every closed-year book — so the server is asked
+         to classify exactly those, rather than answering from the live report's
+         own miss list. Those two lists are not the same list: a value that
+         traded in a closed year and has since been dropped from the lookup is
+         only ever on this one, and asking for the other one is what opened this
+         form with nothing in it while the section behind it listed 1,116 mixes.
+         `kind` says which tab; the reply carries one list and the vocabulary
+         that tab already uses. */
+      var isX=(kind==='rmxextras'), send=(values||[]);
+      var tab=isX?'EXTRAS LOOKUP':'PRODUCT MASTER';
       google.script.run
         .withSuccessHandler(function(r){
           if(!r || !r.ok){ lkSet(secId,{busy:false,err:'Could not work out any suggestions.'}); return; }
-          var list=r.product||[];
-          lkSet(secId,{ busy:false, opts:(r.options||{}),
-            total:(values||[]).length, more:0,
-            /* the one empty case worth explaining: the codes are in the tab
+          var list=(isX ? r.extras : r.product)||[];
+          lkSet(secId,{ busy:false, kind:kind, opts:(r.options||{}),
+            total:send.length, more:0,
+            /* the one empty case worth explaining: the values are in the tab
                already and it is the cube that has not caught up */
             note:(!list.length && r.already)
-              ? ('All '+r.already+' of these are in PRODUCT MASTER already \u2014 the count above it '
+              ? ('All '+r.already+' of these are in '+tab+' already \u2014 the count above it '
                 +'is the month cube\u2019s, and updates when the cube next rebuilds.')
               : '',
             rows:list.map(function(p){ return { key:p.value, sug:p, skip:false }; }) });
         })
         .withFailureHandler(function(e){ lkSet(secId,{busy:false,err:(e&&e.message)||String(e)}); })
-        .getRmxSuggestions({ values: send });
+        .getRmxSuggestions({ values: send, kind: (isX?'extras':'product') });
     }
 
     function lkField(label, html){
@@ -22834,15 +22726,6 @@ AMR.page('overview', {
             +lkField('mat_prod_hier_3', lkSelect('hier3', p.hier3||'', (p.hier3All&&p.hier3All.length)?p.hier3All:OE.hier3))
             +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
         }).join('')+'</div>';
-      }else if(st.kind==='rmxflag'){
-        var OF=st.opts||{};
-        body='<div class="lk-body">'+rows.map(function(r,i){
-          if(r.skip) return '';
-          var p=r.sug||{};
-          return '<div class="lk-row" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
-            +lkField('Custom flag', lkSelect('flag', p.flag||'', OF.flag, 'v_flag'))
-            +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
-        }).join('')+'</div>';
       }else{
         var O=st.opts||{};
         body='<div class="lk-body">'+rows.map(function(r,i){
@@ -22909,14 +22792,14 @@ AMR.page('overview', {
       }else{
         google.script.run.withSuccessHandler(done).withFailureHandler(fail)
           .applyRmxLookupRows({
-            target: (st.kind==='rmxextras' ? 'extras' : st.kind==='rmxflag' ? 'flag' : 'product'),
+            target: (st.kind==='rmxextras' ? 'extras' : 'product'),
             rows: live.map(function(r){ return r.sug; }) });
       }
     }
     /* "Open the tab" — the server hands back the real gid links */
     function lkOpenTab(kind){
       if(!IS_LIVE) return;
-      var RMXTAB={ rmxproduct:'product', rmxextras:'extras', rmxflag:'flag' };
+      var RMXTAB={ rmxproduct:'product', rmxextras:'extras' };
       if(RMXTAB[kind]){
         google.script.run.withSuccessHandler(function(u){
           var url=u && u[RMXTAB[kind]];
@@ -22944,13 +22827,9 @@ AMR.page('overview', {
       CACHE={}; CUST_CACHE={}; RAW_CUST={}; FSC_DATA=null;
       XF_CACHE={}; XF_PEND={}; XF_ERR={};
       RXF_CACHE={}; RXF_PEND={}; RXF_ERR={};
-      /* the extras endpoint answers off the EXTRAS LOOKUP and PLANT LOOKUP the
-         write just changed, so its answers are stale in exactly the same way */
-      WEXT_CACHE={}; WEXT_PEND={}; WEXT_ERR={};
       DIMS_CACHE={}; DIMS_ERR={}; DIMS_PEND={};
       PM_CACHE={}; PM_ERR={}; PM_PEND={};
       XDATA={}; XDATA_PEND={};
-      DQX={ state:'idle', product:[], extras:[], flag:[], options:{}, err:'' };  // re-read after any generation bump
       RFUEL=null; RFUEL_ERR=null;                       // fuel facts are re-pulled under the new generation
       try{ if(window.AmrCache) AmrCache.del('rfsc:facts'); }catch(e){}
     }
@@ -22979,7 +22858,7 @@ AMR.page('overview', {
     function dqOpen(on){
       $('dqBack').classList.toggle('show', on);
       $('dqModal').classList.toggle('show', on);
-      if(on){ dqLoadRmx(false); renderDq(); }
+      if(on) renderDq();
     }
     /* ---- header: Update from source -------------------------------------
        syncAll() bumps the Price & Volume, RMX, Segment and KPI generations in
@@ -23647,21 +23526,11 @@ AMR.page('overview', {
 
       wireCube();
       load();
-      /* ---- THE DATA-QUALITY BADGE HAS TO ASK FOR HALF ITS COUNT -------------
-         Four of the six sections come from the month cube's manifest, which the
-         page already holds. The other two - EXTRAS LOOKUP and CUSTOM FLAG - are
-         not in the cube at all: the RMX fact table carries plant, mix and
-         segment, and no extras or material DESCRIPTION to match on, so they come
-         from getRmxSuggestions instead. That call used to be made only by
-         dqOpen(), which meant the badge in the header counted four sections and
-         the extras misses were invisible until somebody happened to open the
-         panel - and an extras row that matches nothing is exactly the one that
-         drops a type out of the Extras & VAP table above.
-         Asked once, behind the first paint (the same shape as prefetchXData) so
-         it costs the opening screen nothing; dqLoadRmx is a no-op on every call
-         after the first, and invalidateAll() puts it back to idle so a lookup
-         write re-asks. */
-      setTimeout(function(){ try{ dqLoadRmx(false); }catch(e){} }, 1200);
+      /* THE DATA-QUALITY BADGE ASKS FOR NOTHING. Every section it counts comes
+         out of the cube manifest this page already holds, so the count is right
+         from the first paint instead of waiting for somebody to open the panel.
+         A second call used to be made here for the two lookup tabs the fact
+         table could not see; the fact table sees them now. */
     }
     /* AmrCube is §E, above §P, so it exists by construction now — the poll
        resolves on its first call and is left alone rather than rewritten
