@@ -2941,22 +2941,33 @@ window.AMR = (function(){
         return m ? m[0] : '';
       });
 
-      /* THE SCREENSHOTS ARE FETCHED WHEN THE GUIDE IS OPENED, NOT WHEN THE PAGE
-         IS. This ran on mount - which is on every open of every page that has a
-         guide, for a panel that starts CLOSED and that most opens never touch.
-         It is not a cheap call either: getGuideImages reads each screenshot out
-         of Drive and base64s it, and it was measured at 6.2 and 6.5 seconds on
-         two consecutive opens on 26 Aug 2026. Apps Script runs one user's calls
-         END TO END (§D), so those six seconds were not happening alongside the
-         opening batch - they were happening IN FRONT OF IT, on a page that had
-         not drawn a number yet, to fill in pictures behind a closed panel.
-         Once per page load, still: FETCHED is latched before the call goes out,
-         so opening and closing the guide twice does not ask twice. */
-      var FETCHED = false;
-      function fetchImages(){
-        if (FETCHED) return;
-        FETCHED = true;
-        if (!LIVE){ ids.forEach(function(_, i){ slot(i, ''); }); return; }
+      /* THE SCREENSHOTS ARE FETCHED ON MOUNT, AND THAT IS DELIBERATE.
+         ------------------------------------------------------------------
+         This was briefly moved to the fab's click on 26 Aug 2026, on the
+         grounds that getGuideImages reads each screenshot out of Drive and
+         base64s it, was measured at 6.2 and 6.5 seconds, and was filling in
+         pictures behind a panel that starts CLOSED. THE PREMISE WAS WRONG AND
+         THE EXECUTION LOG SAYS SO. Two openings, both of them:
+
+           09:02:29  doGet            2.9s
+           09:02:33  getGuideImages   6.2s   -> still running at 09:02:39
+           09:02:36  getSourceTimes   3.5s   -> STARTED INSIDE THAT WINDOW
+           09:02:36  APP_batch        3.5s   -> STARTED INSIDE THAT WINDOW
+
+         Those six seconds were running ALONGSIDE the opening batch, not in
+         front of it, so deferring them saved the page load nothing at all and
+         cost the guide a six-second panel of "loading..." at the moment
+         somebody asks for help. Mounting is the right time: the fetch has the
+         whole of the page's own loading to happen in, and by the time anybody
+         presses the fab the pictures are already there.
+
+         What DID come out of measuring it is on the server: getGuideImages
+         caches each data URI under its Drive id (script.gs §3), so this is one
+         cache read for every user after the first of the six hours rather than
+         a Drive read and a base64 per screenshot per page open, for ever. That
+         half is kept and needs no change here - it makes mounting cheaper
+         still. */
+      if (LIVE){
         google.script.run
           .withSuccessHandler(function(uris){ (uris || []).forEach(function(u, i){ slot(i, u); }); })
           .withFailureHandler(function(e){
@@ -2964,12 +2975,11 @@ window.AMR = (function(){
             ids.forEach(function(_, i){ slot(i, ''); });
           })
           .getGuideImages(ids);
+      } else {
+        ids.forEach(function(_, i){ slot(i, ''); });
       }
 
-      fab.addEventListener('click', function(){
-        aside.classList.toggle('open');
-        if (aside.classList.contains('open')) fetchImages();
-      });
+      fab.addEventListener('click', function(){ aside.classList.toggle('open'); });
       aside.querySelector('#qgHide').addEventListener('click', function(){ aside.classList.remove('open'); });
       document.addEventListener('click', function(e){
         if (!aside.classList.contains('open')) return;
