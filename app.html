@@ -1296,6 +1296,14 @@ body[data-page="overview"] .ov-tabpanel{display:flex; flex-direction:column; gap
 body[data-page="overview"] .ov-tabpanel[hidden]{display:none}
 
 /* ===== KPI strip (smaller boxes + separate % boxes) ===== */
+/* THE STRIP SAYS WHAT IT IS FOR. It was the one panel on this page with no
+   heading, no eyebrow and no span on it, which is what let a strip reporting
+   one month sit above a table reporting another with nothing on screen to
+   check either against. Same words and the same weight as every .sub under a
+   panel heading, because it is the same sentence. */
+body[data-page="overview"] .kpi-span{font:500 11.5px Inter; color:var(--muted); margin:0 0 8px; line-height:1.4}
+body[data-page="overview"] .kpi-span b{font-weight:700; color:var(--blue-70)}
+body[data-page="overview"] .kpi-span:empty{display:none}
 body[data-page="overview"] .ov-line-head{display:flex; align-items:center; gap:10px; margin:2px 0 12px}
 body[data-page="overview"] .ov-line-head .name{font:800 13px Archivo; letter-spacing:.02em; color:var(--blue-100)}
 body[data-page="overview"] .ov-line-head .unit{font:600 11px Inter; color:var(--muted)}
@@ -17022,6 +17030,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
   <div class="ov-tabpanel" id="panelAgg" role="tabpanel">
 
     <div>
+      <p class="kpi-span" id="kpiAggSpan"></p>
       <div class="kpi-row" id="kpiAgg"></div>
     </div>
 
@@ -17169,6 +17178,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
   <div class="ov-tabpanel" id="panelRmx" role="tabpanel" hidden>
 
     <div>
+      <p class="kpi-span" id="kpiRmxSpan"></p>
       <div class="kpi-row" id="kpiRmx"></div>
     </div>
 
@@ -18389,8 +18399,50 @@ AMR.page('overview', {
       var t=cubeWinTotals(line);
       return (t && t.present && t.cpi!=null) ? t.cpi : null;
     }
+    /* ---- WHICH MONTHS A PAYLOAD IS ACTUALLY FOR -----------------------------
+       Every report on the server echoes it: the PV reports as `month`, the
+       Ready-Mix reports as `month`, getOverview as `month` / `rmxMonth`. Asking
+       for one month and being answered for another is the single failure on
+       this page nobody can see from the outside, so it is READ BACK rather than
+       assumed - and said out loud rather than used to refuse the paint, because
+       a page that will not draw is worse than a page that says which month it
+       drew. null when the payload carries nothing to check. */
+    function paidMonth(d, field){
+      if(!d) return null;
+      var m=d[field||'month'];
+      if(m==null) m=d.latestMonth;
+      m=Number(m)||0;
+      return (m>=1 && m<=12) ? m : null;
+    }
+    function monthName(m){ return (m>=1 && m<=12) ? MONTH_NAMES[m-1] : ''; }
+    /* '' when the answer is the month the page asked for, or when there is
+       nothing to check; otherwise the sentence that names what came back. */
+    function monthWarn(d, field){
+      var want=loadMonth(), got=paidMonth(d, field);
+      if(!want || !got || got===want) return '';
+      return 'These figures are for <b>'+esc(monthName(got))+'</b>, not '
+        +esc(monthName(want))+' \u2014 the source sheet has not been exported for '
+        +esc(monthName(want))+' yet.';
+    }
+    /* WHAT THE KPI STRIP IS FOR, in the same words every other card uses. In
+       window mode it is the window; on a server pick it is that pick's own
+       span, which is exactly what the Months slider is showing. */
+    function stripLabel(){
+      if(winMode()) return winLabel();
+      var sp=STATE.pick ? periodSpan(STATE.pick) : null;
+      if(!sp) return '';
+      return (sp.from===sp.to) ? ymLong(sp.to) : (ymLong(sp.from)+' \u2013 '+ymLong(sp.to));
+    }
     function renderKpiRow(hostId, t, unit, aspFmt){
       var host=$(hostId);
+      /* set BEFORE the early returns below - "no data for this selection" is
+         still a selection, and which months it found nothing in is the first
+         thing a reader wants */
+      var cap=$(hostId+'Span');
+      if(cap){
+        var sp=stripLabel();
+        cap.innerHTML=esc(scopeLabel())+(sp?(' \u00b7 '+esc(sp)):'');
+      }
       host.classList.remove('two'); host.classList.remove('six');
       if(!t || !t.present){
         host.innerHTML='<div class="kpi na">No data for this selection.</div>';
@@ -18846,6 +18898,10 @@ AMR.page('overview', {
           loadFsc();
           // footer diagnostics (aggregates markets not mapped on this page)
           var foot=[];
+          /* FIRST, because it is about the numbers rather than about the
+             mapping: the month this half was actually built for, whenever it
+             is not the one the page asked for. See monthWarn(). */
+          var aw=monthWarn(STATE.data,'month'); if(aw) foot.push(aw);
           if(STATE.data.unmatched && STATE.data.unmatched.pv && STATE.data.unmatched.pv.length){
             foot.push('Aggregates markets in the sheet that aren\u2019t mapped on this page: <code>'
               + STATE.data.unmatched.pv.map(esc).join('</code>, <code>') + '</code>. '
@@ -18881,6 +18937,11 @@ AMR.page('overview', {
           renderRmxKpis();
           // footer diagnostics (segment markets not mapped on this page)
           var rfoot=[];
+          /* the cross-report drives every panel on this tab; the getOverview
+             half only paints until it lands, so both are checked and whichever
+             is out of step says so once */
+          var rw=monthWarn(rxfData()) || monthWarn(STATE.data,'rmxMonth');
+          if(rw) rfoot.push(rw);
           var sg=STATE.data.seg;
           if(sg && sg.unmatched && sg.unmatched.length){
             rfoot.push('Product Segment markets in the sheet that aren\u2019t mapped on this page: <code>'
@@ -21908,7 +21969,19 @@ AMR.page('overview', {
       var buYm = BU ? cy.filter(function(ym){ return BU[ym]; }) : [];
 
       var notes=[];
-      notes.push((QUARTER?'Quarterly':'Monthly')+' volume and revenue add up to the KPI strip above. <b>'
+      /* THE CLAIM IS CONDITIONAL, because it used not to be true. This panel is
+         cube-fed on the slider's span and the strip above it was server-fed on
+         a different month, so "they add up" was the one line on the page that
+         would have caught the fault and instead concealed it. The months agree
+         now; the test stays, because a chart that quietly stops reconciling is
+         exactly what went unnoticed before. */
+      var sameSpan = winMode() || (windowPeriod()===STATE.pick);
+      notes.push((QUARTER?'Quarterly':'Monthly')+' volume and revenue '
+        +(sameSpan
+            ? 'add up to the KPI strip above'
+            : ('cover '+esc(ymLong(cy[0]))+' \u2013 '+esc(ymLong(cy[cy.length-1]))
+               +', which is not the span the KPI strip above is reporting'))
+        +'. <b>'
         +(QUARTER?'Quarterly':'Monthly')+' PPI does not</b> \u2014 '
         +'coverage is decided on whatever period is collapsed, so a pair can qualify in one '+GW+' and not across the window.');
       if(!isAgg){
