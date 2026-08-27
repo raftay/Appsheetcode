@@ -19834,12 +19834,13 @@ AMR.page('overview', {
            which is what the breakdown's own market rows are keyed by. MARKET is
            never highlighted with xfsel - it is undone by the market chips, not
            by the chip bar (see renderBreakdown). */
-        /* (blank) is cubeRowAsTable's name for a row whose market never
-           resolved - unmapped plants reach this table now that it draws every
-           surcharge-bearing group. It is a real number and it stays visible;
-           it is not a handle, because selecting MARKET='(blank)' matches
-           nothing and would empty the tab. */
-        var pick=!isTot && r.label!=='(blank)';
+        /* A ROW WHOSE MARKET NEVER RESOLVED HAS AN EMPTY KEY - unmapped plants
+           reach this table now that it draws every surcharge-bearing group. The
+           figure is real and stays visible; it is not a handle, because there is
+           no market to select and an empty MARKET would match nothing and empty
+           the tab. Asked of r.key, which is what a filter matches on, and not of
+           r.label, which is only how the empty key is drawn. */
+        var pick=!isTot && !!r.key;
         return '<tr'+(isTot?' class="tot"':'')
           +(pick?' class="xfrow" data-xf-f="MARKET" data-xf-v="'+esc(r.label)+'"':'')
           +'><td>'+esc(r.label)+'</td><td>'+fMoneyS(r.cyFsc)+'</td>'
@@ -22300,7 +22301,12 @@ AMR.page('overview', {
     /* the cube's row shape in the shape the server-fed tables are painted from */
     function cubeRowAsTable(g){
       var st=pyStale(), k=String(g.key==null?'':g.key);
-      return { label:k||'(blank)',
+      /* THE RAW KEY TRAVELS WITH THE ROW. `label` is for reading and carries a
+         placeholder when the key is empty; `key` is the thing the cube and the
+         cross-filter actually match on, and '' is a real answer - a caller that
+         has to know whether this row is selectable must not be asking whether
+         its label happens to read like the placeholder. */
+      return { key:k, label:k||'(blank)',
                cyVol:g.cyVol, pyVol:st?null:g.pyVol, volPct:st?null:g.volPct,
                cyAsp:g.cyAsp, pyAsp:st?null:g.pyAsp, aspPct:st?null:g.aspPct,
                ppi:st?null:g.ppi, cpi:st?null:g.cpi,
