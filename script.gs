@@ -7647,7 +7647,7 @@ var XF_FIELDS = {
 var XF_ORDER = ['MARKET', 'SUBMARKET1', 'PLANT_TYPE', 'MATERIAL_FAM', 'PROD_CLASS', 'PLANT', 'MATERIAL', 'CUST_PARENT'];
 var XF_TABLE_KEYS = ['MARKET', 'SUBMARKET1', 'PLANT_TYPE', 'MATERIAL_FAM', 'PROD_CLASS', 'PLANT', 'MATERIAL'];
 var XF_TABLE_CAP = { PLANT: 80, MATERIAL: 80 };     // biggest tables — options carry the full label list for search
-var XF_CHILD_CAP = 25;                              // segment children kept for the top N customers only
+var XF_CHILD_CAP = 25;                              // split children kept for the top N customers only
 
 function xfMetrics_(grpRows, ix) {
   var s = { pyVol: 0, cyVol: 0, pyRev: 0, cyRev: 0, pyFsc: 0, cyFsc: 0 };
@@ -7801,27 +7801,42 @@ function getCrossReport(opts) {
     tables.push({ key: f, rows: rows, trimmed: trimmed });
   });
 
-  /* customers — fully filtered, ranked, with Cust Segment children for the
-     top XF_CHILD_CAP (the split view only expands the top of the table) */
+  /* customers — fully filtered, ranked, with BOTH splits' children for the
+     top XF_CHILD_CAP (the split view only expands the top of the table).
+
+     TWO CHILD SETS, ONE PAYLOAD. The Overview's Top-10 panel breaks a customer
+     down by Cust Segment or by Sold To, and that pill is not part of the
+     cross-filter signature this report is cached under — it changes what one
+     panel shows of a selection, not the selection. Carrying only the pill that
+     was pressed would therefore mean re-reading the whole cross report to
+     answer the other one. They are the same grouping over the same records, so
+     both are built here; `children` stays the segment set because that is what
+     the table reads, and the client lifts the other into place. */
   var cg = {}, cOrder = [];
   recs.forEach(function (rc) {
     if (rc.nFail !== 0 || !rc.refOk) return;
     var p = rc.v.CUST_PARENT || '(no customer)';
-    var g = cg[p]; if (!g) { g = cg[p] = { rows: [], seg: {}, segOrder: [] }; cOrder.push(p); }
+    var g = cg[p]; if (!g) { g = cg[p] = { rows: [], seg: {}, segOrder: [], sold: {}, soldOrder: [] }; cOrder.push(p); }
     g.rows.push(rc.row);
     var sk = (ix.custSeg !== -1) ? (String(rc.row[ix.custSeg] || '(blank)').trim() || '(blank)') : '(blank)';
     var sg = g.seg[sk]; if (!sg) { sg = g.seg[sk] = []; g.segOrder.push(sk); }
     sg.push(rc.row);
+    var tk = (ix.soldTo !== -1) ? (String(rc.row[ix.soldTo] || '(blank)').trim() || '(blank)') : '(blank)';
+    var tg = g.sold[tk]; if (!tg) { tg = g.sold[tk] = []; g.soldOrder.push(tk); }
+    tg.push(rc.row);
   });
   var custRows = cOrder.map(function (p) {
     var g = cg[p], m = xfMetrics_(g.rows, ix); m.label = p; m._g = g; return m;
   }).sort(function (a, b) { return b.cyVol - a.cyVol; });
+  function xfKids_(order, byKey, ix2) {
+    return order.map(function (k) { var cm = xfMetrics_(byKey[k], ix2); cm.label = k; return cm; })
+      .sort(function (a, b) { return b.cyVol - a.cyVol; });
+  }
   custRows.forEach(function (m, i) {
     var g = m._g; delete m._g;
-    m.children = (i < XF_CHILD_CAP)
-      ? g.segOrder.map(function (sk) { var cm = xfMetrics_(g.seg[sk], ix); cm.label = sk; return cm; })
-          .sort(function (a, b) { return b.cyVol - a.cyVol; })
-      : [];
+    var top = (i < XF_CHILD_CAP);
+    m.children = top ? xfKids_(g.segOrder, g.seg, ix) : [];
+    m.childrenSoldTo = (top && ix.soldTo !== -1) ? xfKids_(g.soldOrder, g.sold, ix) : [];
   });
 
   var pyAsp = totals.pyAsp, volImpact = pyAsp * (totals.cyVol - totals.pyVol);

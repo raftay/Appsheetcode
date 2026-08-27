@@ -17540,9 +17540,10 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
           <input id="custSearchIn" type="text" placeholder="Search &amp; filter customers…" autocomplete="off">
           <div class="ov-results" id="custSearchRes"></div>
         </div>
-        <div class="seg pills" id="custSplit" role="group" aria-label="Segment split">
+        <div class="seg pills" id="custSplit" role="group" aria-label="Customer breakdown">
           <button data-split="off" aria-pressed="true">By customer</button>
-          <button data-split="on" aria-pressed="false">Split by segment</button>
+          <button data-split="CUST_SEGMENT" aria-pressed="false">Customer segment</button>
+          <button data-split="SOLD_TO" aria-pressed="false">Sold&nbsp;to</button>
         </div>
       </div>
       <div id="custBody"><div class="ov-mini">Loading customers…</div></div>
@@ -17774,7 +17775,27 @@ AMR.page('overview', {
        win     = the numbers come from the month cube rather than the server. True
                  for a custom window AND for both Prev-month picks, which are the
                  same shapes one month back and so cannot come off the server. */
-    var STATE = { period:'MTD', pick:'MTD', sel:'ALL', split:false, tab:'agg', data:null, win:false };
+    var STATE = { period:'MTD', pick:'MTD', sel:'ALL', split:'', tab:'agg', data:null, win:false };
+    /* THE TOP-10 CUSTOMERS PANEL SPLITS ON A NAMED DIMENSION, NOT A BOOLEAN.
+       STATE.split is '' (no split) or one of CUST_SPLIT's keys, and those keys
+       are the SERVER'S OWN secondary names (CUST_SECONDARY in script.gs) so
+       loadCustomers hands the value straight to getCustomerReport with nothing
+       to translate. It stayed truthy-or-empty deliberately: every
+       `STATE.split ? … : …` on this page still reads as "is the table
+       expanded", and only the places that need to know WHICH dimension go
+       through splitDef().
+
+       Each entry names where that dimension lives in the three owners of this
+       panel — `dim` in the month cube, `xfKids` in the cross-filter payload,
+       and the key itself on the server — because the panel is painted by
+       whichever one is driving (see repaintPanel) and all three have to answer
+       the same pill. */
+    var CUST_SPLIT = {
+      CUST_SEGMENT: { dim:'custSeg', xfKids:'children',       sub:'customer segment', mix:'Segment mix' },
+      SOLD_TO:      { dim:'soldTo',  xfKids:'childrenSoldTo', sub:'sold-to',          mix:'Sold-to mix' }
+    };
+    function splitDef(){ return CUST_SPLIT[STATE.split] || null; }
+    function splitSub(){ var s=splitDef(); return s ? ' · split by '+s.sub : ''; }
     /* pick -> the server payload it needs. Prev-month MTD still wants the MTD
        payload: the Product Segment sheet splits MTD and YTD into their own tabs
        and those tabs are ALREADY last month's, so the MTD tab is exactly what a
@@ -18454,24 +18475,36 @@ AMR.page('overview', {
         return { key:f, rows:rows, trimmed:trimmed };
       });
 
-      var cg={}, colC=cols.CUST_PARENT, colS=cols.CUST_SEG;
+      /* BOTH CHILD SETS, IN THE ONE PASS. The Top-10 panel's breakdown pills
+         flip between customer segment and sold-to WITHOUT changing xfSig(), so a
+         payload carrying only one of them would need a full recompute — or, on
+         the server fallback, a round trip — to answer the other pill. Built for
+         the same top 25 rows as before and costing one more accumulator per row.
+         SOLD_TO is guarded for the same reason CPI is: a dataset built before it
+         was carried has no such column, and then the sold-to children are absent
+         rather than wrong — the same shape the table already draws for a
+         customer that has only one child. */
+      var cg={}, colC=cols.CUST_PARENT, colS=cols.CUST_SEG, colT=cols.SOLD_TO;
       for(x=0;x<full.length;x++){
         var i4=full[x], cc=colC[i4];
-        var e=cg[cc]; if(!e) e=cg[cc]={a:newAcc(), seg:{}};
+        var e=cg[cc]; if(!e) e=cg[cc]={a:newAcc(), seg:{}, sold:{}};
         accRow(e.a, i4);
         var sc=colS[i4], sa=e.seg[sc]; if(!sa) sa=e.seg[sc]=newAcc();
         accRow(sa, i4);
+        if(colT){ var tc=colT[i4], ta=e.sold[tc]; if(!ta) ta=e.sold[tc]=newAcc(); accRow(ta, i4); }
       }
       var custRows=Object.keys(cg).map(function(cc2){
         var e2=cg[cc2], m=finAcc(e2.a, D.dicts.CUST_PARENT[+cc2]||'(no customer)');
-        m._seg=e2.seg; return m;
+        m._seg=e2.seg; m._sold=e2.sold; return m;
       }).sort(function(p,q){ return q.cyVol-p.cyVol; });
+      function xfKidsOf(acc, dict){
+        return Object.keys(acc).map(function(k4){ return finAcc(acc[k4], dict[+k4]||'(blank)'); })
+                 .sort(function(p,q){ return q.cyVol-p.cyVol; });
+      }
       custRows.forEach(function(m,idx){
-        var seg=m._seg; delete m._seg;
-        m.children = (idx<25)
-          ? Object.keys(seg).map(function(sc2){ return finAcc(seg[sc2], D.dicts.CUST_SEG[+sc2]||'(blank)'); })
-              .sort(function(p,q){ return q.cyVol-p.cyVol; })
-          : [];
+        var seg=m._seg, sold=m._sold; delete m._seg; delete m._sold;
+        m.children       = (idx<25) ? xfKidsOf(seg, D.dicts.CUST_SEG) : [];
+        m.childrenSoldTo = (idx<25 && colT) ? xfKidsOf(sold, D.dicts.SOLD_TO) : [];
       });
 
       var options={};
@@ -18542,14 +18575,14 @@ AMR.page('overview', {
       if(xdataReady()){
         var rep=xfComputeLocal(XDATA[xdataKey()], xfFilters(), { values:XREF.values.slice(), mode:XREF.mode });
         XF_CACHE[sig]=rep;
-        if(window.AmrCache && xfIsPrimary()) AmrCache.set('xf:'+sig, rep);
+        if(window.AmrCache && xfIsPrimary()) AmrCache.set('xf2:'+sig, rep);
         renderXfPanels(); renderRefine(); xfDropsRefresh();
         return;
       }
       prefetchXData();   // not in yet — start it, and fall back to the server for this one
 
       if(!XF_CACHE[sig] && window.AmrCache){
-        var v=AmrCache.get('xf:'+sig);
+        var v=AmrCache.get('xf2:'+sig);
         if(v) XF_CACHE[sig]=v;
       }
       if(XF_CACHE[sig]){ renderXfPanels(); return; }
@@ -18561,7 +18594,7 @@ AMR.page('overview', {
             XF_PEND[sig]=false;
             if(d && d.ok){
               XF_CACHE[sig]=d; delete XF_ERR[sig];
-              if(window.AmrCache && xfIsPrimary()) AmrCache.set('xf:'+sig, d);
+              if(window.AmrCache && xfIsPrimary()) AmrCache.set('xf2:'+sig, d);
             }
             else XF_ERR[sig]='The filtered report came back empty.';
             if(sig===xfSig() && xfActive() && STATE.tab==='agg'){ renderXfPanels(); renderRefine(); xfDropsRefresh(); }
@@ -19624,15 +19657,26 @@ AMR.page('overview', {
     function cubeCustomers(){
       var cg=cubeWinRows('agg','custParent');
       if(!cg) return null;
-      var parents=cg.rows.map(cubeRowAsTable);
-      if(STATE.split){
+      var parents=cg.rows.map(cubeRowAsTable), sp=splitDef(), splitMissing=false;
+      if(sp){
         /* one grouped pass per top customer would be ten queries; one pass over
-           custParent|custSeg is not available, so the split is read from the
-           segment dimension filtered to that customer — done for the ten rows
-           that are actually drawn, and no further. */
-        parents.slice(0,10).forEach(function(p){
-          var kids=cubeGroups('agg','custSeg', { custParent:[p.label] });
-          p.children=(kids||[]).map(cubeRowAsTable).filter(function(k){ return k.cyVol||k.pyVol; })
+           custParent|<split dim> is not available, so the split is read from the
+           split's own dimension filtered to that customer — done for the ten
+           rows that are actually drawn, and no further.
+
+           A CUBE BUILT BEFORE THE DIMENSION EXISTED MUST NOT LOOK LIKE A
+           CUSTOMER WITH NO CHILDREN. soldTo is carried on the Aggregates line,
+           but a manifest built before it was has no such dim, and the cube's
+           answer to a groupBy it cannot resolve is not an error: it drops every
+           row into ONE bucket keyed '\u0001all' (see pvCubeGrouped). So both are
+           checked — the dim has to be in the manifest, and the sentinel row is
+           dropped if it turns up anyway — and the panel says the split is
+           unavailable instead of quietly drawing an empty one. */
+        splitMissing=!cubeHasDim('agg', sp.dim);
+        if(!splitMissing) parents.slice(0,10).forEach(function(p){
+          var kids=cubeGroups('agg', sp.dim, { custParent:[p.label] });
+          p.children=(kids||[]).filter(function(k){ return k.key && String(k.key).charCodeAt(0)!==1; })
+                      .map(cubeRowAsTable).filter(function(k){ return k.cyVol||k.pyVol; })
                       .sort(function(a,b){ return b.cyVol-a.cyVol; });
         });
       }
@@ -19640,15 +19684,16 @@ AMR.page('overview', {
       var others=rest.reduce(function(s,p){ s.cyVol+=p.cyVol; s.pyVol+=(p.pyVol||0); return s; },{cyVol:0,pyVol:0});
       others.count=rest.length;
       return { top:top, others:others, total:cg.total?cubeRowAsTable(cg.total):{cyVol:0,pyVol:0},
-               customerCount:parents.length, parents:parents };
+               customerCount:parents.length, parents:parents, splitMissing:splitMissing };
     }
     function renderWinCustomers(){
       var d=cubeCustomers();
       if(!d){ showPanel('custBody'); clearCH('cust'); winWaiting('custBody'); return; }
       if(!d.top.length){ hidePanel('custBody'); renderWinFscCustomers(null); return; }
       showPanel('custBody');
-      $('custScope').textContent=scopeLabel()+' · by customer parent'+(STATE.split?' · split by segment':'')
-        +' · '+winLabel();
+      $('custScope').textContent=scopeLabel()+' · by customer parent'+splitSub()
+        +' · '+winLabel()
+        +(d.splitMissing?' · '+((splitDef()||{}).sub||'that split')+' is not in the loaded months':'');
       renderCustomers(d);
       renderWinFscCustomers(d);
     }
@@ -20385,10 +20430,20 @@ AMR.page('overview', {
     }
     function renderXfCustomers(d, err){
       var body=$('custBody');
-      xfSubSet('custScope','Filtered · ',' · by customer parent'+(STATE.split?' · split by segment':''));
+      xfSubSet('custScope','Filtered · ',' · by customer parent'+splitSub());
       if(err){ clearCH('cust'); body.innerHTML='<div class="ov-notice">Could not load customers: '+esc(err)+'</div>'; return; }
       if(!d){ clearCH('cust'); body.innerHTML='<div class="ov-mini">Loading customers…</div>'; return; }
+      /* BOTH child sets ride along in the cross payload — getCrossReport and
+         xfComputeLocal build them in the same pass — so flipping the breakdown
+         re-paints from what is already here: it does not change xfSig(), and so
+         costs neither a recompute nor a server round trip. `children` is the
+         segment split, which is what the table reads, so only sold-to has to be
+         lifted into place, and onto COPIES: the payload behind it is cached. */
+      var kidsKey=(splitDef()||{}).xfKids||'children';
       var ranked=(d.customers&&d.customers.rows)||[];
+      if(kidsKey!=='children') ranked=ranked.map(function(r){
+        var o={}; for(var k in r) o[k]=r[k]; o.children=r[kidsKey]||[]; return o;
+      });
       var top=ranked.slice(0,10), rest=ranked.slice(10);
       var others={cyVol:0, pyVol:0, count:rest.length};
       rest.forEach(function(p){ others.cyVol+=(p.cyVol||0); others.pyVol+=(p.pyVol||0); });
@@ -22053,6 +22108,14 @@ AMR.page('overview', {
       if(!isAll() && !R.filters.market) return null;
       return cube().query({ line:line, cyMonths:cy, pyMonths:cy.map(function(m){ return ymAdd(m,-12); }),
                             filters:R.filters });
+    }
+    /* Does this line's LOADED manifest carry that dimension? A cube built before
+       a dim existed answers a groupBy on it with the '\u0001all' sentinel, which
+       is a grand total wearing a row's clothes — so a caller that can be asked
+       for a newer dim has to ask this first. */
+    function cubeHasDim(line, d){
+      var C0=cube(), m=C0 && C0.manifest && C0.manifest(line);
+      return !!(m && m.dims && m.dims.indexOf(d)!==-1);
     }
     function cubeWinRows(line, groupBy, min){
       var rows=cubeGroups(line, groupBy);
@@ -24263,7 +24326,7 @@ AMR.page('overview', {
     }
     function scopeSig(){ var s=pvScope(); return s==='__ALL__' ? 'ALL' : s.slice().sort().join('|'); }
     function scopeLabel(){ return isAll() ? 'All markets' : selectedKeys().map(labelOf).join(', '); }
-    function custKey(){ return STATE.period+'|m'+loadMonth()+'|'+scopeSig()+'|'+(STATE.split?'seg':'cust'); }
+    function custKey(){ return STATE.period+'|m'+loadMonth()+'|'+scopeSig()+'|'+(STATE.split||'cust'); }
     function scheduleCustomers(){ if(custTimer) clearTimeout(custTimer); custTimer=setTimeout(loadCustomers, 220); }
 
     function loadCustomers(){
@@ -24273,7 +24336,7 @@ AMR.page('overview', {
          Surcharge customers panel, which always shows the unfiltered scope */
       var xfOwns = xfActive() && STATE.tab==='agg';
       var body=$('custBody');
-      if(!xfOwns) $('custScope').textContent = scopeLabel()+' · by customer parent'+(STATE.split?' · split by segment':'');
+      if(!xfOwns) $('custScope').textContent = scopeLabel()+' · by customer parent'+splitSub();
       if(STATE.data.errors && STATE.data.errors.pv){
         if(!xfOwns){
           hidePanel('custBody');
@@ -24296,7 +24359,10 @@ AMR.page('overview', {
 
       var scope=pvScope();
       var mkts = (scope==='__ALL__') ? ['__ALL__'] : scope;
-      var secondary = STATE.split ? 'CUST_SEGMENT' : 'NONE';
+      /* the pill's key IS the server's secondary name (CUST_SECONDARY in
+         script.gs), so there is nothing to map here and no second list to keep
+         in step with it */
+      var secondary = STATE.split || 'NONE';
 
       /* ONE CALL PER MARKET, IN ONE ROUND TRIP. Customer data is fetched per
          selected market and merged here — a dedicated getOverviewCustomers on
@@ -24454,7 +24520,7 @@ AMR.page('overview', {
     function renderCustomers(d){
       var body=$('custBody');
       clearCH('cust');
-      var top=d.top||[];
+      var top=d.top||[], sp=splitDef();
       if(!top.length){ hidePanel('custBody'); return; }
       showPanel('custBody');
       var LAB='font:700 9.5px Archivo;letter-spacing:.14em;text-transform:uppercase;color:var(--blue-70);margin:0 0 8px';
@@ -24463,7 +24529,7 @@ AMR.page('overview', {
         + '<div>'
           + '<p style="'+LAB+'">Customer share · '+(volRev()?'volume':'this year')+'</p>'
           + '<div class="ov-cbox tall"><canvas id="cust_share"></canvas></div>'
-          + (STATE.split ? '<p style="'+LAB+';margin-top:16px">Segment mix · top 10</p><div class="ov-cbox tall"><canvas id="cust_seg"></canvas></div>' : '')
+          + (sp ? '<p style="'+LAB+';margin-top:16px">'+esc(sp.mix)+' · top 10</p><div class="ov-cbox tall"><canvas id="cust_seg"></canvas></div>' : '')
         + '</div>'
         + '<div>'
           + '<p style="'+LAB+'">Top 10 · '+(volRev()?'volume':'volume vs last year')+'</p>'
@@ -24481,7 +24547,7 @@ AMR.page('overview', {
       custDonut('cust', $('cust_share'), pieLabels, pieData, pieCols,
         function(i){ if(i<top.length) custPick(i); });
 
-      if(STATE.split){
+      if(sp){
         var segMap={}, segOrder=[];
         top.forEach(function(c){ (c.children||[]).forEach(function(ch){ if(!(ch.label in segMap)){ segMap[ch.label]=0; segOrder.push(ch.label); } segMap[ch.label]+=ch.cyVol; }); });
         if(segOrder.length) custDonut('cust', $('cust_seg'), segOrder, segOrder.map(function(l){return segMap[l];}), segOrder.map(function(_,i){return CUST_COLORS[i%CUST_COLORS.length];}));
@@ -24489,7 +24555,7 @@ AMR.page('overview', {
 
       custBar('cust', $('cust_bar'), top);
 
-      if(STATE.split){
+      if(sp){
         [].forEach.call(body.querySelectorAll('tr.parent.expandable'), function(tr){
           var cell=tr.querySelector('td');
           cell.addEventListener('click', function(e){
@@ -24664,17 +24730,19 @@ AMR.page('overview', {
         'This panel and the by-market table come from different tables, so small differences in totals are expected.');
     }
 
-    /* segment split toggle */
+    /* customer breakdown toggle: off / customer segment / sold-to */
     $('custSplit').addEventListener('click', function(e){
       var b=e.target.closest('button'); if(!b) return;
-      var on=(b.dataset.split==='on');
-      if(on===STATE.split) return;
-      STATE.split=on;
+      /* anything that is not a known split is "off" - '' is not a key of
+         CUST_SPLIT, so the default pill falls through this test too */
+      var mode=b.dataset.split; if(!(mode in CUST_SPLIT)) mode='';
+      if(mode===STATE.split) return;
+      STATE.split=mode;
       [].forEach.call(this.querySelectorAll('button'),function(x){x.setAttribute('aria-pressed', x===b);});
-      /* the cube splits by customer segment too - cubeCustomers() reads
+      /* the cube carries both split dimensions too - cubeCustomers() reads
          STATE.split - so a window answers this toggle itself */
       repaintPanel(renderWinCustomers,
-        function(){ var sig=xfSig(); renderXfCustomers(XF_CACHE[sig], XF_ERR[sig]); },  // segment children ride along in the cross payload
+        function(){ var sig=xfSig(); renderXfCustomers(XF_CACHE[sig], XF_ERR[sig]); },  // both child sets ride along in the cross payload
         loadCustomers);
     });
 
