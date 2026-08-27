@@ -5018,8 +5018,8 @@ window.AmrCube = (function(){
        built on the Aggregates line, which is the only one carrying soldTo.
 
        Both indexes carry the same four slots and the same arithmetic; CPI
-       differs ONLY in its key. There is no per-index threshold and pool() takes
-       no argument to pass one in. See script.gs piIndex_. */
+       differs in its key and in the ASP gate it passes to pool(). See
+       script.gs §1 COVERAGE for what that gate is and what it costs. */
     var G = {}, order = [];
     var soldToCol = (isAgg && man.dims.indexOf('soldTo') !== -1) ? 'soldTo' : null;
     function bucket(key){
@@ -5116,18 +5116,31 @@ window.AmrCube = (function(){
        weight x the pair's own ASP move, index = Sum f / Sum w - which is what
        keeps the browser's answer and the server's the same number.
 
-       THE GRAIN IS THE ONLY DIFFERENCE between PPI and CPI. The line's floors
-       (mv/mr) apply to both, there is no per-index threshold, and pool() takes
-       no argument to pass one in - which is what stops a second difference
-       creeping back in later. A CPI-only gate lived here until 2026-08-27;
-       script.gs §1 COVERAGE records what removing it costs. */
-    function pool(pairs){
+       The line's floors (mv/mr) apply to both indices. `extra` is script.gs §1's
+       cpi block for CPI and null for PPI, where every test collapses to the
+       "> 0" it has always run. */
+    /* NULL, NOT AN EMPTY GATE, WHEN THE MANIFEST DOES NOT CARRY THE BLOCK.
+       Reading a missing key with `|| 0` took it for "no gate at all", and a
+       manifest is cached on the device: the Overview published +141.7% for 2026
+       Jan-Aug for as long as that copy stood, because one credit-cancelled pair
+       moved +492,409% and nothing took it out. ovcCovTok_ (script.gs §1/§8)
+       makes a COVERAGE edit move the generation, which wipes that copy - this is
+       the other half: until the fresh manifest lands, CPI is NOT REPORTED. The
+       column is dropped exactly as it is on a line with no sold-to. An absent
+       column is a question the page declines to answer; a wrong one is not. */
+    var cpiCov = (cov && cov.cpi) ? cov.cpi : null;
+    function pool(pairs, extra){
       var w = 0, f = 0;
+      var xv = extra ? (extra.minVol || 0) : 0,
+          xr = extra ? (extra.minRev || 0) : 0,
+          xa = extra ? (extra.minAsp || 0) : 0;
       for (var pk in pairs){
         var o2 = pairs[pk];
         if (!(o2[0] > 0 && o2[1] > 0 && o2[2] > 0 && o2[3] > 0)) continue;   // the app's own coverage
         if (!(o2[0] > mv && o2[1] > mv && o2[2] > mr && o2[3] > mr)) continue; // the line's floors
+        if (!(o2[0] > xv && o2[1] > xv && o2[2] > xr && o2[3] > xr)) continue; // CPI's own
         var pyAsp = o2[3] / o2[1], cyAsp = o2[2] / o2[0];
+        if (xa > 0 && !(cyAsp > xa && pyAsp > xa)) continue;   // a price, not a credit residue
         w += o2[2];
         f += o2[2] * ((cyAsp - pyAsp) / pyAsp);
       }
@@ -5135,8 +5148,8 @@ window.AmrCube = (function(){
     }
     var rows = order.map(function(k){
       var g = G[k];
-      var pi = pool(g.pairs);
-      var ci = soldToCol ? pool(g.cpairs) : null;
+      var pi = pool(g.pairs, null);
+      var ci = (soldToCol && cpiCov) ? pool(g.cpairs, cpiCov) : null;
       delete g.pairs; delete g.cpairs;                 // don't hand the caller the scratch indexes
       g.cyAsp = g.cyVol ? g.cyRev / g.cyVol : 0;
       g.pyAsp = g.pyVol ? g.pyRev / g.pyVol : 0;
@@ -18411,7 +18424,8 @@ AMR.page('overview', {
            than an arithmetic one - three dictionaries multiplied together
            overflow the safe integer range on a big period. Absent on a payload
            built before SOLD_TO was carried, and then CPI is simply not reported
-           and the column is not drawn. */
+           and the column is not drawn — the same outcome as a payload that
+           carries no cpiCoverage block (see poolPairs below). */
         if(D.cols.SOLD_TO){
           var pcArr=new Array(D.n), S=D.cols.SOLD_TO;
           for(var z2=0; z2<D.n; z2++) pcArr[z2]=P[z2]+'|'+S[z2]+'|'+M[z2];
@@ -18467,15 +18481,19 @@ AMR.page('overview', {
       }
       /* ONE pooling pass, run at each grain - the same arithmetic as script.gs
          piIndex_ and as the cube's pool(), which is what makes the three agree.
-         Coverage keeps a pair in BOTH sums or drops it from both, so the weight
-         is the CY revenue of exactly the pairs that earned it.
-         PPI and CPI differ in the grain and in nothing else - there is no
-         per-index threshold to carry in the payload any more. */
-      function poolPairs(bag){
+         A pair that fails the gate leaves BOTH sums, so the weight is the CY
+         revenue of exactly the pairs that earned it.
+         null, not an empty gate, when the payload predates the block: a dataset
+         that cannot say what the gate is reports NO CPI rather than an ungated
+         one. Same rule and the same reason as the cube's pool(). */
+      var CPICOV=(D && D.cpiCoverage) ? D.cpiCoverage : null;
+      function poolPairs(bag, extra){
         var w=0,f=0;
+        var xv=extra?(extra.minVol||0):0, xr=extra?(extra.minRev||0):0, xa=extra?(extra.minAsp||0):0;
         for(var k in bag){ var c=bag[k];
-          if(c.pv>0&&c.cv>0&&c.pr>0&&c.cr>0){
+          if(c.pv>xv&&c.cv>xv&&c.pr>xr&&c.cr>xr){
             var pa=c.pr/c.pv, ca=c.cr/c.cv;
+            if(xa>0 && !(ca>xa && pa>xa)) continue;
             w+=c.cr;
             f+=c.cr*((ca-pa)/pa);
           }
@@ -18485,8 +18503,8 @@ AMR.page('overview', {
       function finAcc(o,label){
         var cyAsp=o.cyVol?o.cyRev/o.cyVol:0, pyAsp=o.pyVol?o.pyRev/o.pyVol:0;
         var live=(o.cyRev>0&&o.pyRev>0);
-        var pi=poolPairs(o.pm);                 // PPI: plant x material
-        var ci=D._pc?poolPairs(o.pc):null;      // CPI: plant x sold-to x material
+        var pi=poolPairs(o.pm, null);                          // PPI: plant x material
+        var ci=(D._pc && CPICOV)?poolPairs(o.pc, CPICOV):null;  // CPI: plant x sold-to x material
         return { label:label, cyVol:o.cyVol, pyVol:o.pyVol,
           volPct:o.pyVol?(o.cyVol-o.pyVol)/o.pyVol:0,
           cyAsp:cyAsp, pyAsp:pyAsp, aspPct:pyAsp?(cyAsp-pyAsp)/pyAsp:0,

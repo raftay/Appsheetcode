@@ -658,37 +658,60 @@ var APP_CONFIG = {
      *
      * WHERE THEY APPLY. These are the CUBE's floors: app.html's pool()
      * tests them, and it tests them for PPI and CPI alike. The server's
-     * raw-row path (piIndex_, §7) carries no floors at all and tests only
+     * raw-row path (piIndex_, §7) carries no floors of its own and tests
      * "> 0" — for both indices equally.
      *
-     * THERE IS NO `cpi` KEY HERE, deliberately. CPI and PPI differ in the
-     * GRAIN they pool at and in nothing else: same coverage, same weight,
-     * same factor, same pooling. A floor that applied to one and not the
-     * other would be a second difference, and piIndex_ now takes no
-     * coverage argument at all so it cannot quietly become one again.
+     * ------------------------------------------------------------------
+     * cpi — THE CPI ASP GATE, AND ONLY CPI'S.
+     * ------------------------------------------------------------------
+     * A PAIR HAS TO SHOW A REAL PRICE IN BOTH YEARS. `minAsp` is the whole
+     * rule and it is $1.00/t: both years must average more than a dollar a
+     * tonne. It is a GATE, not an outlier filter — a pair that fails leaves
+     * the WEIGHT as well as the FACTOR, so the index stays a straight
+     * weighted mean of the pairs it covers rather than a diluted one.
      *
-     * WHAT THAT COSTS, because it should not read as an oversight. CPI's
-     * finer grain isolates pairs that PPI pools away, and a degenerate one
-     * moves the index hard:
+     * WHY CPI AND NOT PPI. The grain is what makes it necessary. CPI pools
+     * at plant × sold-to × material, so a degenerate pair stands alone
+     * where PPI's coarser key pools it away:
      *
      *   3P36 / Brock Aggregates / 9141 — a March 2025 invoice of $693.98
      *   met an April credit of $693.84, leaving FOURTEEN CENTS against 47
-     *   tonnes. Prior-year ASP $0.003/t, "price move" +492,409%.
+     *   tonnes. Prior-year ASP $0.003/t, "price move" +492,409%, and 135
+     *   of a 141.7% answer by itself. $0.003/t is not a price, and this
+     *   gate is what says so.
+     *
+     * WHAT $1.00 DOES NOT CATCH, because it is the number that will be
+     * asked about:
      *
      *   3Q00 / JNF Ready Mix / 9055 — 378 t at $2.343/t last year against
      *   24,593 t at $22.75/t this year: $559,436 of weight at +870.9%,
-     *   which is +3.13pp of the all-markets index on its own.
+     *   which is +3.13pp of the all-markets index on its own. IT PASSES AT
+     *   $1.00 and stays in the index. The $3.00 floor this gate carried
+     *   until 2026-08-27 took it out, on the reading that $2.343/t is
+     *   Ontario's rebate rate (Manitoba $0.60, Saskatchewan $0.90, nil on
+     *   recycled) rather than a price. $3.00 is a judgement about rebates;
+     *   $1.00 is the narrower claim that nothing sells for under a dollar
+     *   a tonne. $1.00 is the floor that was asked for, and this row is
+     *   what it costs.
      *
-     * Ungated, 2026 Jan-Aug all markets reads 141.719% and Aug MTD reads
-     * 2.789%. THAT IS THE INTENDED BEHAVIOUR — one grain difference and no
-     * second one. A CPI-only gate was removed on 2026-08-27; `git log -S
-     * minAsp` has it, and putting it back is one key here plus a `cov`
-     * argument threaded through piIndex_ and the two browser pools.
-     * README §7.
+     * minVol / minRev ARE 0 HERE ON PURPOSE. The "> 0 in both years on all
+     * four figures" coverage every index already runs is the only volume
+     * and revenue test; ASP is the one thing this block adds.
+     *
+     * NOT APPLIED TO PPI, which passes no block at all and is bit-for-bit
+     * the index it has always published.
+     *
+     * AND IT IS ONLY REAL IF IT TRAVELS. The browser does the pooling, so
+     * this block ships inside cached payloads; ovcCovTok_ (§8) is what
+     * makes editing it an invalidation, and a payload that arrives without
+     * it reports NO CPI rather than an ungated one. Read that comment
+     * before changing anything here. README §7.
      * ---------------------------------------------------------------- */
     COVERAGE: {
       agg: { minVol: 0, minRev: 0    },    // AGG: no floor
-      rmx: { minVol: 1, minRev: 110  }     // RMX: vol > 1, revenue > 110
+      rmx: { minVol: 1, minRev: 110  },    // RMX: vol > 1, revenue > 110
+      /* CPI only. A pair with no real price in both years is not a pair. */
+      cpi: { minVol: 0, minRev: 0, minAsp: 1 }
     }
   }
 };
@@ -7300,12 +7323,16 @@ var CUST_SECONDARY = { CUST_SEGMENT: 'Cust Segment [Rock]', PRODUCT_APP: 'Produc
  * in PPI — which is why the two carry different total weights and are not two
  * views of one number.
  *
- * EVERYTHING ELSE IS THE SAME ARITHMETIC — the coverage test, the weight, the
- * factor, the pooling — so it is written ONCE here and every caller that starts
- * from RAW ROWS goes through it (custPpi_, custCpi_, applyPpi_, xfMetrics_,
- * segMetrics_ and the customer report). piIndex_ takes NO coverage argument,
- * which is what makes "only the grain differs" a property of the code instead
- * of a convention someone has to remember to keep.
+ * EVERYTHING ELSE IS ONE PIECE OF ARITHMETIC — the coverage test, the weight,
+ * the factor, the pooling — so it is written ONCE here and every caller that
+ * starts from RAW ROWS goes through it (custPpi_, custCpi_, applyPpi_,
+ * xfMetrics_, segMetrics_ and the customer report).
+ *
+ * THE ONE THING BESIDES THE GRAIN: CPI passes §1's `cpi` coverage block and PPI
+ * passes null. That block is a single ASP floor — both years above $1.00/t —
+ * and it exists because the finer grain is what exposes pairs whose "price" is
+ * a credit residue or a rebate. §1 states the rule and what it costs; PPI's
+ * every test collapses to the "> 0" it has always run.
  *
  * THE ONE PATH THAT DOES NOT, AND WHY IT IS LEFT ALONE. metrics_() reads the
  * pivot's OWN precomputed weight columns ("CY REV (FOR PPI)" / "FACTOR (CY REV
@@ -7331,14 +7358,25 @@ var PI_SEP_ = '|\u2016|';
  * Coverage keeps a pair in BOTH sums or drops it from both; nothing is ever
  * taken out of the numerator while its weight stays behind. That is what makes
  * the index a straight weighted mean of the pairs it covers, and it is why
- * Σ weight and TotalWeight are the same number here.
+ * Σ weight and TotalWeight are the same number here — and it is the reason
+ * CPI's ASP floor is a GATE rather than an outlier cap. A gate DELETES a pair;
+ * the ±50% and 500% caps this replaced left the weight behind and dropped only
+ * the factor, which is a dilution and reads as one on the page.
  * ------------------------------------------------------------------------- */
 
-/* ONE POOLING PASS, run at two grains, and `keyOf` is the WHOLE difference
-   between the two indices. Coverage is the "> 0 in both years on all four
-   figures" test below, identical for PPI and CPI — there is no per-index
-   threshold, and deliberately no argument to pass one in. */
-function piIndex_(rows, ix, keyOf) {
+/* null when §1 carries no cpi block, so a config that cannot say what the gate
+   is reports NO CPI rather than an ungated one. Same rule as piKeyCpi_. */
+function piCpiCov_() {
+  var C = (typeof APP_CONFIG !== 'undefined' && APP_CONFIG.CUBE && APP_CONFIG.CUBE.COVERAGE)
+        ? APP_CONFIG.CUBE.COVERAGE : {};
+  return C.cpi || null;
+}
+
+/* ONE POOLING PASS, run at two grains. `keyOf` is the first difference between
+   the two indices and `cov` is the only other one: PPI passes null and every
+   test below collapses to the "> 0 in both years on all four figures" it has
+   always run; CPI passes §1's cpi block, whose one live floor is minAsp. */
+function piIndex_(rows, ix, keyOf, cov) {
   var g = {};
   rows.forEach(function (r) {
     var k = keyOf(r);
@@ -7346,13 +7384,18 @@ function piIndex_(rows, ix, keyOf) {
     o.pyVol += toNum_(r[ix.pyVol]); o.cyVol += toNum_(r[ix.cyVol]);
     o.pyRev += toNum_(r[ix.pyRev]); o.cyRev += toNum_(r[ix.cyRev]);
   });
+  var mv = cov ? (cov.minVol || 0) : 0,
+      mr = cov ? (cov.minRev || 0) : 0,
+      ma = cov ? (cov.minAsp || 0) : 0;
   var weight = 0, factor = 0;
   Object.keys(g).forEach(function (k) {
     var o = g[k];
-    /* Coverage: both years carry volume AND revenue. A pair that exists in
-       only one year has no price MOVE to measure. */
-    if (!(o.pyVol > 0 && o.cyVol > 0 && o.pyRev > 0 && o.cyRev > 0)) return;
+    /* Coverage: both years carry volume AND revenue, above the floors. A pair
+       that exists in only one year has no price MOVE to measure. */
+    if (!(o.pyVol > mv && o.cyVol > mv && o.pyRev > mr && o.cyRev > mr)) return;
     var pyAsp = o.pyRev / o.pyVol, cyAsp = o.cyRev / o.cyVol;
+    /* ...and a price in both years, not a credit residue (see §1 cpi.minAsp) */
+    if (ma > 0 && !(cyAsp > ma && pyAsp > ma)) return;
     weight += o.cyRev;                                 // TotalWeight: every covered pair
     factor += o.cyRev * ((cyAsp - pyAsp) / pyAsp);     // Factor = Weight × ASP%
   });
@@ -7377,14 +7420,16 @@ function piKeyCpi_(ix) {
 }
 
 function custPpi_(rows, ix) {
-  var p = piIndex_(rows, ix, piKeyPpi_(ix));
+  var p = piIndex_(rows, ix, piKeyPpi_(ix), null);     // no floors: PPI is unchanged
   return { weight: p.weight, factor: p.factor, ppi: p.index };
 }
-/* null ONLY when the pivot carries no Sold To — the one structural reason CPI
-   cannot be answered. There is no second reason now that the gate is gone. */
+/* null for either of the two reasons CPI cannot be answered: the pivot carries
+   no Sold To, or §1 carries no cpi block. Report NO CPI rather than an ungated
+   one — an absent column is a question the page declines to answer. */
 function custCpi_(rows, ix) {
   var k = piKeyCpi_(ix); if (!k) return null;
-  var c = piIndex_(rows, ix, k);
+  var cov = piCpiCov_(); if (!cov) return null;
+  var c = piIndex_(rows, ix, k, cov);
   return { weight: c.weight, factor: c.factor, cpi: c.index };
 }
 
@@ -7959,6 +8004,10 @@ function getCrossData(opts) {
                   month: data.month || 0, months: data.months || { all: [], cy: [] },
                   latestMonth: data.reportMonth || 0,
                   dicts: dicts, cols: cols, nums: nums,
+                  /* §1's CPI coverage block, so the local path gates CPI on exactly
+                     the rule the server does. null travels as null: a payload
+                     that cannot say what the gate is reports NO CPI. */
+                  cpiCoverage: ((ovcCfg_().COVERAGE || {}).cpi) || null,
                   generation: generation_() };
   var size = 0;
   try { size = JSON.stringify(payload).length; } catch (e) { size = XF_DATA_CAP + 1; }
@@ -15157,15 +15206,24 @@ function CUBE_bumpHistoryToken(){
  * was built from the DATA's generation and the cube's SHAPE. Neither moves when
  * a threshold is edited.
  *
- * So editing a floor changed nothing anyone could see. The server-side manifest
- * cache answered from the copy it built before the edit, and the browser's
+ * So adding a CPI threshold changed nothing anyone could see. The server-side
+ * manifest cache answered from the copy it built before the edit; the browser's
  * IndexedDB copy of that manifest is only ever wiped when the generation moves,
- * so it warm-painted from the pre-edit manifest indefinitely. A floor that
- * exists on the server and never reaches the code that pools is not a floor.
+ * so it warm-painted from the pre-edit manifest indefinitely; and reading the
+ * missing key with `|| 0` took it for "no gate at all". The Overview published
+ * +141.7% for 2026 Jan-Aug — one pair, plant 3P36 / Brock Aggregates / 9141,
+ * whose prior year was a $0.14 residue after a credit, carrying an ASP move of
+ * +492,409% and 135pp of the answer by itself. The exclusion that exists to
+ * catch exactly that row was on the server the whole time and never reached the
+ * code that pools. A floor that exists on the server and never reaches the code
+ * that pools is not a floor.
  *
  * The token below is what makes a COVERAGE edit an invalidation. It hashes the
  * whole block, so a floor changing is the same kind of event as a shape change
- * and needs no second thing to remember.
+ * and needs no second thing to remember. Pair it with the fail-closed read in
+ * app.html's pool(): a payload that carries no threshold reports NO CPI rather
+ * than an unexcluded one, so the gap between an edit and a warm device catching
+ * up is an absent column instead of a wrong number.
  * ------------------------------------------------------------------------- */
 function ovcCovTok_(){
   var C = ovcCfg_().COVERAGE || {}, parts = [];
@@ -15391,12 +15449,12 @@ function ovcBuildNow_(line, gen, key){
     dict: cube.dict, plantMap: cube.plantMap,
     mixMap: cube.mixMap || null, extraMap: cube.extraMap || null,
     revType: cube.revType || null,
-    /* the line's floors. Both indices pool with the same ones — the grain is
-       the only thing that differs between PPI and CPI. */
+    /* the line's floors, which apply to both indices, plus §1's CPI coverage
+       block, so the browser gates CPI on exactly the rule the server does. */
     coverage: (function(){
       var C = ovcCfg_().COVERAGE || {};
       var c = C[line] || { minVol:0, minRev:0 };
-      return { minVol: c.minVol||0, minRev: c.minRev||0 };
+      return { minVol: c.minVol||0, minRev: c.minRev||0, cpi: C.cpi || null };
     })(),
     skipped: cube.skipped || 0,
     history: !!hist,
