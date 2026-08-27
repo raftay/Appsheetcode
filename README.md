@@ -282,7 +282,9 @@ knowing before touching a page:
   Product Segment and Ready-Mix.
 - **`AmrCube`** — the month fact table, in IndexedDB. What the Overview's window mode is
   computed from.
-- **`AmrKpi`** — the shared EBITDA workbooks and the KPI strip.
+- **`AmrKpi`** — the shared EBITDA workbooks and the KPI strip. It also answers **which
+  month a workbook is for**, off its file name (`monthOfName` / `monthCheck`), because
+  nothing inside the file says — see §7.
 - **`AmrDeckSource`** — the registry a page uses to offer its content to the Deck Builder.
 - **`AmrProgress` / `AmrBoot` / `AmrFresh`** — one loading screen, one boot gate, one "these
   figures are out of date" poll. The screen covers the page for exactly one situation — an
@@ -2007,10 +2009,24 @@ there with the input that moved.
   month *before* the anchor — and say which month that is. It arrives during the month after
   the one it covers, so it can never answer for "this month"; moving the whole page back to
   meet it was the wrong half to move. **The month on that card is an EXPECTATION, and the
-  wording says so.** `AmrKpi` carries no month at all — the cards show whatever workbook was
-  last uploaded — so printing `kpiMonth()` flatly asserted something nobody had checked,
-  which is the failure the label was added to prevent, one step further back. It reads *"the
-  closed month, expected July 2026"*.
+  wording says so.** The workbook's *contents* carry no month at all — the plant statements are
+  an MTD block and a YTD block of fixed columns, so June's export parses exactly like July's —
+  so printing `kpiMonth()` flatly asserted something nobody had checked, which is the failure
+  the label was added to prevent, one step further back. It reads *"the closed month, expected
+  July 2026"*.
+- **The FILE NAME is the only thing that dates an EBITDA workbook, so it is read.**
+  `AmrKpi.monthOfName` takes the month and year out of names like *"July 2026 CENTRAL ACM ON
+  EBITDA Report D+3 (4).xlsx"*, and `monthCheck` compares that against the month a page is
+  reporting. This does **not** make the workbook self-describing and nothing downstream may
+  treat it as if it did: it is a **caution**, never a gate on the numbers themselves, because
+  the name is something a human typed. Three states, kept apart because they are fixed by
+  different things — `ok`, `mismatch` (the wrong file: upload the right one) and `unknown` (a
+  name that carries no month, which is unverifiable rather than wrong and never stops
+  anything). A bare month 1–12 resolves to its reporting **year** in one place, `AmrKpi.yearOf`
+  — a month later in the calendar than the current one has not happened yet, so it is last
+  year's — because a second copy of that rule is a second answer. The Price & Volume rail and
+  the Deck Builder's KPI workbooks panel both say it; the Deck Builder also asks about it
+  before it renders (§8).
 - **And therefore the SAP / USGAAP cards are the PREV-MONTH picks' and nobody else's.**
   `kpiMonth()` is `anchorMonth() - 1`, which is exactly the month *Prev month (MTD)* spans and
   the month *Prev month (YTD)* ends on. The cards used to be drawn on the other two picks
@@ -2366,6 +2382,62 @@ slide 40 must not cost the first 39.
    you — every slide builds, nothing goes red, and the deck is quietly last week's.
 4. **Publish** — one `google.script.run` per slide. ~2–4 s each, well inside the 6-minute limit
    because no call ever handles more than one slide.
+
+**Render asks two questions before it photographs anything**, and they are both the same
+shape as the source check above them: a deck where all 43 slides build, nothing is marked red,
+and the numbers are wrong. That is the one failure this page cannot show you afterwards, so
+it is asked in front — as a **dialog**, because a banner over a render that is already running
+is a note about a pack that exists by the time anyone reads it.
+
+1. **The lookup tabs.** A plant with no `REGION LOOKUP` row still carries its volume and
+   revenue; it lands in a blank market and submarket, in USD. A mix with no `PRODUCT MASTER`
+   row still counts but has no strength class, so the Strength and Product Class tables miss
+   it. A material with no `EXTRAS LOOKUP` row sits under *Unclassified*. Each report page has
+   shown this as its Mapping check for a long time; the deck reads those same pages and had no
+   way to see it. `getPvUnmapped` answers for the AGG line (`pv`, `cust`, `fsc` — Fuel Recovery
+   takes its market off `REGION LOOKUP` too) and `RMX_getUnmapped` for the Ready-Mix one
+   (`rmx`, `seg`). **RMX Fuel Recovery is deliberately in neither**: it reads neither tab, and
+   a warning that claims to reach a slide it cannot reach is a warning people stop reading.
+   Only the lines the pack still has slides to render on are asked, and both answers come out
+   of the server's own cache under the current generation.
+2. **The KPI workbook's month** — see §7. The file name is checked against the deck's Report
+   month. Only a real `mismatch` opens the dialog; an unverifiable name is said in the rail and
+   left there.
+
+**It is a prompt, not a refusal.** *"The lookups have four misses worth $2k and the deck is
+due"* is a real answer and not this page's to overrule. **Render anyway** builds the pack and
+records what it was told about; the same findings do not ask again, and anything that
+moves — a lookup fixed, a workbook replaced, the month changed, new figures synced — brings the
+question back. **Stop** renders nothing and keeps everything already built. On the normal month
+nothing is said at all.
+
+**It runs after the source check and not before it.** The lookup counts are counted against the
+data as the server currently holds it, and the source check is the thing that syncs it — asking
+first would ask about figures that were about to be replaced.
+
+### The KPI workbooks, from this page
+
+**The two shared EBITDA files are uploadable here**, in the left rail directly under **Report
+month**, because the two only mean anything together. They used to be uploadable from Price &
+Volume alone — which put them on the one page that does *not* choose a month for a pack, and
+left the one that does unable to see them: a row whose workbook was missing said *"no workbook ·
+upload it on the Price & Volume page"*, a correct instruction that costs the deck you are in the
+middle of, since switching pages unmounts this one and every picture with it.
+
+It is the *same shared file*: `AmrKpi.upload` parses the workbook in the browser and saves the
+slice for everybody, so a file put in here is the file Price & Volume, Product Segment and the
+Overview read next. **SheetJS is fetched at the moment a file is chosen** (`AMR.lib.need`) and
+is deliberately not in the page's `libs` — every other thing the Deck Builder does reads KPI
+numbers the server already parsed, and a library on that list is loaded on every open of the
+page to serve the one press in twenty that replaces a workbook.
+
+**A new workbook drops exactly the pictures it changed.** `AmrDeckSource.resetKpi()` is a second
+reset alongside `reset()` for precisely this: the KPI cards move and the report tables, customer
+blocks and Ready-Mix key rows do not, so `resetAll()` here would buy forty-odd server round
+trips to correct five cards. Only rows whose source declares a strip (`kpiPicker` or
+`kpiToggle`, and not switched off by a scope) are re-queued — on the same rule `dbRestale` uses,
+including putting an already-photographed row back on the **live** queue so a render in flight
+rebuilds it before it ends.
 
 **Render can be stopped.** A `Stop render` button appears beside Render while a pass is
 running and ends it at the *next* slide: the one being photographed finishes and is kept,
@@ -2830,3 +2902,4 @@ or was forgotten.**
 | 2026-08-27 | **The two surcharge cards disagreed by $39,650 because one of them totalled only the customers who were charged, and the by-market card was carrying a notice that contradicted the table above it.** Reported off a screenshot: the by-market card read **$2,230,997** and the Top-10 customers card beside it **$2,270,647** for the same year to date, under a notice reading *Combined Data CPI Raw stops at July, so there is nothing here for August yet — the figures above are that empty month* over the top of August's own figures. Checked against the raw `CPI Combined CENTRAL CANADA AGG PRICE & VOLUME REPORT` export rather than reasoned about. **(1) The notice asked the calendar, not the export.** `fscBehind` was `month > defaultMonth`, and `defaultMonth` is LAST CLOSED CALENDAR MONTH (`buildCells_`: July, on the 27th of August) — not a statement about what the sheet holds. The export carries August, the table was August's, and the notice denied it. It now tests `FSC_DATA.months` — the months `buildCells_` actually found current-year volume for, which is what the Fuel Surcharge page's own picker is built from — so it fires only on a month that genuinely has no rows, and says which month the export really stops at. **(2) The customer total was the wrong total.** All three callers filtered to `cyFsc > 0` before ranking, and `fscCustTable` then totalled what it was handed — so the TOTAL row, and the denominator every Share % is figured against, dropped every customer whose surcharge nets to a CREDIT. On the July export that is four customers worth **-$28,118**: the panel published **$1,761,134** where the by-market card published **$1,733,016**, and $1,733,044.06 is the raw **CY Fuel Surcharge** column summed over Jan-Jul to the cent. `fscCustTable` is handed every customer now: the ranking still shows only customers who were charged (a credit is not a top-ten row and a donut has no negative slice), the total is arithmetic over the lot, and `All others` carries the credits so the ten rows plus the remainder come to the total. The footnote blaming *different tables* is replaced by the one difference that is real — the customer report counts **TOP LINE REVENUE** rows only. **(3) `getRawEnriched_`'s re-spread was deleting money.** `r.cyFsc = b.cv ? b.cf * r.cyVol / b.cv : 0` spread a LOOKUP KEY with no tonnes over nothing and wrote the zero back, so every PV-derived view came in under the Fuel Surcharge page — $28.38 of $1.73m, one key, in Manitoba. There is no proportional split to make when the denominator is zero, so the row's own figure now stands. **(4) The by-market card follows the filters on MTD / YTD.** The previous session's *it genuinely cannot be filtered, and that is now on the card* was answered with *make it dynamic*. `renderWinFsc`'s body is factored out as `fscCubeTable()` and both paths use it, so the MTD / YTD card is `cubeWinRows('agg','market')` — the market pick and every chip, through `trendFilters()` — with the workbook summary kept as the fallback for the two cases the cube cannot answer (a pick before `FSC_FROM_YM`, and the seconds before the months stream in; unfiltered only, because an all-markets table under a one-market heading is the *filter that failed* this panel was already reported for). **The figures do not move**: with (3) fixed, the cube's by-market totals equal the Fuel Surcharge page's to the cent on every market on the raw export, because the cube's `fsc` IS the CY Fuel Surcharge column. `loadFsc()` skips its server call when the cube can answer, and the cube listener repaints the card as blocks land (`renderFscSoon`). Gate: `node --check` clean on `script.gs` at a `.js` path and on all 30 of `app.html`'s inline script blocks | ✅ |
 | 2026-08-27 | **CPI carries an ASP gate again, and its floor is $1.00/t.** Asked for directly: the CPI check is `ASP > 1`. `COVERAGE.cpi` is back in §1 as `{ minVol: 0, minRev: 0, minAsp: 1 }` — **`minAsp` is the only live floor**, because the "> 0 in both years on all four figures" coverage every index already runs is the volume and revenue test and there is no reason for this block to restate it. `piIndex_` takes its `cov` argument back, PPI passes `null` and is **bit-for-bit the index it has always published**, and the same argument is threaded through both browser pools (`pool()` in `AmrCube`, `poolPairs()` in the Overview's local cross-filter path). **It is a gate, not an outlier cap**: a failing pair leaves the WEIGHT as well as the FACTOR, so the index stays a straight weighted mean of the pairs it covers — which is the correction the ±50% and 500% caps never made. **What $1.00 catches and what it does not, recorded because the second one will be asked about.** `3P36` / Brock Aggregates / `9141` — a March 2025 invoice of $693.98 met by an April credit of $693.84, fourteen cents against 47 t, a prior-year ASP of **$0.003/t** and a "price move" of +492,409% worth 135pp of a 141.7% answer by itself — is **excluded**. `3Q00` / JNF Ready Mix / `9055` — 378 t at **$2.343/t** against 24,593 t at $22.75/t, $559,436 of weight, +870.9%, **+3.13pp of all markets on its own** — is **included**, because $2.343 clears a dollar. The $3.00 floor this gate carried until earlier the same day took it out on the reading that $2.343/t is Ontario's rebate rate (Manitoba $0.60, Saskatchewan $0.90, nil on recycled) rather than a price; $1.00 is the narrower claim that nothing sells for under a dollar a tonne, and JNF is what the narrower claim costs. **The gate only counts if it travels**, so it ships in the cube manifest and in `getCrossData`'s payload again, and both pools **fail closed**: a payload that cannot say what the gate is reports **NO CPI** rather than an ungated one, dropping the column exactly as a line with no Sold To does. No cache or shape bump was needed — `ovcCovTok_` hashes the whole `COVERAGE` block into `ovcGen_` and `getCrossData`'s key already carried it, so adding a key is itself the invalidation, and `XDATA` is in-memory only. **Gate:** `node --check` clean on `script.gs` at a `.js` path and on all 30 of `app.html`'s inline script blocks; and `piIndex_`, `pool()` and `poolPairs()` lifted **out of the edited files** and run under Node over the two named pairs plus a clean control — Brock out, JNF in, and the three runtimes returning **bit-identical** weight and factor, which is the test that says the browser and the server still agree. Nothing here can be exercised off-platform end to end: run `APP_verifyPermissions` and read a CPI column on Price & Volume and on the Overview before trusting it | ✅ |
 | 2026-08-27 | **The two surcharge cards still stood $28 apart, and the missing money was a VOLUME FLOOR on a MONEY question.** Both cards read the same cube and the same filters, so a difference could only be population: the by-market card's Total line is `cubeTotal()` — the ungrouped query, every row in the window — while the customer card **sums the list it is handed**, and that list came from `cubeWinRows()`, which drops any group with no tonnes on either side (and any blank key). The **$28.38 zero-tonne LOOKUP KEY** that the previous session stopped `getRawEnriched_` from zeroing therefore reached the cube, reached the grand total, and **vanished out of every grouped list** — so the market card counted it and the customer card did not. `cubeWinRows()` now returns **two row sets out of the one query**: `rows` unchanged (a real key, tonnes on one side — what a volume table wants) and `all`, everything bar the `\u0001all` sentinel, sorted identically so `rows` is a subset rather than a second pass. **Both surcharge cards read `all`**, whose own filter is already *carried a surcharge* — the right population for a surcharge table — which also makes the by-market rows tie to their own Total for the first time. A `(blank)` market can now reach that table, so it is drawn but is **not a cross-filter handle**: `MARKET='(blank)'` matches nothing and would empty the tab. `cubeCustomers()` keeps `parents` as the volume list (the Top-10, its donut and `customerCount` are all about tonnes) and adds `fscParents` for the money one. **Gate:** `node --check` clean on `script.gs` at a `.js` path and on all 30 of `app.html`'s inline script blocks. Client-side only — no cache, shape or manifest bump, and no server figure moves | ✅ |
+| 2026-08-27 | **Render asks about the lookups and the KPI workbook's month before it photographs anything, and the KPI workbooks are uploadable from the Deck Builder.** Three things, one failure shape: a deck where all 43 slides build, nothing goes red, and the numbers are wrong. **(1) The mapping check is now part of Render.** `getPvUnmapped` for the AGG line (`pv`, `cust`, `fsc`) and `RMX_getUnmapped` for Ready-Mix (`rmx`, `seg`) — RMX Fuel Recovery is in neither, because it reads neither tab and a warning that claims a slide it cannot reach is one people stop reading. Only the lines the pack still has slides to render on are asked, both answers come out of the server's own cache under the current generation, and a check that cannot run says so and renders anyway. It is a **dialog**, because a banner over a running render is a note about a pack that exists by the time it is read; it is a **prompt**, because “four misses worth $2k and the deck is due” is a real answer. *Render anyway* records what it was told about, so the same findings do not ask twice and anything that moves brings the question back. **It runs AFTER the source check**, which is not a detail: the counts are counted against the data the server currently holds and the source check is what syncs it. **(2) The KPI workbooks are in the Deck Builder's rail**, under Report month, uploading the same shared file `AmrKpi` has always saved for everybody — they were on the one page that does *not* choose a month for a pack, and the fix cost the deck you were mid-way through, since switching pages unmounts this one and every picture with it. SheetJS is fetched by `AMR.lib.need` at the moment a file is chosen rather than joining `libs`, and `AmrDeckSource.resetKpi()` is a second reset beside `reset()` so a new workbook drops the slides that carry a strip and leaves forty-odd round trips' worth of report tables alone. **(3) The workbook's month is checked against the reported month.** The contents carry none — an MTD block and a YTD block of fixed columns, so June parses exactly like July — and the **file name** is the only evidence there is, so `AmrKpi.monthOfName` reads it (“July 2026 CENTRAL ACM ON EBITDA Report D+3 (4).xlsx”) and `monthCheck` compares. Three states kept apart: `ok`, `mismatch` (the wrong file), `unknown` (a name nobody can date — unverifiable, not wrong, and it never stops anything). The bare-month → reporting-year rule lives once, in `AmrKpi.yearOf`. Said in the Price & Volume rail and the Deck Builder's panel; only a `mismatch` opens the dialog. **Gate:** `node --check` clean on `script.gs` at a `.js` path and on all 30 of `app.html`'s inline script blocks. Client-side only — no cache, shape or manifest bump, and no server figure moves | ✅ |
