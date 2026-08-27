@@ -19225,6 +19225,49 @@ AMR.page('overview', {
         +'<br><a class="linkbtn" href="'+(window.APP_URL||'')+'?page='+pageKey+'" target="_top">Open '+esc(tool)+' →</a></div>';
     }
 
+    /* ---- THE CPI CARD ARRIVES WITH THE CUBE, NOT WITH THE PAINT -------------
+       On a server pick every panel that shows CPI is answered by the cube and
+       painted by the server: the strip through serverCpi(), the dimension table
+       and the explorer through joinCpi(). getOverview and getReport come back
+       seconds BEFORE the month-blocks do, so each of those painters ran at the
+       one moment the cube had nothing to say — and nothing ran them again. The
+       cube's listener repaints the TREND on a server pick and never the panels,
+       so CPI was missing on every fresh open and then appeared on the next
+       selection change: the same figures, drawn twice, with nothing on screen
+       to say why the second drawing had a card the first did not.
+
+       ONLY THE SERVER PICK IS REPAINTED HERE. A window is already re-rendered
+       whole by the same listener; a cross-filter report carries Sold To and
+       answers for its own CPI (see joinCpi); Ready-Mix carries no Sold To at
+       all and never shows the card. And both painters below are pure — they
+       draw DIMS_CACHE / PM_CACHE and fetch nothing — so a landing block can
+       never turn into a server call. */
+    function repaintServerCpi(){
+      if(!STATE.data || winMode() || STATE.tab!=='agg') return;
+      if(STATE.data.errors && STATE.data.errors.pv) return;
+      if(xfActive()) return;                       // the cross-report answers for itself
+      var t=aggTotals(selectedKeys());
+      if(t && t.present && t.cpi==null) t.cpi=serverCpi('agg');
+      renderKpiRow('kpiAgg', t, 't', fAsp);
+      renderDimPies();
+      renderExplorer();
+    }
+    /* THE SIGNAL IS THE ANSWER, NOT THE EVENT. The listener fires once per
+       month-block and almost none of them change what the cube can say about
+       the picked period, so repainting on each would rebuild four charts for
+       nothing. '' means the cube cannot stand in — what this reads before the
+       first block lands, and again if the handles are dragged off the pick —
+       and it is a value like any other, so the card is taken back down as
+       readily as it was put up. */
+    var cpiTimer=null, CPI_SIG=null;
+    function repaintServerCpiSoon(){
+      var c=serverCpi('agg'), sig=(c==null)?'':String(c);
+      if(sig===CPI_SIG) return;
+      CPI_SIG=sig;
+      if(cpiTimer) clearTimeout(cpiTimer);
+      cpiTimer=setTimeout(function(){ cpiTimer=null; repaintServerCpi(); }, 260);
+    }
+
     /* ===================== TAB RENDERING ===================== */
     function renderActiveTab(){
       var agg=(STATE.tab==='agg');
@@ -19240,6 +19283,12 @@ AMR.page('overview', {
     }
     function renderTab(){
       if(!STATE.data) return;
+      /* THE MEMO BELONGS TO THE PAINT THAT SET IT. Every branch below draws
+         its own answer for CPI - or has none to draw - so the one recorded for
+         the last paint is worthless here. null is "unknown", which makes the
+         next month-block re-evaluate rather than trust it; the server pick
+         records what it actually drew, further down. */
+      CPI_SIG=null;
       /* Everything comes back first. The painters below are the only thing that
          decides a card has nothing to show, and they have to decide it again on
          every selection - otherwise a panel hidden for last month's pick would
@@ -19276,6 +19325,7 @@ AMR.page('overview', {
           renderRefine();
           var aggT=aggTotals(keys);
           if(aggT && aggT.present && aggT.cpi==null) aggT.cpi=serverCpi('agg');
+          CPI_SIG=(aggT && aggT.cpi!=null)?String(aggT.cpi):'';   // what this paint drew
           renderKpiRow('kpiAgg', aggT, 't', fAsp);
           renderAggBreakdown();
           renderBridges();
@@ -24482,7 +24532,8 @@ AMR.page('overview', {
            the outside: cache-first on both sides, so when it is right it costs
            nothing, and when something has moved it is still corrected. */
         if(LOADED_KEY && LOADED_KEY!==loadKey()){ load(); return; }
-        if(winMode()) renderActiveTab(); else renderTrendSoon();
+        if(winMode()) renderActiveTab();
+        else { renderTrendSoon(); repaintServerCpiSoon(); }
       });
       /* A CUBE THAT NEVER SPEAKS IS A LOADING SCREEN THAT NEVER LIFTS. The step
          'month history' is answered by the listener above, so anything that
