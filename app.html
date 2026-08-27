@@ -17553,7 +17553,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
     <div class="ov-cols" id="fscRow">
       <div class="ov-panel" id="colFsc">
         <h3>Fuel surcharge — by market</h3>
-        <p class="sub" id="fscSub">All markets, always · $/applied tonne · from the Fuel Surcharge sheet</p>
+        <p class="sub" id="fscSub">$/applied tonne · from the month fact table</p>
         <div id="fscBody"><div class="ov-mini">Loading fuel surcharge…</div></div>
       </div>
       <div class="ov-panel" id="colFscCust">
@@ -17748,7 +17748,7 @@ AMR.page('overview', {
 <h3>Drill-downs</h3>
 <p>Pick a single market and the breakdown panels pivot to <b>submarkets</b> inside it. The Aggregates tab adds <b>Plant Type / Product Class / Material Family</b> views and a <b>Plants &amp; materials</b> search where you can compare individual plants or materials against the total. The Ready-Mix tab adds <b>Submarket / Project Segment / Strength Class / Product Class / Plant</b> breakdown tables, the <b>ASP build-up</b>, the <b>Extras &amp; VAP</b> tables and the <b>Product Category</b> view. Every drill-down shows volume change, ASP % inc and — where the source carries it — PPI.</p>
 <h3>Cross-filtering (Aggregates tab)</h3>
-<p><b>Click any value</b> — a submarket, plant type, product class, plant, material, or customer, in a table row, pie slice, bar or legend — and <b>every panel filters by it</b>, including the panel you clicked in. Your active filters appear as chips in a bar under the controls; remove one with its ×, or press <b>Clear filters</b>. To combine values within the same dimension (say, two plant types), use the <b>search box on that panel</b> — it lists everything that would be available if that dimension's own filter were lifted, so you can add a second value after the panel has collapsed to your first pick. The <b>Land / Docks</b> toggle appears beside the markets when <b>Southwest</b> is selected — pick Land or Docks to narrow to it (none selected = both). On the two server settings (MTD / YTD) the <b>Fuel Surcharge panels and the SAP/USGAAP cards are deliberately exempt</b> — they always show the unfiltered scope; on a Prev-month or custom span the surcharge panels are computed here and do follow the filters. Under filters, PPI everywhere uses the customer-report method (Plant + Material coverage), which stays exact at any slice depth.</p>
+<p><b>Click any value</b> — a submarket, plant type, product class, plant, material, or customer, in a table row, pie slice, bar or legend — and <b>every panel filters by it</b>, including the panel you clicked in. Your active filters appear as chips in a bar under the controls; remove one with its ×, or press <b>Clear filters</b>. To combine values within the same dimension (say, two plant types), use the <b>search box on that panel</b> — it lists everything that would be available if that dimension's own filter were lifted, so you can add a second value after the panel has collapsed to your first pick. The <b>Land / Docks</b> toggle appears beside the markets when <b>Southwest</b> is selected — pick Land or Docks to narrow to it (none selected = both). The <b>SAP/USGAAP cards are deliberately exempt</b> — they are the closed month’s statement and always show the unfiltered scope. Both <b>Fuel Surcharge panels follow the filters on every pick</b>: the by-market card is computed here from the month fact table, and falls back to the Fuel Surcharge workbook’s own unfiltered summary only while those months are still loading. Under filters, PPI everywhere uses the customer-report method (Plant + Material coverage), which stays exact at any slice depth.</p>
 <h3>Good to know</h3>
 <p>These are the same figures the full tools show — this page just brings the headlines together. For the full customer drill-down and slide exports, open the individual tools from the switcher (top-right). Numbers refresh when someone presses <b>&#8635; Update from source</b> on the Price &amp; Volume, RMX or Product Segment page.</p>`,
 
@@ -19758,22 +19758,31 @@ AMR.page('overview', {
       if(!winFscOk()){ hidePanel(bodyId); return; }
       clearCH(sec); showPanel(bodyId); winWaiting(bodyId);
     }
-    function renderWinFsc(){
-      clearCH('fsc');
-      if(!winFscOk()){ hidePanel('fscBody'); return; }
-      var g=cubeWinRows('agg','market');
-      if(!g){ showPanel('fscBody'); winWaiting('fscBody'); return; }
+    /* THE BY-MARKET SURCHARGE TABLE, OFF THE MONTH FACT TABLE. Both paths come
+       here now — a window, and the MTD / YTD picks — because both want the same
+       five columns, the same market handles and the same donut, and only the
+       caption differs. cubeWinRows() runs the market pick and every
+       cross-filter chip through trendFilters(), so what this paints is always
+       the selection the rest of the tab is showing.
+
+       WHY THE MTD / YTD PATH MOVED HERE. It used to paint the Fuel Surcharge
+       workbook's own summary, which carries market and month and none of the
+       dimensions the chips filter on — so it was unfiltered on purpose and said
+       so, in a caption nobody wants to read beside eight filtered panels. The
+       objection to moving it was that cube-derived figures would drift from the
+       ones the business reconciles against Qlik. They do not: the cube's `fsc`
+       is Price & Volume's CY Fuel Surcharge column and the workbook summary is
+       the same column read straight, so once getRawEnriched_'s re-spread
+       stopped zeroing keys with no tonnes (§ PV_Backend) the two agree to the
+       cent on every market. Checked against the raw export, not asserted.
+
+       Returns false when there is nothing to draw, so the caller can decide
+       between hiding the panel and falling back. */
+    function fscCubeTable(g, sub){
       var rows=g.rows.map(cubeRowAsTable).filter(function(r){ return r.cyFsc || r.pyFsc; });
-      if(!rows.length){ hidePanel('fscBody'); return; }
+      if(!rows.length) return false;
       showPanel('fscBody');
-      /* THIS TABLE IS FILTERED AND USED TO DENY IT. cubeWinRows() runs the
-         market pick and every cross-filter chip through trendFilters(), so the
-         hard-coded "All markets" here was a caption for a different table than
-         the one below it - and it sat beside the customer panel, which has
-         always said scopeLabel(). The two now answer the same way. */
-      xfSubSet('fscSub','',' \u00b7 '+winLabel()
-        +' \u00b7 $/applied tonne \u00b7 from the month fact table (Price & Volume rows)'
-        +' \u00b7 click a market to select it.');
+      xfSubSet('fscSub','',sub);
       function rate(f, v){ return v ? f/v : 0; }
       var tot=g.total?cubeRowAsTable(g.total):null;
       var LAB='font:700 9.5px Archivo;letter-spacing:.14em;text-transform:uppercase;color:var(--blue-70);margin:0 0 8px';
@@ -19803,16 +19812,25 @@ AMR.page('overview', {
         withFsc.map(function(r){ return r.cyFsc; }),
         withFsc.map(function(_,i){ return CUST_COLORS[i%CUST_COLORS.length]; }),
         function(i){ var r=withFsc[i]; if(r) toggleXf('MARKET', r.label); });
+      return true;
+    }
+    function renderWinFsc(){
+      clearCH('fsc');
+      if(!winFscOk()){ hidePanel('fscBody'); return; }
+      var g=cubeWinRows('agg','market');
+      if(!g){ showPanel('fscBody'); winWaiting('fscBody'); return; }
+      if(!fscCubeTable(g, ' \u00b7 '+winLabel()
+          +' \u00b7 $/applied tonne \u00b7 from the month fact table (Price & Volume rows)'
+          +' \u00b7 click a market to select it.')) hidePanel('fscBody');
     }
     function renderWinFscCustomers(d){
       clearCH('fscc');
       if(!winFscOk() || !d){ hidePanel('fscCustBody'); return; }
-      var ranked=(d.parents||[]).filter(function(p){ return (Number(p.cyFsc)||0)>0; })
-        .slice().sort(function(a,b){ return b.cyFsc-a.cyFsc; });
-      if(!ranked.length){ hidePanel('fscCustBody'); return; }
+      var list=(d.parents||[]);
+      if(!fscAny(list)){ hidePanel('fscCustBody'); return; }
       showPanel('fscCustBody');
       xfSubSet('fscCustScope','',' \u00b7 CY fuel-surcharge dollars \u00b7 '+winLabel());
-      fscCustTable(ranked);
+      fscCustTable(list);
     }
     function winDimRow(g){
       /* the ungrouped query keys its single bucket with an internal sentinel; the
@@ -20404,14 +20422,11 @@ AMR.page('overview', {
       clearCH('fscc');
       if(err){ hidePanel('fscCustBody'); return; }
       if(!d){ showPanel('fscCustBody'); $('fscCustBody').innerHTML='<div class="ov-mini">Loading…</div>'; return; }
-      var ranked=((d.customers&&d.customers.rows)||[])
-        .filter(function(p){ return (Number(p.cyFsc)||0)>0; })
-        .slice().sort(function(a,b){ return b.cyFsc-a.cyFsc; });
-      if(!ranked.length){ hidePanel('fscCustBody'); return; }
+      var list=((d.customers&&d.customers.rows)||[]);
+      if(!fscAny(list)){ hidePanel('fscCustBody'); return; }
       showPanel('fscCustBody');
       xfSubSet('fscCustScope','',' \u00b7 CY fuel-surcharge dollars \u00b7 '+periodLabel());
-      fscCustTable(ranked,
-        'This panel and the by-market table come from different tables, so small differences in totals are expected.');
+      fscCustTable(list, 'The customer table counts TOP LINE REVENUE rows only, which is what the Price &amp; Volume customer report is; the by-market card counts every row. Where a surcharge sits on another revenue type the two totals differ by it.');
     }
     function renderXfKpi(d, err){
       var host=$('kpiAgg');
@@ -24674,9 +24689,16 @@ AMR.page('overview', {
     var FSC_CHECKED={};      // month -> asked once this page open
     function fscKey(){ return 'fsc|m'+loadMonth(); }
     function fscFresh(){ return !!FSC_DATA && FSC_MONTH===loadMonth(); }
+    /* renderFsc() ANSWERS WHETHER IT NEEDS THE SERVER, and that is why the test
+       is not repeated here: it already runs the cube query that decides it, and
+       cubeWinRows() is two queries a call. False means the workbook summary is
+       the only thing that can paint this and we do not hold this month's yet -
+       so it also means loadFsc() will not put a loading message over a table
+       the cube has already drawn, or spend a server execution on a payload that
+       is now only the fallback. */
     function loadFsc(){
       var body=$('fscBody'), mo=loadMonth();
-      if(fscFresh()){ renderFsc(); return; }
+      if(renderFsc()) return;
       /* The FSC sheet has no data-version token (it's re-read on every call), so
          the device copy paints instantly and is then silently re-checked against
          the sheet in the background — if the numbers changed, the panel updates
@@ -24717,39 +24739,85 @@ AMR.page('overview', {
       }catch(e){}
     }
 
+    /* The cube streams in a block at a time and the by-market card is now one of
+       the panels drawn from it, so it has to be repainted as those months land -
+       the same debounce the trend uses, for the same reason. In window mode the
+       listener already calls renderActiveTab(); this is the other half. */
+    var fscPaintTimer=null;
+    function renderFscSoon(){
+      if(fscPaintTimer) clearTimeout(fscPaintTimer);
+      fscPaintTimer=setTimeout(function(){ if(!winMode()) loadFsc(); }, 260);
+    }
+    /* Returns TRUE when this card is dealt with - painted, waiting, or hidden -
+       and FALSE only when the Fuel Surcharge workbook's summary is the one thing
+       that could paint it and the payload we hold is for another month. That is
+       loadFsc()'s cue to fetch, and it is the whole handshake between the two. */
     function renderFsc(){
       var body=$('fscBody');
       /* in a window this panel is renderWinFsc's, and this data is the server's
          period - a background revalidate must not paint over it */
-      if(winMode()) return;
+      if(winMode()) return true;
       clearCH('fsc');
+      /* THE FILTERED ANSWER FIRST. This card follows the market chips and the
+         cross-filter chips now, which means it is the month fact table's, not
+         the Fuel Surcharge workbook's — see fscCubeTable() for why that costs
+         nothing in accuracy. The workbook summary is still the fallback for the
+         two cases the cube cannot answer: a pick reaching back before the
+         surcharge columns exist (winFscOk), and the seconds before the months
+         have streamed in. */
+      if(winFscOk()){
+        var cg=cubeWinRows('agg','market');
+        if(cg){ if(!fscCubeTable(cg, ' \u00b7 '+periodLabel()
+                  +' \u00b7 $/applied tonne \u00b7 from the month fact table (Price & Volume rows)'
+                  +' \u00b7 click a market to select it.')) hidePanel('fscBody');
+                return true; }
+        /* THE CUBE IS STILL LOADING AND A SELECTION IS ON. The workbook summary
+           is every market and every plant; painting it under a heading naming
+           one market is the "filter that failed" this panel was already once
+           reported for, so it waits instead. Unfiltered, the two answer the
+           same thing and there is nothing to wait for. */
+        if(!isAll() || xfHasFilters()){ showPanel('fscBody'); winWaiting('fscBody'); return true; }
+      }
       /* a payload for another month must not paint: loadFsc() is about to
-         replace it, and this sheet's figures look identical either way */
-      if(!fscFresh()){ loadFsc(); return; }
-      if(!FSC_DATA || !FSC_DATA.summary){ hidePanel('fscBody'); return; }
+         fetch the right one, and this sheet's figures look identical either way */
+      if(!fscFresh()) return false;
+      if(!FSC_DATA || !FSC_DATA.summary){ hidePanel('fscBody'); return true; }
       var rows=(FSC_DATA.summary[STATE.period]||[]);
       var mkRows=rows.filter(function(r){ return !r.isTotal; });
       var tot=rows.filter(function(r){ return r.isTotal; })[0];
-      if(!mkRows.length){ hidePanel('fscBody'); return; }
+      if(!mkRows.length){ hidePanel('fscBody'); return true; }
       showPanel('fscBody');
       /* the FSC workbook names its own markets (REGION LOOKUP), which is not
          guaranteed to be the Price & Volume spelling the market chips key on */
       function pvKnown(nm){ return markets().some(function(x){ return x.pvName===nm; }); }
       var anyPick=mkRows.some(function(r){ return pvKnown(r.market); });
-      $('fscSub').textContent='All markets, always ('+(STATE.period==='MTD'?String(FSC_DATA.latestMonth||'latest month'):'year to date')+')'
+      /* THE FALLBACK ONLY EVER PAINTS UNFILTERED (renderFsc gates it on that),
+         so this caption no longer has to disown the chips - it says which
+         months it is for and leaves it there. The filtered answer is
+         fscCubeTable()'s, and it names the selection like every other panel. */
+      $('fscSub').textContent='All markets ('+(STATE.period==='MTD'?String(FSC_DATA.latestMonth||'latest month'):'year to date')+')'
         + ' \u00b7 $/applied tonne \u00b7 from Price & Volume (Combined Data CPI Raw)'
-        /* THE ONE PANEL ON THE TAB THE CHIPS DO NOT REACH, and it used to be the
-           one panel that did not say so. This table is the Fuel Surcharge
-           workbook's own summary - it carries market and month and none of the
-           dimensions the chips filter on - so with filters active it is
-           unfiltered ON PURPOSE, and an unmarked unfiltered table beside eight
-           filtered ones reads as a filter that failed. In a window it IS
-           filtered, off the month fact table; see renderWinFsc(). */
-        + (xfHasFilters() ? ' \u00b7 not narrowed by the active filters \u2014 this sheet does not carry them' : '')
         + (anyPick ? ' \u00b7 click a market to select it.' : '');
-      /* asked for a month this sheet has not been exported for: output_ answers
-         for it regardless, which is a real, correct, all-zero report */
-      var fscBehind = (Number(FSC_DATA.month)||0) > (Number(FSC_DATA.defaultMonth)||0);
+      /* ASKED FOR A MONTH THIS SHEET HAS NOT BEEN EXPORTED FOR. output_ answers
+         for it regardless, which is a real, correct, all-zero report - and zero
+         is the one figure that looks like data, so it has to be said.
+
+         WHAT IT USED TO ASK WAS THE WRONG QUESTION. `month > defaultMonth`
+         compares the pick against LAST CLOSED CALENDAR MONTH, which is not a
+         statement about the export at all: on the 27th of August, with August
+         already in the sheet and the surcharge already summing to $2.2m on
+         screen, defaultMonth is July and this printed "Combined Data CPI Raw
+         stops at July, so there is nothing here for August yet" over the top of
+         August's own figures. A notice that contradicts the table above it
+         teaches people to distrust both.
+
+         `months` is the list of months the export actually carries current-year
+         volume for (buildCells_ collects it, and it is what the Fuel Surcharge
+         page's own picker is built from), so the honest test is whether the
+         month asked for is in it. When the payload predates the field there is
+         nothing to test and nothing is claimed. */
+      var fscMonths = (FSC_DATA.months||[]), fscWant = Number(FSC_DATA.month)||0;
+      var fscBehind = !!(fscMonths.length && fscWant && fscMonths.indexOf(fscWant)===-1);
 
       var LAB='font:700 9.5px Archivo;letter-spacing:.14em;text-transform:uppercase;color:var(--blue-70);margin:0 0 8px';
       var out='<p style="'+LAB+'">Share of total FSC dollars · this year</p>'
@@ -24769,8 +24837,8 @@ AMR.page('overview', {
       }
       out+='</tbody></table>';
       if(fscBehind) out+='<div class="ov-notice"><b>Combined Data CPI Raw stops at '
-        +esc(monthName(Number(FSC_DATA.defaultMonth)||0))+'</b>, so there is nothing here for '
-        +esc(monthName(Number(FSC_DATA.month)||0))+' yet \u2014 the figures above are that empty month.</div>';
+        +esc(monthName(fscMonths[fscMonths.length-1]))+'</b>, so there is nothing here for '
+        +esc(monthName(fscWant))+' yet \u2014 the figures above are that empty month.</div>';
       /* Applied tonnes are now READ off each row rather than inferred from a
          Market x Sold To bucket, so this rate is the charge over the tonnes it
          was actually charged on. Worth saying once: the numbers moved when the
@@ -24793,17 +24861,43 @@ AMR.page('overview', {
           withFsc.map(function(_,i){ return CUST_COLORS[i%CUST_COLORS.length]; }),
           function(i){ var r=withFsc[i]; if(r && pvKnown(r.market)) toggleXf('MARKET', r.market); });
       }
+      return true;
     }
 
-    /* Whether the ranked list came from the server's customer report or from the
-       month cube, it is the same list and the same picture — so it is drawn once,
-       here, and the two callers only decide whether there is anything to draw.
-       `note` is what differs: the server path reads a different table from the
-       by-market panel and has to say so. */
-    function fscCustTable(ranked, note){
+    /* Does anybody in this list carry a surcharge at all? A credit counts: the
+       panel's job is to show the surcharge, and a market month that nets
+       negative is still an answer. Nothing to draw only means nothing was
+       charged either way. */
+    function fscAny(list){
+      return (list||[]).some(function(p){ return (Number(p.cyFsc)||0)!==0; });
+    }
+    /* Whether the list came from the server's customer report or from the month
+       cube, it is the same list and the same picture — so it is drawn once,
+       here, and the callers only decide whether there is anything to draw.
+       `note` is what differs: a path that reads a different table from the
+       by-market panel has to say so.
+
+       IT IS HANDED EVERY CUSTOMER, NOT THE RANKED SURVIVORS, AND THAT IS THE
+       WHOLE OF THE FIX. Each caller used to filter to cyFsc > 0 before ranking
+       and this function then totalled what it was given — so the TOTAL row, and
+       the denominator every Share % is figured against, silently dropped every
+       customer whose surcharge nets to a CREDIT. On the July file that is four
+       customers worth -$28,118 against $1.73m, and the panel published
+       $1,761,134 where the by-market card beside it published $1,733,016. Two
+       cards, one source, different answers — explained away in a footnote about
+       "different tables" that was never the reason. A credit is a customer's
+       surcharge going the other way, not a customer with no surcharge.
+
+       So: the RANKING still only ever shows customers who were charged (a
+       credit cannot be a top-ten row, and a donut has no negative slice), while
+       the TOTAL is arithmetic over the lot. `All others` carries the credits,
+       which is what makes the ten rows plus the remainder come to the total. */
+    function fscCustTable(list, note){
       var body=$('fscCustBody');
-      var top=ranked.slice(0,10);
-      var totalFsc=ranked.reduce(function(s,p){ return s+p.cyFsc; },0);
+      var withFsc=(list||[]).filter(function(p){ return (Number(p.cyFsc)||0)!==0; });
+      var top=withFsc.filter(function(p){ return (Number(p.cyFsc)||0)>0; })
+        .slice().sort(function(a,b){ return b.cyFsc-a.cyFsc; }).slice(0,10);
+      var totalFsc=withFsc.reduce(function(s,p){ return s+(Number(p.cyFsc)||0); },0);
       var othersFsc=totalFsc-top.reduce(function(s,p){ return s+p.cyFsc; },0);
       var LAB='font:700 9.5px Archivo;letter-spacing:.14em;text-transform:uppercase;color:var(--blue-70);margin:0 0 8px';
       var out='<p style="'+LAB+'">Share of customer FSC dollars · this year</p>'
@@ -24817,7 +24911,7 @@ AMR.page('overview', {
           +'<td>'+esc(p.label)+'</td><td>'+fMoneyS(p.cyFsc)+'</td><td>'+fMoneyS(p.pyFsc)+'</td>'
           +'<td>'+(totalFsc?(p.cyFsc/totalFsc*100).toFixed(1):'0.0')+'%</td></tr>';
       });
-      out+='<tr class="tot"><td>All customers with FSC ('+ranked.length+')</td><td>'+fMoneyS(totalFsc)+'</td><td></td><td>100%</td></tr>';
+      out+='<tr class="tot"><td>All customers with FSC ('+withFsc.length+')</td><td>'+fMoneyS(totalFsc)+'</td><td></td><td>100%</td></tr>';
       out+='</tbody></table>'
         +(note?'<p class="note" style="font:500 10.5px Inter;color:var(--muted);margin-top:10px;line-height:1.45">'+note+'</p>':'');
       body.innerHTML=out;
@@ -24836,12 +24930,10 @@ AMR.page('overview', {
       clearCH('fscc');
       $('fscCustScope').textContent=scopeLabel()+' · CY fuel-surcharge dollars · from Price & Volume customer data';
       if(!merged){ hidePanel('fscCustBody'); return; }
-      var ranked=(merged.parents||[]).filter(function(p){ return (Number(p.cyFsc)||0)>0; })
-        .slice().sort(function(a,b){ return b.cyFsc-a.cyFsc; });
-      if(!ranked.length){ hidePanel('fscCustBody'); return; }
+      var list=(merged.parents||[]);
+      if(!fscAny(list)){ hidePanel('fscCustBody'); return; }
       showPanel('fscCustBody');
-      fscCustTable(ranked,
-        'This panel and the by-market table come from different tables, so small differences in totals are expected.');
+      fscCustTable(list, 'The customer table counts TOP LINE REVENUE rows only, which is what the Price &amp; Volume customer report is; the by-market card counts every row. Where a surcharge sits on another revenue type the two totals differ by it.');
     }
 
     /* customer breakdown toggle: off / customer segment / sold-to */
@@ -24991,7 +25083,7 @@ AMR.page('overview', {
            nothing, and when something has moved it is still corrected. */
         if(LOADED_KEY && LOADED_KEY!==loadKey()){ load(); return; }
         if(winMode()) renderActiveTab();
-        else { renderTrendSoon(); repaintServerCpiSoon(); }
+        else { renderTrendSoon(); repaintServerCpiSoon(); renderFscSoon(); }
       });
       /* A CUBE THAT NEVER SPEAKS IS A LOADING SCREEN THAT NEVER LIFTS. The step
          'month history' is answered by the listener above, so anything that
