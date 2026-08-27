@@ -664,6 +664,10 @@ tfoot td:first-child{text-align:left}
 /* the one-line load/error status under a rail panel's buttons */
 .dzstat{font:500 11px Inter; color:var(--muted)}
 .dzstat.ok{color:var(--pos)} .dzstat.err{color:var(--neg)}
+/* Neither of those: the file saved fine and something about it is worth a
+   second look — today, an EBITDA workbook whose name says a different month
+   from the one being reported. See AmrKpi.monthCheck. */
+.dzstat.warn{color:#7A5200}
 /* the show/hide market checklist */
 .mkt-list{display:flex; flex-direction:column; gap:6px}
 .mkt-row{display:flex; align-items:center; gap:8px; font:600 12.5px Inter; color:var(--ink)}
@@ -1892,6 +1896,49 @@ body[data-page="deckbuilder"] .db-banner.warn{background:#FFF6E5; border:1px sol
 body[data-page="deckbuilder"] .db-banner.bad{background:#FDECEC; border:1px solid #F3B7B7; color:#8A1F1F}
 body[data-page="deckbuilder"] .db-banner.ok{background:#E9F8EF; border:1px solid #A9DFC0; color:#15653A}
 body[data-page="deckbuilder"] .db-banner a{color:inherit; font-weight:800}
+
+/* ---- THE KPI WORKBOOKS, IN THE RAIL ---------------------------------------
+   The same two shared EBITDA files the Price & Volume page uploads, put where
+   the Report month is — because the two only mean anything together. See
+   dbKpiPanel. */
+body[data-page="deckbuilder"] .db-kpif{margin-bottom:12px}
+body[data-page="deckbuilder"] .db-kpif:last-child{margin-bottom:0}
+body[data-page="deckbuilder"] .db-file{width:100%; box-sizing:border-box; font:500 11.5px Inter;
+  color:var(--ink)}
+body[data-page="deckbuilder"] .db-kpist{font:500 11px Inter; color:var(--muted); margin-top:4px;
+  line-height:1.45; word-break:break-word}
+body[data-page="deckbuilder"] .db-kpist.ok{color:var(--pos)}
+body[data-page="deckbuilder"] .db-kpist.err{color:var(--neg)}
+body[data-page="deckbuilder"] .db-kpist.warn{color:#7A5200}
+body[data-page="deckbuilder"] .db-kpist a{color:var(--neg); font-weight:700; text-decoration:none}
+
+/* ---- THE PRE-FLIGHT DIALOG ------------------------------------------------
+   It is a DIALOG and not a banner because it is the one thing on this page
+   that has to be answered rather than read: a banner over a render that is
+   already photographing slides is a note about a deck that is being built
+   wrong, and by the time anybody reads it the pack exists. See dbPreflight. */
+body[data-page="deckbuilder"] .db-gate{position:fixed; inset:0; z-index:9998;
+  background:rgba(1,30,106,.55); display:flex; align-items:center; justify-content:center;
+  padding:20px}
+body[data-page="deckbuilder"] .db-gate[hidden]{display:none}
+body[data-page="deckbuilder"] .db-gate-box{background:var(--white); border-radius:var(--r);
+  box-shadow:0 24px 70px rgba(0,0,0,.35); width:min(660px, 100%); max-height:86vh;
+  display:flex; flex-direction:column; overflow:hidden}
+body[data-page="deckbuilder"] .db-gate-box h3{margin:0; padding:14px 18px 12px;
+  border-bottom:1px solid var(--line); font:800 13px Archivo; letter-spacing:.05em;
+  text-transform:uppercase; color:var(--blue-100)}
+body[data-page="deckbuilder"] .db-gate-body{padding:14px 18px; overflow:auto;
+  font:500 12.5px Inter; color:var(--ink); line-height:1.55}
+body[data-page="deckbuilder"] .db-gate-body p{margin:0 0 10px}
+body[data-page="deckbuilder"] .db-gate-find{border:1px solid var(--line); border-left:3px solid #F5D08A;
+  border-radius:9px; padding:9px 12px; margin-bottom:9px; background:#FFFCF5}
+body[data-page="deckbuilder"] .db-gate-find.kpi{border-left-color:#E79B9B; background:#FEF7F7}
+body[data-page="deckbuilder"] .db-gate-find b{color:var(--blue-100)}
+body[data-page="deckbuilder"] .db-gate-find .sub{display:block; margin-top:3px; font:500 11.5px Inter;
+  color:var(--muted); line-height:1.5}
+body[data-page="deckbuilder"] .db-gate-act{display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:12px 18px; border-top:1px solid var(--line); background:#F7FAFE}
+body[data-page="deckbuilder"] .db-gate-act .db-spacer{flex:1}
 
 /* ---- ARRANGE, WHICH IS A MODE OF THE LIST AND NOT A PANEL ABOVE IT ---------
    It used to be its own card above #dbList, holding a SECOND copy of all 43
@@ -4442,6 +4489,141 @@ window.AmrKpi = (function(){
     }).join('|');
   }
 
+  /* =====================================================================
+   * WHICH MONTH A WORKBOOK IS FOR, AND THE ONLY EVIDENCE THERE IS
+   * ---------------------------------------------------------------------
+   * The EBITDA export is named for the month it covers - "July 2026 CENTRAL
+   * ACM ON EBITDA Report D+3 (4).xlsx" - and NOTHING INSIDE IT SAYS SO.
+   * extractBook reads fixed cells: column B row labels for the plant
+   * statements, the RMX Summary blocks for the market ones, MTD in one set of
+   * columns and YTD in another. A June workbook and a July workbook parse
+   * identically and produce different numbers under the same labels, so a
+   * deck built for July off June's file is a pack that renders perfectly,
+   * goes nowhere near red, and is wrong on every KPI card.
+   *
+   * That is the whole reason the file name is read rather than ignored: it is
+   * the ONLY thing that dates the figures. It is also a name a human typed,
+   * so this NEVER GUESSES - an unreadable name answers null and the caller
+   * says "could not tell" rather than inventing a month to compare against.
+   *
+   * A MONTH NAME FIRST, because that is the export's own format and it cannot
+   * collide with anything else in these names. Whole words only, so the "Mar"
+   * of a "MARKET" and the "Jun" of a "JUNCTION" are not months. Only then the
+   * strict numeric form (2026-07), which is narrow enough not to match the
+   * "D+3" or the "(4)" that these names also carry.
+   * =================================================================== */
+  var KPI_MON = ['January','February','March','April','May','June',
+                 'July','August','September','October','November','December'];
+  /* 'sept' before 'sep' - the alternation is ordered and the longer spelling
+     has to win, or "Sept 2026" matches 'sep' and leaves a stray 't'.
+
+     IT ENDS ON "no letter next", NOT ON \b. A trailing \b would refuse
+     "december2025 ebitda.xlsx", because a digit is a word character and there
+     is no boundary between 'r' and '2' - and a month run straight into its
+     year is a name people actually type. A LETTER is the thing that has to
+     disqualify it, which is what keeps the "mar" of MARKET and the "jun" of
+     JUNCTION out. */
+  var KPI_MON_RE = new RegExp('\\b(' +
+    'january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|' +
+    'august|aug|september|sept|sep|october|oct|november|nov|december|dec' +
+    ')(?![a-z])', 'i');
+  var KPI_MON_KEY = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7,
+                      aug:8, sep:9, oct:10, nov:11, dec:12 };
+
+  /* { m:1-12, y:YYYY or 0, label:'July 2026' } or null when the name says
+     nothing. y is 0 when a month was found and no year with it - that is a
+     real answer and a narrower one, not a failure: the month still checks. */
+  function monthOfName(name){
+    var s = String(name || '');
+    if (!s) return null;
+    var m = 0, y = 0, hit = KPI_MON_RE.exec(s);
+    if (hit){
+      m = KPI_MON_KEY[hit[1].slice(0, 3).toLowerCase()] || 0;
+      /* The year is the first 19xx/20xx anywhere in the name. These files
+         carry no other four-digit number - the D+3 and the copy suffix are
+         one digit - and pinning it to the month's own neighbourhood would
+         miss "EBITDA July - 2026 final".
+
+         NOT \b AT EITHER END, for the reason the month is not either:
+         "Sept2026" has no boundary between the 't' and the '2'. What has to
+         be excluded is a LONGER RUN OF DIGITS, so it is "not a digit" on both
+         sides - written without a lookbehind, which browsers only agreed on
+         recently and this file has no other use for. */
+      var yh = /(^|[^0-9])((?:19|20)\d\d)(?![0-9])/.exec(s);
+      if (yh) y = parseInt(yh[2], 10);
+    } else {
+      /* 2026-07 / 2026_07 / 2026.07, and its reverse. Anchored on the
+         four-digit year at one end so "D+3 (4)" cannot reach it. */
+      var num = /\b((?:19|20)\d\d)[-_. ](0?[1-9]|1[0-2])\b/.exec(s)
+             || /\b(0?[1-9]|1[0-2])[-_.]((?:19|20)\d\d)\b/.exec(s);
+      if (!num) return null;
+      if (num[1].length === 4){ y = parseInt(num[1], 10); m = parseInt(num[2], 10); }
+      else                    { m = parseInt(num[1], 10); y = parseInt(num[2], 10); }
+    }
+    if (!(m >= 1 && m <= 12)) return null;
+    return { m:m, y:y, label: KPI_MON[m-1] + (y ? (' ' + y) : '') };
+  }
+
+  /* WHICH REPORTING YEAR A BARE MONTH 1-12 BELONGS TO. A month later in the
+     calendar than the one we are in has not happened yet, so it is last
+     year's - which is the same rule the Deck Builder's month picker and the
+     report pages' month selects resolve by, and it has to be the same one
+     here or a December workbook would be checked against next December. */
+  function yearOf(m){
+    var now = new Date();
+    return (Number(m) > now.getMonth() + 1) ? now.getFullYear() - 1 : now.getFullYear();
+  }
+
+  /* THE CAUTION, for whichever page knows what month it is asking about.
+     Answers per uploaded workbook, and the three states are kept apart
+     because they are fixed by different things:
+
+       ok        the name agrees with the month being reported
+       mismatch  the name says another month - upload the right file
+       unknown   the name carries no month at all, so nothing can be checked
+
+     `y` IS OPTIONAL AND USUALLY OMITTED. Every page that pins a month pins it
+     as 1-12 with no year, so the year is resolved here, once, by yearOf above
+     rather than by each caller - a page passing its own answer would be a
+     second copy of a calendar rule that has to agree with this one. A file
+     whose own name carries no year is compared on the month alone, because
+     that is all it said. */
+  function monthCheck(v, m, y){
+    var f = files(v), out = [];
+    m = Number(m) || 0; y = Number(y) || 0;
+    if (m && !y) y = yearOf(m);
+    ['main','mbsk'].forEach(function(bk){
+      if (!f[bk]) return;                       // not uploaded: nothing to check
+      var got = monthOfName(f[bk].name);
+      var row = { book:bk, label:bookLabel(bk), name:f[bk].name,
+                  file:got, state:'ok' };
+      if (!got) row.state = 'unknown';
+      else if (!m) row.state = 'ok';            // caller does not know its month either
+      else if (got.m !== m || (y && got.y && got.y !== y)) row.state = 'mismatch';
+      out.push(row);
+    });
+    return out;
+  }
+  /* Just the ones worth saying something about. */
+  function monthProblems(v, m, y){
+    return monthCheck(v, m, y).filter(function(r){ return r.state !== 'ok'; });
+  }
+  /* One sentence for a mismatch row, so every page says it the same way.
+     `want` is the month being reported, spelled for a human. */
+  function monthSentence(row, want){
+    if (!row) return '';
+    if (row.state === 'unknown')
+      return 'The ' + row.label + ' workbook is \u201c' + row.name + '\u201d, which does not say '
+           + 'which month it covers \u2014 nothing inside the file does either, so it cannot be checked '
+           + 'against ' + (want || 'the month being reported') + '.';
+    if (row.state === 'mismatch')
+      return 'The ' + row.label + ' workbook is \u201c' + row.name + '\u201d \u2014 its name says '
+           + row.file.label + ', but ' + (want || 'the month being reported') + ' is being reported. '
+           + 'The KPI cards would be ' + row.file.label + '\u2019s figures under ' + (want || 'that month')
+           + '\u2019s headings.';
+    return '';
+  }
+
   /* ---------- device copy (shared by every page, keyed by version) ---------- */
   function devGet(gen){
     try{
@@ -4576,6 +4758,15 @@ window.AmrKpi = (function(){
     rmxHeaders: rmxHeaders,
     files: files,
     sig: sig,
+    /* The month the loaded workbooks are FOR, read off their names - see
+       monthOfName. Every page that knows which month it is reporting can
+       check the two against each other; nothing else can. */
+    monthOfName: monthOfName,
+    yearOf: yearOf,
+    monthCheck: monthCheck,
+    monthProblems: monthProblems,
+    monthSentence: monthSentence,
+    monthName: function(m){ return KPI_MON[(Number(m)||0) - 1] || ''; },
     extractBook: extractBook,
     stripHtml: stripHtml,
     fitStrip: fitStrip,
@@ -5649,6 +5840,27 @@ var AmrDeckSource = (function(){
     return n;
   }
 
+  /* THE KPI WORKBOOK ALONE, and it is deliberately not resetAll().
+     A new EBITDA file changes the KPI strip on the slides that carry one and
+     NOTHING ELSE - the report tables, the customer blocks and the resolved
+     refines behind them are the same figures they were a second ago. resetAll()
+     would throw all of that away too, which on a full deck is forty-odd server
+     round trips bought to correct five cards.
+
+     Optional, exactly like reset(): a source with no KPI strip declares none
+     and is skipped. Returns how many ran, which is what the Deck Builder
+     reports. */
+  function resetKpi(){
+    var n = 0;
+    Object.keys(REG).forEach(function(id){
+      var src = REG[id];
+      if(typeof src.resetKpi !== 'function') return;
+      try { src.resetKpi(); n++; }
+      catch(e){ console.warn('AmrDeckSource: resetKpi() failed for "'+id+'"', e); }
+    });
+    return n;
+  }
+
   /* Which sources a recipe needs but nobody registered. The Deck Builder
      shows this up front, so a missing adapter is a sentence on the page
      rather than 43 rows that each fail on their own. */
@@ -5685,7 +5897,7 @@ var AmrDeckSource = (function(){
 
   return { register:register, has:has, get:get, list:list,
            missingFor:missingFor, build:build, warmAll:warmAll,
-           resetAll:resetAll };
+           resetAll:resetAll, resetKpi:resetKpi };
 })();
 </script>
 
@@ -7141,6 +7353,15 @@ var AmrPvSlide = (function(){
     reset: function(){
       RPT = {}; CUST = {}; REFINED = {};
       KPIVALS.loaded = false; KPIVALS.vals = null;
+    },
+    /* A NEW EBITDA WORKBOOK, WHICH IS NOT THE SAME EVENT. It moves the KPI
+       cards and nothing else - the reports and the customer blocks in RPT /
+       CUST are the same figures - so this drops the KPI slice on its own and
+       leaves forty-odd server round trips where they are. AmrKpi has already
+       replaced its own copy by the time this runs; all that is needed here is
+       to stop answering out of the one taken before it. */
+    resetKpi: function(){
+      KPIVALS.loaded = false; KPIVALS.vals = null;
     }
   });
 
@@ -7165,6 +7386,9 @@ var AmrPvSlide = (function(){
        neither adapter depends on the other being registered. */
     reset: function(){
       RPT = {}; CUST = {}; REFINED = {};
+      KPIVALS.loaded = false; KPIVALS.vals = null;
+    },
+    resetKpi: function(){
       KPIVALS.loaded = false; KPIVALS.vals = null;
     }
   });
@@ -9508,6 +9732,11 @@ var AmrSegSlide = (function(){
     /* ↻ Update from source: forget the tables and the KPI slice. */
     reset: function(){
       CACHE = {};
+      KPIVALS.loaded = false; KPIVALS.vals = null;
+    },
+    /* A new EBITDA workbook moves the cards and leaves CACHE - the Segment
+       tables - exactly as correct as they were. See the 'pv' registration. */
+    resetKpi: function(){
       KPIVALS.loaded = false; KPIVALS.vals = null;
     }
   });
@@ -12653,6 +12882,11 @@ MB Submarket, plus Region&rarr;Country.<br>
     if (monthEl) monthEl.addEventListener('change', function(){
       STATE.month = parseInt(this.value, 10) || 0;
       RPT_CACHE = {}; CUST_CACHE = {}; STATE.cust = null; warmed = false;
+      /* The KPI workbook is checked against the month being reported, so the
+         caution under the two file inputs is about the month that has just
+         changed - a file that was right for July is the wrong one the moment
+         August is picked, and nothing else redraws those lines. */
+      kpiSavedLines();
       if(STATE.view==='markets') load(); else loadCustomers();
     });
     document.getElementById('filterField').addEventListener('change', function(){
@@ -13142,6 +13376,12 @@ MB Submarket, plus Region&rarr;Country.<br>
       if (d.months && d.months.cy && d.months.cy.length) STATE.monthList = d.months.cy;
       if (d.latestMonth) STATE.latestMonth = d.latestMonth;
     }
+    /* THE MONTH IS HALF OF THE KPI WORKBOOK CHECK, and it lands here — the
+       server's latestMonth is what "follow the calendar" resolves to, so
+       until this the caution had nothing to compare a file name against.
+       Cheap and derived entirely from KPI.vals, so calling it before those
+       have loaded simply leaves the lines hidden, as they already are. */
+    kpiSavedLines();
     var list = STATE.monthList;
     if (!list) return;                       // getPvMonths hasn't answered yet: leave it alone
     if (!list.length){
@@ -14336,20 +14576,58 @@ MB Submarket, plus Region&rarr;Country.<br>
     kpiRebuildSheets();
     if(KPI.sheets.indexOf(KPI.sheet)===-1) KPI.sheet='';
     kpiAutoPick(); renderKpis();
-    ['main','mbsk'].forEach(function(book){
-      var f = window.AmrKpi ? AmrKpi.files(KPI.vals)[book] : null;
-      kpiSavedLine(book, f ? f.name : null);
-    });
+    kpiSavedLines();
     if(STATE.data) setTimeout(renderSlidePreview, 0);
   }
 
-  /* "in use by everyone · Replace" line under a given file input */
+  /* "in use by everyone · Replace" line under a given file input, and — when
+     the name disagrees with the month this page is reporting — the caution.
+
+     THE FILE NAME IS THE ONLY THING THAT DATES AN EBITDA WORKBOOK. Nothing
+     inside it says which month it covers: the plant statements are an MTD
+     block and a YTD block of fixed columns, so June's export parses exactly
+     like July's and puts June's figures on the cards under a July heading.
+     AmrKpi.monthCheck is the one place that comparison is made; this is the
+     Price & Volume end of it, and the Deck Builder's KPI workbooks panel is
+     the other. */
   function kpiSavedLine(book, name){
     var el=document.getElementById(KPI_SAVED[book]); if(!el) return;
     if(!name){ el.style.display='none'; el.innerHTML=''; return; }
     el.style.display=''; el.className='dzstat ok';
     el.innerHTML='\u2713 '+esc(name)+' \u00B7 in use by everyone &nbsp;'
-      +'<a href="#" data-kpiclear="'+book+'" style="color:var(--neg);font-weight:700;text-decoration:none">Remove</a>';
+      +'<a href="#" data-kpiclear="'+book+'" style="color:var(--neg);font-weight:700;text-decoration:none">Remove</a>'
+      + kpiMonthNote(book);
+  }
+
+  /* The report month this page is showing, 1-12. STATE.month is the picker;
+     0 means "follow the calendar", which the server has already resolved into
+     latestMonth. AmrKpi works the reporting YEAR out itself. */
+  function kpiReportMonth(){ return STATE.month || STATE.latestMonth || 0; }
+  function kpiMonthNote(book){
+    if(!(window.AmrKpi && AmrKpi.monthProblems)) return '';
+    var m = kpiReportMonth(); if(!m) return '';        // no month known: nothing to check against
+    var hit = null;
+    try {
+      AmrKpi.monthProblems(KPI.vals, m).forEach(function(r){ if(r.book===book) hit=r; });
+    } catch(e){ return ''; }
+    if(!hit) return '';
+    var want = PV_MONTH_NAMES[m-1] + ' ' + AmrKpi.yearOf(m);
+    return '<span class="dzstat warn" style="display:block;margin-top:3px">\u26A0 '
+         + esc(AmrKpi.monthSentence(hit, want)) + '</span>';
+  }
+  /* Both lines, redrawn. The name and the month it is checked against can each
+     move without the values themselves changing — a month picked in the rail
+     is exactly that case. */
+  function kpiSavedLines(){
+    /* fillMonths() calls this, and the month list can land from the opening
+       batch — so this can be reached before `var KPI` down the page has been
+       evaluated. A hoisted var is `undefined` until then, and there is nothing
+       to draw either way. */
+    if(!KPI) return;
+    ['main','mbsk'].forEach(function(book){
+      var f = window.AmrKpi ? AmrKpi.files(KPI.vals)[book] : null;
+      kpiSavedLine(book, f ? f.name : null);
+    });
   }
 
   function kpiInit(){
@@ -25245,6 +25523,22 @@ AMR.page('overview', {
       <input class="db-in" id="dbSub" type="text" placeholder="Central Canada &middot; Commercial">
     </div>
 
+    <!-- THE KPI WORKBOOKS, AND THEY BELONG HERE.
+         They used to be uploadable from the Price & Volume page alone, so the
+         one page that picks a report month for a whole pack was the one page
+         that could not see, let alone change, the files the KPI strips are
+         built from. Directly under Report month, because the two only mean
+         anything together: the EBITDA export is named for the month it covers
+         and nothing inside it is, so the month picked above is the only thing
+         the file name can be checked against. See dbKpiPanel. -->
+    <div class="db-panel">
+      <h3>KPI workbooks</h3>
+      <div id="dbKpiBooks" class="db-note">Reading the shared workbooks&hellip;</div>
+      <p class="db-note" style="margin-top:10px">The EBITDA files every KPI strip is built
+        from. Uploading one <b>replaces it for everybody</b> &mdash; the same two feed
+        Price &amp; Volume, Product Segment and the Overview.</p>
+    </div>
+
     <div class="db-panel">
       <h3>Arrangement</h3>
       <p class="db-note">Slide <b>order</b>, what each slide <b>shows</b>, and what is
@@ -25320,6 +25614,24 @@ AMR.page('overview', {
   </div>
 </div>
 
+<!-- THE PRE-FLIGHT, ASKED BEFORE ANY SLIDE IS PHOTOGRAPHED.
+     Outside .dbwrap, like the lightbox below it, because it covers the page.
+     Its two Open-page buttons are written into #dbGateBody by dbGateHtml and
+     read by the same data-act delegation as the header's. -->
+<div class="db-gate" id="dbGate" hidden>
+  <div class="db-gate-box" role="dialog" aria-modal="true" aria-labelledby="dbGateTtl">
+    <h3 id="dbGateTtl">Before this deck is built</h3>
+    <div class="db-gate-body" id="dbGateBody"></div>
+    <div class="db-gate-act">
+      <button class="dbbtn" data-act="db-gate-stop"
+        title="Nothing is rendered. Everything already built is kept.">Stop</button>
+      <div class="db-spacer"></div>
+      <button class="dbbtn primary" id="dbGateGo" data-act="db-gate-go"
+        title="Build the deck as it stands. You will not be asked again unless something changes.">Render anyway</button>
+    </div>
+  </div>
+</div>
+
 <!-- full-size look at one slide mock -->
 <div class="db-lb" id="dbLb">
   <button class="db-lb-close" data-act="db-lb-close">&times;</button>
@@ -25360,8 +25672,12 @@ AMR.page('overview', {
 AMR.page('deckbuilder', {
   title: 'Amrize · Deck Builder',
   /* Chart.js because the content modules draw the slides' charts, html2canvas
-     because AmrSlide.captureBare photographs them. No SheetJS: this page reads
-     the KPI numbers the server already parsed, it never opens a workbook. */
+     because AmrSlide.captureBare photographs them. STILL NO SheetJS: every
+     slide is built from KPI numbers the server already parsed, and the one
+     thing here that does open a workbook — replacing an EBITDA file in the
+     KPI workbooks panel — fetches it with AMR.lib.need at the moment a file is
+     chosen. A library on this list is loaded on every open of the page; this
+     one is wanted on perhaps one open in twenty. */
   libs: ['chart', 'html2canvas'],
   help:
     '<h3>What is this?</h3><p>Builds the monthly pack as a real Google Slides deck. '+
@@ -25376,6 +25692,33 @@ AMR.page('deckbuilder', {
     'slide per call.</p>'+
     '<p>Arrange is worth opening even on a month where nothing needs changing — it is the '+
     'only place that shows what somebody set months ago.</p>'+
+    '<h3>The two questions Render asks first</h3>'+
+    '<p>Both are the same shape, and it is the shape this page cannot show you any other '+
+    'way: a deck where every slide builds, nothing goes red, and the numbers are wrong.</p>'+
+    '<p><b>The lookup tabs.</b> A plant with no <b>REGION LOOKUP</b> row still carries its '+
+    'volume and revenue — it lands in a blank market and submarket, in USD. A mix with no '+
+    '<b>PRODUCT MASTER</b> row still counts but has no strength class, so the Strength and '+
+    'Product Class tables miss it. A material with no <b>EXTRAS LOOKUP</b> row sits under '+
+    '&ldquo;Unclassified&rdquo;. Each report page shows this as its Mapping check; the deck '+
+    'reads those same pages, so it asks the same question before it photographs anything.</p>'+
+    '<p><b>The KPI workbook&rsquo;s month.</b> Nothing inside an EBITDA export says which '+
+    'month it covers — June&rsquo;s file parses exactly like July&rsquo;s. Its <b>name</b> is '+
+    'the only evidence there is, so the name is read and checked against the report month '+
+    'above.</p>'+
+    '<p>Neither one stops you: it is a prompt, not a refusal. <b>Render anyway</b> builds the '+
+    'pack as it stands and does not ask again until something moves — a lookup fixed, a '+
+    'workbook replaced, the month changed, new figures synced. <b>Stop</b> renders nothing '+
+    'and keeps everything already built. Nothing at all is said on the normal month, where '+
+    'everything matched.</p>'+
+    '<h3>The KPI workbooks</h3>'+
+    '<p>The two shared EBITDA files, in the left rail under <b>Report month</b> — because the '+
+    'two only mean anything together. Uploading one <b>replaces it for everybody</b>; it is '+
+    'the same file Price &amp; Volume, Product Segment and the Overview read. You no longer '+
+    'have to leave this page to fix a KPI strip, which used to cost the deck you were in the '+
+    'middle of.</p>'+
+    '<p>A new workbook drops <b>only the slides that carry a strip</b> and rebuilds them — in '+
+    'the run that is going, if one is. The report tables and the customer blocks are the same '+
+    'figures they were and keep their pictures.</p>'+
     '<h3>If a slide fails</h3><p>It goes red with the reason. Press <b>Render</b> again — only '+
     'the unfinished rows are retried, nothing already done is rebuilt.</p>'+
     '<h3>Stopping a render</h3><p><b>Stop render</b> appears beside <b>Render</b> while a pass '+
@@ -25396,8 +25739,8 @@ AMR.page('deckbuilder', {
     '<h3>The Region column</h3><p>Slides with a KPI strip read one region sheet of an EBITDA '+
     'workbook, and there are two workbooks: Manitoba and Saskatchewan are on their own, '+
     'everything else is on the main one. Each row is only offered the regions from ITS workbook. '+
-    'A row whose workbook has not been uploaded says <i>no workbook</i> instead — upload it on '+
-    'the Price &amp; Volume page and the region appears here on its own.</p>'+
+    'A row whose workbook has not been uploaded says <i>no workbook</i> instead — upload it in '+
+    '<b>KPI workbooks</b> in the left rail and the region appears here on its own.</p>'+
     '<p><b>The Region on the row is a read-out, not a picker.</b> It says which region sheet '+
     'that slide will be built from, and whether anybody chose it: <i>Region &middot; shared</i> '+
     'is a choice saved for everybody, <i>Region &middot; default</i> is the first region sheet '+
@@ -25481,6 +25824,11 @@ AMR.page('deckbuilder', {
         case 'help':          AMR.openHelp();  break;
         case 'db-validate':   dbValidate();    break;
         case 'db-lb-close':   dbCloseLb();     break;
+        /* The pre-flight's three answers. Its Open-page buttons are written
+           into #dbGateBody by dbGateHtml, so they land here too. */
+        case 'db-gate-go':    dbGateClose('go');   break;
+        case 'db-gate-stop':  dbGateClose('stop'); break;
+        case 'db-gate-page':  dbGateClose('page:' + b.getAttribute('data-db-page')); break;
       }
     });
 
@@ -25661,6 +26009,14 @@ AMR.page('deckbuilder', {
       ROWS.forEach(function(r){
         if(r.png || r.status === 'ready'){ r.png = null; r.w = r.h = 0; r.status = 'pending'; n++; }
       });
+      /* THE WORKBOOK CAUTION IS ABOUT THIS MONTH, so it is re-read against the
+         new one — a file that was right for July is the finding on an August
+         deck, and the panel is where it is said. The pre-flight's "render
+         anyway" was given about the old month and does not carry over; its
+         signature carries the month for exactly this reason, but clearing it
+         here is what makes that true even when the findings are identical. */
+      dbKpiPanel();
+      GATE_OK = '';
       redraw(); updateStages();
       prog(DB_MON[DECK_MONTH-1] + ' selected' + (n ? ' · re-render the ' + n + ' slide(s) already built' : ''));
     });
@@ -25673,6 +26029,224 @@ AMR.page('deckbuilder', {
     if(el.getAttribute('data-touched')) return;
     var m = DECK_MONTH || dbPrevMonth();
     el.value = 'Amrize Commercial Deck — ' + DB_MON[m-1] + ' ' + dbYearOf(m);
+  }
+
+
+  /* =========================================================================
+   * THE KPI WORKBOOKS, FROM THIS PAGE
+   * -------------------------------------------------------------------------
+   * The two shared EBITDA files behind every KPI strip. They were uploadable
+   * from the Price & Volume page and nowhere else, which put them on the one
+   * page that does NOT choose a month for a pack, and left the one that does
+   * unable to see them at all. A row whose workbook was missing said "no
+   * workbook · upload it on the Price & Volume page" — a correct instruction
+   * that costs the deck you are in the middle of, because switching pages
+   * tears this one down and every picture with it.
+   *
+   * SO THE SAME UPLOAD IS HERE, and it is the same shared file: AmrKpi.upload
+   * parses the workbook in this browser and saves the slice for EVERYBODY, so
+   * a file put in here is the file Price & Volume, Product Segment and the
+   * Overview read next time they load. Nothing about that is per-device and
+   * nothing about it is per-page.
+   *
+   * WHAT A NEW WORKBOOK COSTS, and it is deliberately not what ↻ costs. The
+   * KPI cards move; the report tables, the customer blocks and the Ready-Mix
+   * key rows do not. So this drops the KPI slice alone (AmrDeckSource.resetKpi)
+   * and re-queues only the slides that CARRY a strip — dbKpiRestale, on the
+   * same rule dbRestale uses for a table or region change, including putting
+   * an already-photographed row back on the LIVE queue so a render in flight
+   * rebuilds it before it ends.
+   * ======================================================================= */
+  var KPIF = { vals:null, loaded:false };
+
+  /* Every book, in the order the panel shows them. AmrKpi owns the labels. */
+  var DB_KPI_BOOKS = ['main', 'mbsk'];
+
+  function dbBookLabel(book){
+    return (window.AmrKpi && AmrKpi.bookLabel) ? AmrKpi.bookLabel(book) : 'EBITDA';
+  }
+
+  /* The shared values, as this page last saw them. AmrKpi caches them itself
+     and hands the same object to every caller, so this is a handle rather than
+     a second copy — but the panel has to be able to redraw without asking
+     again, which is what the local reference is for. */
+  function dbKpiLoad(){
+    if(KPIF.loaded) return Promise.resolve(KPIF.vals);
+    if(!window.AmrKpi){ KPIF.loaded = true; return Promise.resolve(null); }
+    return new Promise(function(resolve){
+      try {
+        AmrKpi.load(function(v){
+          KPIF.loaded = true; KPIF.vals = v || null; resolve(KPIF.vals);
+        });
+      } catch(e){ KPIF.loaded = true; resolve(null); }
+    });
+  }
+
+  /* WHICH WORKBOOKS DISAGREE WITH THE MONTH THIS DECK IS BEING BUILT FOR.
+     AmrKpi reads the month off the FILE NAME because that is the only thing
+     that carries one — see its monthOfName. Two states come back and they are
+     not the same problem: `mismatch` is the wrong file and is fixed by
+     uploading the right one; `unknown` is a name nobody can date, which is not
+     wrong, just unverifiable, and is said once rather than made to look like
+     an error. */
+  function dbKpiMonthRows(){
+    if(!(window.AmrKpi && AmrKpi.monthProblems)) return [];
+    /* The month alone: AmrKpi resolves the reporting year by the same rule
+       dbYearOf uses, so handing it one would be a second copy of it. */
+    try { return AmrKpi.monthProblems(KPIF.vals, DECK_MONTH || dbPrevMonth()) || []; }
+    catch(e){ return []; }
+  }
+  /* The month the deck is for, spelled the way a sentence wants it. */
+  function dbMonthLabel(){
+    var m = DECK_MONTH || dbPrevMonth();
+    return DB_MON[m-1] + ' ' + dbYearOf(m);
+  }
+
+  /* One file input, its shared-file line and its month caution, per book. */
+  function dbKpiPanel(){
+    var host = document.getElementById('dbKpiBooks'); if(!host) return;
+    if(!window.AmrKpi){
+      host.innerHTML = '<span style="color:var(--neg);font-weight:700">The KPI module did '+
+        'not load — refresh the page.</span>';
+      return;
+    }
+    var f = AmrKpi.files(KPIF.vals) || {};
+    var probs = {}, want = dbMonthLabel();
+    dbKpiMonthRows().forEach(function(r){ probs[r.book] = r; });
+
+    host.innerHTML = DB_KPI_BOOKS.map(function(bk){
+      var got = f[bk], p = probs[bk];
+      var line = got
+        ? '<div class="db-kpist ok">\u2713 ' + esc(got.name) + ' \u00b7 in use by everyone '+
+          '&nbsp;<a href="#" data-dbkpiclear="' + bk + '" '+
+          'title="Remove this workbook for everybody. The strips that read it go blank until one is uploaded again.">Remove</a></div>'
+        : '<div class="db-kpist">Not uploaded. Slides whose KPI cards read this workbook '+
+          'are built without a strip.</div>';
+      var note = (got && p)
+        ? '<div class="db-kpist warn">\u26a0 ' + esc(AmrKpi.monthSentence(p, want)) + '</div>'
+        : '';
+      return '<div class="db-kpif">'+
+        '<label class="db-lbl" for="dbKpi_' + bk + '">' + esc(dbBookLabel(bk)) + ' (.xlsx)</label>'+
+        '<input class="db-file" type="file" accept=".xlsx,.xlsm" id="dbKpi_' + bk + '" '+
+        'data-dbkpi="' + bk + '">' + line + note +
+      '</div>';
+    }).join('');
+  }
+
+  /* Does this row carry a KPI strip at all? The source declares it — kpiPicker
+     for a strip that reads a region sheet, kpiToggle for one that can be
+     switched off — and a scope may have switched it off for this row. Anything
+     else is a slide a new workbook cannot change. */
+  function dbKpiRow(r){
+    var src = srcOf(r.spec.source);
+    if(!src || (!src.kpiPicker && !src.kpiToggle)) return false;
+    return !(r.spec.kpi && r.spec.kpi.on === false);
+  }
+  function dbKpiSlideCount(){
+    return ROWS.filter(function(r){ return r.on && dbKpiRow(r); }).length;
+  }
+
+  /* EXACTLY THE PICTURES THE NEW WORKBOOK CHANGED, and no others — the same
+     shape as dbRestale, which is why it returns the same pair and is reported
+     with the same sentence. A slide with no strip was photographed from
+     figures this did not touch and keeps its picture. */
+  function dbKpiRestale(){
+    var requeued = 0, ahead = 0;
+    ROWS.forEach(function(row){
+      if(!row.on || !dbKpiRow(row)) return;
+      if(!row.png){
+        if(RQ && RQ.list.indexOf(row) >= RQ.i) ahead++;
+        return;
+      }
+      row.png = null; row.w = row.h = 0; row.status = 'pending'; row.err = '';
+      requeued++;
+      if(RQ && RQ.list.indexOf(row) < RQ.i) RQ.list.push(row);
+    });
+    return { requeued: requeued, ahead: ahead };
+  }
+
+  /* One landing for an upload AND a removal: the values have moved, so the
+     adapters' copies are dropped, the affected pictures go back on the queue,
+     the Region read-outs are refilled and the panel repaints. */
+  function dbKpiApply(vals, said){
+    KPIF.loaded = true; KPIF.vals = vals || null;
+    if(window.AmrDeckSource && AmrDeckSource.resetKpi) AmrDeckSource.resetKpi();
+    /* The gate's answer was given about the workbooks that were loaded THEN. */
+    GATE_OK = '';
+    var n = dbKpiRestale();
+    dbKpiPanel();
+    banner('ok', said + dbRestaleNote(n));
+    /* Refills every row's Region read-out from the new workbook and redraws.
+       Without it a row whose region sheet has just arrived would keep saying
+       "no workbook" until something else redrew the list. */
+    dbWarmPickers();
+    setBusy(BUSY);
+  }
+
+  /* The file inputs and the Remove links are written by dbKpiPanel, so both
+     are delegated on the panel that survives its redraws. `change` bubbles. */
+  function dbKpiInit(){
+    var host = document.getElementById('dbKpiBooks'); if(!host) return;
+
+    host.addEventListener('change', function(e){
+      var inp = e.target;
+      if(!inp || !inp.getAttribute || !inp.getAttribute('data-dbkpi')) return;
+      var book = inp.getAttribute('data-dbkpi');
+      var file = inp.files && inp.files[0]; if(!file) return;
+      if(!window.AmrKpi){ banner('bad', 'The KPI module did not load — refresh the page.'); return; }
+
+      /* Say which file is being read, in the row it was dropped into: parsing
+         a 60-tab workbook in the browser is seconds, not milliseconds, and an
+         input that goes quiet reads as one that did nothing. */
+      var st = inp.parentNode ? inp.parentNode.querySelector('.db-kpist') : null;
+      if(st){ st.className = 'db-kpist'; st.textContent = 'Reading ' + file.name + '\u2026'; }
+      clearBanners();
+
+      /* SHEETJS IS FETCHED HERE AND NOT IN `libs`, which is the whole reason
+         this page still opens without it. AmrKpi.upload parses the workbook in
+         the browser, so XLSX has to exist by the time it runs — but every
+         other thing this page does reads KPI numbers the server already
+         parsed, and putting xlsx in the registration would buy a CDN load on
+         every open of the Deck Builder to serve the one press in twenty that
+         replaces a workbook. AMR.lib.need caches, so the second upload in a
+         session is free. */
+      AMR.lib.need('xlsx').then(function(){
+        AmrKpi.upload(book, file, function(ok, res){
+          inp.value = '';
+          if(!ok){
+            dbKpiPanel();
+            banner('bad', '<b>' + esc(dbBookLabel(book)) + ' was not saved:</b> ' + esc(String(res)));
+            return;
+          }
+          dbKpiApply(res, '<b>' + esc(dbBookLabel(book)) + ' updated for everybody</b> — ' +
+            esc(file.name) + '. Every KPI strip is built from it from now on');
+        });
+      }).catch(function(e){
+        inp.value = '';
+        dbKpiPanel();
+        banner('bad', '<b>Could not load the spreadsheet reader,</b> so the workbook was '+
+          'not opened: ' + esc(e && e.message ? e.message : String(e)));
+      });
+    });
+
+    host.addEventListener('click', function(e){
+      var a = e.target.closest ? e.target.closest('[data-dbkpiclear]') : null;
+      if(!a) return;
+      e.preventDefault();
+      var book = a.getAttribute('data-dbkpiclear');
+      if(!window.AmrKpi) return;
+      if(!window.confirm('Remove the ' + dbBookLabel(book) + ' workbook?\n\n' +
+         'This is shared: it removes it for everybody, and every slide whose KPI cards ' +
+         'read it is built without a strip until one is uploaded again.')) return;
+      clearBanners();
+      AmrKpi.clear(book, function(ok, res){
+        if(!ok){ banner('bad', esc(String(res))); return; }
+        dbKpiApply(res, '<b>' + esc(dbBookLabel(book)) + ' removed for everybody.</b> ' +
+          'Slides whose KPI cards read it are built without a strip');
+      });
+    });
+
+    dbKpiLoad().then(dbKpiPanel);
   }
 
 
@@ -25763,6 +26337,12 @@ AMR.page('deckbuilder', {
 
         var n = window.AmrDeckSource ? AmrDeckSource.resetAll() : 0;
 
+        /* The pre-flight's answers were about the figures that have just been
+           replaced: the lookup misses are counted against the raw data, and
+           "render anyway" was said about a particular set of them. Both are
+           re-asked. See dbPreflight. */
+        dbMapForget();
+
         /* Every picture on screen was taken from the old figures. */
         var dropped = 0;
         ROWS.forEach(function(r){
@@ -25784,6 +26364,279 @@ AMR.page('deckbuilder', {
            before the redraw — otherwise every row would flip to "no workbook"
            for the length of the render. dbWarmPickers redraws for us. */
         dbWarmPickers().then(function(){ resolve(true); });
+      });
+    });
+  }
+
+
+  /* =========================================================================
+   * THE PRE-FLIGHT — the ways a deck comes out WRONG WITHOUT GOING RED
+   * -------------------------------------------------------------------------
+   * The source check above answers "are these last week's figures?". This
+   * answers the other two questions with the same shape, and the shape is the
+   * whole reason it exists: every one of them produces a deck where all 43
+   * slides build, nothing is marked red, and the numbers are wrong.
+   *
+   *   1. THE LOOKUP TABS. A plant with no REGION LOOKUP row still carries its
+   *      volume and revenue — it just lands in a blank market and submarket,
+   *      in USD. A mix with no PRODUCT MASTER row still counts, with no
+   *      strength class, so the Strength and Product Class tables miss it. An
+   *      extra with no EXTRAS LOOKUP row sits under "Unclassified". The report
+   *      pages each show this as a Mapping check card; the deck reads those
+   *      same pages and had no way to see it.
+   *   2. THE KPI WORKBOOK'S MONTH. The EBITDA export is named for the month it
+   *      covers and nothing inside it is, so June's file parses exactly like
+   *      July's and puts June's cards on a July slide. See AmrKpi.monthOfName.
+   *
+   * IT IS A QUESTION, NOT A BANNER, AND IT COMES BEFORE THE FIRST CAPTURE.
+   * A banner over a render that is already photographing slides is a note
+   * about a pack that is being built wrong; by the time anyone reads it, it
+   * exists. So Render stops here and asks — and it is a prompt rather than a
+   * refusal, because "the lookups have four misses worth $2k and the deck is
+   * due" is a real answer and not this page's to overrule.
+   *
+   * IT RUNS AFTER THE SOURCE CHECK, which is not a detail. The lookup counts
+   * are counted against the data as the server currently holds it, and the
+   * source check is the thing that syncs it. Asking first would mean asking
+   * about the figures that were about to be replaced, and then either asking
+   * again or not saying that the answer had moved.
+   *
+   * ONCE ANSWERED IT STAYS ANSWERED, until the answer would be different. The
+   * findings are hashed into a signature; "Render anyway" records it, and a
+   * later Render with the same signature goes straight through. Anything that
+   * moves — a lookup fixed, a workbook replaced, the month changed, new
+   * figures synced — changes the signature and the question comes back.
+   * ======================================================================= */
+
+  /* WHICH LINE'S LOOKUP TABS A SLIDE ACTUALLY DEPENDS ON.
+     'agg' is the REGION LOOKUP check (getPvUnmapped): the AGG raw tab is keyed
+     on Plant and the market comes off that tab, which is as true of Fuel
+     Recovery and the Top 10 Customers block as it is of Price & Volume.
+     'rmx' is PRODUCT MASTER and EXTRAS LOOKUP (RMX_getUnmapped): the Ready-Mix
+     strength and product-class tables and the Product Segment's extras.
+
+     RMX FUEL RECOVERY IS DELIBERATELY ABSENT. It reads neither tab — its
+     market comes off the fuel data's own mapping — and claiming a finding
+     reaches a slide it cannot reach is the way a warning stops being read. */
+  var DB_MAP_LINE = { pv:'agg', cust:'agg', fsc:'agg', rmx:'rmx', seg:'rmx' };
+  var DB_MAP_FN   = { agg:'getPvUnmapped', rmx:'RMX_getUnmapped' };
+  var DB_MAP_PAGE = { agg:{ key:'pricevolume', label:'AGG \u00b7 Price & Volume' },
+                      rmx:{ key:'rmx',         label:'RMX \u00b7 Price & Volume' } };
+
+  var MAPCHK  = { agg:null, rmx:null };   // this session's answers, per line
+  var MAPERR  = { agg:'',   rmx:''   };   // ...or why there isn't one
+  var GATE_OK = '';                       // the findings "Render anyway" was said about
+  var GATE    = null;                     // the open dialog's resolve, while it is up
+
+  function dbMapForget(){
+    MAPCHK = { agg:null, rmx:null };
+    MAPERR = { agg:'',   rmx:''   };
+    GATE_OK = '';
+  }
+
+  /* Only the lines this pack still has slides to render on. A deck of nothing
+     but Fuel Recovery asks neither question, and a retry after everything
+     Ready-Mix has already been photographed does not re-ask about mixes. */
+  function dbMapLines(){
+    var need = {};
+    ROWS.forEach(function(r){
+      if(!r.on || r.png) return;
+      var line = DB_MAP_LINE[r.spec.source];
+      if(line) need[line] = 1;
+    });
+    return need;
+  }
+  function dbLineSlides(line){
+    return ROWS.filter(function(r){
+      return r.on && !r.png && DB_MAP_LINE[r.spec.source] === line;
+    }).length;
+  }
+
+  /* Ask the two backends, once per session per line. Both answers are served
+     out of the server's own cache under the current data generation, so the
+     second press of Render costs a round trip and nothing more; the first can
+     cost a real read, which is what the progress screen is for.
+
+     NEVER REJECTS. A check that cannot run must not stop a render — it says so
+     and lets the deck be built on the operator's judgement, exactly as the
+     source check does. */
+  function dbMapLoad(){
+    var need = dbMapLines();
+    var want = Object.keys(need).filter(function(k){ return !MAPCHK[k]; });
+    if(!IS_LIVE || !want.length) return Promise.resolve();
+
+    prog('Checking the lookup tabs\u2026');
+    if(window.AmrProgress)
+      AmrProgress.set('maps', { text:'Checking the lookup tabs\u2026', order:6 });
+
+    return Promise.all(want.map(function(line){
+      return srv(DB_MAP_FN[line], [{ upload:null }])
+        .then(function(d){ MAPCHK[line] = d || null; })
+        .catch(function(e){ MAPERR[line] = (e && e.message) ? e.message : String(e); });
+    })).then(function(){
+      if(window.AmrProgress){ try { AmrProgress.clear('maps'); } catch(e){} }
+    });
+  }
+
+  /* Everything worth stopping for, in one list, so the dialog has one shape to
+     render and the signature has one thing to hash. */
+  function dbFindings(){
+    var need = dbMapLines(), out = [];
+
+    if(need.agg && MAPCHK.agg){
+      var n = MAPCHK.agg.regionTotal || 0;
+      if(n) out.push({ kind:'map', line:'agg', tab:'REGION LOOKUP', n:n,
+        what: n + ' plant' + (n===1?'':'s') + ' in the Aggregates raw data ' +
+              (n===1?'has':'have') + ' no REGION LOOKUP row',
+        lands:'Their volume and revenue are still counted — they land in a blank market '+
+              'and submarket, and with no country they are treated as USD.',
+        slides: dbLineSlides('agg') });
+    }
+    if(need.rmx && MAPCHK.rmx){
+      var np = (MAPCHK.rmx.product || []).length, ne = (MAPCHK.rmx.extras || []).length;
+      if(np) out.push({ kind:'map', line:'rmx', tab:'PRODUCT MASTER', n:np,
+        what: np + ' mix' + (np===1?'':'es') + ' in the Ready-Mix data ' +
+              (np===1?'has':'have') + ' no PRODUCT MASTER row',
+        lands:'They still count in volume and base revenue, but carry no strength class, '+
+              'product class or application — so the Strength and Product Class tables miss them.',
+        slides: dbLineSlides('rmx') });
+      if(ne) out.push({ kind:'map', line:'rmx', tab:'EXTRAS LOOKUP', n:ne,
+        what: ne + ' material' + (ne===1?'':'s') + ' ' + (ne===1?'has':'have') +
+              ' no EXTRAS LOOKUP row',
+        lands:'Their revenue is still counted — in the ASP build-up and in the All-in '+
+              'figure — but it sits under “Unclassified” instead of a real extra type.',
+        slides: dbLineSlides('rmx') });
+    }
+
+    /* THE WORKBOOK MONTH, and only for a pack that actually shows a strip.
+       ONLY A MISMATCH STOPS ANYTHING. monthProblems also answers `unknown` —
+       a file name nobody can date — and that is not a wrong workbook, it is an
+       unverifiable one. The rail says so under the input, where it can be read
+       and ignored; putting it here would open this dialog on every single
+       render for a team whose file names simply do not carry months, which is
+       how a prompt stops being read. */
+    var strips = dbKpiSlideCount();
+    if(strips){
+      dbKpiMonthRows().forEach(function(r){
+        if(r.state !== 'mismatch') return;
+        out.push({ kind:'kpi', book:r.book, state:r.state, name:r.name,
+                   month:(r.file && r.file.label) || '',
+                   what: window.AmrKpi ? AmrKpi.monthSentence(r, dbMonthLabel()) : '',
+                   slides: strips });
+      });
+    }
+    return out;
+  }
+
+  /* WHAT WAS ANSWERED, not just that something was. A count that moves, a
+     workbook that is replaced or a month that is changed all have to bring the
+     question back; the same findings twice must not. */
+  function dbFindSig(find){
+    return find.map(function(f){
+      return f.kind === 'map'
+        ? ('m:' + f.line + ':' + f.tab + ':' + f.n)
+        : ('k:' + f.book + ':' + f.state + ':' + f.name + ':' + f.month);
+    }).join('|') + '|@' + (DECK_MONTH || dbPrevMonth());
+  }
+
+  function dbGateHtml(find){
+    var maps = find.filter(function(f){ return f.kind === 'map'; });
+    var kpis = find.filter(function(f){ return f.kind === 'kpi'; });
+    var h = '';
+
+    if(maps.length){
+      h += '<p><b>The lookup tabs did not match everything.</b> None of this fails a slide — '+
+           'every row still builds and nothing goes red. The figures are simply filed in the '+
+           'wrong place, or in no place at all.</p>';
+      h += maps.map(function(f){
+        return '<div class="db-gate-find"><b>' + esc(f.tab) + '</b> — ' + esc(f.what) + '.'+
+          '<span class="sub">' + esc(f.lands) + ' Reaches <b>' + f.slides + '</b> slide' +
+          (f.slides===1?'':'s') + ' still to render in this pack.</span></div>';
+      }).join('');
+    }
+
+    if(kpis.length){
+      h += '<p><b>The KPI workbook may be the wrong month.</b> Nothing inside an EBITDA '+
+           'export says which month it covers — its file name is the only evidence there is, '+
+           'so this is what the name says against the month the deck is set to.</p>';
+      h += kpis.map(function(f){
+        return '<div class="db-gate-find kpi">' + esc(f.what) +
+          '<span class="sub">Reaches <b>' + f.slides + '</b> slide' + (f.slides===1?'':'s') +
+          ' with a KPI strip. Replace it in <b>KPI workbooks</b> in the left rail — you do '+
+          'not have to leave this page.</span></div>';
+      }).join('');
+    }
+
+    /* WHERE TO FIX A LOOKUP, and what going there costs. Switching pages
+       unmounts this one, so anything already photographed goes with it — which
+       is worth saying rather than discovering. */
+    var lines = {}; maps.forEach(function(f){ lines[f.line] = 1; });
+    var keys = Object.keys(lines);
+    if(keys.length){
+      var built = countReady();
+      h += '<p style="margin-top:12px">Add the missing rows on the page that owns the tab:</p>'+
+        '<div class="db-gate-act" style="padding:0;border:0;background:transparent;margin-bottom:8px">'+
+        keys.map(function(k){
+          var p = DB_MAP_PAGE[k];
+          return '<button class="dbbtn" data-act="db-gate-page" data-db-page="' + esc(p.key) + '">'+
+            'Open ' + esc(p.label) + ' \u2197</button>';
+        }).join('') + '</div>' +
+        (built ? ('<p class="sub" style="font:500 11.5px Inter;color:var(--muted);margin:0">'+
+                  'Leaving loses the ' + built + ' slide' + (built===1?'':'s') + ' already '+
+                  'photographed — they live in this tab, not in the deck.</p>') : '');
+    }
+    return h;
+  }
+
+  function dbGateOpen(html){
+    return new Promise(function(resolve){
+      GATE = resolve;
+      document.getElementById('dbGateBody').innerHTML = html;
+      document.getElementById('dbGate').hidden = false;
+      var go = document.getElementById('dbGateGo'); if(go) go.focus();
+    });
+  }
+  /* Answering it at all is what closes it — there is no dismiss. A gate you can
+     click past without saying anything is a gate that was not asked. */
+  function dbGateClose(answer){
+    var el = document.getElementById('dbGate'); if(el) el.hidden = true;
+    var r = GATE; GATE = null;
+    if(r) r(answer || 'stop');
+  }
+
+  /* Resolves TRUE when the render should go ahead. Never rejects. */
+  function dbPreflight(){
+    return dbMapLoad().then(function(){
+      /* A CHECK THAT COULD NOT RUN DOES NOT STOP ANYTHING, and it is said
+         every time rather than once: it is a live condition, not an event, and
+         a deck built without the check is worth knowing about on the press
+         that built it. Clearing it here is what makes the next Render ask
+         again instead of inheriting a failure it never retried. */
+      ['agg','rmx'].forEach(function(line){
+        var msg = MAPERR[line]; if(!msg) return;
+        MAPERR[line] = '';
+        banner('warn', '<b>Could not check the ' + esc(DB_MAP_PAGE[line].label) + ' lookup tabs:</b> ' +
+          esc(msg) + ' Rendering without that check.');
+      });
+
+      var find = dbFindings();
+      if(!find.length){ GATE_OK = ''; return true; }
+
+      var sig = dbFindSig(find);
+      if(sig && sig === GATE_OK) return true;            // already answered, unchanged
+
+      return dbGateOpen(dbGateHtml(find)).then(function(ans){
+        if(ans === 'go'){ GATE_OK = sig; return true; }
+        if(ans.indexOf('page:') === 0){
+          var p = ans.slice(5);
+          prog('');
+          /* Out of the dialog's own click handler before the page is torn down
+             from under it. */
+          setTimeout(function(){ if(window.AMR && AMR.nav) AMR.nav.go(p); }, 0);
+          return false;
+        }
+        prog('Render stopped — nothing was photographed.');
+        return false;
       });
     });
   }
@@ -25886,11 +26739,30 @@ AMR.page('deckbuilder', {
     /* The check may DROP rows that already have pictures, so `todo` cannot be
        worked out until it has run. Stop is live from here rather than from the
        first slide: the check can cost a sync's worth of seconds, and a button
-       that appears and does nothing yet is worse than no button. */
+       that appears and does nothing yet is worse than no button.
+
+       THEN THE PRE-FLIGHT, and in that order for a reason: the lookup counts
+       are counted against the data the server currently holds, and the source
+       check is the thing that syncs it. Both are in front of the first capture,
+       which is the point — every question they ask is about a deck that would
+       otherwise build perfectly and be wrong. */
     dbSourceCheck().then(function(){
       if(RSTOP) return dbRenderEnd(true);
-      dbRenderPass();
+      return dbPreflight().then(function(go){
+        if(!go) return dbRenderAbort();
+        if(RSTOP) return dbRenderEnd(true);
+        dbRenderPass();
+      });
     });
+  }
+
+  /* THE PRE-FLIGHT SAID NO. Not dbRenderEnd: nothing was photographed, nothing
+     failed and no pass was stopped part way, so its "N of M slides ready · X
+     failed" line would be a report on a run that never began. dbPreflight has
+     already written the progress line that explains it. */
+  function dbRenderAbort(){
+    RQ = null; RENDERING = false; RSTOP = false; dbStopUi();
+    setBusy(false); updateStages();
   }
 
   /* THE QUEUE IS LIVE WHILE IT RUNS.
@@ -26206,8 +27078,8 @@ AMR.page('deckbuilder', {
       var name = (window.AmrKpi && AmrKpi.bookLabel) ? AmrKpi.bookLabel(book) : 'EBITDA';
       return '<div class="db-kpi-none" title="'+esc(missing
           ? 'This slide\u2019s KPI cards come from the ' + name + ' workbook, which '+
-            'has not been uploaded yet. Upload it on the Price & Volume page and '+
-            'the region appears here and in the Arrange stage.'
+            'has not been uploaded yet. Upload it under KPI workbooks in the left '+
+            'rail and the region appears here and in the Arrange stage.'
           : 'The ' + name + ' workbook is uploaded but has no region sheet for '+
             'this market.')+'">'+
         esc(missing ? 'no workbook' : 'no region')+'</div>';
@@ -27497,7 +28369,12 @@ AMR.page('deckbuilder', {
   }
   function dbCloseLb(){ document.getElementById('dbLb').classList.remove('open'); }
   document.addEventListener('keydown', function(e){
-    if(e.key === 'Escape' || e.keyCode === 27) dbCloseLb();
+    if(e.key !== 'Escape' && e.keyCode !== 27) return;
+    /* The pre-flight first, and it does NOT fall through to the lightbox: Esc
+       on an open gate is "stop", which is an answer, and answering two things
+       with one key is how somebody cancels a render they meant to keep. */
+    if(GATE){ dbGateClose('stop'); return; }
+    dbCloseLb();
   });
   document.getElementById('dbLb').addEventListener('click', function(e){
     if(e.target === this) dbCloseLb();
@@ -27533,6 +28410,11 @@ AMR.page('deckbuilder', {
 
     /* builds the Report month picker AND names the deck for the month it lands on */
     dbBuildMonthPicker();
+
+    /* The KPI workbooks, and the month caution that reads against the picker
+       above. AFTER dbBuildMonthPicker, because DECK_MONTH is what the caution
+       compares the file names to and the picker is what sets it. */
+    dbKpiInit();
     document.getElementById('dbName').addEventListener('input', function(){
       this.setAttribute('data-touched', '1');       // a typed name stops following the month
     });
