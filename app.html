@@ -18287,11 +18287,53 @@ AMR.page('overview', {
     /* Land / Docks toggle (MB submarket) — Southwest only. The chips carry
        friendly labels; none selected = both. Include-mode only (the backend
        still accepts exclude, but the toggle covers the two-value case). */
+    /* WHERE THE TWO CHIPS COME FROM, and why one of them used to go missing.
+       Both sources below are PERIOD answers: xfData() is the cross-report,
+       which is not fetched for a window at all, and DIMS_CACHE is keyed on
+       STATE.period. So in a window this returned [] until the (debounced,
+       MTD/YTD) dims fetch happened to land - and renderRefine() force-adds
+       whatever is already SELECTED to the list it draws, so the state that
+       came out of an empty list was not "no chips", it was "only the one you
+       clicked": pick Land and Docks is gone, with no way back to it. Exactly
+       the shape xfOptionsFor() already has for the dropdowns - the cube is the
+       only thing that knows a window's own scope, and mb is one of its dims.
+
+       THE REFINE MUST NOT NARROW ITS OWN OPTIONS. Every other filter is
+       applied and the Land / Docks pick is dropped before the group-by, which
+       is the server's rule verbatim ("refine options ignore the refine
+       itself", getCrossReport) - without it selecting Land is what removes
+       Docks, which is the bug it is here to fix. */
+    function cubeRefineOpts(){
+      /* NOT cubeHasDim('agg','mb') - mb is not in OVCUBE_SHAPE_.agg.dims. It is
+         resolved from the plant (VIA_PLANT_AGG), exactly as market and
+         submarket are, so the manifest test that guards custSeg / soldTo would
+         refuse this one for ever. Whether the cube can group by it is answered
+         by asking it. */
+      var cy=winCy('agg'); if(!cy) return null;
+      var R=trendResolve('agg', trendFilters('agg')), f={};
+      Object.keys(R.filters).forEach(function(k){ if(k!=='mb') f[k]=R.filters[k]; });
+      var C0=cube(); if(!C0) return null;
+      var g=C0.query({ line:'agg', cyMonths:cy,
+                       pyMonths:cy.map(function(m){ return ymAdd(m,-12); }),
+                       groupBy:'mb', filters:f });
+      if(!g) return null;
+      var vals=g.filter(function(r){ return r.key && String(r.key).charCodeAt(0)!==1
+                                            && (r.cyVol || r.pyVol || r.cyRev || r.pyRev); })
+                .map(function(r){ return String(r.key); }).sort();
+      return vals.length ? vals : null;
+    }
+    /* Order matters. The two server answers are authoritative AND scoped to the
+       market - the values are per market ("SW Land", "GTA Land"), and the chips
+       label them all as just Land or Docks, so an unscoped list draws buttons
+       that filter to nothing (the same trap the Price & Volume page names in
+       pvLocalReport). The cube is the LAST resort and only reaches the cases
+       that used to answer with nothing at all. */
     function refineOpts(){
       var d=xfData();
       if(d && d.refineOptions && d.refineOptions.length) return d.refineOptions;
       var dm=DIMS_CACHE[dimsKey()];
-      return (dm && dm.refineOptions) || [];
+      if(dm && dm.refineOptions && dm.refineOptions.length) return dm.refineOptions;
+      return cubeRefineOpts() || [];
     }
     function refineLabelOf(v){ return /dock/i.test(v) ? 'Docks' : 'Land'; }
     function renderRefine(){
@@ -20093,7 +20135,10 @@ AMR.page('overview', {
           .withFailureHandler(function(err){
             DIMS_PEND[key]=false;
             DIMS_ERR[key]=(err&&err.message)||String(err);
-            if(key===dimsKey() && !xfOwns()){ renderAggBreakdown(); renderDimPies(); }
+            if(key===dimsKey()){
+              if(!xfOwns()){ renderAggBreakdown(); renderDimPies(); }
+              renderRefine();
+            }
           })
           .getReport(params);
       }catch(e){ DIMS_PEND[key]=false; DIMS_ERR[key]=String(e&&e.message||e); }
