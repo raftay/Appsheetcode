@@ -10153,8 +10153,32 @@ function loadDataCached_(force){
  * page reads always include MB/SK.
  */
 var ALL_MARKETS = '__ALL__';
+/* ONE MARKET, A LIST OF MARKETS, OR ALL OF THEM.
+ * ---------------------------------------------------------------------------
+ * `sel` was a single name because the Overview's market chips were single-
+ * select. They are not any more, so getCrossReport can be handed the whole
+ * selection and every row test on this file goes through here — which is why
+ * the list form belongs in this one function rather than in the caller. The
+ * string form is untouched: every other caller still passes one name and gets
+ * exactly what it always got.
+ */
 function mktOk_(rowMarket, sel){
-  return sel === ALL_MARKETS || String(rowMarket) === String(sel);
+  if (sel === ALL_MARKETS) return true;
+  var r = String(rowMarket);
+  if (Object.prototype.toString.call(sel) === '[object Array]'){
+    for (var i = 0; i < sel.length; i++) if (r === String(sel[i])) return true;
+    return false;
+  }
+  return r === String(sel);
+}
+/* The same selection as ONE comparable string, for a cache key. Sorted, so two
+   clicks that land on the same set of markets share one entry. */
+function mktTag_(sel){
+  if (sel === ALL_MARKETS) return ALL_MARKETS;
+  if (Object.prototype.toString.call(sel) === '[object Array]'){
+    return sel.map(String).sort().join('\u2016') || ALL_MARKETS;
+  }
+  return String(sel);
 }
 
 /* THE REPORT MONTH — the month the pages report on by default.
@@ -11189,7 +11213,15 @@ function rxfAspBlock_(volCY, volPY, baseCY, basePY, exRows, vaRows){
 function getCrossReport(opts){
   opts = opts || {};
   var period = (opts.period==='MTD') ? 'MTD' : 'YTD';
+  /* ONE NAME, A LIST OF NAMES, OR ALL MARKETS — see mktOk_. The Overview's
+     market chips are multi-select, so a subset arrives here as an array; an
+     empty one is no selection at all and means the grand total. */
   var market = opts.market || ALL_MARKETS;
+  if (Object.prototype.toString.call(market) === '[object Array]'){
+    market = market.map(function(x){ return String(x == null ? '' : x).trim(); })
+                   .filter(function(x){ return !!x; });
+    if (!market.length) market = ALL_MARKETS;
+  }
 
   /* normalise filters + a stable signature (sorted, so equivalent selections
      share one cache entry) */
@@ -11220,7 +11252,7 @@ function getCrossReport(opts){
      The single inScope_ below is what that attempt left behind and is worth
      keeping: every month test in this report goes through it, so no two halves
      of one answer can be scoped differently. */
-  var ck = cacheKey_(['xf', period, 'm' + (Number(opts.month) || 0), market,
+  var ck = cacheKey_(['xf', period, 'm' + (Number(opts.month) || 0), mktTag_(market),
                       sigParts.join('&') || 'none']);
   var hit = cacheGet_(ck); if (hit) return hit;
 
@@ -14871,13 +14903,20 @@ function ovcHistSrcNow_(era, line){
  * `first` used to be indistinguishable from "the shape moved", because both
  * arrive as ovcHistFile_ returning null — a file written against an older
  * OVCUBE_SHAPE_VER_ is deliberately read as absent (ovcHistShapeOk_) so it can
- * never be MISREAD. Correct, and it meant the browser's own background reader
- * saw four never-built books the morning after every shape bump and read all
- * four in the foreground, moving ovcHistTok_ between each and throwing away the
- * cube the page was waiting for. app.html's histPending() now asks for `first`
- * and gets only the genuinely-new book — somebody has just linked it and is
- * sitting there — while a shape bump is `stale`, which is the warm-cache
- * trigger's job and the pill's Reload button, and nobody's page load.
+ * never be MISREAD. Correct, and worth telling apart: the pill can then say a
+ * book is being read for the FIRST time rather than being read again.
+ *
+ * WHAT THEY HAVE IN COMMON IS THE THING THAT MATTERS TO A READER, and for a
+ * while app.html acted only on `first`. Both are built:false, and built:false
+ * means the months are NOT IN THE CUBE AT ALL — so bumping the shape version
+ * (v5 -> v6, 2026-08-27) took 2023 and 2024 off the Overview's slider for
+ * everybody, silently, until an hourly trigger got round to it, while the pill
+ * said "History loaded" because the only staleness it counts is the readable
+ * kind. histPending() now reads any linked book that is not BUILT — one era per
+ * run, behind a pill nothing waits on, and only once every block already built
+ * has landed, which is what keeps it out of the foreground. A book that IS
+ * built and merely out of date stays the warm-cache trigger's job and the
+ * pill's Reload button, and nobody's page load.
  *
  * THE PROPERTY IS WHAT TELLS THEM APART, at no cost. A stamp exists if and only
  * if a file was written at some point, so "unreadable AND a stamp" is a file
@@ -14901,8 +14940,8 @@ function ovcHistWhy_(era, line, readable){
        compare — so it needs exactly ONE read to acquire a stamp, and after that
        it is on the modified time like everything else.
        That is `adopt`: the warm-cache trigger does it, once, at an hour when
-       nobody is waiting. The browser never does — histPending() asks for
-       `first` and this is not that. */
+       nobody is waiting. The browser never does — histPending() reads a book
+       that is not BUILT, and this one is built and reads cleanly. */
     if (!was) return { linked:true, built:true, stale:false, first:false, adopt:true,
                        why:'stamp unknown' };
     var now = ovcHistSrcNow_(era, line);
@@ -15023,14 +15062,23 @@ function ovcEraStat_(line, hist){
   ((hist && hist.eras) || []).forEach(function(e){ built[e.id] = e; });
   return ovcEras_().map(function(e){
     var b = built[e.id];
-    /* `stale` IS NOT `!built`, AND THE PAGE TREATS THEM DIFFERENTLY. A book
-       that has NEVER been built is the one case a browser still reads for
-       itself: it is what happens the day a new closed-year book is linked, and
-       somebody is by definition sitting there having just linked it. A book
-       that is built but no longer matches its workbook is the warm-cache
-       trigger's job (§11) and the pill's Reload button - never something a
-       page load stops to do, because a rebuild moves ovcHistTok_ and therefore
-       throws away the cube the page is waiting for. */
+    /* `stale` IS NOT `!built`, AND THE PAGE TREATS THEM DIFFERENTLY.
+       ---------------------------------------------------------------------
+       THE LINE THE BROWSER DRAWS IS `built`, not `first`. A book that is
+       linked and NOT built - never read at all, or written against an older
+       OVCUBE_SHAPE_VER_ - is a book whose months are simply not in the cube,
+       and a slider that quietly stops offering 2023 and 2024 after a deploy is
+       not something a warm-cache trigger can be left to fix an hour later.
+       app.html's histPending() reads both of those, one era per run, behind a
+       pill nothing waits on.
+       A book that IS built and no longer matches its workbook stays the
+       warm-cache trigger's job (§11) and the pill's Reload button, and never
+       something a page load stops to do: its months are on the page, they are
+       just from the previous export, and a rebuild moves ovcHistTok_ and
+       therefore throws away the cube the page is running on.
+       `first` is still sent and still means what it said - nobody has ever
+       read this book - because it is the difference between "being read for
+       the first time" and "being read again", which is what the pill says. */
     var w = ovcHistWhy_(e, line, !!b);
     return { id: e.id, label: e.label || e.id,
              linked: w.linked, built: !!b, stale: w.stale, first: w.first, why: w.why,
