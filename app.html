@@ -18287,11 +18287,53 @@ AMR.page('overview', {
     /* Land / Docks toggle (MB submarket) — Southwest only. The chips carry
        friendly labels; none selected = both. Include-mode only (the backend
        still accepts exclude, but the toggle covers the two-value case). */
+    /* WHERE THE TWO CHIPS COME FROM, and why one of them used to go missing.
+       Both sources below are PERIOD answers: xfData() is the cross-report,
+       which is not fetched for a window at all, and DIMS_CACHE is keyed on
+       STATE.period. So in a window this returned [] until the (debounced,
+       MTD/YTD) dims fetch happened to land - and renderRefine() force-adds
+       whatever is already SELECTED to the list it draws, so the state that
+       came out of an empty list was not "no chips", it was "only the one you
+       clicked": pick Land and Docks is gone, with no way back to it. Exactly
+       the shape xfOptionsFor() already has for the dropdowns - the cube is the
+       only thing that knows a window's own scope, and mb is one of its dims.
+
+       THE REFINE MUST NOT NARROW ITS OWN OPTIONS. Every other filter is
+       applied and the Land / Docks pick is dropped before the group-by, which
+       is the server's rule verbatim ("refine options ignore the refine
+       itself", getCrossReport) - without it selecting Land is what removes
+       Docks, which is the bug it is here to fix. */
+    function cubeRefineOpts(){
+      /* NOT cubeHasDim('agg','mb') - mb is not in OVCUBE_SHAPE_.agg.dims. It is
+         resolved from the plant (VIA_PLANT_AGG), exactly as market and
+         submarket are, so the manifest test that guards custSeg / soldTo would
+         refuse this one for ever. Whether the cube can group by it is answered
+         by asking it. */
+      var cy=winCy('agg'); if(!cy) return null;
+      var R=trendResolve('agg', trendFilters('agg')), f={};
+      Object.keys(R.filters).forEach(function(k){ if(k!=='mb') f[k]=R.filters[k]; });
+      var C0=cube(); if(!C0) return null;
+      var g=C0.query({ line:'agg', cyMonths:cy,
+                       pyMonths:cy.map(function(m){ return ymAdd(m,-12); }),
+                       groupBy:'mb', filters:f });
+      if(!g) return null;
+      var vals=g.filter(function(r){ return r.key && String(r.key).charCodeAt(0)!==1
+                                            && (r.cyVol || r.pyVol || r.cyRev || r.pyRev); })
+                .map(function(r){ return String(r.key); }).sort();
+      return vals.length ? vals : null;
+    }
+    /* Order matters. The two server answers are authoritative AND scoped to the
+       market - the values are per market ("SW Land", "GTA Land"), and the chips
+       label them all as just Land or Docks, so an unscoped list draws buttons
+       that filter to nothing (the same trap the Price & Volume page names in
+       pvLocalReport). The cube is the LAST resort and only reaches the cases
+       that used to answer with nothing at all. */
     function refineOpts(){
       var d=xfData();
       if(d && d.refineOptions && d.refineOptions.length) return d.refineOptions;
       var dm=DIMS_CACHE[dimsKey()];
-      return (dm && dm.refineOptions) || [];
+      if(dm && dm.refineOptions && dm.refineOptions.length) return dm.refineOptions;
+      return cubeRefineOpts() || [];
     }
     function refineLabelOf(v){ return /dock/i.test(v) ? 'Docks' : 'Land'; }
     function renderRefine(){
@@ -19558,7 +19600,9 @@ AMR.page('overview', {
        and those simply are not shown.                                        */
     function renderWinAgg(){
       var t=cubeWinTotals('agg');
-      if(!t){ kpiSpan('kpiAgg'); $('kpiAgg').innerHTML='<div class="kpi na">Loading months…</div>'; winWaiting('aggBody'); winWaiting('dimBody'); return; }
+      if(!t){ kpiSpan('kpiAgg'); $('kpiAgg').innerHTML='<div class="kpi na">Loading months…</div>';
+              winWaiting('aggBody'); winWaiting('dimBody');
+              winFscWaiting('fscBody','fsc'); winFscWaiting('fscCustBody','fscc'); return; }
       renderKpiRow('kpiAgg', t, 't', fAsp);
 
       renderWinBreakdown();
@@ -19688,7 +19732,8 @@ AMR.page('overview', {
     }
     function renderWinCustomers(){
       var d=cubeCustomers();
-      if(!d){ showPanel('custBody'); clearCH('cust'); winWaiting('custBody'); return; }
+      if(!d){ showPanel('custBody'); clearCH('cust'); winWaiting('custBody');
+              winFscWaiting('fscCustBody','fscc'); return; }
       if(!d.top.length){ hidePanel('custBody'); renderWinFscCustomers(null); return; }
       showPanel('custBody');
       $('custScope').textContent=scopeLabel()+' · by customer parent'+splitSub()
@@ -19703,6 +19748,16 @@ AMR.page('overview', {
        surcharge — both are columns in the fact table (fsc and fv), so this is a
        sum, not an inference. It answers for the current book year only; see
        winFscOk().                                                            */
+    /* A PANEL THAT CANNOT ANSWER YET MUST NOT GO ON ANSWERING THE LAST
+       QUESTION. resetPanels() puts every card back on display and leaves the
+       BODIES alone, so an early return anywhere above these two left last
+       selection's surcharge table on screen under the new window's label -
+       which is what "it doesn't change to the right sub-selection" looks like.
+       Every early return that skips one of them now routes through here. */
+    function winFscWaiting(bodyId, sec){
+      if(!winFscOk()){ hidePanel(bodyId); return; }
+      clearCH(sec); showPanel(bodyId); winWaiting(bodyId);
+    }
     function renderWinFsc(){
       clearCH('fsc');
       if(!winFscOk()){ hidePanel('fscBody'); return; }
@@ -19711,8 +19766,14 @@ AMR.page('overview', {
       var rows=g.rows.map(cubeRowAsTable).filter(function(r){ return r.cyFsc || r.pyFsc; });
       if(!rows.length){ hidePanel('fscBody'); return; }
       showPanel('fscBody');
-      $('fscSub').textContent='All markets · '+winLabel()
-        +' · $/applied tonne · from the month fact table (Price & Volume rows)';
+      /* THIS TABLE IS FILTERED AND USED TO DENY IT. cubeWinRows() runs the
+         market pick and every cross-filter chip through trendFilters(), so the
+         hard-coded "All markets" here was a caption for a different table than
+         the one below it - and it sat beside the customer panel, which has
+         always said scopeLabel(). The two now answer the same way. */
+      xfSubSet('fscSub','',' \u00b7 '+winLabel()
+        +' \u00b7 $/applied tonne \u00b7 from the month fact table (Price & Volume rows)'
+        +' \u00b7 click a market to select it.');
       function rate(f, v){ return v ? f/v : 0; }
       var tot=g.total?cubeRowAsTable(g.total):null;
       var LAB='font:700 9.5px Archivo;letter-spacing:.14em;text-transform:uppercase;color:var(--blue-70);margin:0 0 8px';
@@ -19721,7 +19782,12 @@ AMR.page('overview', {
         +'<table class="ov-table"><thead><tr><th>Market</th><th>FSC $ CY</th><th>$/t CY</th><th>$/t PY</th><th>YOY</th></tr></thead><tbody>';
       function line(r, isTot){
         var cyR=rate(r.cyFsc, r.cyFv), pyR=rate(r.pyFsc, r.pyFv);
-        return '<tr'+(isTot?' class="tot"':'')+'><td>'+esc(r.label)+'</td><td>'+fMoneyS(r.cyFsc)+'</td>'
+        /* the cube's market key IS the pvName selectMarketByPvName() matches on,
+           which is what the breakdown's own market rows are keyed by. MARKET is
+           never highlighted with xfsel - it is undone by the market chips, not
+           by the chip bar (see renderBreakdown). */
+        return '<tr'+(isTot?' class="tot"':' class="xfrow" data-xf-f="MARKET" data-xf-v="'+esc(r.label)+'"')
+          +'><td>'+esc(r.label)+'</td><td>'+fMoneyS(r.cyFsc)+'</td>'
           +'<td>'+fRateS(cyR)+'</td><td>'+fRateS(pyR)+'</td>'
           +'<td class="'+cls(cyR-pyR)+'">'+fYoyS(cyR-pyR)+'</td></tr>';
       }
@@ -19735,7 +19801,8 @@ AMR.page('overview', {
       if(withFsc.length) custDonut('fsc', $('fsc_pie'),
         withFsc.map(function(r){ return truncate(r.label,22); }),
         withFsc.map(function(r){ return r.cyFsc; }),
-        withFsc.map(function(_,i){ return CUST_COLORS[i%CUST_COLORS.length]; }));
+        withFsc.map(function(_,i){ return CUST_COLORS[i%CUST_COLORS.length]; }),
+        function(i){ var r=withFsc[i]; if(r) toggleXf('MARKET', r.label); });
     }
     function renderWinFscCustomers(d){
       clearCH('fscc');
@@ -19744,7 +19811,7 @@ AMR.page('overview', {
         .slice().sort(function(a,b){ return b.cyFsc-a.cyFsc; });
       if(!ranked.length){ hidePanel('fscCustBody'); return; }
       showPanel('fscCustBody');
-      $('fscCustScope').textContent=scopeLabel()+' · CY fuel-surcharge dollars · '+winLabel();
+      xfSubSet('fscCustScope','',' \u00b7 CY fuel-surcharge dollars \u00b7 '+winLabel());
       fscCustTable(ranked);
     }
     function winDimRow(g){
@@ -20068,7 +20135,10 @@ AMR.page('overview', {
           .withFailureHandler(function(err){
             DIMS_PEND[key]=false;
             DIMS_ERR[key]=(err&&err.message)||String(err);
-            if(key===dimsKey() && !xfOwns()){ renderAggBreakdown(); renderDimPies(); }
+            if(key===dimsKey()){
+              if(!xfOwns()){ renderAggBreakdown(); renderDimPies(); }
+              renderRefine();
+            }
           })
           .getReport(params);
       }catch(e){ DIMS_PEND[key]=false; DIMS_ERR[key]=String(e&&e.message||e); }
@@ -20321,6 +20391,27 @@ AMR.page('overview', {
       renderXfBridges(d, err);
       renderXfExplorer(d, err);
       renderXfCustomers(d, err);
+      renderXfFscCustomers(d, err);
+    }
+    /* THE SURCHARGE CUSTOMERS PANEL IS NOT EXEMPT FROM THE CHIPS. It used to be
+       painted only by loadCustomers(), which is market-scoped and knows nothing
+       about a cross-filter - so clicking a plant or a segment left this panel
+       showing every customer, under a subtitle that named only the market.
+       getCrossReport's customer rows carry cyFsc / pyFsc (xfMetrics_), and the
+       local engine's carry them too, so the filtered answer is already in the
+       payload the rest of the tab is drawn from. */
+    function renderXfFscCustomers(d, err){
+      clearCH('fscc');
+      if(err){ hidePanel('fscCustBody'); return; }
+      if(!d){ showPanel('fscCustBody'); $('fscCustBody').innerHTML='<div class="ov-mini">Loading…</div>'; return; }
+      var ranked=((d.customers&&d.customers.rows)||[])
+        .filter(function(p){ return (Number(p.cyFsc)||0)>0; })
+        .slice().sort(function(a,b){ return b.cyFsc-a.cyFsc; });
+      if(!ranked.length){ hidePanel('fscCustBody'); return; }
+      showPanel('fscCustBody');
+      xfSubSet('fscCustScope','',' \u00b7 CY fuel-surcharge dollars \u00b7 '+periodLabel());
+      fscCustTable(ranked,
+        'This panel and the by-market table come from different tables, so small differences in totals are expected.');
     }
     function renderXfKpi(d, err){
       var host=$('kpiAgg');
@@ -24350,8 +24441,7 @@ AMR.page('overview', {
         if(cdev) CUST_CACHE[mergedKey]=cdev;
       }
       if(CUST_CACHE[mergedKey]){
-        if(!xfOwns) renderCustomers(CUST_CACHE[mergedKey]);
-        renderFscCustomers(CUST_CACHE[mergedKey]);
+        if(!xfOwns){ renderCustomers(CUST_CACHE[mergedKey]); renderFscCustomers(CUST_CACHE[mergedKey]); }
         return;
       }
       if(!IS_LIVE){ if(!xfOwns) body.innerHTML='<div class="ov-mini">Customer data loads in the live web app.</div>'; return; }
@@ -24394,8 +24484,9 @@ AMR.page('overview', {
            srvOwnsAgg() and repaintPanel() - the key check below catches a
            changed market or split, but not a changed OWNER. */
         if(mergedKey===custKey() && !winMode()){
-          if(!(xfActive() && STATE.tab==='agg')) renderCustomers(merged);
-          renderFscCustomers(merged);
+          /* renderXfPanels owns BOTH customer panels once the chips are on -
+             see renderXfFscCustomers() */
+          if(!(xfActive() && STATE.tab==='agg')){ renderCustomers(merged); renderFscCustomers(merged); }
           xfDropsRefresh();
         }
       }
@@ -24641,8 +24732,21 @@ AMR.page('overview', {
       var tot=rows.filter(function(r){ return r.isTotal; })[0];
       if(!mkRows.length){ hidePanel('fscBody'); return; }
       showPanel('fscBody');
+      /* the FSC workbook names its own markets (REGION LOOKUP), which is not
+         guaranteed to be the Price & Volume spelling the market chips key on */
+      function pvKnown(nm){ return markets().some(function(x){ return x.pvName===nm; }); }
+      var anyPick=mkRows.some(function(r){ return pvKnown(r.market); });
       $('fscSub').textContent='All markets, always ('+(STATE.period==='MTD'?String(FSC_DATA.latestMonth||'latest month'):'year to date')+')'
-        + ' \u00b7 $/applied tonne \u00b7 from Price & Volume (Combined Data CPI Raw)';
+        + ' \u00b7 $/applied tonne \u00b7 from Price & Volume (Combined Data CPI Raw)'
+        /* THE ONE PANEL ON THE TAB THE CHIPS DO NOT REACH, and it used to be the
+           one panel that did not say so. This table is the Fuel Surcharge
+           workbook's own summary - it carries market and month and none of the
+           dimensions the chips filter on - so with filters active it is
+           unfiltered ON PURPOSE, and an unmarked unfiltered table beside eight
+           filtered ones reads as a filter that failed. In a window it IS
+           filtered, off the month fact table; see renderWinFsc(). */
+        + (xfHasFilters() ? ' \u00b7 not narrowed by the active filters \u2014 this sheet does not carry them' : '')
+        + (anyPick ? ' \u00b7 click a market to select it.' : '');
       /* asked for a month this sheet has not been exported for: output_ answers
          for it regardless, which is a real, correct, all-zero report */
       var fscBehind = (Number(FSC_DATA.month)||0) > (Number(FSC_DATA.defaultMonth)||0);
@@ -24652,7 +24756,9 @@ AMR.page('overview', {
         +'<div class="ov-cbox tall"><canvas id="fsc_pie"></canvas></div>'
         +'<table class="ov-table"><thead><tr><th>Market</th><th>FSC $ CY</th><th>$/t CY</th><th>$/t PY</th><th>YOY</th></tr></thead><tbody>';
       mkRows.forEach(function(r){
-        out+='<tr><td>'+esc(r.market)+'</td><td>'+fMoneyS(r.totalFSC)+'</td>'
+        var hit=pvKnown(r.market);
+        out+='<tr'+(hit?' class="xfrow" data-xf-f="MARKET" data-xf-v="'+esc(r.market)+'"':'')
+          +'><td>'+esc(r.market)+'</td><td>'+fMoneyS(r.totalFSC)+'</td>'
           +'<td>'+fRateS(r.fscT2026)+'</td><td>'+fRateS(r.fscT2025)+'</td>'
           +'<td class="'+cls(r.yoy)+'">'+fYoyS(r.yoy)+'</td></tr>';
       });
@@ -24684,7 +24790,8 @@ AMR.page('overview', {
         custDonut('fsc', $('fsc_pie'),
           withFsc.map(function(r){ return truncate(r.market,22); }),
           withFsc.map(function(r){ return r.totalFSC; }),
-          withFsc.map(function(_,i){ return CUST_COLORS[i%CUST_COLORS.length]; }));
+          withFsc.map(function(_,i){ return CUST_COLORS[i%CUST_COLORS.length]; }),
+          function(i){ var r=withFsc[i]; if(r && pvKnown(r.market)) toggleXf('MARKET', r.market); });
       }
     }
 
@@ -24703,7 +24810,11 @@ AMR.page('overview', {
         +'<div class="ov-cbox tall"><canvas id="fscc_pie"></canvas></div>'
         +'<table class="ov-table"><thead><tr><th>Customer</th><th>FSC $ CY</th><th>FSC $ PY</th><th>Share</th></tr></thead><tbody>';
       top.forEach(function(p){
-        out+='<tr><td>'+esc(p.label)+'</td><td>'+fMoneyS(p.cyFsc)+'</td><td>'+fMoneyS(p.pyFsc)+'</td>'
+        /* the same handle the Top-10 customer table carries: one delegated
+           [data-xf-f] listener on the tab turns it into a filter (§ toggleXf) */
+        out+='<tr class="xfrow'+(xfHas('CUST_PARENT',p.label)?' xfsel':'')
+          +'" data-xf-f="CUST_PARENT" data-xf-v="'+esc(p.label)+'">'
+          +'<td>'+esc(p.label)+'</td><td>'+fMoneyS(p.cyFsc)+'</td><td>'+fMoneyS(p.pyFsc)+'</td>'
           +'<td>'+(totalFsc?(p.cyFsc/totalFsc*100).toFixed(1):'0.0')+'%</td></tr>';
       });
       out+='<tr class="tot"><td>All customers with FSC ('+ranked.length+')</td><td>'+fMoneyS(totalFsc)+'</td><td></td><td>100%</td></tr>';
@@ -24715,7 +24826,10 @@ AMR.page('overview', {
       var pieData=top.map(function(p){ return p.cyFsc; });
       var pieCols=top.map(function(_,i){ return CUST_COLORS[i%CUST_COLORS.length]; });
       if(othersFsc>0){ pieLabels.push('All others'); pieData.push(othersFsc); pieCols.push(OTHERS_COLOR); }
-      custDonut('fscc', $('fscc_pie'), pieLabels, pieData, pieCols);
+      /* "All others" is the slice past the top ten and names no customer, so it
+         is the one slice that is not a filter */
+      custDonut('fscc', $('fscc_pie'), pieLabels, pieData, pieCols,
+        function(i){ var c=top[i]; if(c) toggleXf('CUST_PARENT', c.label); });
     }
 
     function renderFscCustomers(merged){
