@@ -1592,28 +1592,25 @@ when volume and revenue are **summed into the bucket first and the ratio taken a
 the same "sum into its bucket before taking any ratio" rule the Bill Month note above states.
 Group first, divide second, and the two indices separate on their own.
 
-**CPI divides by TotalWeight, which is NOT the sum of the weights it used.** Read straight
-off Qlik's own Cust Price Detail exports (2026 Jan–Jul: all markets and each of GTA, SW,
-Manitoba, Saskatchewan), `CPI = [CPI Factor] ÷ [TotalWeight]`, and on the all-markets export
-those two columns total **$136,727,744** against **$123,520,166** — a tenth apart. So:
+**CPI divides by TotalWeight — the CY revenue of every covered pair.**
 
 ```
 TotalWeight = CY revenue of EVERY covered pair          ← the denominator
-Factor      = CY revenue × ASP%, over covered pairs
-              that are not outliers                     ← the numerator
+Factor      = CY revenue × ASP%, over the same pairs    ← the numerator
 ```
 
-A pair excluded as an outlier **keeps its weight and loses its factor**. The exclusion is a
-dilution, not a deletion. Summing covered CY revenue reproduces `TotalWeight` to the dollar on
-all five Jan–Jul exports, and **to the penny** on both August ones — `$155,497,057.14` for
-Jan–Aug and `$13,041,331.22` for Aug MTD, from the app's own raw rows at the app's own grain.
-The denominator is not the part that is wrong. PPI passes no threshold, so both its sums run
-over the same pairs and it is arithmetically what it has always computed — unchanged.
+Coverage keeps a pair in **both** sums or drops it from both; nothing is ever taken out of
+the numerator while its weight stays behind. So `Σ Weight` and `TotalWeight` are the same
+number here, and the index is a straight revenue-weighted mean of the pairs it covers.
 
-**The gate is stronger than "> 0", and that is the whole rule.** A pair earns weight only
-if it shows a **real price in both years**. Qlik gates on revenue *net of rebates*; this export
-carries only gross ex-Works, and on 2026 Jan–Aug that difference is 10 pairs. Two of them wreck
-the page on their own:
+**Coverage is identical for PPI and CPI — the grain is the only difference.** Both test the
+same thing: both years carry volume AND revenue on that pair. `piIndex_` takes **no coverage
+argument**, so there is no per-index threshold and no way to reintroduce one without changing
+the signature. In the cube, `pool()` additionally applies the line's own floors
+(`COVERAGE.agg` / `COVERAGE.rmx`) — to both indices alike.
+
+**What that costs, stated plainly so the number is not read as a fault.** CPI's finer grain
+isolates pairs that PPI pools away, and a degenerate one moves the index hard:
 
 | pair | last year | this year | ASP move | carries |
 |---|---|---|---|---|
@@ -1621,97 +1618,48 @@ the page on their own:
 | `3Q00` / JNF Ready Mix / `9055` | 378 t at **$2.343/t** | 24,593 t at $22.75/t | +870.9% | +3.13pp |
 
 Brock is a March 2025 invoice of $693.98 met by an April credit of $693.84 — fourteen cents
-against 47 tonnes. JNF is the one that matters for the design: **nothing about it is small.**
-$559,436 of weight, five figures of tonnes, every volume and revenue figure comfortably above
-any floor you would think to set. Only its *price* gives it away, and $2.343/t is Ontario's
-rebate rate, not a price.
+against 47 tonnes. JNF is the instructive one: **nothing about it is small.** $559,436 of
+weight, five figures of tonnes, every volume and revenue figure comfortably above any floor
+you would think to set. Only its *price* gives it away, and $2.343/t is Ontario's rebate rate
+(Manitoba $0.60, Saskatchewan $0.90, nil on recycled), not a price. At PPI's grain both pool
+away; at CPI's they stand alone.
 
-So `COVERAGE.cpi` carries three floors, and each catches a different thing:
+Ungated, 2026 Jan–Aug all markets reads **141.719%** and Aug MTD **2.789%**. Anyone
+reconciling CPI against another source should start from those two numbers.
 
-| floor | value | what it takes out |
-|---|---|---|
-| `minVol` | 1 t | a pair that barely traded in either year |
-| `minRev` | $1 | **Brock** — fourteen cents is not a year of trading |
-| `minAsp` | $3.00/t | **JNF** — the visible shadow of Qlik's net-revenue gate |
-
-`minAsp` is the one doing the work. Ontario's rebate runs $2.248/t (Manitoba $0.60,
-Saskatchewan $0.90, nil on recycled), so a pair whose year averaged $2.34/t was billing the
-rebate and not a price. Qlik nets that to zero and drops the pair; we cannot see the rebate,
-but we can see that no real product sells for $2.34 a tonne.
-
-**It is a GATE, not an outlier cap, and the difference is the denominator.** A pair that fails
-leaves the **weight as well as the factor** — a deletion, which is what Qlik does. The ±50% and
-500% caps that preceded it were dilutions: they dropped the factor and left the weight behind,
-which is why neither ever reproduced Qlik's selection.
-
-Calibrated against Qlik's Cust Price Detail for both August windows, all markets:
-
-| | `vol/rev > 0` | `> 1` only | `+ $3.00 ASP` | Qlik |
-|---|---|---|---|---|
-| **Jan–Aug 2026** | 141.719% | 6.248% | **3.106%** | 2.864% |
-| **Aug 2026 MTD** | 2.789% | 2.789% | **2.724%** | 2.646% |
-
-The `> 1` column is the trap: it takes Brock and looks like a fix, while SW Ontario still reads
-**14.36%** because JNF sails through it. The price floor costs three pairs Qlik keeps, worth
-$1,894 out of $155.5M of weight. Anything from $2.50 to about $3.90 gives the same answer to
-the third decimal; $4.00 starts eating real product — bank sand runs $3.97/t. $3.00 is the
-middle of that window. **Do not tune these floors at the residual below**; it is a different
-thing entirely.
-
-**What is left, and why it cannot be closed here.** With the denominator exact to the penny and
-the gate reproducing Qlik's selection, the remaining error is that **Qlik weights the numerator
-by net-of-rebate revenue while dividing by a gross `TotalWeight`** — its `Weight` runs ~0.905×
-ex-Works with a per-row ratio, so no constant recovers it:
-
-| 2026 Jan–Aug | Qlik | app | residual |
-|---|---|---|---|
-| All markets | 2.864% | 3.106% | +0.24pp |
-| GTA | 2.48% | 2.74% | +0.26pp |
-| SW Ontario | 3.05% | 3.37% | +0.32pp |
-| Manitoba | 2.84% | 2.85% | **+0.01pp** |
-| Saskatchewan | 5.91% | 5.95% | **+0.04pp** |
-| North | 6.22% | 6.22% | **0.00pp** |
-
-Manitoba, Saskatchewan and North land inside 0.04pp because their rebate is small or nil.
-Closing GTA and SW needs `_rebate` as its own column in the Price & Volume export. Until then
-this is the ceiling, and it is a weighting difference rather than a wrong method.
-
-**And none of it is real if the gate does not travel.** See §7's next note.
+**This is the specified behaviour, not an oversight.** A CPI-only gate (`COVERAGE.cpi`, floors
+`minVol` 1 t / `minRev` $1 / `minAsp` $3.00/t) was removed on **2026-08-27** on the explicit
+instruction that CPI and PPI differ in grain and in nothing else. Restoring it is: one key in
+`COVERAGE`, a `cov` argument threaded back through `piIndex_`, and the same argument through
+`pool()` and `poolPairs()`. `git log -S minAsp` has the whole of it, including the calibration
+that set those three values.
 
 ### The tunable that shipped inside a cached payload
 
-A CPI threshold was added, was correct, and changed nothing for a day. The Overview went on
-publishing **+141.7%** for 2026 Jan–Aug against Qlik's 2.86%, and **+243.0%** for GTA against
-2.48% — the Brock Aggregates pair above, unexcluded, carrying 135 of those points.
+Worth keeping even though CPI no longer carries a threshold of its own, because the floors in
+`COVERAGE.agg` / `COVERAGE.rmx` still travel and the trap is general.
 
-The arithmetic was never wrong. **The number never arrived.** §1's `COVERAGE` block is read on
-the server, but the browser does the pooling, so the thresholds *travel* — inside the cube
-manifest and inside the cross-filter dataset. Every cache key in that chain was built from the
-**data's** generation and the cube's **shape**, and neither moves when a threshold is edited:
+§1's `COVERAGE` block is read on the server, but the browser does the pooling, so the
+thresholds *travel* — inside the cube manifest and inside the cross-filter dataset. Every
+cache key in that chain was built from the **data's** generation and the cube's **shape**, and
+neither moves when a threshold is edited:
 
 | layer | what it held | how long |
 |---|---|---|
 | `CacheService` (`ovcBuild_`) | the manifest built before the edit | 6 h |
 | IndexedDB (`AmrCube`) | that manifest, replayed on every warm start | until the generation moved |
-| reading the missing key with `\|\| 0` | took it for *no gate at all* | — |
 
-Two changes, and they are two halves of one rule:
-
-1. **`ovcCovTok_` hashes the whole `COVERAGE` block into `ovcGen_`**, and `getCrossData`'s key
-   carries it too. Editing a floor is now the same kind of event as a shape change — one
-   invalidation, nothing to remember separately. `getCrossData`'s key is scoped rather than
-   folded into `gk_`: nothing else under `gk_` carries a coverage threshold.
-2. **A payload that cannot say what the gate is reports NO CPI**, in `pool()` and in
-   `poolPairs()` alike — `null`, not an empty gate. The column is dropped exactly as it is on a
-   line with no Sold To. An absent column is a question the page declines to answer; a wrong one
-   is not. A block present but all-zero is a *deliberate* empty gate and still reports.
+**`ovcCovTok_` hashes the whole `COVERAGE` block into `ovcGen_`**, and `getCrossData`'s key
+carries it too. Editing a floor is the same kind of event as a shape change — one
+invalidation, nothing to remember separately. `getCrossData`'s key is scoped rather than
+folded into `gk_`: nothing else under `gk_` carries a coverage threshold.
 
 `revalidate()` also writes the confirmed manifest back to IndexedDB. It was only ever stored by
 `adoptGen()`, which runs on a **cold** start, so a warm device painted from the manifest it
 first saw for as long as the generation held, however many times the server rebuilt it.
 
 **The general rule: a tunable that ships inside a cached payload belongs in that payload's
-cache key.** `tests/cpiindex.js` gates both halves.
+cache key.**
 
 The arithmetic is written once per runtime — `piIndex_` (`script.gs` §6), `pool()` in
 `AmrCube`, and `poolPairs()` in the Overview's local cross-filter path — and CPI is reported
@@ -2786,3 +2734,4 @@ or was forgotten.**
 | 2026-08-26 | **The Deck Builder's KPI Region was the one setting it kept on your own device, and the one view that needed its own could not be given one.** Reported from the page: *remove the local storage KPI*, and *for Southwest I can't select Land only or Docks only*. They are the same defect from both ends. The per-row Region dropdown wrote `pvKpiViewMap` in `localStorage` through `kpiPicker.choose()` → `AmrPvSlide.kpiRemember()`, and `kpiFor()` read that map between the shared scope and the workbook default — so **everything else Arrange saves is shared and this one thing was not**, and two people building from the same saved arrangement could publish different KPI numbers on the same slide with nothing on screen saying so. A region is not something you can see is wrong on a finished picture. It is gone: `KPI_MAP_KEY`, `kpiLoadMap`, `kpiSaveMap`, `kpiViewKeyFor`, `kpiRemember` and the `map` field of `kpiFor`'s return, whose only callers were the deck's two — the **Price & Volume page has its own independent copy** of that map (`KPI.map`, same key) for its own screen and is untouched. `kpiFor(vals, override, book)` now has two answers, both the same on every device. `dbPickKpi` went with it, and `spec.kpiSheet` with that: grep proves the per-row pin was **read in two places and assigned in none** since the shared scope arrived. The row's Region cell is a read-out captioned `Region · shared` or `Region · default`, because the fallback is the workbook's *first* region sheet — a real region nobody picked, the same shape that once put an Ontario region on a Manitoba slide — and that has to be readable rather than silent. **The second half is what removing the memory exposed**: the Region select was gated to `key === marketRung(sp)`, so Southwest Land and Southwest Docks — which read different region sheets from whole-market Southwest — had nowhere left to say so. The gate is `kpiRungOk()` now, market rung **or** refine rung; the ladder already carried `pv|Southwest|Land`, both `scopeLadder_` and `ladderFor` build it, and the server needed no change at all. The drawer's *— each person's own choice —* option was true only while the memory existed, so it names the real alternative instead (`arrKpiBelow()`: the rung below that chose one, or the workbook's first sheet). **Opening that rung for real exposed a third thing, in the half of the panel not being changed**: the strip's tick box read the rung's OWN entry (`!ke || ke.on !== false`), so a rung storing nothing drew a *ticked* box over a strip a broader rung had switched off — and ticking it wrote nothing at all, because `arrKpiPatch` collapsed "on with no region" to null against a hard-coded default instead of against **what the rung inherits**. Both now resolve the whole inherited entry (`arrKpiBelow`, first rung with a `kpi` key wins whole, exactly as `resolveScope_` does it), so a no-sheet entry is kept only for an `on` that differs and unticking the box under a broader rung's region no longer drops that region with it. No harness left to extend; the gate run was `node --check` on all 30 inline script blocks of `app.html`, extracted to `.js` paths | ✅ |
 | 2026-08-27 | **The CPI card was missing on every fresh open of the Overview and appeared on the next selection change — the same figures, drawn twice, with nothing on screen to say why the second drawing had a card the first did not.** On a server pick (This month / Year to date) three panels get their CPI from the month cube and are painted by the server: the KPI strip through `serverCpi()`, the dimension table and the explorer through `joinCpi()`. `getOverview` and `getReport` come back seconds **before** the first month-block does, so all three ran at the one moment `cube()` had nothing to say — and nothing ran them again. `wireCube`'s listener has always ended `if(winMode()) renderActiveTab(); else renderTrendSoon();`: a **window** is re-rendered whole when a block lands, a server pick gets its **trend** repainted and never its panels. So the card waited for the next thing that happened to call `renderTab()`, which for most people was resetting a selection. `repaintServerCpi()` is the missing half — the strip, `renderDimPies()` and `renderExplorer()`, and **only** those: a window is already handled by the same listener, a cross-filter report carries Sold To and answers for its own CPI (see `joinCpi`), Ready-Mix carries no Sold To at all, and both painters are pure reads of `DIMS_CACHE` / `PM_CACHE`, so a landing block can never become a server call. **The trigger is the ANSWER, not the event.** The listener fires once per month-block and almost none of them change what the cube can say about the picked period, so repainting per block would rebuild four charts for nothing; `repaintServerCpiSoon()` compares `serverCpi('agg')` against what was last drawn and debounces 260 ms, the same as `renderTrendSoon`. `''` — the cube cannot stand in — is a value like any other there, so the card comes back **down** as readily as it goes up when the handles leave the pick. The memo is kept honest at the other end too: `renderTab()` clears it to `null` (unknown, so the next block re-evaluates) and the server-pick branch records what it actually drew, which is what stops a stale reading from an earlier pick suppressing a repaint the new one needs. **Ready-Mix is untouched and stays without the card**, as its own comment and the window painters already said. `node --check` clean on all 30 of `app.html`'s inline script blocks, extracted to `.js` paths | ✅ |
 | 2026-08-27 | **All-in ASP (INC VA) did not tie to Qlik anywhere it appeared, and the reason was that three families of extras are not concrete revenue at all.** Reported against the RMX PPI book on HNS_SW / Jul-26 MTD: Qlik's `PPI (All IN)` prints CY **$200.43** and PY **$201.61**, this file printed **$202.03 / $204.45**, and *mix only* matched — which is the sentence that says where to look, because BASE and ALL-IN differ by exactly one thing. Reconciled off the uploaded workbook rather than reasoned about: the gap is **$87,490 CY / $163,139 PY**, and a search over every subset of the 19 `mat_prod_hier_3` groups in that slice returns **one** answer inside the tolerance Qlik's 2-dp printing allows (±$272 CY, ±$287 PY) — Conveyors/Pumps, Concrete Blocks and Yard-stone-sand sales, at $87,400 / $163,146. Taking them out lands on **$200.43 / $201.61 to the cent**, and on −0.6% rather than −1.2% for the ASP move. It triangulates: the SAP/USGAAP *Concrete Sales* KPI on the same page reads $10,920k / $11,585k against the reconstruction's $10,930k / $11,585k, and its *Total Revenue* − *Concrete Sales* gap ($109k / $172k) is the same order as the excluded money — SAP books pumping, blocks and yard sales as other revenue, so Qlik's concrete ASP never had them. **The key is `mat_prod_hier_3`, never the EXTRAS LOOKUP category**, and §7 says why: pumping is inside *Misc* beside minimum-load and afterhours charges that ARE concrete revenue, blocks and yard sales are inside *Other VAP* beside real admixtures. EXTRAS LOOKUP is still the one classification for TYPE — what it gains is its own `mat_prod_hier_3` column being READ (`buildLookups_`), because the month cube holds `mat_descr` and nothing else and both paths have to answer the same way. **One split, at the bundle** (`splitNonConc_` → `bundle.nonConc`), because eleven places sum `extras` / `assoc` and a per-caller filter is eleven chances to forget; `ovcRmxExtraTab_` keeps the same rows out of the parked history for the same reason, so the window-mode build-up and the period-mode one stay one arithmetic. **The 24-character truncation is the trap**: the raw tabs carry `7 : Yard-stone-sand sale`, EXTRAS LOOKUP carries `7 : Yard-stone-sand sales`, and the spacing around the colon differs between them — `rmxH3Key_` normalises the spacing and matches as a prefix either way with an 8-character floor, and the code before the colon is not unique on its own (`9` is Fuel Surcharge on one tab and Concrete Blocks on the other). **`CACHE_VER` v19 → v20 and `OVCUBE_SHAPE_VER_` v5 → v6**, the second for exactly the case its own banner was written for: the COLUMNS did not move, so a warm browser would go on drawing the old all-in ASP from IndexedDB against a fixed server, and every parked history file would keep replaying it. **Nothing is dropped silently** — `nonConc` rides the extras payload and the cross-report's ASP block, and the by-extra-type tables on the RMX page, the Product Segment slide and the Overview print the amount and the groups under themselves. **Four of the seven list entries are siblings, not measurements** (Conveying/Pumping, Resale Aggregates, Aggregates, Crushed Recycled Concrete — the same two families under other markets' codes); **R/M Truck Rental is deliberately left in** and a second Qlik slice from another market is what would settle it. Impact where it lands, all months pooled: HNS_SW −$2.22/m³ CY, North −$5.40, Saskatchewan −$7.44, Innocon −$0.01, Manitoba $0.00. Gate: `node --check` clean on `script.gs` and on all 30 of `app.html`'s inline script blocks; the rule itself extracted from `script.gs` and run under Node over all 38,031 extras/VAP rows of the real workbook — it catches the five groups that exist and nothing else, and reproduces Qlik's $200.43 / $201.61 exactly | ✅ |
+| 2026-08-27 | **CPI and PPI now differ by GRAIN and nothing else — the CPI-only coverage gate is removed.** Asked for directly: same coverage, same weight, same factor, same pooling; only the key differs (`plant × material` for PPI, `plant × sold-to × material` for CPI). `COVERAGE.cpi` (`minVol` 1 t / `minRev` $1 / `minAsp` $3.00/t) is gone, and **`piIndex_` no longer takes a `cov` argument at all** — the invariant is now a property of the signature rather than a convention, so a second difference cannot quietly reappear. The same removal in both browser pools: `pool()` in `AmrCube` and `poolPairs()` in the local cross-filter path each lost their `extra` parameter. With no threshold left to travel, `cpiCoverage` is out of the cross-filter payload and `cpi` out of the cube manifest; `ovcCovTok_` stays because `COVERAGE.agg` / `COVERAGE.rmx` still ship inside cached payloads. **CPI is now `null` for exactly one reason — no Sold To column** — where it previously had two, so a stale payload no longer suppresses the column. **What it costs, recorded rather than hidden:** ungated, 2026 Jan–Aug all markets reads **141.719%** and Aug MTD **2.789%**; the Brock Aggregates ($0.14 against 47 t) and JNF Ready Mix ($2.343/t on 378 t) pairs are back inside the index, and both are pairs CPI's finer grain isolates that PPI pools away. Verified by collapsing the grain to a single sold-to: PPI and CPI then return bit-identical weight, factor and index. Qlik-comparison prose removed from the price-index code and §7 only — the QlikView sync engine (`QLIKSYNC`, `QLIK_SYNC`, the `qlikSync*` trigger targets, the upload's format errors) is live code and untouched, and §11's older rows are left as the historical record they are | ✅ |
