@@ -11531,7 +11531,16 @@ function getCrossReport(opts){
         var hit = extrasLookup_(LK, descr);
         return hit.miss ? '' : (hit.hier3 || '');
       };
-    }
+    },
+    /* THE RULE ITSELF, handed out for that same one caller and for the same
+       reason. rmxNonConc_ is written flush-left but it is INSIDE this closure,
+       so a top-level function cannot see the name: the month cube's history
+       reader called it directly and every closed book with an extras tab died
+       on "rmxNonConc_ is not defined" the moment it reached the first row. It
+       is exported rather than copied out because one list (RMX_NONCONC_H3_) and
+       one prefix rule (rmxH3Key_) are what stop the cube and the bundle
+       splitting differently. PURE: no sheet, no lookup, no cache. */
+    isNonConc:      rmxNonConc_
   };
 })();
 
@@ -14369,9 +14378,11 @@ function ovcRmxExtraTab_(A, ss, tab, vap){
   var cPlant = ovcCol_(t, 'plant'),
       cDescr = ovcCol_(t, 'mat_descr'),
       cSeg   = ovcCol_(t, 'major project segment'),
-      /* mat_prod_hier_3, for the non-concrete rule - see rmxNonConc_. Optional
-         for the same reason Major Project Segment is: a probe naming a column
-         an older book spells differently finds no header row at all. EXTRAS
+      /* mat_prod_hier_3, for the non-concrete rule - RMX_NS.isNonConc, which is
+         rmxNonConc_ handed out of the RMX closure (the name is private in
+         there; this function is not inside it and cannot say it). Optional for
+         the same reason Major Project Segment is: a probe naming a column an
+         older book spells differently finds no header row at all. EXTRAS
          LOOKUP's copy of the column stands in when the tab has none. */
       cH3    = ovcCol_(t, 'mat_prod_hier_3');
   if (cPlant < 0 || cDescr < 0) throw new Error('Ready-Mix extras: "' + tab
@@ -14403,7 +14414,7 @@ function ovcRmxExtraTab_(A, ss, tab, vap){
        a row left out on purpose is not a row the cube could not place. */
     var h3 = (cH3 < 0) ? '' : ovcStr_(row[cH3]);
     if (!h3){ if (!h3Of) h3Of = RMX_NS.extraHier3(); h3 = h3Of(descr); }
-    if (rmxNonConc_(h3)) continue;
+    if (RMX_NS.isNonConc(h3)) continue;
     A.extra(ym, row[cPlant], ovcStr_(cSeg < 0 ? '' : row[cSeg]),
             descr, ovcNum_(row[ci]), vap);
   }
