@@ -9559,7 +9559,13 @@ var CONFIG = {
   APPLIED_BASE_PY: null,   // null => total PY concrete m3 across all markets (≈947,519).
   MAX_DIMS: 24,            // effectively unlimited (only 4 breakdowns exist); grouping happens client-side
   CACHE_TTL: 21600,        // 6 hours
-  CACHE_VER: 'v19',  // bumped: CUSTOM FLAG LOOKUP is gone, so the lookups object has
+  CACHE_VER: 'v20',  // bumped: the two extras streams are SPLIT at load now - the
+                     // concrete extras and VAP stay in `extras` / `assoc`, and the
+                     // non-concrete families (pumping, blocks, yard sales - see
+                     // rmxNonConc_) come out into `nonConc`. A v19 bundle carries
+                     // them mixed in, and every all-in ASP built off one is the
+                     // pre-fix number that does not tie to Qlik.
+                     // v19: CUSTOM FLAG LOOKUP is gone, so the lookups object has
                      // no customFlag and stream rows carry no `flag`; and the
                      // unmapped bag now carries `checked` (how many distinct values
                      // each tab was asked about). A v18 bundle answers the mapping
@@ -9839,16 +9845,25 @@ function buildLookups_(){
   var el = readSheet_(CONFIG.SHEETS.EXTRASLU, ['material (mat_descr)']);
   var eCat = firstCol_(el, ['category','catergory','new bucket']);
   var eMat = firstCol_(el, ['material (mat_descr)','mat_descr','material']);
+  /* mat_prod_hier_3 sits on this tab beside the category, and it is the key the
+     non-concrete rule reads (rmxNonConc_). OPTIONAL on purpose: the two raw tabs
+     carry their own copy of the column and that is what loadStream_ reads, so a
+     book whose EXTRAS LOOKUP predates it still loads. What this copy is FOR is
+     the month cube, which holds mat_descr and nothing else - resolving the rule
+     from the live tab there is what keeps one answer across the two paths. */
+  var eH3 = col_(el, 'mat_prod_hier_3');
+  if (eH3 === -1) eH3 = col_(el, 'mat prod hier 3');
   for (var k2=el.hdr+1; k2<el.values.length; k2++){
     var er=el.values[k2];
     var bucket=String(er[eCat]||'').trim(), mat=String(er[eMat]||'').trim();
     if (!mat || !bucket) continue;
+    var h3lu = (eH3===-1) ? '' : String(er[eH3]||'').trim();
     var kFull = norm_(mat);
-    if (!(kFull in extras)) extras[kFull] = { type: bucket };
+    if (!(kFull in extras)) extras[kFull] = { type: bucket, hier3: h3lu };
     var dash = mat.indexOf(' - ');
     if (dash > 0){
       var kShort = norm_(mat.substring(dash + 3));
-      if (kShort && !(kShort in extras)) extras[kShort] = { type: bucket };
+      if (kShort && !(kShort in extras)) extras[kShort] = { type: bucket, hier3: h3lu };
     }
   }
   return { plant: plant, product: product, extras: extras };
@@ -9946,13 +9961,84 @@ function monthOrd_(v){
   var m = s.match(/(^|[^0-9])(1[0-2]|0?[1-9])([^0-9]|$)/);
   return m ? parseInt(m[2],10) : 0;
 }
+/* ================= WHAT IS, AND IS NOT, CONCRETE REVENUE =================
+ * ALL-IN ASP IS CONCRETE NET SALES OVER CONCRETE m3, AND THREE FAMILIES OF
+ * mat_prod_hier_3 ON THE TWO EXTRAS TABS ARE NOT CONCRETE SALES AT ALL:
+ *
+ *   PUMPING AND CONVEYING - boom pumps, line pumps, conveyor trucks, their
+ *     travel time and their hourly / minimum charges. A placement SERVICE sold
+ *     beside the pour, not a price on it.
+ *   BLOCKS - concrete, interlocking, decorative and half blocks. Finished goods
+ *     off the yard, sold by the piece.
+ *   YARD SALES AND RESALE AGGREGATES - AGGNEO, concrete stone and sand resale,
+ *     premium slate and limestone, crushed recycled concrete. Aggregates, not
+ *     ready-mix.
+ *
+ * Qlik's PPI (All IN) sheet carries none of them; this file carried all three,
+ * and that is the whole of the "all-in ASP does not tie to Qlik" gap. On the
+ * slice it was reported against - HNS_SW, Jul-26, MTD - Qlik prints CY $200.43
+ * and PY $201.61 where this file printed $202.03 / $204.45, and the difference
+ * is exactly these families: $87,400 CY and $163,146 PY out of $1,438,521 /
+ * $1,455,339 of extras and VAP. Taking them out lands on $200.43 / $201.61, to
+ * the cent Qlik prints, and on -0.6% rather than -1.2% for the ASP move. BASE
+ * ("mix only") was never wrong and does not move by a cent.
+ *
+ * THE KEY IS mat_prod_hier_3, NOT THE EXTRAS LOOKUP CATEGORY, and it cannot be.
+ * Pumping sits inside "Misc" beside minimum-load and afterhours charges, which
+ * ARE concrete revenue; blocks and yard sales sit inside "Other VAP" beside
+ * real admixtures. The category cannot express this split and must not be bent
+ * into expressing it - EXTRAS LOOKUP stays the one classification for TYPE.
+ *
+ * ONE GROUP, TWO SPELLINGS. The raw tabs truncate this column at 24 characters
+ * ("7 : Yard-stone-sand sale") while EXTRAS LOOKUP holds it whole
+ * ("7 : Yard-stone-sand sales"), and the spacing around the colon differs
+ * between the two ("4: Conveyors/Pumps" against "4 : Conveyors/Pumps").
+ * rmxH3Key_ normalises the spacing and the match is a prefix EITHER WAY, so a
+ * truncation still matches. The code before the colon is not unique on its own
+ * - "9" is Fuel Surcharge on Extra Raw Data and Concrete Blocks on Associate
+ * Raw Data, "4" is Conveyors/Pumps and Steel Fibers - so the name has to be
+ * part of the key, and the 8-character floor stops a stub matching anything.
+ *
+ * THREE OF THE SEVEN ARE MEASURED, FOUR ARE THEIR OWN SIBLINGS. Conveyors/
+ * Pumps, Concrete Blocks and Yard-stone-sand sales are the three that carry
+ * money in the reconciled slice and the three the arithmetic above proves.
+ * Conveying/Pumping, Resale Aggregates, Aggregates and Crushed Recycled
+ * Concrete are the same two families under the codes the other markets and the
+ * closed books use, and are here for that reason rather than a second
+ * measurement. R/M Truck Rental is deliberately NOT here: renting the mixer is
+ * charged on the delivery, and no slice yet says which side Qlik puts it on.
+ *
+ * NOTHING IS SILENTLY DROPPED. These rows are split out of the two streams into
+ * `bundle.nonConc`, and every payload that prices extras reports what came out
+ * (`nonConc` on the extras payload and on the cross-report's ASP block) so the
+ * page states it under the table instead of the reader noticing a total move.
+ * ======================================================================== */
+var RMX_NONCONC_H3_ = ['4:CONVEYORS/PUMPS', 'B:CONVEYING/PUMPING',
+                       '9:CONCRETE BLOCKS',
+                       '7:YARD-STONE-SAND SALES', 'A:RESALE AGGREGATES',
+                       '2:AGGREGATES', '8:CRUSHED RECYCLED CONCRETE'];
+function rmxH3Key_(v){
+  var s = String(v==null?'':v).replace(/\u00A0/g,' ').replace(/\s+/g,' ').trim().toUpperCase();
+  var c = s.indexOf(':');
+  return (c < 0) ? s : (s.substring(0,c).trim() + ':' + s.substring(c+1).trim());
+}
+function rmxNonConc_(hier3){
+  var k = rmxH3Key_(hier3);
+  if (k.length < 8) return false;          // too short a stub to be sure of
+  for (var i=0; i<RMX_NONCONC_H3_.length; i++){
+    var t = RMX_NONCONC_H3_[i];
+    if (k === t || k.indexOf(t) === 0 || t.indexOf(k) === 0) return true;
+  }
+  return false;
+}
+
 function extrasLookup_(LK, descr){
   var hit = LK.extras[norm_(descr)];                       // exact "SAP# - NAME" or bare name
   if (!hit){
     var d = String(descr).indexOf(' - ');
     if (d > 0) hit = LK.extras[norm_(String(descr).substring(d + 3))];  // strip SAP prefix
   }
-  return hit || { type: 'Unclassified', miss:true };
+  return hit || { type: 'Unclassified', hier3: '', miss:true };
 }
 
 /* Each row now carries its month ordinal (1-12, or 0 if no month col).
@@ -10037,12 +10123,35 @@ function loadStream_(LK, sheetName, src, bag){
                                                   // type/flag and never reads it.
       market: pd.market, submarket: pd.submarket, segment: row[cSeg],
       hier3: h3, descr: descr, type: lu.type, stream: streamLabel,
+      /* NOT concrete net sales - see rmxNonConc_ above. The row is read,
+         classified and carried out of here whole; splitNonConc_ is what takes
+         it off the stream, so nothing is dropped inside the loader. The tab's
+         own column wins and EXTRAS LOOKUP's copy is the fallback, because the
+         tab is the record and the lookup is a restatement of it. */
+      nonConc: rmxNonConc_(h3 || lu.hier3 || ''),
       pyRev: pyR, cyRev: cyR, pyM3: pyM, cyM3: cyM });
   }
   out.cyYear = rY.cy || mY.cy;
   out.pyYear = rY.py || mY.py;
   return out;
 }
+
+/* THE STREAM SPLIT, and the reason it happens HERE and not at each caller.
+   `extras` / `assoc` are the CONCRETE extras and VAP - what every ASP, every
+   by-type table, every all-in figure and the month cube's live half are built
+   from - and `nonConc` is what came out of them. One split at the bundle means
+   a consumer cannot forget it, which is the failure mode a per-caller filter
+   would have: eleven places sum these two streams and any one of them left
+   unfiltered is an all-in ASP that disagrees with the other ten.
+   The year stamps travel with the concrete half, which is the half everything
+   reads. */
+function splitNonConc_(rows, out){
+  var keep = [];
+  rows.forEach(function(r){ if (r.nonConc) out.push(r); else keep.push(r); });
+  keep.cyYear = rows.cyYear; keep.pyYear = rows.pyYear;
+  return keep;
+}
+
 /* =================== data bundle (cached, period-agnostic) =================== */
 /* A cached bundle is only usable if it has the fields today's code reads.
    Version keys alone are not enough: CACHE_VER was left on v15 across a drop
@@ -10059,7 +10168,12 @@ function bundleOk_(b){
                data has none, and a page reading it would fall back to a
                hard-coded pair. Same rule as the months check above, for the same
                reason — rebuild it rather than repair it. */
-            && Number(b.cyYear) > 0);
+            && Number(b.cyYear) > 0
+            /* a bundle written before the split has its non-concrete rows still
+               mixed into `extras` / `assoc`, so every all-in ASP off it is the
+               old number. An empty array is truthy - "none in this book" is a
+               valid answer and a missing field is not. */
+            && b.nonConc);
 }
 
 function loadDataCached_(force){
@@ -10069,10 +10183,16 @@ function loadDataCached_(force){
   var bag = newUnmapped_();
   var main = loadMain_(LK, null, bag);
   var latest = reportMonth_(main);          // latest month with CY volume, capped at last month
+  var nonConc = [];
+  var extras = splitNonConc_(loadStream_(LK, CONFIG.SHEETS.EXTRA, null, bag), nonConc);
+  var assoc  = splitNonConc_(loadStream_(LK, CONFIG.SHEETS.ASSOC, null, bag), nonConc);
   var bundle = {
     main:   main,
-    extras: loadStream_(LK, CONFIG.SHEETS.EXTRA, null, bag),
-    assoc:  loadStream_(LK, CONFIG.SHEETS.ASSOC, null, bag),
+    extras: extras,
+    assoc:  assoc,
+    /* pumping, blocks and yard sales - real revenue, not concrete revenue.
+       Kept so the pages can report what came out; see rmxNonConc_. */
+    nonConc: nonConc,
     markets: marketsOf_(LK),
     latestMonth: latest,
     months: monthsOf_(main),
@@ -10501,10 +10621,12 @@ function uploadData(payload){
   if (!main.length) throw new Error('Main Raw Data upload has no data rows.');
   var latest = reportMonth_(main);          // latest month with CY volume, capped at last month
 
+  var nonConc = [];
   var bundle = {
     main:   main,
-    extras: loadStream_(LK, CONFIG.SHEETS.EXTRA, sExtra, bag),
-    assoc:  loadStream_(LK, CONFIG.SHEETS.ASSOC, sAssoc, bag),
+    extras: splitNonConc_(loadStream_(LK, CONFIG.SHEETS.EXTRA, sExtra, bag), nonConc),
+    assoc:  splitNonConc_(loadStream_(LK, CONFIG.SHEETS.ASSOC, sAssoc, bag), nonConc),
+    nonConc: nonConc,          // same split as the sheet path - see rmxNonConc_
     markets: marketsOf_(LK),
     latestMonth: latest,
     months: monthsOf_(main),
@@ -10836,6 +10958,13 @@ function getExtras(opts){
 function extrasPayload_(bundle, main, market, month){
   var extras = bundle.extras.filter(function(e){return mktOk_(e.market, market) && inMonth_(e.month, month);});
   var assoc  = bundle.assoc.filter(function(e){return mktOk_(e.market, market) && inMonth_(e.month, month);});
+  /* WHAT CAME OUT OF THE TWO STREAMS, on this same scope. Pumping, blocks and
+     yard sales are real revenue and are not concrete revenue, so pricing them
+     per concrete m3 is what used to put All-in above Qlik - see rmxNonConc_.
+     The page prints this under the table rather than letting a reader who
+     remembers last month's total wonder where it went. */
+  var nonConc = nonConcBlock_((bundle.nonConc||[]).filter(function(e){
+    return mktOk_(e.market, market) && inMonth_(e.month, month); }));
   // applied-rate base = GLOBAL total concrete m3 (all markets, month-scoped), CY & PY separately (sheet hard-codes 714957 / 947519)
   var gCY=0, gPY=0;
   main.forEach(function(m){ gCY+=m.cyVol; gPY+=m.pyVol; });
@@ -10898,7 +11027,19 @@ function extrasPayload_(bundle, main, market, month){
     byTypeVap:byTypeVp,          byTypeVapTotal:    onVolume_(tot(byTypeVp)),
     extras:exDetail, extrasTotal:tot(exDetail),
     vap:vpDetail,    vapTotal:   tot(vpDetail),
+    nonConc: nonConc,
     detailTotal: tot(exDetail.concat(vpDetail)) };
+}
+
+/* The one shape the excluded revenue travels in, so the extras payload and the
+   cross-report say the same thing in the same words. `groups` is the raw
+   mat_prod_hier_3 the rows sat under, which is the vocabulary of the tab the
+   reader would go and look at. */
+function nonConcBlock_(rows){
+  var cy = 0, py = 0, g = {};
+  rows.forEach(function(e){ cy += e.cyRev; py += e.pyRev;
+    var h = String(e.hier3||'').trim(); if (h) g[h] = 1; });
+  return { cyRev: cy, pyRev: py, groups: Object.keys(g).sort(), rows: rows.length };
 }
 function finalizeExtra_(g, baseCY, basePY){
   g.revPct = g.pyRev? (g.cyRev-g.pyRev)/Math.abs(g.pyRev) : 0;
@@ -11227,10 +11368,13 @@ function getCrossReport(opts){
     }
     return true;
   }
-  var exRows = [], vaRows = [];
+  var exRows = [], vaRows = [], ncRows = [];
   if (!mixFiltered){
     bundle.extras.forEach(function(e){ if (extraPass(e, true)) exRows.push(e); });
     bundle.assoc .forEach(function(e){ if (extraPass(e, true)) vaRows.push(e); });
+    /* the non-concrete rows carry plant / submarket / segment exactly as the
+       two streams do, so the same pass scopes them - see rmxNonConc_ */
+    (bundle.nonConc||[]).forEach(function(e){ if (extraPass(e, true)) ncRows.push(e); });
   }
   var asp = mixFiltered
     ? { ok:false, reason:'mix',
@@ -11238,6 +11382,7 @@ function getCrossReport(opts){
           + 'mix, so a ' + RXF_MIX_ONLY.map(function(f){ return RXF_LABEL[f]; }).join(' or ')
           + ' filter cannot be applied to them. Base ASP and PPI are unaffected.' }
     : rxfAspBlock_(totals.cyVol, totals.pyVol, totals.baseCY, totals.basePY, exRows, vaRows);
+  if (asp.ok) asp.nonConc = nonConcBlock_(ncRows);
 
   /* by extra type, on the same single denominator as the ASP block */
   var byType = null;
@@ -11409,6 +11554,21 @@ function getCrossReport(opts){
       return function(descr){
         var hit = extrasLookup_(LK, descr);
         return hit.miss ? '' : hit.type;
+      };
+    },
+    /* The same handout for mat_prod_hier_3, and it exists for ONE caller: the
+       month cube's history reader, which walks a closed book whose extras tab
+       may predate the column. The live tabs carry it and loadStream_ reads it
+       there; this is the fallback that keeps the non-concrete rule (rmxNonConc_)
+       answering the same way on both halves of the cube. A material EXTRAS
+       LOOKUP has no row for comes back '' - which rmxNonConc_ reads as
+       "concrete", the safe side: an unclassified material keeps being counted
+       exactly as it is today rather than vanishing on a lookup miss. */
+    extraHier3:     function(){
+      var LK = getLookupsCached_(false);
+      return function(descr){
+        var hit = extrasLookup_(LK, descr);
+        return hit.miss ? '' : (hit.hier3 || '');
       };
     }
   };
@@ -13798,8 +13958,14 @@ function ovNorm_(s){
    is not shipped.
    v5 = `extra` is a dimension of the rmx line (the raw mat_descr), so the
    extras and VAP rows ride the same rows, the same chunks and the same parked
-   file as Main Raw Data. */
-var OVCUBE_SHAPE_VER_ = 'v5';
+   file as Main Raw Data.
+   v6 = `ex` / `va` no longer carry the non-concrete families - pumping, blocks
+   and yard sales (rmxNonConc_). The COLUMNS did not move, which is exactly the
+   case the paragraph above was written for: a v5 chunk still holds that money,
+   so a warm browser would go on drawing the old all-in ASP against a fixed
+   server for as long as it kept its IndexedDB, and every parked history file
+   would keep replaying it. */
+var OVCUBE_SHAPE_VER_ = 'v6';
 
 var OVCUBE_TOK_PROP_ = 'cube_hist_tok';   // bumped by CUBE_rebuildHistory()
 
@@ -14241,9 +14407,18 @@ function ovcRmxExtraTab_(A, ss, tab, vap){
     + '" has no "Bill Month" column (the export spells it "bill_month").');
   var cPlant = ovcCol_(t, 'plant'),
       cDescr = ovcCol_(t, 'mat_descr'),
-      cSeg   = ovcCol_(t, 'major project segment');
+      cSeg   = ovcCol_(t, 'major project segment'),
+      /* mat_prod_hier_3, for the non-concrete rule - see rmxNonConc_. Optional
+         for the same reason Major Project Segment is: a probe naming a column
+         an older book spells differently finds no header row at all. EXTRAS
+         LOOKUP's copy of the column stands in when the tab has none. */
+      cH3    = ovcCol_(t, 'mat_prod_hier_3');
   if (cPlant < 0 || cDescr < 0) throw new Error('Ready-Mix extras: "' + tab
     + '" needs a "Plant" and a "mat_descr" column.');
+  /* Resolved on FIRST USE, not here: a book whose tab carries the column never
+     asks for it, and a history build that would otherwise open no lookup should
+     not open one to answer a question it does not have. */
+  var h3Of = null;
 
   var cyBill = APP_dataCyYear_(t.values, cBill, t.hdr + 1);
   var rcols = ovcYearCols_(t, 'total revenue', cyBill);
@@ -14259,8 +14434,17 @@ function ovcRmxExtraTab_(A, ss, tab, vap){
     if (!ym){ A.skip(); continue; }
     var ci = byYear[Math.floor(ym / 100)];
     if (ci == null){ A.skip(); continue; }        // a year this tab has no column for
+    var descr = ovcStr_(row[cDescr]);
+    /* PUMPING, BLOCKS AND YARD SALES NEVER ENTER THE CUBE, exactly as they never
+       enter the bundle (splitNonConc_) - the window-mode all-in ASP and the
+       period-mode one are the same arithmetic over the same money, and a filter
+       applied to only one of them is two answers to one question. NOT A skip():
+       a row left out on purpose is not a row the cube could not place. */
+    var h3 = (cH3 < 0) ? '' : ovcStr_(row[cH3]);
+    if (!h3){ if (!h3Of) h3Of = RMX_NS.extraHier3(); h3 = h3Of(descr); }
+    if (rmxNonConc_(h3)) continue;
     A.extra(ym, row[cPlant], ovcStr_(cSeg < 0 ? '' : row[cSeg]),
-            ovcStr_(row[cDescr]), ovcNum_(row[ci]), vap);
+            descr, ovcNum_(row[ci]), vap);
   }
   return true;
 }

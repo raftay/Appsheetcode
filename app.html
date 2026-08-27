@@ -9780,7 +9780,21 @@ var AmrRmxSlide = (function(){
       body += '<tr class="subtotal"><td class="tlbl" colspan="2">VAP Total</td>'+byTypeRowNoLabel(d.byTypeVapTotal)+'</tr>';
     }
     var foot='<tfoot><tr><td class="tlbl" colspan="2">Total</td>'+byTypeRowNoLabel(d.byTypeTotal)+'</tr></tfoot>';
-    return head+body+'</tbody>'+foot+'</table></div></div>';
+    return head+body+'</tbody>'+foot+'</table></div>'+nonConcNote(d)+'</div>';
+  }
+  /* WHAT IS NOT IN THIS TABLE, SAID OUT LOUD. Pumping, blocks and yard sales are
+     revenue this book carries and concrete ASP does not: a pump hour is not a
+     price on a m3, and dividing one by m3 is what used to lift All-in above the
+     number Qlik reports. A rule nobody can see is indistinguishable from a total
+     that quietly moved, so the amount and the groups it came from are printed
+     under the table that no longer holds them. */
+  function nonConcNote(d){
+    var nc = d && d.nonConc;
+    if(!nc || !(nc.cyRev || nc.pyRev)) return '';
+    return '<p class="hint">Not in this table: <b>'+f$0(nc.cyRev)+'</b> '+cyOf(d)+' and <b>'
+      +f$0(nc.pyRev)+'</b> '+pyOf(d)+' of non-concrete revenue \u2014 '+esc(nc.groups.join(', '))
+      +'. It is not a price on a m\u00b3, carries no ASP, and Qlik\u2019s all-in ASP does not '
+      +'include it either.</p>';
   }
 
   function detailRow(r){
@@ -15326,7 +15340,21 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
       body += '<tr class="subtotal"><td class="tlbl" colspan="2">VAP Total</td>'+byTypeRowNoLabel(d.byTypeVapTotal)+'</tr>';
     }
     var foot='<tfoot><tr><td class="tlbl" colspan="2">Total</td>'+byTypeRowNoLabel(d.byTypeTotal)+'</tr></tfoot>';
-    return head+body+'</tbody>'+foot+'</table></div></div>';
+    return head+body+'</tbody>'+foot+'</table></div>'+nonConcNote(d)+'</div>';
+  }
+  /* WHAT IS NOT IN THIS TABLE, SAID OUT LOUD. Pumping, blocks and yard sales are
+     revenue this book carries and concrete ASP does not: a pump hour is not a
+     price on a m3, and dividing one by m3 is what used to lift All-in above the
+     number Qlik reports. A rule nobody can see is indistinguishable from a total
+     that quietly moved, so the amount and the groups it came from are printed
+     under the table that no longer holds them. */
+  function nonConcNote(d){
+    var nc = d && d.nonConc;
+    if(!nc || !(nc.cyRev || nc.pyRev)) return '';
+    return '<p class="hint">Not in this table: <b>'+f$0(nc.cyRev)+'</b> '+cyOf(d)+' and <b>'
+      +f$0(nc.pyRev)+'</b> '+pyOf(d)+' of non-concrete revenue \u2014 '+esc(nc.groups.join(', '))
+      +'. It is not a price on a m\u00b3, carries no ASP, and Qlik\u2019s all-in ASP does not '
+      +'include it either.</p>';
   }
   function detailRow(r){
     return '<td class="tlbl">'+esc(r.label)+'</td>'
@@ -21280,6 +21308,17 @@ AMR.page('overview', {
       var incItems=rows.filter(function(r){ return r.pyRev; }).map(function(r){
         return { label:truncate(r.stream+' \u00b7 '+r.label,22), v:r.revPct };
       });
+      /* THE SAME SENTENCE THE RMX PAGE PRINTS, from the same server figure - it
+         rides on the ASP block because that is the block it changes. Pumping,
+         blocks and yard sales are revenue, and are not a price on a m3, so they
+         are in neither this table nor All-in - and neither are they in Qlik's. */
+      function nonConcNote(){
+        var nc = d.asp && d.asp.nonConc;
+        if(!nc || !(nc.cyRev || nc.pyRev)) return '';
+        return '<p class="ov-mini">Not shown: '+fMoneyFull(nc.cyRev)+' CY and '+fMoneyFull(nc.pyRev)
+          +' PY of non-concrete revenue \u2014 '+esc(nc.groups.join(', '))
+          +'. It carries no $/m\u00b3 and is not in All-in.</p>';
+      }
       body.innerHTML=
         '<div class="ov-cols">'
         +'<div><p class="ov-lab">Share of CY extras + VAP revenue</p><div class="ov-cbox tall"><canvas id="ext_pie"></canvas></div></div>'
@@ -21288,6 +21327,7 @@ AMR.page('overview', {
         +'<table class="ov-table"><thead><tr>'
         +'<th>Extra type</th><th>Rev CY</th><th>Rev PY</th><th>Rev %</th><th>$/m\u00b3 CY</th><th>$/m\u00b3 PY</th><th>$ chg</th>'
         +'</tr></thead><tbody>'+block('EXTRAS')+block('VAP')+grandTotal()+'</tbody></table>'
+        +nonConcNote()
         +(d.note||'')
         +'<div style="margin-top:12px"><a class="linkbtn" href="'+(window.APP_URL||'')+'?page=rmx" target="_top">Open RMX - Price &amp; Volume for the applied-m\u00b3 detail \u2192</a></div>';
       if(withRev.length){
