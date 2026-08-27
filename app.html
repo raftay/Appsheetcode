@@ -1079,6 +1079,65 @@ table.gt.wrapText tbody td.tlbl{white-space:normal}
 .tbl-stack thead th{position:sticky; top:0}
 /* the tick that puts a table on the slide */
 .export-cb{margin-right:10px; width:16px; height:16px; accent-color:var(--blue-50); cursor:pointer}
+
+/* ---- THE LOOKUP EDITOR ------------------------------------------------------
+   Two pages open this form now — the Overview's data-quality sheet and the Deck
+   Builder's pre-flight dialog — so it is here rather than scoped to one of
+   them, on §A3's own rule: a rule a second page would want belongs here. §E
+   AmrLookupEdit is the markup these describe.
+
+   NOTHING IN THEM CHANGED. The block is the Overview's, unscoped and moved: a
+   form whose rows look different in the dialog from how they look in the sheet
+   is a form somebody has to learn twice.                                    */
+.lk-wrap{margin-top:10px; border:1px solid var(--blue-40); border-radius:12px; overflow:hidden}
+.lk-head{display:flex; align-items:center; gap:10px; padding:10px 13px; background:var(--blue-10);
+  border-bottom:1px solid var(--line)}
+.lk-head .t{font:700 12px Archivo; color:var(--blue-100)}
+.lk-head .sp{flex:1}
+.lk-body{padding:11px 13px 13px; max-height:340px; overflow:auto}
+/* content-visibility, and it is the other half of removing the 200-row cap.
+   .lk-body above is a 340px scroll box, so on a form of a thousand rows the
+   browser was laying out and painting a thousand of them to show five. This
+   lets it skip the ones nobody can see and do them when they scroll into view;
+   contain-intrinsic-size keeps the scrollbar honest until it has (auto, so the
+   real height replaces the estimate once a row has been rendered once).
+   It changes nothing about the DOM — AmrLookupEdit's harvest still reads every
+   row's value,
+   rendered or not — and a browser that does not support it simply lays them all
+   out as before. */
+.lk-row{display:flex; flex-wrap:wrap; gap:7px; align-items:center; padding:7px 0; border-bottom:1px solid var(--line);
+  content-visibility:auto; contain-intrinsic-size:auto 44px}
+.lk-row:last-child{border-bottom:0}
+/* A ROW THE SERVER COULD NOT CALL. The chip at the end of the row says so, but
+   this list runs to four figures and a chip is 60px of a 900px row — the spine
+   is what makes "the ones I have to read" findable while scrolling. Same red,
+   same meaning and the same server verdict as the Ready-Mix dialog's
+   `tr.lowrow`; only the shape differs, because that one is a table. */
+.lk-row.low{box-shadow:inset 3px 0 0 0 var(--neg); padding-left:9px}
+.lk-row .sugchip{flex:0 0 auto; margin-left:auto}
+.lk-row .k{flex:1 1 170px; font:700 11.5px Inter; color:var(--blue-100); min-width:0;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.lk-row .f{flex:0 1 128px; min-width:96px}
+.lk-row input, .lk-row select{width:100%; box-sizing:border-box; border:1px solid var(--line);
+  border-radius:7px; padding:5px 7px; font:500 11.5px Inter; background:#fff; color:var(--ink)}
+.lk-row .fl{display:block; font:700 8px Archivo; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--blue-70); margin-bottom:2px}
+.lk-row .sk{flex:0 0 auto; border:0; background:transparent; color:var(--neg); font:700 15px Inter;
+  cursor:pointer; padding:0 4px; line-height:1}
+.lk-btn{border:1px solid var(--line); background:#fff; color:var(--blue-100); border-radius:8px;
+  padding:6px 12px; font:700 11px Inter; cursor:pointer; white-space:nowrap}
+.lk-btn:hover{border-color:var(--blue-40); background:var(--blue-10)}
+.lk-btn.primary{background:var(--blue-100); color:#fff; border-color:var(--blue-100)}
+.lk-btn.primary:hover{background:var(--blue-70); border-color:var(--blue-70)}
+.lk-btn:disabled{opacity:.5; cursor:default}
+.lk-msg{font:600 11.5px Inter; padding:8px 13px; border-top:1px solid var(--line)}
+.lk-msg.ok{color:var(--pos); background:var(--pos-bg)}
+.lk-msg.bad{color:var(--neg); background:var(--neg-bg)}
+/* "Reading the lookup tab…". It was the Overview's own .ov-mini, which is §A4
+   and scoped to that page — so a second page's copy of this form showed the
+   line unstyled. Same shape, in the layer both pages can see. */
+.lk-load{min-height:120px; display:flex; align-items:center; justify-content:center;
+  color:var(--muted); font:600 12px Inter}
 </style>
 
 <style>
@@ -1542,50 +1601,6 @@ body[data-page="overview"] .dq-body th:first-child{text-align:left}
 body[data-page="overview"] .dq-body td{padding:7px 9px; border-bottom:1px solid var(--line); text-align:right; font-variant-numeric:tabular-nums}
 body[data-page="overview"] .dq-body td:first-child{text-align:left; font-weight:600; white-space:normal; max-width:380px; line-height:1.35}
 
-/* ===== lookup editor (inside the data-quality sheet) ===== */
-body[data-page="overview"] .lk-wrap{margin-top:10px; border:1px solid var(--blue-40); border-radius:12px; overflow:hidden}
-body[data-page="overview"] .lk-head{display:flex; align-items:center; gap:10px; padding:10px 13px; background:var(--blue-10);
-  border-bottom:1px solid var(--line)}
-body[data-page="overview"] .lk-head .t{font:700 12px Archivo; color:var(--blue-100)}
-body[data-page="overview"] .lk-head .sp{flex:1}
-body[data-page="overview"] .lk-body{padding:11px 13px 13px; max-height:340px; overflow:auto}
-/* content-visibility, and it is the other half of removing the 200-row cap.
-   .lk-body above is a 340px scroll box, so on a form of a thousand rows the
-   browser was laying out and painting a thousand of them to show five. This
-   lets it skip the ones nobody can see and do them when they scroll into view;
-   contain-intrinsic-size keeps the scrollbar honest until it has (auto, so the
-   real height replaces the estimate once a row has been rendered once).
-   It changes nothing about the DOM — lkHarvest still reads every row's value,
-   rendered or not — and a browser that does not support it simply lays them all
-   out as before. */
-body[data-page="overview"] .lk-row{display:flex; flex-wrap:wrap; gap:7px; align-items:center; padding:7px 0; border-bottom:1px solid var(--line);
-  content-visibility:auto; contain-intrinsic-size:auto 44px}
-body[data-page="overview"] .lk-row:last-child{border-bottom:0}
-/* A ROW THE SERVER COULD NOT CALL. The chip at the end of the row says so, but
-   this list runs to four figures and a chip is 60px of a 900px row — the spine
-   is what makes "the ones I have to read" findable while scrolling. Same red,
-   same meaning and the same server verdict as the Ready-Mix dialog's
-   `tr.lowrow`; only the shape differs, because that one is a table. */
-body[data-page="overview"] .lk-row.low{box-shadow:inset 3px 0 0 0 var(--neg); padding-left:9px}
-body[data-page="overview"] .lk-row .sugchip{flex:0 0 auto; margin-left:auto}
-body[data-page="overview"] .lk-row .k{flex:1 1 170px; font:700 11.5px Inter; color:var(--blue-100); min-width:0;
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-body[data-page="overview"] .lk-row .f{flex:0 1 128px; min-width:96px}
-body[data-page="overview"] .lk-row input, body[data-page="overview"] .lk-row select{width:100%; box-sizing:border-box; border:1px solid var(--line);
-  border-radius:7px; padding:5px 7px; font:500 11.5px Inter; background:#fff; color:var(--ink)}
-body[data-page="overview"] .lk-row .fl{display:block; font:700 8px Archivo; letter-spacing:.09em; text-transform:uppercase;
-  color:var(--blue-70); margin-bottom:2px}
-body[data-page="overview"] .lk-row .sk{flex:0 0 auto; border:0; background:transparent; color:var(--neg); font:700 15px Inter;
-  cursor:pointer; padding:0 4px; line-height:1}
-body[data-page="overview"] .lk-btn{border:1px solid var(--line); background:#fff; color:var(--blue-100); border-radius:8px;
-  padding:6px 12px; font:700 11px Inter; cursor:pointer; white-space:nowrap}
-body[data-page="overview"] .lk-btn:hover{border-color:var(--blue-40); background:var(--blue-10)}
-body[data-page="overview"] .lk-btn.primary{background:var(--blue-100); color:#fff; border-color:var(--blue-100)}
-body[data-page="overview"] .lk-btn.primary:hover{background:var(--blue-70); border-color:var(--blue-70)}
-body[data-page="overview"] .lk-btn:disabled{opacity:.5; cursor:default}
-body[data-page="overview"] .lk-msg{font:600 11.5px Inter; padding:8px 13px; border-top:1px solid var(--line)}
-body[data-page="overview"] .lk-msg.ok{color:var(--pos); background:var(--pos-bg)}
-body[data-page="overview"] .lk-msg.bad{color:var(--neg); background:var(--neg-bg)}
 body[data-page="overview"] .dq-act{display:flex; gap:7px; margin-left:auto; flex:none}
 body[data-page="overview"] .dq-link{border:1px solid var(--line); background:#fff; color:var(--blue-100); border-radius:8px;
   padding:6px 11px; font:700 11px Inter; cursor:pointer; text-decoration:none; display:inline-block}
@@ -1921,8 +1936,10 @@ body[data-page="deckbuilder"] .db-gate{position:fixed; inset:0; z-index:9998;
   background:rgba(1,30,106,.55); display:flex; align-items:center; justify-content:center;
   padding:20px}
 body[data-page="deckbuilder"] .db-gate[hidden]{display:none}
+/* 860, not 660: the add-rows form opens INSIDE this box, and a .lk-row is a
+   key plus up to five controls. At 660 every row wrapped onto three lines. */
 body[data-page="deckbuilder"] .db-gate-box{background:var(--white); border-radius:var(--r);
-  box-shadow:0 24px 70px rgba(0,0,0,.35); width:min(660px, 100%); max-height:86vh;
+  box-shadow:0 24px 70px rgba(0,0,0,.35); width:min(860px, 100%); max-height:86vh;
   display:flex; flex-direction:column; overflow:hidden}
 body[data-page="deckbuilder"] .db-gate-box h3{margin:0; padding:14px 18px 12px;
   border-bottom:1px solid var(--line); font:800 13px Archivo; letter-spacing:.05em;
@@ -1939,6 +1956,10 @@ body[data-page="deckbuilder"] .db-gate-find .sub{display:block; margin-top:3px; 
 body[data-page="deckbuilder"] .db-gate-act{display:flex; align-items:center; gap:8px; flex-wrap:wrap;
   padding:12px 18px; border-top:1px solid var(--line); background:#F7FAFE}
 body[data-page="deckbuilder"] .db-gate-act .db-spacer{flex:1}
+/* the two buttons that open the add-rows form, on the finding itself */
+body[data-page="deckbuilder"] .db-gate-fix{display:flex; align-items:center; gap:7px;
+  flex-wrap:wrap; margin-top:8px}
+body[data-page="deckbuilder"] .db-gate-cap{font:500 11px Inter; color:var(--muted)}
 
 /* ---- ARRANGE, WHICH IS A MODE OF THE LIST AND NOT A PANEL ABOVE IT ---------
    It used to be its own card above #dbList, holding a SECOND copy of all 43
@@ -3760,8 +3781,8 @@ window.AMR = (function(){
    ----------------------------------------------------------------------------
    AmrCache, AmrProgress, AmrBoot, AmrFresh, AmrStamp, AmrTick, AmrCube,
    AmrKpi, AmrSlide, AmrDeckSource, AmrFuelExec, AmrPvSlide, AmrSegSlide,
-   AmrRmxSlide, AmrHover, AmrSugChip. Sixteen — AmrKpiStore was a seventeenth
-   and did not come across.
+   AmrRmxSlide, AmrHover, AmrSugChip, AmrLookupEdit. Seventeen — and
+   AmrKpiStore was an eighteenth that did not come across.
 
    EACH ONE HAS A PAGE THAT PROVES IT, and that is how they should be changed:
    AmrProgress / AmrBoot / AmrFresh / AmrStamp / AmrSlide / AmrFuelExec against
@@ -3771,6 +3792,13 @@ window.AMR = (function(){
    AmrTick, AmrDeckSource and AmrRmxSlide against the Deck Builder, the only
    page that calls any of them. Changing a module with no page open to show it
    is how a silent break gets committed.
+
+   AmrLookupEdit IS A THIRD WITH TWO, and they are not the same shape: the
+   Overview's data-quality sheet opens it inside a panel it REBUILDS whole on
+   every section toggle, and the Deck Builder's pre-flight opens it inside a
+   modal dialog that ends a render when it saves. The first is what the
+   harvest-before-re-render rule exists for and the second is what onSaved
+   does; a change checked against only one of them has checked neither.
 
    AmrHover AND AmrSugChip ARE THE TWO WITH *TWO* PAGES THAT PROVE THEM, and
    both must be looked at: Ready-Mix's "Suggested lookup rows" dialog and the
@@ -4105,6 +4133,417 @@ window.AmrSugChip = (function(){
   }
 
   return { chip: chip, card: card, mount: mount, word: WORD };
+})();
+</script>
+
+<script>
+/* ---- §E AmrLookupEdit — adding rows to a lookup tab, from any page ----------
+   Was the Overview's LOOKUP EDITOR, and it is here because a SECOND page opens
+   it now: the Deck Builder's pre-flight, where a plant with no REGION LOOKUP
+   row is found at the one moment somebody is about to publish 43 slides built
+   on it. Making a third copy of a form that carries this much judgement — the
+   option-list trick below, the harvest-before-re-render rule, the confidence
+   chip — is exactly what §9 says not to do, so the Overview's copy moved here
+   whole and both pages call it.
+
+   THE TWO WRITE PATHS ARE THE PAGES' OWN, unchanged:
+
+     Aggregates plants    -> getPvLookupForm / applyPvLookupRows   (REGION LOOKUP)
+     Ready-Mix mixes      -> getRmxSuggestions / applyRmxLookupRows (PRODUCT MASTER)
+     Ready-Mix materials  -> getRmxSuggestions / applyRmxLookupRows (EXTRAS LOOKUP)
+
+   Both are append-only, take a script lock, re-read the tab at write time and
+   skip anything already there, and bump the page generation on success — so the
+   cube, every cached report and every other user pick the new rows up. Nothing
+   is written until "Save"; the values on screen are only a proposal.
+
+   The two lookups the cube reads come from the LIVE Price & Volume and RMX
+   sheets, never the closed-year history books, so a row added here fixes the
+   current data straight away.
+
+   RMX PLANT LOOKUP and the Aggregates material lookup have no append API on the
+   server yet, so a caller with one of those offers the tab link only.
+
+   WHAT THE PAGE OWNS AND WHAT THIS DOES. A page mounts a NAMESPACE, says how to
+   find the host element for a key, and says what to do after a successful write
+   — which is the one thing that cannot be shared, because "everything derived
+   from that tab is now stale" means different caches on every page. Everything
+   else is here: the form, the state, the save, and one delegated click handler.
+
+     AmrLookupEdit.mount('ovlk', { host:fn(key), onSaved:fn(done) })
+     AmrLookupEdit.wire(containerEl)          once, on something that survives
+     AmrLookupEdit.toggle('ovlk', key, kind, values)
+     AmrLookupEdit.harvestAll('ovlk')         BEFORE the page rebuilds its body
+     AmrLookupEdit.openKeys('ovlk').forEach(...)  ...and re-render after it
+
+   `kind` is one of 'pvplant' | 'rmxproduct' | 'rmxextras'. `key` is whatever
+   the page calls the section it is fixing; it has to be stable across that
+   page's own re-renders and MUST NOT CONTAIN '#' — the confidence chip's id is
+   `key#rowIndex` and the resolver splits on it.                              */
+window.AmrLookupEdit = (function(){
+
+  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function live(){ return typeof google!=='undefined' && google.script && google.script.run; }
+
+  /* namespace -> { host, onSaved } and namespace -> { key -> state }.
+     A state is { busy, kind, err, msg, form, opts, rows, note, total, more }. */
+  var CFG = {}, ST = {};
+
+  function cfg(ns){ return CFG[ns] || {}; }
+  function all(ns){ return (ST[ns] = ST[ns] || {}); }
+  function hostOf(ns, key){
+    var f = cfg(ns).host;
+    try { return f ? f(key) : null; } catch(e){ return null; }
+  }
+
+  /* THE FORM OFFERS EVERY ROW, AND THE REASON IT USED TO OFFER 200 IS FIXED
+     RATHER THAN CAPPED.
+     -----------------------------------------------------------------------
+     The cap was real and the arithmetic behind it was right: the Ready-Mix
+     mix section lists well over a thousand mixes, each proposed row is five
+     controls, and three of those are selects carrying the whole PRODUCT
+     MASTER vocabulary. Measured in Chromium: 1,200 rows rendered that way is
+     91,200 nodes and 5.8 SECONDS of frozen main thread — on a fast machine
+     with nothing else running, so inside the Apps Script frame on a laptop it
+     is a page that has hung. Capping at 200 made that 1.6s, which is bad
+     rather than fatal, and left the real cost in place: fixing 1,116 mixes
+     meant six rounds of fill-save-WAIT-FOR-THE-CUBE-TO-REBUILD, and the
+     rebuild is the slow half.
+
+     The nodes were never the rows — they were the option lists, repeated per
+     row. select_() renders each select holding only the option that is
+     SELECTED, and fill() puts the rest in the first time it is touched.
+     Same measurement, same 1,200 rows: 25,200 nodes and 446ms, thirteen times
+     faster, with every value and every save path identical. So there is
+     nothing left for a cap to protect and the whole list is offered.
+
+     If a section ever does get big enough to be slow again, the thing to
+     reach for is rendering the ROWS lazily too — not a cap, which trades a
+     slow form for six slow rebuilds. */
+
+  function set_(ns, key, patch){
+    var m = all(ns);
+    m[key] = Object.assign(m[key] || {}, patch);
+    render(ns, key);
+  }
+  function close(ns, key){
+    delete all(ns)[key];
+    var h = hostOf(ns, key); if(h) h.innerHTML = '';
+  }
+
+  /* open: fetch the form (PV) or the suggestions (RMX), then render the rows.
+     Pressing the button again closes it, which is what the Overview's single
+     "+ Add these rows" control has always done. */
+  function toggle(ns, key, kind, values){
+    if(all(ns)[key]) return close(ns, key);
+    if(!live()){ set_(ns, key, {err:'The lookup editor only works in the live web app.'}); return; }
+    set_(ns, key, {busy:true, kind:kind, err:'', msg:''});
+    if(kind==='pvplant'){
+      google.script.run
+        .withSuccessHandler(function(f){
+          if(!f || !f.ok){ set_(ns,key,{busy:false,err:'Could not read the lookup tab.'}); return; }
+          set_(ns, key, { busy:false, form:f, url:f.url,
+            rows: (values||[]).map(function(v){ return { key:v, cells:{}, skip:false }; }) });
+        })
+        .withFailureHandler(function(e){ set_(ns,key,{busy:false,err:(e&&e.message)||String(e)}); })
+        .getPvLookupForm();
+      return;
+    }
+    /* BOTH RMX FORMS CLASSIFY THE VALUES ON SCREEN, and that is deliberate.
+       The mixes and the materials listed behind this form are the CALLER's —
+       on the Overview the cube's, live workbook plus every closed-year book —
+       so the server is asked to classify exactly those, rather than answering
+       from the live report's own miss list. Those two lists are not the same
+       list: a value that traded in a closed year and has since been dropped
+       from the lookup is only ever on the cube's, and asking for the other one
+       is what opened this form with nothing in it while the section behind it
+       listed 1,116 mixes. `kind` says which tab; the reply carries one list and
+       the vocabulary that tab already uses. */
+    var isX=(kind==='rmxextras'), send=(values||[]);
+    var tab=isX?'EXTRAS LOOKUP':'PRODUCT MASTER';
+    google.script.run
+      .withSuccessHandler(function(r){
+        if(!r || !r.ok){ set_(ns,key,{busy:false,err:'Could not work out any suggestions.'}); return; }
+        var list=(isX ? r.extras : r.product)||[];
+        set_(ns, key, { busy:false, kind:kind, opts:(r.options||{}),
+          total:send.length, more:0,
+          /* the one empty case worth explaining: the values are in the tab
+             already and it is the caller's count that has not caught up */
+          note:(!list.length && r.already)
+            ? ('All '+r.already+' of these are in '+tab+' already \u2014 the count above it '
+              +'is not re-read until whatever produced it is rebuilt.')
+            : '',
+          rows:list.map(function(p){ return { key:p.value, sug:p, skip:false }; }) });
+      })
+      .withFailureHandler(function(e){ set_(ns,key,{busy:false,err:(e&&e.message)||String(e)}); })
+      .getRmxSuggestions({ values: send, kind: (isX?'extras':'product') });
+  }
+
+  function field(label, html){
+    return '<div class="f"><span class="fl">'+esc(label)+'</span>'+html+'</div>';
+  }
+
+  /* ---- HOW SURE THE SERVER WAS, ON THE ROW ITSELF ----
+     This form has always shown the server's ANSWER — a Category, a Strength,
+     a Product class — and never how sure it was of it. The Ready-Mix page's
+     dialog shows exactly that, on rows from exactly this call, so the chip
+     and its hover card are shared rather than re-invented: AmrSugChip owns
+     the wording and AmrHover paints the card at <body>, which is what stops
+     .lk-body's 340px scroll box clipping it.
+
+     Both matter more here than they do in the dialog. This form opens on a
+     miss list — 1,116 mixes on a bad day, every one of them proposed and none
+     of them pre-ticked away — so "which of these do I actually need to read"
+     is the whole question, and a Review row that looks identical to a
+     Confident one is how a defaulted Strength gets saved into PRODUCT MASTER
+     unread. The chip answers it at a glance and the card says why. */
+  function chip_(ns, key, i, sug){
+    if(!sug || !sug.band || !window.AmrSugChip) return '';
+    return AmrSugChip.chip(ns, key+'#'+i, sug);
+  }
+  function low(sug){ return (sug && sug.band==='Low') ? ' low' : ''; }
+
+  /* ---- the option lists, ONCE, and put into a select when it is touched ----
+     This is what makes the cap above unnecessary. A vocabulary rendered into
+     every row is the same twenty strings a thousand times over, and it is the
+     whole of the cost: the form is a handful of controls per row and tens of
+     thousands of <option>s.
+
+     So the list is registered here under a key and the select is rendered
+     holding ONE option — the selected one, which is what a harvest reads, so
+     a select nobody ever touches still saves the right value. fill() puts
+     the rest in on the first focus or mousedown, both of which fire before
+     the dropdown opens.
+
+     Keys are shared where the list is (strength, class, application, and the
+     whole of a pvplant column); a per-row list — extras' hier3All, which is
+     the handful of hierarchies THAT row appears under — gets its own. */
+  var OPTS = {}, OPTS_N = 0;
+  function select_(name, val, options, key){
+    var list=options||[];
+    if(!list.length) return '<input type="text" data-f="'+esc(name)+'" value="'+esc(val||'')+'">';
+    /* WHAT THE BROWSER WOULD HAVE SELECTED. With no value the old form
+       rendered no selected option and the browser took the first one, so that
+       is the value a save has always written — not blank. */
+    var cur = val || list[0];
+    var k = key || ('o'+(++OPTS_N));
+    OPTS[k] = list;
+    return '<select data-f="'+esc(name)+'" data-opts="'+esc(k)+'">'
+      +'<option value="'+esc(cur)+'" selected>'+esc(cur)+'</option></select>';
+  }
+  /* One select, filled. Idempotent, and safe on a select whose list has gone
+     (a re-render between the touch and this) — it keeps what it has. */
+  function fill(sel){
+    if(!sel || sel.tagName!=='SELECT' || sel.getAttribute('data-filled')) return;
+    sel.setAttribute('data-filled','1');
+    var list=OPTS[sel.getAttribute('data-opts')];
+    if(!list || !list.length) return;
+    var cur=sel.value, seen=false, html='';
+    for(var i=0;i<list.length;i++){
+      var o=list[i];
+      if(o===cur) seen=true;
+      html+='<option value="'+esc(o)+'"'+(o===cur?' selected':'')+'>'+esc(o)+'</option>';
+    }
+    /* a value the vocabulary does not have goes to the front, exactly as the
+       eager form put it there */
+    if(!seen) html='<option value="'+esc(cur)+'" selected>'+esc(cur)+'</option>'+html;
+    sel.innerHTML=html;
+    sel.value=cur;
+  }
+
+  function render(ns, key){
+    var h=hostOf(ns,key), st=all(ns)[key]; if(!h) return;
+    if(!st){ h.innerHTML=''; return; }
+    /* .lk-load, NOT the Overview's .ov-mini: that rule is §A4 and scoped to
+       that page, so on the Deck Builder this line was unstyled text. */
+    if(st.busy){ h.innerHTML='<div class="lk-wrap"><div class="lk-body"><div class="lk-load">Reading the lookup tab\u2026</div></div></div>'; return; }
+    if(st.err && !st.rows){ h.innerHTML='<div class="lk-wrap"><div class="lk-msg bad">'+esc(st.err)+'</div></div>'; return; }
+    var rows=st.rows||[], liveRows=rows.filter(function(r){ return !r.skip; });
+    var body;
+    if(!liveRows.length){
+      body='<div class="lk-body"><p class="hint">'+esc(st.note||'Nothing left to add here.')+'</p></div>';
+    }else if(st.kind==='pvplant'){
+      /* one control per TYPED column the server described; the key column is
+         the unmapped plant itself and is never editable */
+      var cols=(st.form.cols||[]).filter(function(c){ return c.kind!=='key'; });
+      body='<div class="lk-body">'+rows.map(function(r,i){
+        if(r.skip) return '';
+        return '<div class="lk-row" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
+          +cols.map(function(c){
+            return field(c.label, c.kind==='select'
+              ? select_(String(c.i), r.cells[c.i]||'', c.options, 'c_'+ns+'_'+key+'_'+c.i)
+              : '<input type="text" data-f="'+c.i+'" value="'+esc(r.cells[c.i]||'')+'">');
+          }).join('')
+          +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
+      }).join('')+'</div>';
+    }else if(st.kind==='rmxextras'){
+      /* applyRmxLookupRows({target:'extras'}) writes Category, mat_prod_hier_3
+         and the description, so those are exactly the controls here. */
+      var OE=st.opts||{};
+      body='<div class="lk-body">'+rows.map(function(r,i){
+        if(r.skip) return '';
+        var p=r.sug||{};
+        return '<div class="lk-row'+low(p)+'" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
+          +field('Category', select_('category', p.category||'', OE.category, 'v_cat'))
+          /* no shared key: hier3All is this row's own handful of hierarchies */
+          +field('mat_prod_hier_3', select_('hier3', p.hier3||'', (p.hier3All&&p.hier3All.length)?p.hier3All:OE.hier3))
+          +chip_(ns,key,i,p)
+          +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
+      }).join('')+'</div>';
+    }else{
+      var O=st.opts||{};
+      body='<div class="lk-body">'+rows.map(function(r,i){
+        if(r.skip) return '';
+        var p=r.sug||{};
+        return '<div class="lk-row'+low(p)+'" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
+          +field('Code','<input type="text" data-f="code" value="'+esc(p.code||'')+'">')
+          +field('New description','<input type="text" data-f="newD" value="'+esc(p.newD||'')+'">')
+          +field('Strength', select_('strength', p.strength||'Others', O.strength, 'v_strength'))
+          +field('Product class', select_('cls', p.cls||'Others', O.cls||O.category, 'v_cls'))
+          +field('Application', select_('app', p.app||'Others', O.app, 'v_app'))
+          +chip_(ns,key,i,p)
+          +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
+      }).join('')+'</div>';
+    }
+    /* THE NAMESPACE AND THE KEY ARE ON THE WRAPPER, which is what lets wire()
+       be one handler that does not know the page it is on: Cancel, Save and
+       every × are inside this element, so the section they belong to is an
+       ancestor lookup rather than something each page has to describe. */
+    h.innerHTML='<div class="lk-wrap" data-lk-ns="'+esc(ns)+'" data-lk-key="'+esc(key)+'">'
+      +'<div class="lk-head"><span class="t">Add '+liveRows.length+' row'+(liveRows.length===1?'':'s')+' to the lookup</span>'
+      +'<span class="sp"></span>'
+      +'<button class="lk-btn" data-lk="cancel">Cancel</button>'
+      +'<button class="lk-btn primary" data-lk="save"'+(liveRows.length?'':' disabled')+'>Save to the sheet</button>'
+      +'</div>'+body
+      +(st.more>0&&liveRows.length
+         /* kept for a caller that still hands in a slice; nothing does today */
+         ? ('<div class="lk-msg">'+esc('The '+liveRows.length+' biggest by revenue, of '+st.total
+            +'. Save these, then open it again for the next batch.')+'</div>')
+         : '')
+      +(st.msg?('<div class="lk-msg ok">'+esc(st.msg)+'</div>'):'')
+      +(st.err?('<div class="lk-msg bad">'+esc(st.err)+'</div>'):'')
+      +'</div>';
+  }
+
+  /* read the controls back into state before saving, so edits are never lost */
+  function harvest(ns, key){
+    var h=hostOf(ns,key), st=all(ns)[key]; if(!h||!st) return;
+    [].forEach.call(h.querySelectorAll('.lk-row'), function(el){
+      var r=st.rows[Number(el.dataset.i)]; if(!r) return;
+      [].forEach.call(el.querySelectorAll('[data-f]'), function(inp){
+        var f=inp.dataset.f;
+        if(st.kind==='pvplant') r.cells[Number(f)]=inp.value;
+        else { r.sug=r.sug||{}; r.sug[f]=inp.value; }
+      });
+    });
+  }
+  function harvestAll(ns){ Object.keys(all(ns)).forEach(function(k){ harvest(ns, k); }); }
+  function openKeys(ns){ return Object.keys(all(ns)); }
+  function isOpen(ns, key){ return !!all(ns)[key]; }
+
+  function save(ns, key){
+    var st=all(ns)[key]; if(!st) return;
+    harvest(ns, key);
+    var rows=st.rows.filter(function(r){ return !r.skip; });
+    if(!rows.length) return;
+    set_(ns, key, {busy:true, err:'', msg:''});
+    function done(res){
+      var added=(res&&res.added)||0, skipped=(res&&res.skipped)||0;
+      var m=all(ns)[key]; if(!m) return;
+      m.busy=false;
+      m.rows=[];
+      m.msg='\u2713 Added '+added+' row'+(added===1?'':'s')+' to the sheet'
+        +(skipped?(' \u00b7 '+skipped+' were already there'):'')
+        +'. '+(cfg(ns).savedNote || 'Everything derived from that tab is being rebuilt.');
+      render(ns, key);
+      /* the write bumped the page generation, so every cached tab, pivot,
+         report and cube chunk in the browser is stale — and what that means is
+         the PAGE's to say, which is the whole reason onSaved is a callback. */
+      var after=cfg(ns).onSaved;
+      if(after) { try { after(added, skipped, key); } catch(e){} }
+    }
+    function fail(e){ set_(ns, key, {busy:false, err:(e&&e.message)||String(e)}); }
+    if(st.kind==='pvplant'){
+      google.script.run.withSuccessHandler(done).withFailureHandler(fail)
+        .applyPvLookupRows({ rows: rows.map(function(r){ return { key:r.key, cells:r.cells }; }) });
+    }else{
+      google.script.run.withSuccessHandler(done).withFailureHandler(fail)
+        .applyRmxLookupRows({
+          target: (st.kind==='rmxextras' ? 'extras' : 'product'),
+          rows: rows.map(function(r){ return r.sug; }) });
+    }
+  }
+
+  function skip(ns, key, i){
+    var st=all(ns)[key]; if(!st || !st.rows || !st.rows[i]) return;
+    harvest(ns, key);
+    st.rows[i].skip=true;
+    render(ns, key);
+  }
+
+  /* "Open the tab" — the server hands back the real gid links */
+  function openTab(kind){
+    if(!live()) return;
+    var RMXTAB={ rmxproduct:'product', rmxextras:'extras' };
+    if(RMXTAB[kind]){
+      google.script.run.withSuccessHandler(function(u){
+        var url=u && u[RMXTAB[kind]];
+        if(url) window.open(url,'_blank');
+      }).getRmxLookupUrls();
+      return;
+    }
+    google.script.run.withSuccessHandler(function(f){
+      if(f && f.url) window.open(f.url,'_blank');
+    }).getPvLookupForm();
+  }
+
+  /* ONE DELEGATED HANDLER PER CONTAINER, and it covers every control this
+     module renders. The page's own "+ Add these rows" button is NOT here —
+     only the page knows which values to open the form on.
+
+     A SELECT IS FILLED THE MOMENT IT IS TOUCHED. Both events fire before the
+     dropdown opens — focusin covers the keyboard and mousedown covers a click
+     that has not moved focus yet — and fill() is idempotent, so binding both
+     costs nothing and neither can be the one that was missing. Delegated, so a
+     re-render never leaves a listener behind. */
+  function wire(root){
+    if(!root || root.getAttribute('data-lk-wired')) return;
+    root.setAttribute('data-lk-wired','1');
+    ['focusin','mousedown'].forEach(function(ev){
+      root.addEventListener(ev, function(e){
+        var sel=e.target.closest ? e.target.closest('select[data-opts]') : null;
+        if(sel) fill(sel);
+      }, true);
+    });
+    root.addEventListener('click', function(e){
+      var el=e.target.closest ? e.target.closest('[data-lk],[data-skip]') : null;
+      if(!el) return;
+      var wrap=el.closest('.lk-wrap'); if(!wrap) return;
+      var ns=wrap.getAttribute('data-lk-ns'), key=wrap.getAttribute('data-lk-key');
+      if(!ns || key==null) return;
+      if(el.hasAttribute('data-skip')){ skip(ns, key, Number(el.getAttribute('data-skip'))); return; }
+      if(el.getAttribute('data-lk')==='cancel') close(ns, key); else save(ns, key);
+    });
+  }
+
+  /* One source per namespace for the confidence card, registered once and
+     asked for a card only when a chip is hovered — the same reason select_
+     leaves its options out until the select is touched. */
+  function mount(ns, opts){
+    CFG[ns] = opts || {};
+    all(ns);
+    if(window.AmrSugChip) AmrSugChip.mount(ns, function(id){
+      var p=String(id||'').split('#'), st=all(ns)[p[0]];
+      if(!st || !st.rows) return null;
+      var r=st.rows[+p[1]];
+      return (r && r.sug) || null;
+    });
+  }
+
+  return { mount:mount, wire:wire, toggle:toggle, close:close, render:render,
+           harvest:harvest, harvestAll:harvestAll, openKeys:openKeys,
+           isOpen:isOpen, save:save, skip:skip, fill:fill, openTab:openTab };
 })();
 </script>
 
@@ -24249,310 +24688,39 @@ AMR.page('overview', {
           +'</div></div>';
       }).join('');
       host.innerHTML=html;
-      Object.keys(LK).forEach(function(id){ lkRender(id); });
+      /* renderDq() replaced the whole body, so every open form's host div is a
+         new element. The module re-finds it through the host() it was mounted
+         with and repaints from the state it already holds — which is why the
+         harvest below has to have happened first. */
+      if(window.AmrLookupEdit)
+        AmrLookupEdit.openKeys('ovlk').forEach(function(id){ AmrLookupEdit.render('ovlk', id); });
     }
     /* ===================== LOOKUP EDITOR =====================
-       The same two write paths the AGG and RMX pages already use, reachable from
-       here so an unmapped value can be fixed without leaving the Overview:
+       IT IS §E AmrLookupEdit NOW, and this page is one of its two callers. The
+       form, its state, the option-list trick, the confidence chip and both
+       write paths moved there whole when the Deck Builder's pre-flight needed
+       the same form — a plant with no REGION LOOKUP row turns up there at the
+       one moment somebody is about to publish 43 slides built on it, and a
+       second copy of a form carrying this much judgement is what §9 is about.
 
-         Aggregates plants    -> getPvLookupForm / applyPvLookupRows   (REGION LOOKUP)
-         Ready-Mix mixes      -> getRmxSuggestions / applyRmxLookupRows (PRODUCT MASTER)
-         Ready-Mix materials  -> getRmxSuggestions / applyRmxLookupRows (EXTRAS LOOKUP)
+       What stayed here is what only this page can answer:
 
-       Both are append-only, take a script lock, re-read the tab at write time and
-       skip anything already there, and bump the page generation on success — so
-       the cube, every cached report and every other user pick the new rows up.
-       Nothing is written until "Save"; the values on screen are only a proposal.
+         host      where a section's form goes — the <div id="lk_…"> renderDq
+                   leaves under each open section
+         onSaved   what "that lookup tab changed" means HERE, which is a cube
+                   reload and a re-boot; on the Deck Builder it is dropped
+                   pictures. Nothing shareable about it.
 
-       The two lookups the cube reads come from the LIVE Price & Volume and RMX
-       sheets, never the closed-year history books, so a row added here fixes the
-       current data straight away.
-
-       RMX PLANT LOOKUP and the Aggregates material lookup have no append API on
-       the server yet, so those sections offer the tab link only.              */
-    var LK = {};                    // section id -> { busy, err, msg, form, rows, done }
-
-    /* THE FORM OFFERS EVERY ROW, AND THE REASON IT USED TO OFFER 200 IS FIXED
-       RATHER THAN CAPPED.
-       -----------------------------------------------------------------------
-       The cap was real and the arithmetic behind it was right: the Ready-Mix
-       mix section lists well over a thousand mixes, each proposed row is five
-       controls, and three of those are selects carrying the whole PRODUCT
-       MASTER vocabulary. Measured in Chromium: 1,200 rows rendered that way is
-       91,200 nodes and 5.8 SECONDS of frozen main thread — on a fast machine
-       with nothing else running, so inside the Apps Script frame on a laptop it
-       is a page that has hung. Capping at 200 made that 1.6s, which is bad
-       rather than fatal, and left the real cost in place: fixing 1,116 mixes
-       meant six rounds of fill-save-WAIT-FOR-THE-CUBE-TO-REBUILD, and the
-       rebuild is the slow half.
-
-       The nodes were never the rows — they were the option lists, repeated per
-       row. lkSelect() renders each select holding only the option that is
-       SELECTED, and lkFill() puts the rest in the first time it is touched.
-       Same measurement, same 1,200 rows: 25,200 nodes and 446ms, thirteen times
-       faster, with every value and every save path identical. So there is
-       nothing left for a cap to protect and the whole list is offered.
-
-       If a section ever does get big enough to be slow again, the thing to
-       reach for is rendering the ROWS lazily too — not a cap, which trades a
-       slow form for six slow rebuilds. */
-
-    function lkHost(secId){ return $('lk_'+secId.replace('|','_')); }
-    function lkSet(secId, patch){
-      LK[secId]=Object.assign(LK[secId]||{}, patch);
-      lkRender(secId);
-    }
-    function lkClose(secId){ delete LK[secId]; var h=lkHost(secId); if(h) h.innerHTML=''; }
-
-    /* open: fetch the form (PV) or the suggestions (RMX), then render the rows */
-    function lkOpen(kind, secId, values){
-      if(LK[secId]) return lkClose(secId);
-      if(!IS_LIVE){ lkSet(secId,{err:'The lookup editor only works in the live web app.'}); return; }
-      lkSet(secId,{busy:true, kind:kind, err:'', msg:''});
-      if(kind==='pvplant'){
-        google.script.run
-          .withSuccessHandler(function(f){
-            if(!f || !f.ok){ lkSet(secId,{busy:false,err:'Could not read the lookup tab.'}); return; }
-            lkSet(secId,{ busy:false, form:f, url:f.url,
-              rows: values.map(function(v){ return { key:v, cells:{}, skip:false }; }) });
-          })
-          .withFailureHandler(function(e){ lkSet(secId,{busy:false,err:(e&&e.message)||String(e)}); })
-          .getPvLookupForm();
-        return;
-      }
-      /* BOTH RMX FORMS CLASSIFY THE VALUES ON SCREEN, and that is deliberate.
-         The mixes and the materials listed behind this form are the CUBE's —
-         the live workbook plus every closed-year book — so the server is asked
-         to classify exactly those, rather than answering from the live report's
-         own miss list. Those two lists are not the same list: a value that
-         traded in a closed year and has since been dropped from the lookup is
-         only ever on this one, and asking for the other one is what opened this
-         form with nothing in it while the section behind it listed 1,116 mixes.
-         `kind` says which tab; the reply carries one list and the vocabulary
-         that tab already uses. */
-      var isX=(kind==='rmxextras'), send=(values||[]);
-      var tab=isX?'EXTRAS LOOKUP':'PRODUCT MASTER';
-      google.script.run
-        .withSuccessHandler(function(r){
-          if(!r || !r.ok){ lkSet(secId,{busy:false,err:'Could not work out any suggestions.'}); return; }
-          var list=(isX ? r.extras : r.product)||[];
-          lkSet(secId,{ busy:false, kind:kind, opts:(r.options||{}),
-            total:send.length, more:0,
-            /* the one empty case worth explaining: the values are in the tab
-               already and it is the cube that has not caught up */
-            note:(!list.length && r.already)
-              ? ('All '+r.already+' of these are in '+tab+' already \u2014 the count above it '
-                +'is the month cube\u2019s, and updates when the cube next rebuilds.')
-              : '',
-            rows:list.map(function(p){ return { key:p.value, sug:p, skip:false }; }) });
-        })
-        .withFailureHandler(function(e){ lkSet(secId,{busy:false,err:(e&&e.message)||String(e)}); })
-        .getRmxSuggestions({ values: send, kind: (isX?'extras':'product') });
-    }
-
-    function lkField(label, html){
-      return '<div class="f"><span class="fl">'+esc(label)+'</span>'+html+'</div>';
-    }
-
-    /* ---- HOW SURE THE SERVER WAS, ON THE ROW ITSELF ----
-       This form has always shown the server's ANSWER — a Category, a Strength,
-       a Product class — and never how sure it was of it. The Ready-Mix page's
-       dialog shows exactly that, on rows from exactly this call, so the chip
-       and its hover card are shared rather than re-invented: AmrSugChip owns
-       the wording and AmrHover paints the card at <body>, which is what stops
-       .lk-body's 340px scroll box clipping it.
-
-       Both matter more here than they do in the dialog. This form opens on the
-       CUBE's miss list — 1,116 mixes on a bad day, every one of them proposed
-       and none of them pre-ticked away — so "which of these do I actually need
-       to read" is the whole question, and a Review row that looks identical to
-       a Confident one is how a defaulted Strength gets saved into PRODUCT
-       MASTER unread. The chip answers it at a glance and the card says why. */
-    function lkChip(secId, i, sug){
-      if(!sug || !sug.band || !window.AmrSugChip) return '';
-      return AmrSugChip.chip('ovlk', secId+'#'+i, sug);
-    }
-    function lkLow(sug){ return (sug && sug.band==='Low') ? ' low' : ''; }
-    /* One source for every section: the id carries which. Registered once, and
-       asked for a card only when a chip is hovered — the same reason lkSelect
-       leaves its options out until the select is touched. */
-    if(window.AmrSugChip) AmrSugChip.mount('ovlk', function(id){
-      var p=String(id||'').split('#'), st=LK[p[0]];
-      if(!st || !st.rows) return null;
-      var r=st.rows[+p[1]];
-      return (r && r.sug) || null;
+       Its Cancel, Save and per-row × are wired once, below, by the module's own
+       delegated handler on #dbBody — this page no longer names those controls
+       at all. "+ Add these rows" IS still this page's, because only this page
+       knows which values a section is offering.                            */
+    if(window.AmrLookupEdit) AmrLookupEdit.mount('ovlk', {
+      host: function(key){ return lkHost(key); },
+      savedNote: 'The month cube is rebuilding \u2014 the counts here update when it finishes.',
+      onSaved: function(){ afterLookupWrite(); }
     });
-
-    /* ---- the option lists, ONCE, and put into a select when it is touched ----
-       This is what makes the cap above unnecessary. A vocabulary rendered into
-       every row is the same twenty strings a thousand times over, and it is the
-       whole of the cost: the form is a handful of controls per row and tens of
-       thousands of <option>s.
-
-       So the list is registered here under a key and the select is rendered
-       holding ONE option — the selected one, which is what a harvest reads, so
-       a select nobody ever touches still saves the right value. lkFill() puts
-       the rest in on the first focus or mousedown, both of which fire before
-       the dropdown opens.
-
-       Keys are shared where the list is (strength, class, application, and the
-       whole of a pvplant column); a per-row list — extras' hier3All, which is
-       the handful of hierarchies THAT row appears under — gets its own. */
-    var LK_OPTS = {}, LK_OPTS_N = 0;
-    function lkSelect(name, val, options, key){
-      var list=options||[];
-      if(!list.length) return '<input type="text" data-f="'+esc(name)+'" value="'+esc(val||'')+'">';
-      /* WHAT THE BROWSER WOULD HAVE SELECTED. With no value the old form
-         rendered no selected option and the browser took the first one, so that
-         is the value a save has always written — not blank. */
-      var cur = val || list[0];
-      var k = key || ('o'+(++LK_OPTS_N));
-      LK_OPTS[k] = list;
-      return '<select data-f="'+esc(name)+'" data-opts="'+esc(k)+'">'
-        +'<option value="'+esc(cur)+'" selected>'+esc(cur)+'</option></select>';
-    }
-    /* One select, filled. Idempotent, and safe on a select whose list has gone
-       (a re-render between the touch and this) — it keeps what it has. */
-    function lkFill(sel){
-      if(!sel || sel.tagName!=='SELECT' || sel.getAttribute('data-filled')) return;
-      sel.setAttribute('data-filled','1');
-      var list=LK_OPTS[sel.getAttribute('data-opts')];
-      if(!list || !list.length) return;
-      var cur=sel.value, seen=false, html='';
-      for(var i=0;i<list.length;i++){
-        var o=list[i];
-        if(o===cur) seen=true;
-        html+='<option value="'+esc(o)+'"'+(o===cur?' selected':'')+'>'+esc(o)+'</option>';
-      }
-      /* a value the vocabulary does not have goes to the front, exactly as the
-         eager form put it there */
-      if(!seen) html='<option value="'+esc(cur)+'" selected>'+esc(cur)+'</option>'+html;
-      sel.innerHTML=html;
-      sel.value=cur;
-    }
-    function lkRender(secId){
-      var h=lkHost(secId), st=LK[secId]; if(!h) return;
-      if(!st){ h.innerHTML=''; return; }
-      if(st.busy){ h.innerHTML='<div class="lk-wrap"><div class="lk-body"><div class="ov-mini">Reading the lookup tab\u2026</div></div></div>'; return; }
-      if(st.err && !st.rows){ h.innerHTML='<div class="lk-wrap"><div class="lk-msg bad">'+esc(st.err)+'</div></div>'; return; }
-      var rows=st.rows||[], live=rows.filter(function(r){ return !r.skip; });
-      var body;
-      if(!live.length){
-        body='<div class="lk-body"><p class="hint">'+esc(st.note||'Nothing left to add here.')+'</p></div>';
-      }else if(st.kind==='pvplant'){
-        /* one control per TYPED column the server described; the key column is
-           the unmapped plant itself and is never editable */
-        var cols=(st.form.cols||[]).filter(function(c){ return c.kind!=='key'; });
-        body='<div class="lk-body">'+rows.map(function(r,i){
-          if(r.skip) return '';
-          return '<div class="lk-row" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
-            +cols.map(function(c){
-              return lkField(c.label, c.kind==='select'
-                ? lkSelect(String(c.i), r.cells[c.i]||'', c.options, 'c_'+secId+'_'+c.i)
-                : '<input type="text" data-f="'+c.i+'" value="'+esc(r.cells[c.i]||'')+'">');
-            }).join('')
-            +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
-        }).join('')+'</div>';
-      }else if(st.kind==='rmxextras'){
-        /* applyRmxLookupRows({target:'extras'}) writes Category, mat_prod_hier_3
-           and the description, so those are exactly the controls here. */
-        var OE=st.opts||{};
-        body='<div class="lk-body">'+rows.map(function(r,i){
-          if(r.skip) return '';
-          var p=r.sug||{};
-          return '<div class="lk-row'+lkLow(p)+'" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
-            +lkField('Category', lkSelect('category', p.category||'', OE.category, 'v_cat'))
-            /* no shared key: hier3All is this row's own handful of hierarchies */
-            +lkField('mat_prod_hier_3', lkSelect('hier3', p.hier3||'', (p.hier3All&&p.hier3All.length)?p.hier3All:OE.hier3))
-            +lkChip(secId,i,p)
-            +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
-        }).join('')+'</div>';
-      }else{
-        var O=st.opts||{};
-        body='<div class="lk-body">'+rows.map(function(r,i){
-          if(r.skip) return '';
-          var p=r.sug||{};
-          return '<div class="lk-row'+lkLow(p)+'" data-i="'+i+'"><span class="k" title="'+esc(r.key)+'">'+esc(r.key)+'</span>'
-            +lkField('Code','<input type="text" data-f="code" value="'+esc(p.code||'')+'">')
-            +lkField('New description','<input type="text" data-f="newD" value="'+esc(p.newD||'')+'">')
-            +lkField('Strength', lkSelect('strength', p.strength||'Others', O.strength, 'v_strength'))
-            +lkField('Product class', lkSelect('cls', p.cls||'Others', O.cls||O.category, 'v_cls'))
-            +lkField('Application', lkSelect('app', p.app||'Others', O.app, 'v_app'))
-            +lkChip(secId,i,p)
-            +'<button class="sk" data-skip="'+i+'" title="Leave this one out">\u00d7</button></div>';
-        }).join('')+'</div>';
-      }
-      h.innerHTML='<div class="lk-wrap">'
-        +'<div class="lk-head"><span class="t">Add '+live.length+' row'+(live.length===1?'':'s')+' to the lookup</span>'
-        +'<span class="sp"></span>'
-        +'<button class="lk-btn" data-lk="cancel">Cancel</button>'
-        +'<button class="lk-btn primary" data-lk="save"'+(live.length?'':' disabled')+'>Save to the sheet</button>'
-        +'</div>'+body
-        +(st.more>0&&live.length
-           /* kept for a caller that still hands in a slice; nothing does today */
-           ? ('<div class="lk-msg">'+esc('The '+live.length+' biggest by revenue, of '+st.total
-              +'. Save these, then open it again for the next batch.')+'</div>')
-           : '')
-        +(st.msg?('<div class="lk-msg ok">'+esc(st.msg)+'</div>'):'')
-        +(st.err?('<div class="lk-msg bad">'+esc(st.err)+'</div>'):'')
-        +'</div>';
-    }
-    /* read the controls back into state before saving, so edits are never lost */
-    function lkHarvest(secId){
-      var h=lkHost(secId), st=LK[secId]; if(!h||!st) return;
-      [].forEach.call(h.querySelectorAll('.lk-row'), function(el){
-        var r=st.rows[Number(el.dataset.i)]; if(!r) return;
-        [].forEach.call(el.querySelectorAll('[data-f]'), function(inp){
-          var f=inp.dataset.f;
-          if(st.kind==='pvplant') r.cells[Number(f)]=inp.value;
-          else { r.sug=r.sug||{}; r.sug[f]=inp.value; }
-        });
-      });
-    }
-    function lkSave(secId){
-      var st=LK[secId]; if(!st) return;
-      lkHarvest(secId);
-      var live=st.rows.filter(function(r){ return !r.skip; });
-      if(!live.length) return;
-      lkSet(secId,{busy:true, err:'', msg:''});
-      function done(res){
-        var added=(res&&res.added)||0, skipped=(res&&res.skipped)||0;
-        LK[secId].busy=false;
-        LK[secId].rows=[];
-        LK[secId].msg='\u2713 Added '+added+' row'+(added===1?'':'s')+' to the sheet'
-          +(skipped?(' \u00b7 '+skipped+' were already there'):'')
-          +'. The month cube is rebuilding \u2014 the counts here update when it finishes.';
-        lkRender(secId);
-        /* the write bumped the page generation, so every cached tab, pivot,
-           report and cube chunk in the browser is stale */
-        afterLookupWrite();
-      }
-      function fail(e){ lkSet(secId,{busy:false, err:(e&&e.message)||String(e)}); }
-      if(st.kind==='pvplant'){
-        google.script.run.withSuccessHandler(done).withFailureHandler(fail)
-          .applyPvLookupRows({ rows: live.map(function(r){ return { key:r.key, cells:r.cells }; }) });
-      }else{
-        google.script.run.withSuccessHandler(done).withFailureHandler(fail)
-          .applyRmxLookupRows({
-            target: (st.kind==='rmxextras' ? 'extras' : 'product'),
-            rows: live.map(function(r){ return r.sug; }) });
-      }
-    }
-    /* "Open the tab" — the server hands back the real gid links */
-    function lkOpenTab(kind){
-      if(!IS_LIVE) return;
-      var RMXTAB={ rmxproduct:'product', rmxextras:'extras' };
-      if(RMXTAB[kind]){
-        google.script.run.withSuccessHandler(function(u){
-          var url=u && u[RMXTAB[kind]];
-          if(url) window.open(url,'_blank');
-        }).getRmxLookupUrls();
-        return;
-      }
-      google.script.run.withSuccessHandler(function(f){
-        if(f && f.url) window.open(f.url,'_blank');
-      }).getPvLookupForm();
-    }
+    function lkHost(secId){ return $('lk_'+secId.replace('|','_')); }
 
     /* ---- a lookup tab changed: drop everything derived from it -------------
        Writing a lookup row bumps the Price & Volume or RMX generation on the
@@ -24669,56 +24837,41 @@ AMR.page('overview', {
       });
       $('dqBack').addEventListener('click', function(){ dqOpen(false); });
       document.addEventListener('keydown', function(e){ if(e.key==='Escape') dqOpen(false); });
-      /* A SELECT IS FILLED THE MOMENT IT IS TOUCHED. Both events fire before
-         the dropdown opens — focusin covers the keyboard and mousedown covers
-         a click that has not moved focus yet — and lkFill is idempotent, so
-         binding both costs nothing and neither can be the one that was
-         missing. Delegated, so a re-render never leaves a listener behind. */
-      ['focusin','mousedown'].forEach(function(ev){
-        $('dqBody').addEventListener(ev, function(e){
-          var sel=e.target.closest ? e.target.closest('select[data-opts]') : null;
-          if(sel) lkFill(sel);
-        }, true);
-      });
+      /* THE FORM'S OWN CONTROLS ARE THE MODULE'S — Cancel, Save, every × and
+         the select that fills itself when it is touched. One call, and this
+         page stops naming them. */
+      if(window.AmrLookupEdit) AmrLookupEdit.wire($('dqBody'));
+
       $('dqBody').addEventListener('click', function(e){
+        /* "+ Add these rows" stays here: only this page knows which values a
+           section is offering, and the cube's list is not the live report's. */
         var fix=e.target.closest('[data-fix]');
         if(fix){
           var sid=fix.dataset.sec;
           var sec0=dqSections().filter(function(x){ return x.id===sid; })[0];
-          lkOpen(fix.dataset.fix, sid, ((sec0&&sec0.rows)||[]).map(function(r){ return r.value; }));
+          AmrLookupEdit.toggle('ovlk', sid, fix.dataset.fix,
+            ((sec0&&sec0.rows)||[]).map(function(r){ return r.value; }));
           return;
         }
         var op=e.target.closest('[data-open]');
-        if(op){ lkOpenTab(op.dataset.open); return; }
-        var lk=e.target.closest('[data-lk]');
-        if(lk){
-          var host=lk.closest('.dq-sec');
-          var sid2=host && host.dataset.dq;
-          if(!sid2) return;
-          if(lk.dataset.lk==='cancel') lkClose(sid2); else lkSave(sid2);
-          return;
-        }
-        var sk=e.target.closest('[data-skip]');
-        if(sk){
-          var host2=sk.closest('.dq-sec'), sid3=host2 && host2.dataset.dq;
-          if(!sid3 || !LK[sid3]) return;
-          lkHarvest(sid3);
-          LK[sid3].rows[Number(sk.dataset.skip)].skip=true;
-          lkRender(sid3);
-          return;
-        }
+        if(op){ AmrLookupEdit.openTab(op.dataset.open); return; }
+        /* A click inside an open form is the module's and has been handled by
+           its own listener; nothing below may treat it as a section toggle. */
+        if(e.target.closest('.lk-wrap')) return;
         var h=e.target.closest('.dq-head'); if(!h) return;
         var sec=h.closest('.dq-sec'); if(!sec || !sec.dataset.dq) return;
         DQ_OPEN[sec.dataset.dq]=!DQ_OPEN[sec.dataset.dq];
         /* A CLOSED SECTION NO LONGER CARRIES ITS TABLE, so the class alone is
            not enough any more — opening one has to build it.
            HARVEST FIRST, and this is not optional: renderDq() replaces the whole
-           body, so an open lookup form is rebuilt from LK[].rows. Anything typed
+           body, so an open lookup form is rebuilt from the state the module holds.
+           Anything typed
            into a control and not read back into that state is gone — and on a
            form of a thousand rows, losing it because somebody clicked a
            different section's header is the worst thing this panel could do.
-           lkHarvest reads every control back; lkRender then re-renders from it. */
-        Object.keys(LK).forEach(lkHarvest);
+           harvestAll reads every control back; renderDq's tail then re-renders
+           each open form from it. */
+        if(window.AmrLookupEdit) AmrLookupEdit.harvestAll('ovlk');
         renderDq();
       });
     })();
@@ -25623,7 +25776,7 @@ AMR.page('overview', {
     <h3 id="dbGateTtl">Before this deck is built</h3>
     <div class="db-gate-body" id="dbGateBody"></div>
     <div class="db-gate-act">
-      <button class="dbbtn" data-act="db-gate-stop"
+      <button class="dbbtn" id="dbGateStop" data-act="db-gate-stop"
         title="Nothing is rendered. Everything already built is kept.">Stop</button>
       <div class="db-spacer"></div>
       <button class="dbbtn primary" id="dbGateGo" data-act="db-gate-go"
@@ -25829,6 +25982,13 @@ AMR.page('deckbuilder', {
         case 'db-gate-go':    dbGateClose('go');   break;
         case 'db-gate-stop':  dbGateClose('stop'); break;
         case 'db-gate-page':  dbGateClose('page:' + b.getAttribute('data-db-page')); break;
+        /* NEITHER OF THESE CLOSES THE DIALOG. The add-rows form opens inside
+           it, under the finding it fixes — that is the whole point of it being
+           here rather than on another page. */
+        case 'db-gate-fix':   dbOpenLookup(b.getAttribute('data-db-lk')); break;
+        case 'db-gate-tab':
+          if(window.AmrLookupEdit) AmrLookupEdit.openTab(b.getAttribute('data-db-lk'));
+          break;
       }
     });
 
@@ -26425,8 +26585,9 @@ AMR.page('deckbuilder', {
 
   var MAPCHK  = { agg:null, rmx:null };   // this session's answers, per line
   var MAPERR  = { agg:'',   rmx:''   };   // ...or why there isn't one
-  var GATE_OK = '';                       // the findings "Render anyway" was said about
-  var GATE    = null;                     // the open dialog's resolve, while it is up
+  var GATE_OK    = '';                    // the findings "Render anyway" was said about
+  var GATE       = null;                  // the open dialog's resolve, while it is up
+  var GATE_SAVED = false;                 // rows were written from the dialog this time
 
   function dbMapForget(){
     MAPCHK = { agg:null, rmx:null };
@@ -26483,9 +26644,16 @@ AMR.page('deckbuilder', {
   function dbFindings(){
     var need = dbMapLines(), out = [];
 
+    /* `lk` and `vals` are what the add-rows form opens on. THE PV LIST CAN BE
+       SHORTER THAN THE COUNT: getPvUnmapped caps its list at the biggest 250
+       by revenue and reports the true total separately, so the form offers what
+       came back and the dialog says so rather than quietly writing 250 of 400
+       and reporting success. */
     if(need.agg && MAPCHK.agg){
       var n = MAPCHK.agg.regionTotal || 0;
+      var pvVals = (MAPCHK.agg.region || []).map(function(r){ return r.value; });
       if(n) out.push({ kind:'map', line:'agg', tab:'REGION LOOKUP', n:n,
+        lk:'pvplant', vals:pvVals,
         what: n + ' plant' + (n===1?'':'s') + ' in the Aggregates raw data ' +
               (n===1?'has':'have') + ' no REGION LOOKUP row',
         lands:'Their volume and revenue are still counted — they land in a blank market '+
@@ -26493,14 +26661,17 @@ AMR.page('deckbuilder', {
         slides: dbLineSlides('agg') });
     }
     if(need.rmx && MAPCHK.rmx){
-      var np = (MAPCHK.rmx.product || []).length, ne = (MAPCHK.rmx.extras || []).length;
+      var prod = MAPCHK.rmx.product || [], extra = MAPCHK.rmx.extras || [];
+      var np = prod.length, ne = extra.length;
       if(np) out.push({ kind:'map', line:'rmx', tab:'PRODUCT MASTER', n:np,
+        lk:'rmxproduct', vals:prod.map(function(r){ return r.value; }),
         what: np + ' mix' + (np===1?'':'es') + ' in the Ready-Mix data ' +
               (np===1?'has':'have') + ' no PRODUCT MASTER row',
         lands:'They still count in volume and base revenue, but carry no strength class, '+
               'product class or application — so the Strength and Product Class tables miss them.',
         slides: dbLineSlides('rmx') });
       if(ne) out.push({ kind:'map', line:'rmx', tab:'EXTRAS LOOKUP', n:ne,
+        lk:'rmxextras', vals:extra.map(function(r){ return r.value; }),
         what: ne + ' material' + (ne===1?'':'s') + ' ' + (ne===1?'has':'have') +
               ' no EXTRAS LOOKUP row',
         lands:'Their revenue is still counted — in the ASP build-up and in the All-in '+
@@ -26549,9 +26720,26 @@ AMR.page('deckbuilder', {
            'every row still builds and nothing goes red. The figures are simply filed in the '+
            'wrong place, or in no place at all.</p>';
       h += maps.map(function(f){
+        /* THE FIX IS ON THE FINDING, not on another page. The same form the
+           Overview's data-quality sheet opens (§E AmrLookupEdit), under the
+           row that says what is missing — because this is the moment somebody
+           is about to publish 43 slides built on it, and sending them to
+           another page to fix it costs the deck they are standing in. */
+        var short = f.vals && f.vals.length < f.n;
         return '<div class="db-gate-find"><b>' + esc(f.tab) + '</b> — ' + esc(f.what) + '.'+
           '<span class="sub">' + esc(f.lands) + ' Reaches <b>' + f.slides + '</b> slide' +
-          (f.slides===1?'':'s') + ' still to render in this pack.</span></div>';
+          (f.slides===1?'':'s') + ' still to render in this pack.</span>'+
+          (f.lk ? ('<div class="db-gate-fix">'+
+            '<button class="dbbtn" data-act="db-gate-fix" data-db-lk="' + esc(f.lk) + '">'+
+              '&#43; Add ' + ((short ? f.vals.length : f.n) === 1
+                  ? 'this row' : ('these ' + (short ? f.vals.length : f.n) + ' rows')) +
+              ' to ' + esc(f.tab) + '</button>'+
+            '<button class="dbbtn" data-act="db-gate-tab" data-db-lk="' + esc(f.lk) + '">'+
+              'Open the tab &#8599;</button>'+
+            (short ? ('<span class="db-gate-cap">the ' + f.vals.length + ' biggest by revenue, of ' +
+                      f.n + '</span>') : '') +
+            '</div><div id="dbLk_' + esc(f.lk) + '"></div>') : '')+
+          '</div>';
       }).join('');
     }
 
@@ -26567,14 +26755,18 @@ AMR.page('deckbuilder', {
       }).join('');
     }
 
-    /* WHERE TO FIX A LOOKUP, and what going there costs. Switching pages
-       unmounts this one, so anything already photographed goes with it — which
-       is worth saying rather than discovering. */
+    /* THE OTHER PAGE IS THE FALLBACK NOW, not the fix. The add-rows form above
+       covers the three tabs that have an append API; this is still worth
+       offering for everything those pages show that this dialog does not — the
+       per-value revenue, the download, the plant lookups with no API yet. And
+       what going there costs is worth saying rather than discovering: switching
+       pages unmounts this one and every picture with it. */
     var lines = {}; maps.forEach(function(f){ lines[f.line] = 1; });
     var keys = Object.keys(lines);
     if(keys.length){
       var built = countReady();
-      h += '<p style="margin-top:12px">Add the missing rows on the page that owns the tab:</p>'+
+      h += '<p style="margin-top:12px">Or open the page that owns the tab, for the full list '+
+        'and what each value is worth:</p>'+
         '<div class="db-gate-act" style="padding:0;border:0;background:transparent;margin-bottom:8px">'+
         keys.map(function(k){
           var p = DB_MAP_PAGE[k];
@@ -26588,20 +26780,97 @@ AMR.page('deckbuilder', {
     return h;
   }
 
+  /* Which values a tab's form opens on: the ones this pack's own pre-flight
+     just counted, so the form is offering exactly what the finding above it
+     names. dbFindings put them on the finding; this finds it again by kind. */
+  function dbOpenLookup(lk){
+    if(!window.AmrLookupEdit) return;
+    var f = null;
+    dbFindings().forEach(function(x){ if(x.kind === 'map' && x.lk === lk) f = x; });
+    AmrLookupEdit.toggle('dblk', lk, lk, (f && f.vals) || []);
+  }
+
   function dbGateOpen(html){
     return new Promise(function(resolve){
-      GATE = resolve;
+      GATE = resolve; GATE_SAVED = false;
+      /* The body is rebuilt, so any form left open from a previous question is
+         a state pointing at a host that no longer exists. Dropped rather than
+         re-rendered: this is a fresh question about fresh counts. */
+      if(window.AmrLookupEdit)
+        AmrLookupEdit.openKeys('dblk').forEach(function(k){ AmrLookupEdit.close('dblk', k); });
       document.getElementById('dbGateBody').innerHTML = html;
+      var stop = document.getElementById('dbGateStop');
+      var go   = document.getElementById('dbGateGo');
+      if(stop){ stop.hidden = false; }
+      if(go){ go.textContent = 'Render anyway'; go.focus(); }
       document.getElementById('dbGate').hidden = false;
-      var go = document.getElementById('dbGateGo'); if(go) go.focus();
     });
   }
   /* Answering it at all is what closes it — there is no dismiss. A gate you can
-     click past without saying anything is a gate that was not asked. */
+     click past without saying anything is a gate that was not asked.
+
+     A SAVE OVERRIDES WHATEVER BUTTON IS PRESSED AFTERWARDS. Once rows have gone
+     into a lookup tab this render is over whichever way the dialog is closed —
+     Escape, Stop, or the primary button that now says so — and "Render stopped,
+     nothing was photographed" would be the wrong sentence for the one path that
+     changed the sheet. */
   function dbGateClose(answer){
     var el = document.getElementById('dbGate'); if(el) el.hidden = true;
     var r = GATE; GATE = null;
-    if(r) r(answer || 'stop');
+    answer = answer || 'stop';
+    if(GATE_SAVED && answer.indexOf('page:') !== 0) answer = 'saved';
+    if(r) r(answer);
+  }
+
+  /* =========================================================================
+   * A LOOKUP ROW WAS WRITTEN FROM THE DIALOG
+   * -------------------------------------------------------------------------
+   * THE SAVE ENDS THIS RENDER RATHER THAN CONTINUING IT, and that is the
+   * honest answer rather than a cautious one. applyPvLookupRows and
+   * applyRmxLookupRows bump the page generation, so every server cache key is
+   * now unreachable and the cube is rebuilding — but the reason is nearer than
+   * that: the market a plant lands in has just changed. Every table this deck
+   * would photograph is about to be re-read into different buckets, and every
+   * picture already taken was taken with the old ones. Carrying on would
+   * photograph last minute's numbers under this minute's lookup, which is the
+   * exact failure this whole dialog exists to prevent.
+   *
+   * So: drop what the adapters hold, drop every picture, forget the mapping
+   * counts (they have moved and the next Render will re-ask), and say so. One
+   * more press of Render re-runs the source check, which is what picks the new
+   * generation up.
+   * ======================================================================= */
+  function dbLookupSaved(added, skipped){
+    GATE_SAVED = true;
+    dbMapForget();
+    var n = window.AmrDeckSource ? AmrDeckSource.resetAll() : 0;
+    var dropped = 0;
+    ROWS.forEach(function(r){
+      if(r.png || r.status === 'ready' || r.status === 'error'){
+        r.png = null; r.w = r.h = 0; r.status = 'pending'; r.err = '';
+        dropped++;
+      }
+    });
+    redraw();
+
+    /* The dialog is still up and the form has just printed its own "✓ Added N
+       rows" line, so the primary button stops offering a render that is no
+       longer the right thing to press. Stop goes with it — with a save behind
+       it both buttons would end the same way, and two buttons for one answer
+       is one too many. */
+    var go = document.getElementById('dbGateGo');
+    if(go) go.textContent = 'Done \u2014 press Render again';
+    var stop = document.getElementById('dbGateStop');
+    if(stop) stop.hidden = true;
+
+    banner('ok', '<b>' + added + ' row' + (added===1?'':'s') + ' added to the lookup.</b> ' +
+      (skipped ? (skipped + ' ' + (skipped===1?'was':'were') + ' already there. ') : '') +
+      n + ' content source' + (n===1?'':'s') + ' cleared' +
+      (dropped ? (' and ' + dropped + ' slide' + (dropped===1?'':'s') + ' already built dropped, '+
+                  'because the market a row lands in has just changed') : '') +
+      '. Press <b>Render</b> to build with the new rows — the sheet is rebuilding, so the '+
+      'first slide may take a moment.');
+    setBusy(BUSY);
   }
 
   /* Resolves TRUE when the render should go ahead. Never rejects. */
@@ -26627,6 +26896,12 @@ AMR.page('deckbuilder', {
 
       return dbGateOpen(dbGateHtml(find)).then(function(ans){
         if(ans === 'go'){ GATE_OK = sig; return true; }
+        if(ans === 'saved'){
+          /* dbLookupSaved has already dropped everything; it only remains to
+             not render on figures the write has just made stale. */
+          prog('Lookup rows added — press Render to build with them.');
+          return false;
+        }
         if(ans.indexOf('page:') === 0){
           var p = ans.slice(5);
           prog('');
@@ -28415,6 +28690,20 @@ AMR.page('deckbuilder', {
        above. AFTER dbBuildMonthPicker, because DECK_MONTH is what the caution
        compares the file names to and the picker is what sets it. */
     dbKpiInit();
+
+    /* THE ADD-ROWS FORM, inside the pre-flight dialog. The module owns the
+       form, its state and its Cancel / Save / × ; this page says where a
+       section's form goes and what a write means here — which is everything
+       dropped and the render ended, because the buckets have moved. The key IS
+       the kind: one form per tab, and the dialog never shows two of the same. */
+    if(window.AmrLookupEdit){
+      AmrLookupEdit.mount('dblk', {
+        host: function(key){ return document.getElementById('dbLk_' + key); },
+        savedNote: 'The sheet is rebuilding — press Render to build with them.',
+        onSaved: dbLookupSaved
+      });
+      AmrLookupEdit.wire(document.getElementById('dbGateBody'));
+    }
     document.getElementById('dbName').addEventListener('input', function(){
       this.setAttribute('data-touched', '1');       // a typed name stops following the month
     });
