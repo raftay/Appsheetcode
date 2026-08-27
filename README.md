@@ -1584,6 +1584,7 @@ For every pair, inside the rows already sliced to the row's own context:
 ```
 Weight = CY revenue — but only where BOTH years carry volume AND revenue
                       on that pair; otherwise 0
+                      CPI only: and both years' ASP is above $1.00/t
 ASP%   = (CY rev ÷ CY vol) ÷ (PY rev ÷ PY vol) − 1
 Factor = Weight × ASP%
 Index  = Σ Factor ÷ Σ Weight
@@ -1617,41 +1618,53 @@ Coverage keeps a pair in **both** sums or drops it from both; nothing is ever ta
 the numerator while its weight stays behind. So `Σ Weight` and `TotalWeight` are the same
 number here, and the index is a straight revenue-weighted mean of the pairs it covers.
 
-**Coverage is identical for PPI and CPI — the grain is the only difference.** Both test the
-same thing: both years carry volume AND revenue on that pair. `piIndex_` takes **no coverage
-argument**, so there is no per-index threshold and no way to reintroduce one without changing
-the signature. In the cube, `pool()` additionally applies the line's own floors
+**Coverage is the same test for both, and then CPI passes one extra floor.** Both test that
+both years carry volume AND revenue on that pair. CPI *additionally* requires that both years
+average **more than $1.00/t** — `COVERAGE.cpi`, whose only live floor is `minAsp` (`minVol`
+and `minRev` are `0`, so the "> 0" test every index runs is the only volume and revenue
+test). `piIndex_` takes a `cov` argument; PPI passes `null` and is bit-for-bit the index it
+has always published. In the cube, `pool()` also applies the line's own floors
 (`COVERAGE.agg` / `COVERAGE.rmx`) — to both indices alike.
 
-**What that costs, stated plainly so the number is not read as a fault.** CPI's finer grain
-isolates pairs that PPI pools away, and a degenerate one moves the index hard:
+**It is a gate, not an outlier cap.** A pair that fails leaves the **weight** as well as the
+**factor**, so the index stays a straight weighted mean of the pairs it covers. The ±50% and
+500% caps this replaced left the weight behind and dropped only the factor, which dilutes
+rather than excludes and reads as a dilution on the page.
 
-| pair | last year | this year | ASP move | carries |
-|---|---|---|---|---|
-| `3P36` / Brock Aggregates / `9141` | 47.04 t for **$0.14** | 2,918.59 t for $42,780.71 | +492,409% | 135pp |
-| `3Q00` / JNF Ready Mix / `9055` | 378 t at **$2.343/t** | 24,593 t at $22.75/t | +870.9% | +3.13pp |
+**Why CPI and not PPI: the grain is what makes it necessary.** CPI's finer grain isolates
+pairs that PPI pools away, and a degenerate one moves the index hard:
+
+| pair | last year | this year | ASP move | carries | at `minAsp` $1.00 |
+|---|---|---|---|---|---|
+| `3P36` / Brock Aggregates / `9141` | 47.04 t for **$0.14** | 2,918.59 t for $42,780.71 | +492,409% | 135pp | **excluded** ($0.003/t) |
+| `3Q00` / JNF Ready Mix / `9055` | 378 t at **$2.343/t** | 24,593 t at $22.75/t | +870.9% | +3.13pp | **included** |
 
 Brock is a March 2025 invoice of $693.98 met by an April credit of $693.84 — fourteen cents
-against 47 tonnes. JNF is the instructive one: **nothing about it is small.** $559,436 of
-weight, five figures of tonnes, every volume and revenue figure comfortably above any floor
-you would think to set. Only its *price* gives it away, and $2.343/t is Ontario's rebate rate
-(Manitoba $0.60, Saskatchewan $0.90, nil on recycled), not a price. At PPI's grain both pool
-away; at CPI's they stand alone.
+against 47 tonnes. $0.003/t is not a price, and the gate is what says so.
 
-Ungated, 2026 Jan–Aug all markets reads **141.719%** and Aug MTD **2.789%**. Anyone
-reconciling CPI against another source should start from those two numbers.
+**JNF is the one to know about, because $1.00 does not catch it.** Nothing about it is small:
+$559,436 of weight, five figures of tonnes, every volume and revenue figure comfortably above
+any floor you would think to set. Only its *price* gives it away, and $2.343/t is Ontario's
+rebate rate (Manitoba $0.60, Saskatchewan $0.90, nil on recycled), not a price. The **$3.00**
+floor this gate carried until 2026-08-27 excluded it on exactly that reading; **$1.00** is the
+narrower claim that nothing sells for under a dollar a tonne, and it leaves JNF inside the
+index at +3.13pp of all markets. That is the cost of the floor as specified, recorded rather
+than hidden.
 
-**This is the specified behaviour, not an oversight.** A CPI-only gate (`COVERAGE.cpi`, floors
-`minVol` 1 t / `minRev` $1 / `minAsp` $3.00/t) was removed on **2026-08-27** on the explicit
-instruction that CPI and PPI differ in grain and in nothing else. Restoring it is: one key in
-`COVERAGE`, a `cov` argument threaded back through `piIndex_`, and the same argument through
-`pool()` and `poolPairs()`. `git log -S minAsp` has the whole of it, including the calibration
-that set those three values.
+Wholly ungated — no ASP floor at all — 2026 Jan–Aug all markets reads **141.719%** and Aug MTD
+**2.789%**. Anyone reconciling CPI against another source should know which of the three
+regimes a number came from.
+
+**And the gate is only real if it travels**, because the browser does the pooling. It ships
+inside the cube manifest and the cross-filter payload, and a payload arriving **without** it
+reports **no CPI** rather than an ungated one — the column is dropped exactly as it is on a
+line with no Sold To. An absent column is a question the page declines to answer; a wrong one
+is not. `ovcCovTok_` is what makes editing the block an invalidation — see next.
 
 ### The tunable that shipped inside a cached payload
 
-Worth keeping even though CPI no longer carries a threshold of its own, because the floors in
-`COVERAGE.agg` / `COVERAGE.rmx` still travel and the trap is general.
+The floors in `COVERAGE.agg` / `COVERAGE.rmx` and `COVERAGE.cpi` all travel this way, and the
+trap is general.
 
 §1's `COVERAGE` block is read on the server, but the browser does the pooling, so the
 thresholds *travel* — inside the cube manifest and inside the cross-filter dataset. Every
@@ -1677,7 +1690,7 @@ cache key.**
 
 The arithmetic is written once per runtime — `piIndex_` (`script.gs` §6), `pool()` in
 `AmrCube`, and `poolPairs()` in the Overview's local cross-filter path — and CPI is reported
-only where Sold To exists. `metrics_()` is the deliberate exception: it sums the pivot's own
+only where Sold To exists **and** the coverage block reached the pooling code. `metrics_()` is the deliberate exception: it sums the pivot's own
 precomputed weight columns at a **finer** key, those are the numbers Price & Volume has
 always published, and it is left alone rather than unified. See the banner over `piIndex_`.
 Unifying it is a one-line change and it is **not** blocked on effort — it is blocked on the
@@ -2815,3 +2828,4 @@ or was forgotten.**
 | 2026-08-27 | **The two fuel-surcharge panels were filtered but captioned as though they were not, kept the previous selection on screen while the next one loaded, and were the only tables on the tab you could not click.** Reported off a screenshot in which the by-market card read *All markets* while the customer card beside it read *GTA AGG* — over the same window, from the same cube. **(1) The caption was wrong, not the numbers.** `renderWinFsc` builds its rows from `cubeWinRows('agg','market')`, which runs the market pick and every cross-filter chip through `trendFilters()`, so the table was correctly scoped the whole time and the hard-coded `'All markets · '` was a caption for a different table. Both cards go through `xfSubSet()` now, which is what every other panel on the tab already used, so the market **and** the chips are named. **(2) A panel that cannot answer yet must not go on answering the last question.** `resetPanels()` re-shows every card and deliberately leaves the BODIES alone, and both `renderWinAgg` (`!t`) and `renderWinCustomers` (`!d`) return early *before* the surcharge painters — so dragging the slider onto months the cube had not loaded left last window's surcharge table on screen under the new window's label. That is the whole of the reported *doesn't change to the right sub-selection*. `winFscWaiting()` is the one place those early returns now route through. **(3) The customers panel was exempt from the chips and did not say so.** On the MTD / YTD path it was painted only by `loadCustomers()`, which is market-scoped and knows nothing about a cross-filter, so clicking a plant or a segment left every customer showing under a subtitle naming only the market. `getCrossReport`'s customer rows have carried `cyFsc` / `pyFsc` since `xfMetrics_` was written, and the local engine's carry them too, so the filtered answer was already inside the payload the rest of the tab is drawn from: `renderXfFscCustomers()` joins `renderXfPanels()` and `loadCustomers()` stops painting over it, the same `xfOwns` rule the Top-10 panel beside it already followed. **(4) The by-market card on the MTD / YTD path genuinely cannot be filtered, and that is now on the card.** Its source is the Fuel Surcharge workbook's own summary — market and month, none of the dimensions the chips filter on — so it is unfiltered on purpose; an unmarked unfiltered table beside eight filtered ones reads as a filter that failed, and it says *not narrowed by the active filters* when any are on. **(5) Both tables and both donuts are cross-filter handles now**, through the tab's one delegated `[data-xf-f]` listener: customer rows toggle `CUST_PARENT` exactly as the Top-10 table's rows do, market rows toggle `MARKET`, which `toggleXf` routes to `selectMarketByPvName()`. The cube's market key **is** the `pvName` that matches on, but the FSC workbook names its own markets from REGION LOOKUP and is not guaranteed to spell them the same, so on that path the handle is attached per row only where a `pvName` matches and the *click a market* hint is withheld when none does — a row that looks clickable and does nothing is worse than a plain row. `All others` is the one donut slice that names no customer and is the one that is not a filter. Gate: `node --check` clean on `script.gs` at a `.js` path and on all 30 of `app.html`'s inline script blocks | ✅ |
 | 2026-08-27 | **Picking Land was what removed Docks, because the Overview's refine chips had no source in a window and `renderRefine()` draws whatever is SELECTED whether it is in the list or not.** Reported as the Land / Docks chips behaving differently from every other filter on SW Ontario — *sometimes Land or Docks disappears, and clicking Land brings it back*. `refineOpts()` had two sources and both are PERIOD answers: `xfData()` is the cross-report, which is **not fetched for a window at all**, and `DIMS_CACHE` is keyed on `STATE.period`. In a window with a cold dims cache it therefore returned `[]` — and the empty list is not what shows, because `renderRefine()` force-adds `XREF.values` to whatever it draws so a selected chip is always unselectable. So the state that came out of an empty list was not *no chips*, it was **only the one you had clicked**, with no way back to the other. `cubeRefineOpts()` is the third source and the same move `xfOptionsFor()` already makes for the dropdowns: the cube is the only thing that knows a window's own scope. **Two traps, both already documented elsewhere in this file.** (1) The group-by drops the `mb` filter first — the server's own rule (*refine options ignore the refine itself*, `getCrossReport`) and the one `pvLocalReport` names on the Price & Volume page, which met this exact bug and fixed it there: without it, selecting Land is what makes Docks vanish. (2) The guard is **not** `cubeHasDim('agg','mb')` — `mb` is not in `OVCUBE_SHAPE_.agg.dims`, it is resolved from the plant through `VIA_PLANT_AGG` exactly as `market` and `submarket` are, so the manifest test that correctly guards `custSeg` / `soldTo` would have refused this one for ever and the fix would have been a silent no-op. Whether the cube can group by it is answered by asking it. **The cube goes last, not first**: the two server answers are scoped to the market and these values are per market (`SW Land`, `GTA Land`, …) while the chips label them all as just Land or Docks, so an unscoped list draws buttons that filter to nothing — the trap `pvLocalReport` spells out. The cube only reaches the cases that previously answered with nothing at all. Also: a **failed** dims fetch left the chips exactly as they were, which on a cold page is none, so its handler repaints them like the success handler does. Gate: `node --check` clean on `script.gs` at a `.js` path and on all 30 of `app.html`'s inline script blocks | ✅ |
 | 2026-08-27 | **The two surcharge cards disagreed by $39,650 because one of them totalled only the customers who were charged, and the by-market card was carrying a notice that contradicted the table above it.** Reported off a screenshot: the by-market card read **$2,230,997** and the Top-10 customers card beside it **$2,270,647** for the same year to date, under a notice reading *Combined Data CPI Raw stops at July, so there is nothing here for August yet — the figures above are that empty month* over the top of August's own figures. Checked against the raw `CPI Combined CENTRAL CANADA AGG PRICE & VOLUME REPORT` export rather than reasoned about. **(1) The notice asked the calendar, not the export.** `fscBehind` was `month > defaultMonth`, and `defaultMonth` is LAST CLOSED CALENDAR MONTH (`buildCells_`: July, on the 27th of August) — not a statement about what the sheet holds. The export carries August, the table was August's, and the notice denied it. It now tests `FSC_DATA.months` — the months `buildCells_` actually found current-year volume for, which is what the Fuel Surcharge page's own picker is built from — so it fires only on a month that genuinely has no rows, and says which month the export really stops at. **(2) The customer total was the wrong total.** All three callers filtered to `cyFsc > 0` before ranking, and `fscCustTable` then totalled what it was handed — so the TOTAL row, and the denominator every Share % is figured against, dropped every customer whose surcharge nets to a CREDIT. On the July export that is four customers worth **-$28,118**: the panel published **$1,761,134** where the by-market card published **$1,733,016**, and $1,733,044.06 is the raw **CY Fuel Surcharge** column summed over Jan-Jul to the cent. `fscCustTable` is handed every customer now: the ranking still shows only customers who were charged (a credit is not a top-ten row and a donut has no negative slice), the total is arithmetic over the lot, and `All others` carries the credits so the ten rows plus the remainder come to the total. The footnote blaming *different tables* is replaced by the one difference that is real — the customer report counts **TOP LINE REVENUE** rows only. **(3) `getRawEnriched_`'s re-spread was deleting money.** `r.cyFsc = b.cv ? b.cf * r.cyVol / b.cv : 0` spread a LOOKUP KEY with no tonnes over nothing and wrote the zero back, so every PV-derived view came in under the Fuel Surcharge page — $28.38 of $1.73m, one key, in Manitoba. There is no proportional split to make when the denominator is zero, so the row's own figure now stands. **(4) The by-market card follows the filters on MTD / YTD.** The previous session's *it genuinely cannot be filtered, and that is now on the card* was answered with *make it dynamic*. `renderWinFsc`'s body is factored out as `fscCubeTable()` and both paths use it, so the MTD / YTD card is `cubeWinRows('agg','market')` — the market pick and every chip, through `trendFilters()` — with the workbook summary kept as the fallback for the two cases the cube cannot answer (a pick before `FSC_FROM_YM`, and the seconds before the months stream in; unfiltered only, because an all-markets table under a one-market heading is the *filter that failed* this panel was already reported for). **The figures do not move**: with (3) fixed, the cube's by-market totals equal the Fuel Surcharge page's to the cent on every market on the raw export, because the cube's `fsc` IS the CY Fuel Surcharge column. `loadFsc()` skips its server call when the cube can answer, and the cube listener repaints the card as blocks land (`renderFscSoon`). Gate: `node --check` clean on `script.gs` at a `.js` path and on all 30 of `app.html`'s inline script blocks | ✅ |
+| 2026-08-27 | **CPI carries an ASP gate again, and its floor is $1.00/t.** Asked for directly: the CPI check is `ASP > 1`. `COVERAGE.cpi` is back in §1 as `{ minVol: 0, minRev: 0, minAsp: 1 }` — **`minAsp` is the only live floor**, because the "> 0 in both years on all four figures" coverage every index already runs is the volume and revenue test and there is no reason for this block to restate it. `piIndex_` takes its `cov` argument back, PPI passes `null` and is **bit-for-bit the index it has always published**, and the same argument is threaded through both browser pools (`pool()` in `AmrCube`, `poolPairs()` in the Overview's local cross-filter path). **It is a gate, not an outlier cap**: a failing pair leaves the WEIGHT as well as the FACTOR, so the index stays a straight weighted mean of the pairs it covers — which is the correction the ±50% and 500% caps never made. **What $1.00 catches and what it does not, recorded because the second one will be asked about.** `3P36` / Brock Aggregates / `9141` — a March 2025 invoice of $693.98 met by an April credit of $693.84, fourteen cents against 47 t, a prior-year ASP of **$0.003/t** and a "price move" of +492,409% worth 135pp of a 141.7% answer by itself — is **excluded**. `3Q00` / JNF Ready Mix / `9055` — 378 t at **$2.343/t** against 24,593 t at $22.75/t, $559,436 of weight, +870.9%, **+3.13pp of all markets on its own** — is **included**, because $2.343 clears a dollar. The $3.00 floor this gate carried until earlier the same day took it out on the reading that $2.343/t is Ontario's rebate rate (Manitoba $0.60, Saskatchewan $0.90, nil on recycled) rather than a price; $1.00 is the narrower claim that nothing sells for under a dollar a tonne, and JNF is what the narrower claim costs. **The gate only counts if it travels**, so it ships in the cube manifest and in `getCrossData`'s payload again, and both pools **fail closed**: a payload that cannot say what the gate is reports **NO CPI** rather than an ungated one, dropping the column exactly as a line with no Sold To does. No cache or shape bump was needed — `ovcCovTok_` hashes the whole `COVERAGE` block into `ovcGen_` and `getCrossData`'s key already carried it, so adding a key is itself the invalidation, and `XDATA` is in-memory only. **Gate:** `node --check` clean on `script.gs` at a `.js` path and on all 30 of `app.html`'s inline script blocks; and `piIndex_`, `pool()` and `poolPairs()` lifted **out of the edited files** and run under Node over the two named pairs plus a clean control — Brock out, JNF in, and the three runtimes returning **bit-identical** weight and factor, which is the test that says the browser and the server still agree. Nothing here can be exercised off-platform end to end: run `APP_verifyPermissions` and read a CPI column on Price & Volume and on the Overview before trusting it | ✅ |
