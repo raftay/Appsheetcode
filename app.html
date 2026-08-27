@@ -19745,14 +19745,25 @@ AMR.page('overview', {
       var top=parents.slice(0,10), rest=parents.slice(10);
       var others=rest.reduce(function(s,p){ s.cyVol+=p.cyVol; s.pyVol+=(p.pyVol||0); return s; },{cyVol:0,pyVol:0});
       others.count=rest.length;
+      /* `parents` is the VOLUME list - ranked by tonnes, floored by tonnes, and
+         what the Top-10 customer table, its donut and customerCount are all
+         about. `fscParents` is the same query with no volume floor, for the
+         surcharge card, which ranks and totals MONEY: a customer whose only row
+         in this window is a charge on no tonnes belongs in that total and does
+         not belong in a table of who moved the most tonnes. */
       return { top:top, others:others, total:cg.total?cubeRowAsTable(cg.total):{cyVol:0,pyVol:0},
-               customerCount:parents.length, parents:parents, splitMissing:splitMissing };
+               customerCount:parents.length, parents:parents,
+               fscParents:cg.all.map(cubeRowAsTable), splitMissing:splitMissing };
     }
     function renderWinCustomers(){
       var d=cubeCustomers();
       if(!d){ showPanel('custBody'); clearCH('cust'); winWaiting('custBody');
               winFscWaiting('fscCustBody','fscc'); return; }
-      if(!d.top.length){ hidePanel('custBody'); renderWinFscCustomers(null); return; }
+      /* no customer moved tonnes in this window, so there is no Top-10 to draw -
+         but surcharge is not volume, and the card below decides for itself
+         (fscAny) whether it has anything, so it is handed the data rather than
+         a null. Same principle as the floor removed in cubeCustomers(). */
+      if(!d.top.length){ hidePanel('custBody'); renderWinFscCustomers(d); return; }
       showPanel('custBody');
       $('custScope').textContent=scopeLabel()+' · by customer parent'+splitSub()
         +' · '+winLabel()
@@ -19796,8 +19807,18 @@ AMR.page('overview', {
 
        Returns false when there is nothing to draw, so the caller can decide
        between hiding the panel and falling back. */
+    /* IT READS `all`, NOT `rows`, AND THAT IS WHAT MAKES THE TWO CARDS AGREE.
+       The Total line here is cubeTotal() - the ungrouped query, every row in
+       the window - while the lines above it were cubeWinRows()'s volume-floored
+       set, so a market carrying a charge on no tonnes was in the total and in
+       none of the rows. The customer card beside it has no such total to fall
+       back on: it sums the list it is handed, so the same floor showed up there
+       as a card that was SHORT by exactly that money ($28 of $502,832 on the
+       July window, the zero-tonne LOOKUP KEY of § PV_Backend). This table's own
+       filter is already `carried a surcharge`, which is the right population
+       for a surcharge table, so `all` is what it should have been reading. */
     function fscCubeTable(g, sub){
-      var rows=g.rows.map(cubeRowAsTable).filter(function(r){ return r.cyFsc || r.pyFsc; });
+      var rows=(g.all||g.rows).map(cubeRowAsTable).filter(function(r){ return r.cyFsc || r.pyFsc; });
       if(!rows.length) return false;
       showPanel('fscBody');
       xfSubSet('fscSub','',sub);
@@ -19813,7 +19834,15 @@ AMR.page('overview', {
            which is what the breakdown's own market rows are keyed by. MARKET is
            never highlighted with xfsel - it is undone by the market chips, not
            by the chip bar (see renderBreakdown). */
-        return '<tr'+(isTot?' class="tot"':' class="xfrow" data-xf-f="MARKET" data-xf-v="'+esc(r.label)+'"')
+        /* A ROW WHOSE MARKET NEVER RESOLVED HAS AN EMPTY KEY - unmapped plants
+           reach this table now that it draws every surcharge-bearing group. The
+           figure is real and stays visible; it is not a handle, because there is
+           no market to select and an empty MARKET would match nothing and empty
+           the tab. Asked of r.key, which is what a filter matches on, and not of
+           r.label, which is only how the empty key is drawn. */
+        var pick=!isTot && !!r.key;
+        return '<tr'+(isTot?' class="tot"':'')
+          +(pick?' class="xfrow" data-xf-f="MARKET" data-xf-v="'+esc(r.label)+'"':'')
           +'><td>'+esc(r.label)+'</td><td>'+fMoneyS(r.cyFsc)+'</td>'
           +'<td>'+fRateS(cyR)+'</td><td>'+fRateS(pyR)+'</td>'
           +'<td class="'+cls(cyR-pyR)+'">'+fYoyS(cyR-pyR)+'</td></tr>';
@@ -19844,7 +19873,9 @@ AMR.page('overview', {
     function renderWinFscCustomers(d){
       clearCH('fscc');
       if(!winFscOk() || !d){ hidePanel('fscCustBody'); return; }
-      var list=(d.parents||[]);
+      /* the unfloored list, so this card's total is the same population as the
+         by-market card's Total line - see cubeCustomers() and fscCubeTable() */
+      var list=(d.fscParents||d.parents||[]);
       if(!fscAny(list)){ hidePanel('fscCustBody'); return; }
       showPanel('fscCustBody');
       xfSubSet('fscCustScope','',' \u00b7 CY fuel-surcharge dollars \u00b7 '+winLabel());
@@ -22241,12 +22272,23 @@ AMR.page('overview', {
       var C0=cube(), m=C0 && C0.manifest && C0.manifest(line);
       return !!(m && m.dims && m.dims.indexOf(d)!==-1);
     }
+    /* TWO ROW SETS OUT OF ONE QUERY. `rows` is what a VOLUME table wants - a
+       real key and tonnes on one side or the other - and it is unchanged. `all`
+       is every group the query returned bar the sentinel, and it exists because
+       A GROUP WITH NO TONNES IS STILL A GROUP WHEN THE QUESTION IS MONEY.
+       The surcharge cards total their own rows, so this floor - written to keep
+       empty rows out of a volume table - was quietly taking dollars off a
+       surcharge total: a key with a charge and no tonnes survives in the cube's
+       grand total and vanished from every grouped list (see fscCubeTable).
+       Both sets are sorted the same way, so a row in both is in the same place
+       in both, and `rows` is a subset of `all` rather than a second pass. */
     function cubeWinRows(line, groupBy, min){
-      var rows=cubeGroups(line, groupBy);
-      if(rows===null) return null;
-      rows=rows.filter(function(g){ return g.key && g.key!=='\u0001all' && (g.cyVol>(min||0) || g.pyVol>(min||0)); })
-               .sort(function(a,b){ return b.cyVol-a.cyVol; });
-      return { rows:rows, total:cubeTotal(line) };
+      var groups=cubeGroups(line, groupBy);
+      if(groups===null) return null;
+      var all=groups.filter(function(g){ return g.key!=='\u0001all'; })
+                    .sort(function(a,b){ return b.cyVol-a.cyVol; });
+      var rows=all.filter(function(g){ return g.key && (g.cyVol>(min||0) || g.pyVol>(min||0)); });
+      return { rows:rows, all:all, total:cubeTotal(line) };
     }
     function cubeRowsToItems(rows){
       var st=pyStale();
@@ -22259,7 +22301,12 @@ AMR.page('overview', {
     /* the cube's row shape in the shape the server-fed tables are painted from */
     function cubeRowAsTable(g){
       var st=pyStale(), k=String(g.key==null?'':g.key);
-      return { label:k||'(blank)',
+      /* THE RAW KEY TRAVELS WITH THE ROW. `label` is for reading and carries a
+         placeholder when the key is empty; `key` is the thing the cube and the
+         cross-filter actually match on, and '' is a real answer - a caller that
+         has to know whether this row is selectable must not be asking whether
+         its label happens to read like the placeholder. */
+      return { key:k, label:k||'(blank)',
                cyVol:g.cyVol, pyVol:st?null:g.pyVol, volPct:st?null:g.volPct,
                cyAsp:g.cyAsp, pyAsp:st?null:g.pyAsp, aspPct:st?null:g.aspPct,
                ppi:st?null:g.ppi, cpi:st?null:g.cpi,
@@ -24909,7 +24956,14 @@ AMR.page('overview', {
        So: the RANKING still only ever shows customers who were charged (a
        credit cannot be a top-ten row, and a donut has no negative slice), while
        the TOTAL is arithmetic over the lot. `All others` carries the credits,
-       which is what makes the ten rows plus the remainder come to the total. */
+       which is what makes the ten rows plus the remainder come to the total.
+
+       AND IT IS HANDED EVERY CUSTOMER IN THE OTHER DIRECTION TOO. The list the
+       cube path passes is cubeWinRows()'s `all`, not its volume-floored `rows`:
+       the by-market card's Total is the ungrouped cube total and this one is a
+       sum of its list, so while a customer with a charge and no tonnes was
+       being floored out of the grouped list the two cards stood $28 apart on
+       the July window. Both now count the same population. */
     function fscCustTable(list, note){
       var body=$('fscCustBody');
       var withFsc=(list||[]).filter(function(p){ return (Number(p.cyFsc)||0)!==0; });
