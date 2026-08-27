@@ -17380,7 +17380,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
           </div>
         </div>
         <div class="grow">
-          <p class="eyebrow" style="margin-bottom:8px">Markets <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)">· pick one market, or all</span></p>
+          <p class="eyebrow" style="margin-bottom:8px">Markets</p>
           <div class="chips" id="marketChips"></div>
         </div>
         <div id="refineWrap" style="display:none">
@@ -18072,37 +18072,86 @@ AMR.page('overview', {
     function colorOf(key){ var i=allKeys().indexOf(key); return MK_COLORS[i%MK_COLORS.length]; }
 
     /* ---- market chips (shared across both tabs) ----
-       SINGLE-SELECT on purpose: one market or All. Every number on the page is
-       then either a grand total or a single market — both already computed and
-       cached by the base tools, so nothing is ever blended or estimated. */
+       MULTI-SELECT. A chip toggles its own market; "All markets" clears the set
+       back to the grand total, and un-picking the last chip does the same thing
+       (an empty selection is not a page).
+
+       IT USED TO BE ONE MARKET OR ALL, and the reason given was that anything
+       else would be blended or estimated. That was true of ONE path only — the
+       plain getOverview/getReport path, whose market filter is a single string
+       server-side (filterValue) and whose PPI for a 2+ subset is a
+       CY-revenue-weighted blend of the markets' own indices. Every other path
+       on this page already took a LIST: getCrossReport and the browser's own
+       cross-filter engine both filter on MARKET as an array, trendFilters()
+       hands the cube every selected market, loadCustomers() has fanned out per
+       market and merged since it was written, and rmxTotals() sums per market
+       exactly. So the answer is not to blend on the single-market path — it is
+       to stop using that path for a subset. multiMarket() below is what routes
+       a 2+ pick onto the cross-report, where the numbers, PPI included, are
+       computed on the selection itself. */
+    function selKeysOrEmpty(){ return (STATE.sel==='ALL') ? [] : STATE.sel.slice(); }
+    /* A 2+ market subset — not one market, and not the whole set (which is
+       "All markets" by another name and is served exactly by the grand total). */
+    function multiMarket(){ return !isAll() && selectedKeys().length>1; }
     function renderChips(){
       var host=$('marketChips'); if(!host) return;
+      var sel=selKeysOrEmpty();
       var html = '<button class="chip" data-mk="__ALL__" aria-pressed="'+(STATE.sel==='ALL')+'">All markets</button>';
       markets().forEach(function(m){
-        var on = STATE.sel!=='ALL' && STATE.sel[0]===m.key;
+        var on = sel.indexOf(m.key)!==-1;
         html += '<button class="chip" data-mk="'+esc(m.key)+'" aria-pressed="'+on+'">'+esc(labelOf(m.key))+'</button>';
       });
       host.innerHTML = html;
       [].forEach.call(host.querySelectorAll('.chip'), function(c){
-        c.addEventListener('click', function(){
-          var mk=c.dataset.mk;
-          var next = (mk==='__ALL__') ? 'ALL' : [mk];
-          if(JSON.stringify(next)===JSON.stringify(STATE.sel)) return;
-          STATE.sel=next;
-          XF.SUBMARKET1=[]; XREF.values=[];        // submarkets & land/docks are market-specific
-          RXF.SUBMARKET=[]; RXF.PLANT=[];          // ditto on the Ready-Mix side
-          renderChips(); renderXfBar(); renderRxfBar(); renderTab();
-        });
+        c.addEventListener('click', function(){ pickMarket(c.dataset.mk); });
       });
+    }
+    /* ONE PLACE DECIDES WHAT A MARKET CLICK MEANS, wherever the click came
+       from — a chip, a market row in either breakdown, a MARKET cross-filter
+       value. They used to hold three copies of "replace the selection, or go
+       back to All if it was already the one", which is not the rule any more. */
+    function setMarketSel(next){
+      if(JSON.stringify(next)===JSON.stringify(STATE.sel)) return;
+      STATE.sel=next;
+      XF.SUBMARKET1=[]; XREF.values=[];        // submarkets & land/docks are market-specific
+      RXF.SUBMARKET=[]; RXF.PLANT=[];          // ditto on the Ready-Mix side
+      renderChips(); renderXfBar(); renderRxfBar(); renderTab();
+    }
+    function pickMarket(mk){
+      if(mk==='__ALL__'){ setMarketSel('ALL'); return; }
+      var cur=selKeysOrEmpty(), i=cur.indexOf(mk);
+      if(i>=0) cur.splice(i,1); else cur.push(mk);
+      /* held in the chips' own order, so the scope label, every cache key and
+         the saved KPI region read the same however they were clicked */
+      var order=allKeys();
+      cur.sort(function(a,b){ return order.indexOf(a)-order.indexOf(b); });
+      setMarketSel(cur.length ? cur : 'ALL');
     }
 
     /* ===================== CROSS-FILTER ENGINE (Aggregates tab) ===================== */
-    function xfActive(){
+    /* The CHIPS' half — a value clicked on a panel, or a Land / Docks refine.
+       The market subset below is deliberately NOT in here: the chip bar is the
+       list of things its own × buttons and Clear can undo, and a market is
+       undone by the market chips. Without the split a two-market pick drew an
+       empty "Filtered by … Clear filters" bar with nothing in it to clear. */
+    function xfHasFilters(){
       for(var f in XF){ if(XF[f].length) return true; }
       return XREF.values.length>0;
     }
+    /* A 2+ MARKET SUBSET IS A CROSS-FILTER, and saying so here is the whole of
+       what makes multi-select safe. The plain path's report takes ONE market
+       (getReport's filterValue is a string server-side) and its PPI for a
+       subset is a revenue-weighted blend of the markets' own indices; the
+       cross-report takes the LIST and computes every figure, PPI included, on
+       the selection itself. So a subset is routed to the path that can answer
+       it rather than the path that would have to approximate. One market, or
+       all of them, is unchanged and still comes off the plain report. */
+    function xfActive(){ return multiMarket() || xfHasFilters(); }
+    /* EVERY selected market, not the first one. This is the filter the local
+       engine and getCrossReport are both handed, and both have taken a list
+       since they were written. */
     function xfFilters(){
-      var o={ MARKET: isAll() ? [] : [selPvName()].filter(Boolean) };
+      var o={ MARKET: isAll() ? [] : pvNamesSelected() };
       for(var f in XF) o[f]=XF[f].slice();
       return o;
     }
@@ -18140,11 +18189,7 @@ AMR.page('overview', {
     function selectMarketByPvName(nm){
       var m=markets().filter(function(x){ return x.pvName===nm; })[0];
       if(!m) return;
-      var next = (STATE.sel!=='ALL' && STATE.sel[0]===m.key) ? 'ALL' : [m.key];
-      STATE.sel=next;
-      XF.SUBMARKET1=[]; XREF.values=[];
-      RXF.SUBMARKET=[]; RXF.PLANT=[];
-      renderChips(); renderXfBar(); renderRxfBar(); renderTab();
+      pickMarket(m.key);          // same rule as the chips — see pickMarket()
     }
     function xfLabel(){
       var parts=[scopeLabel()];
@@ -18184,7 +18229,7 @@ AMR.page('overview', {
     function renderXfBar(){
       renderXfDrops();
       var bar=$('xfBar'); if(!bar) return;
-      var on = xfActive() && STATE.tab==='agg';
+      var on = xfHasFilters() && STATE.tab==='agg';
       bar.classList.toggle('show', on);
       if(!on){ bar.innerHTML=''; return; }
       var html='<span class="lead">Filtered by</span>';
@@ -18231,7 +18276,7 @@ AMR.page('overview', {
     function renderRefine(){
       var wrap=$('refineWrap'), chips=$('refineChips');
       if(!wrap || !chips) return;
-      var isSW = !isAll() && selectedKeys()[0]==='sw';
+      var isSW = !isAll() && selectedKeys().length===1 && selectedKeys()[0]==='sw';
       var opts = isSW ? refineOpts() : [];
       var on = STATE.tab==='agg' && isSW && (opts.length>0 || XREF.values.length>0);
       wrap.style.display = on ? '' : 'none';
@@ -18592,6 +18637,23 @@ AMR.page('overview', {
     function xfOptionsFor(field){
       var d=xfData();
       if(d && d.options && d.options[field] && d.options[field].length) return d.options[field];
+      /* IN WINDOW MODE THE CUBE IS THE ONLY THING THAT KNOWS THE SCOPE. The
+         cross-report is not fetched for a window (it is a PERIOD report), and
+         the plain report is not fetched at all for a 2+ market subset — see
+         loadDims — so the three caches below would answer for a period, for one
+         market, or not at all, and the drop-downs read "Loading options…"
+         indefinitely. cubeGroups() is the same fields off the fact table the
+         window is already drawn from, and it answers for the SELECTION rather
+         than for the dictionary: offering a value with no rows behind it is a
+         filter that empties the page for no visible reason. */
+      if(winMode() && AGG_CUBE_FIELD[field]){
+        var cg=cubeGroups('agg', AGG_CUBE_FIELD[field]);
+        if(cg && cg.length){
+          var vals=cg.map(function(r){ return String(r.key==null?'':r.key); })
+                     .filter(function(v){ return v && v!=='\u0001all'; });
+          if(vals.length) return vals;
+        }
+      }
       if(field==='CUST_PARENT'){
         var m=CUST_CACHE[custKey()];
         return m ? (m.parents||[]).map(function(p){ return p.label; }) : [];
@@ -19344,8 +19406,14 @@ AMR.page('overview', {
         }
         renderAggTrend();
         renderMktSum('agg');
+        /* THE SAP / USGAAP CARDS ARE PAINTED ON EVERY PATH NOW, and it is
+           renderAggKpis that decides whether they belong to the pick. They used
+           to sit inside this !winMode() guard, which is exactly backwards: a
+           Prev-month pick IS a window, so the one pick the closed-month
+           statement is actually FOR was the one pick that could not see it. See
+           isPrevPick() and syncWinPanels(). */
+        renderAggKpis();
         if(!winMode()){
-          renderAggKpis();
           scheduleCustomers(); // debounced (rapid chip changes fire one server call); FSC customers always, Top-10 only when unfiltered
           loadFsc();
           // footer diagnostics (aggregates markets not mapped on this page)
@@ -19386,8 +19454,8 @@ AMR.page('overview', {
           scheduleRxf();
         }
         renderMktSum('rmx');
+        renderRmxKpis();          // same rule as the Aggregates tab above
         if(!winMode()){
-          renderRmxKpis();
           // footer diagnostics (segment markets not mapped on this page)
           var rfoot=[];
           /* the cross-report drives every panel on this tab; the getOverview
@@ -19412,15 +19480,36 @@ AMR.page('overview', {
        Same painters the MTD/YTD path uses — only the numbers come from the cube
        instead of the server, so the look, the click-to-filter behaviour and the
        colours are identical and there is one set of visuals to maintain.      */
-    /* The SAP / USGAAP cards are the one thing a window genuinely cannot
-       rebuild: they are statement figures and exist per month or per year only.
-       They go, and nothing takes their place. Everything the cube CAN answer is
-       answered by the painters below; whatever it cannot is simply not on the
-       page. */
+    /* The SAP / USGAAP cards are the one thing a DRAGGED window genuinely
+       cannot rebuild: they are statement figures and exist per month or per
+       year only, and a span of five months is neither. They go, and nothing
+       takes their place. Everything the cube CAN answer is answered by the
+       painters below; whatever it cannot is simply not on the page.
+       The two PREV-MONTH picks are the exception and always were the point of
+       them — see syncWinPanels() directly below, which is where the rule now
+       lives. */
+    /* THE SAP / USGAAP CARDS BELONG TO THE PREV-MONTH PICKS AND TO NOTHING ELSE.
+       ------------------------------------------------------------------------
+       The EBITDA workbook is a CLOSED-MONTH statement: it arrives during the
+       month after the one it covers, so the month it is for is kpiMonth() =
+       anchorMonth() - 1, which is the exact month "Prev month (MTD)" spans and
+       the exact month "Prev month (YTD)" ends on. The cards used to show on the
+       other two picks instead — "This month (MTD)" and "Year to date (YTD)" —
+       so the one statement the workbook holds was printed under a heading for
+       the month AFTER it, and it disappeared the moment you picked the month it
+       was actually about. The label said so out loud ("the closed month,
+       expected Jul 2026" under "year to date") and nothing else did.
+
+       So: shown on PMTD / PYTD, hidden everywhere else. A CUSTOM window is
+       still hidden for the older reason as well — statement figures exist per
+       month or per year and a dragged span is neither.
+
+       This runs AFTER renderAggKpis / renderRmxKpis and is the outer gate; each
+       renderer bails on the same test, so the two cannot disagree. Whether the
+       cards have anything to SHOW on a Prev-month pick stays the renderers'
+       call. */
     function syncWinPanels(){
-      if(!winMode()) return;      // hide-only: whether the cards have anything to
-                                  // show at all is renderAggKpis / renderRmxKpis's
-                                  // call, and this runs after them
+      if(isPrevPick()) return;
       ['colAggKpi','colRmxKpi'].forEach(function(id){ panelShow(id, false); });
     }
 
@@ -19456,7 +19545,7 @@ AMR.page('overview', {
     function renderWinBreakdown(){
       /* breakdown: markets at All, submarkets inside one market — the same
          pivot rule the server path uses */
-      var seg=$('bdModeSeg'), showSeg=isAll();
+      var seg=$('bdModeSeg'), showSeg=isAll() || multiMarket();
       if(seg){
         seg.style.display=showSeg?'':'none';
         [].forEach.call(seg.querySelectorAll('button'), function(b){ b.setAttribute('aria-pressed', b.dataset.bd===BD_MODE); });
@@ -19794,7 +19883,9 @@ AMR.page('overview', {
     function renderAggBreakdown(){
       var title=$('aggBdTitle'), sub=$('aggBdSub');
       var seg=$('bdModeSeg');
-      var showSeg=isAll();                       // one market selected = submarkets only, no choice to make
+      /* one market = submarkets only, no choice to make; two or more (All
+         included) = there is a market view worth having */
+      var showSeg=isAll() || multiMarket();
       if(seg){
         seg.style.display = showSeg ? '' : 'none';
         [].forEach.call(seg.querySelectorAll('button'), function(b){ b.setAttribute('aria-pressed', b.dataset.bd===BD_MODE); });
@@ -19816,7 +19907,7 @@ AMR.page('overview', {
       title.textContent='Submarket breakdown';
       sub.textContent = showSeg
         ? 'Submarkets across all markets · volume share, volume vs last year, and price movement · click to filter.'
-        : 'Submarkets inside '+labelOf(selectedKeys()[0])+' · volume share, volume vs last year, and price movement · click to filter.';
+        : 'Submarkets inside '+scopeLabel()+' · volume share, volume vs last year, and price movement · click to filter.';
       var key=dimsKey(), d=DIMS_CACHE[key];
       if(DIMS_ERR[key]){ clearCH('bd'); $('aggBody').innerHTML='<div class="ov-notice">Could not load the submarket breakdown: '+esc(DIMS_ERR[key])+'</div>'; return; }
       if(!d){ clearCH('bd'); $('aggBody').innerHTML='<div class="ov-mini">Loading submarkets…</div>'; return; }
@@ -19837,16 +19928,20 @@ AMR.page('overview', {
     var DIM_TAB='PLANT_TYPE';
     var DIM_LABEL={ PLANT_TYPE:'Plant Type', PROD_CLASS:'Product Class' };
 
-    function selPvName(){
-      var k=selectedKeys()[0];
-      var m=markets().filter(function(x){return x.key===k;})[0];
-      return m?m.pvName:null;
+    /* The selection as the two backends spell it. The `sel*Name` singulars are
+       kept for the calls that genuinely take ONE market — the plain per-market
+       report — and those calls are now guarded so they are never reached with a
+       subset in hand (see loadDims / loadPM). */
+    function mktNames(field){
+      return selectedKeys().map(function(k){
+        var m=markets().filter(function(x){return x.key===k;})[0];
+        return m ? m[field] : null;
+      }).filter(Boolean);
     }
-    function selRmxName(){
-      var k=selectedKeys()[0];
-      var m=markets().filter(function(x){return x.key===k;})[0];
-      return m?m.rmxName:null;
-    }
+    function pvNamesSelected(){ return mktNames('pvName'); }
+    function rmxNamesSelected(){ return mktNames('rmxName'); }
+    function selPvName(){ return pvNamesSelected()[0] || null; }
+    function selRmxName(){ return rmxNamesSelected()[0] || null; }
     function dimsKey(){ return STATE.period+'|m'+loadMonth()+'|'+scopeSig(); }   // the month is part of every key - see xfSig()
     function periodLabel(){ return STATE.period==='YTD'?'year to date':'month to date'; }
     /* THE KPI CARDS SAY WHICH MONTH THEY ARE. The EBITDA workbook holds exactly
@@ -19863,9 +19958,16 @@ AMR.page('overview', {
        label was added to prevent, one step further back. kpiMonth() is what the
        month SHOULD be if the upload is current, and the wording now says only
        that. */
+    /* AND IT NAMES THE PICK, not the server period behind it. PMTD and PYTD are
+       carried to the workbook as MTD and YTD (PICK_SERVER), which is right - the
+       workbook's two blocks ARE those two shapes - but printing "month to date"
+       over a card whose month is one back is the same half-truth the month name
+       was added to remove. */
     function kpiPeriodLabel(){
       var a=(WIN.months.length>1) ? kpiMonth() : null;
-      var half=periodLabel();
+      var half = (STATE.pick==='PMTD') ? 'previous month'
+               : (STATE.pick==='PYTD') ? 'previous month, year to date'
+               : periodLabel();
       return a ? (half+' \u00b7 the closed month, expected '+ymLong(a)) : half;
     }
 
@@ -19878,8 +19980,17 @@ AMR.page('overview', {
        the window was drawn is how a July panel ends up under an August heading
        with nothing on screen to say it happened. */
     function srvOwnsAgg(){ return !winMode() && !(xfActive() && STATE.tab==='agg'); }
+    /* THE PLAIN REPORT ANSWERS FOR ONE MARKET OR FOR ALL OF THEM, AND NOTHING
+       IN BETWEEN. getReport's filterValue is a single string server-side
+       (rpt:m … filterField|filterValue), so a 2+ subset asked for here would
+       come back as ONE of the markets, cached under a key that names the whole
+       set. Nothing would paint it — multiMarket() makes xfActive() true, so the
+       cross-report owns every panel and supplies the option lists as well — but
+       a wrong answer sitting in a cache under a right-looking key is how it
+       stops being nothing. So the subset does not ask. */
     function loadDims(){
       if(!STATE.data || (STATE.data.errors&&STATE.data.errors.pv)) return;
+      if(multiMarket()) return;
       var key=dimsKey();
       if(!DIMS_CACHE[key] && window.AmrCache){
         var dv=AmrCache.get('dims:'+key);
@@ -20038,6 +20149,7 @@ AMR.page('overview', {
     function pmKey(){ return STATE.period+'|m'+loadMonth()+'|'+scopeSig(); }
     function loadPM(){
       if(!STATE.data || (STATE.data.errors&&STATE.data.errors.pv)) return;
+      if(multiMarket()) return;          // see loadDims()
       var key=pmKey();
       if(!PM_CACHE[key] && window.AmrCache){
         var v=AmrCache.get('pm:'+key);
@@ -20174,7 +20286,7 @@ AMR.page('overview', {
     }
     function renderXfBreakdown(d, err){
       var seg=$('bdModeSeg');
-      var showSeg=isAll();                         // toggle only makes sense at All markets
+      var showSeg=isAll() || multiMarket();        // see renderAggBreakdown
       if(seg){
         seg.style.display = showSeg ? '' : 'none';
         [].forEach.call(seg.querySelectorAll('button'), function(b){ b.setAttribute('aria-pressed', b.dataset.bd===BD_MODE); });
@@ -20478,7 +20590,22 @@ AMR.page('overview', {
 
     function rxfActive(){ for(var f in RXF){ if(RXF[f].length) return true; } return false; }
     function rxfFilters(){ var o={}; RXF_FIELDS.forEach(function(f){ o[f]=RXF[f].slice(); }); return o; }
-    function rxfMarket(){ return isAll() ? '__ALL__' : (selRmxName()||'__ALL__'); }
+    /* THE WHOLE SELECTION, NOT ITS FIRST MARKET. getRmxCrossReport's mktOk_
+       takes a list as well as a single name, so a 2+ subset is one report over
+       exactly those markets rather than a report about one of them wearing the
+       subset's label. */
+    function rxfMarket(){
+      if(isAll()) return ALL_MKT;
+      var ns=rmxNamesSelected();
+      return ns.length ? ns : ALL_MKT;
+    }
+    var ALL_MKT='__ALL__';
+    /* the market half of the cache key, order-independent so two clicks that
+       land on the same set share one entry */
+    function rxfMarketSig(){
+      var mk=rxfMarket();
+      return (mk===ALL_MKT) ? ALL_MKT : mk.slice().sort().join('\u2016');
+    }
     /* THE CROSS-REPORT IS A PERIOD REPORT AND NOTHING ELSE ASKS IT FOR A WINDOW.
        A month SPAN was briefly sent from here so Extras & VAP could stay on the
        page for a dragged window. It could only ever answer inside the live book
@@ -20486,7 +20613,7 @@ AMR.page('overview', {
        on the month cube now (winExtrasReport), which reaches every year the
        slider does, so this signature is the plain period one again. */
     function rxfSig(){
-      var parts=[STATE.period, 'm'+loadMonth(), rxfMarket()];
+      var parts=[STATE.period, 'm'+loadMonth(), rxfMarketSig()];
       RXF_FIELDS.forEach(function(f){ if(RXF[f].length) parts.push(f+'='+RXF[f].slice().sort().join('\u2016')); });
       return parts.join('|');
     }
@@ -20728,7 +20855,7 @@ AMR.page('overview', {
     /* ---- market / submarket breakdown, now click-to-filter ---- */
     function renderRmxBreakdown(d, err){
       var title=$('rmxBdTitle'), sub=$('rmxBdSub'), seg=$('rmxBdModeSeg');
-      var showSeg=isAll();
+      var showSeg=isAll() || multiMarket();
       if(seg){
         seg.style.display = showSeg ? '' : 'none';
         [].forEach.call(seg.querySelectorAll('button'), function(b){ b.setAttribute('aria-pressed', b.dataset.rbd===RBD_MODE); });
@@ -20757,7 +20884,12 @@ AMR.page('overview', {
       var rows=null;
       var t=rxfTableOf(d,'SUBMARKET');
       if(t) rows=t.rows;
-      else if(!rxfActive()){                                  // instant first paint
+      else if(!rxfActive() && selectedKeys().length===1){      // instant first paint
+        /* ONE MARKET ONLY. getOverview carries a submarket list PER MARKET, so
+           this shortcut can stand in for a single pick and for nothing else —
+           a 2+ subset painted from it would be the first market's submarkets
+           under the whole selection's heading. The cross-report answers the
+           subset a moment later and is what the panel then shows. */
         var mk=selectedKeys()[0], r=!isAll() && STATE.data.rmx[mk];
         if(r && r.present && r.dims && r.dims.SUBMARKET) rows=r.dims.SUBMARKET;
         else if(r && r.present && r.sub) rows=r.sub;
@@ -20774,12 +20906,7 @@ AMR.page('overview', {
         var it=items[i]; if(it) toggleRxf('SUBMARKET', it.value);
       }, 'SUBMARKET');
     }
-    function selectRmxMarketByKey(k){
-      var next = (STATE.sel!=='ALL' && STATE.sel[0]===k) ? 'ALL' : [k];
-      STATE.sel=next;
-      RXF.SUBMARKET=[]; RXF.PLANT=[];        // submarkets and plants are market-specific
-      renderChips(); renderRxfBar(); renderTab();
-    }
+    function selectRmxMarketByKey(k){ pickMarket(k); }
     /* renderBreakdown's layout with the Ready-Mix field set (its own toggle path) */
     function renderBreakdownRmx(bodyId, items, pick, field){
       var body=$(bodyId);
@@ -21528,7 +21655,14 @@ AMR.page('overview', {
            first seconds of every open, with nothing saying why. */
         var span=periodSpan(k);
         b.disabled = !span;
-        if(span) b.removeAttribute('title');
+        /* THE PREV-MONTH PAIR SAYS WHAT IT UNLOCKS. The SAP / USGAAP cards are
+           only on these two picks (syncWinPanels), and a whole panel appearing
+           and disappearing with no word anywhere is the thing that made the old
+           arrangement so hard to see. */
+        if(span){
+          if(k==='PMTD' || k==='PYTD') b.title='The closed month \u2014 the SAP / USGAAP cards are on these two picks, because that is the month the EBITDA workbook is for.';
+          else b.removeAttribute('title');
+        }
         else b.title='Waiting for the month history \u2014 Period and the Months slider are one control.';
       });
     }
@@ -21771,8 +21905,10 @@ AMR.page('overview', {
               product category, and the SAP / USGAAP cards. None of those are in
               the month fact table, so in window mode those panels say so
               plainly rather than showing a year's number under a month's label.
-              The SAP cards are hidden outright — they are statement figures and
-              only exist per month or per year.                                */
+              The SAP cards are hidden outright on a DRAGGED window — they are
+              statement figures and only exist per month or per year. On the two
+              Prev-month picks they are shown, and shown there only, because the
+              closed month IS what those picks span: syncWinPanels().          */
 
     function winMode(){ return !!STATE.win && winReady(); }
     function winLabel(){
@@ -21986,31 +22122,46 @@ AMR.page('overview', {
       });
       return out;
     }
-    /* Books this browser will read FOR ITSELF, newest first, and it is a much
-       shorter list than it was.
+    /* Books this browser will read FOR ITSELF, newest first.
        ------------------------------------------------------------------------
-       IT IS `first` NOW AND NOT `!built`, WHICH IS THE WHOLE OF THE MORNING
-       FIX. A parked file written against an older OVCUBE_SHAPE_VER_ is read as
-       absent on purpose (never misread), so bumping that version used to make
-       all four books look never-built at once — and the first person to open
-       the Overview after a deploy read all four, thirty seconds each, in the
-       foreground, with the cube being thrown away and rebuilt between them
-       because every read moves ovcHistTok_. Five minutes of loading screen for
-       whoever got there first, and nothing wrong anywhere.
-       The server now says which of the two it is (§8 ovcHistWhy_). `first` is a
-       book NOBODY HAS EVER READ, which happens on the day somebody links one
-       and is therefore the one case where a person is by definition sitting
-       there waiting for it. Everything else — the shape moved, the workbook
-       changed — is stale, and stale belongs to the warm-cache trigger (§11) and
-       to the Reload button, not to a page load.
-       A book still drops off this list the moment it is attempted, so a read
-       that fails cannot loop. */
+       THE LINE IS `built`, AND THE TWO WAYS OF GETTING IT WRONG HAVE BOTH BEEN
+       SHIPPED. It was `!built` originally, which cost a morning: a parked file
+       written against an older OVCUBE_SHAPE_VER_ is read as absent on purpose
+       (never misread), so bumping that version made all four books look
+       never-built at once, and the first person to open the Overview after a
+       deploy read all four, thirty seconds each, IN THE FOREGROUND, with the
+       cube thrown away and rebuilt between them because every read moves
+       ovcHistTok_. Five minutes of loading screen, and nothing wrong anywhere.
+       So it became `first` — a book NOBODY HAS EVER READ — and that is the
+       other way round: a shape bump then read NOTHING, and built:false is not a
+       shade of out-of-date, it is ovcHistFile_ returning null, which means
+       those months are ABSENT FROM THE CUBE. v5 -> v6 on 2026-08-27 took 2023
+       and 2024 off the slider for everybody at once, silently, with the pill
+       still saying "History loaded" because histStale() only counts the
+       READABLE kind.
+       It is `built` again, and the foreground cost is answered where it
+       belongs rather than by not reading: histBootReady() releases the boot
+       step as soon as the cube can answer the opening window, and
+       maybeBuildHistory() does not start until every block already built has
+       landed. So an unreadable book is re-read one era per run, behind a pill
+       nothing waits on.
+       A book that IS built and merely out of date — the workbook itself
+       changed — stays the warm-cache trigger's (§11) and the Reload button's:
+       its months are on the page, they are just from the previous export, and
+       re-reading throws away the cube to fix something nobody can see.
+       `first` is still tested and still read, because it is also the honest
+       case where somebody has just linked a book and is sitting there; it is
+       kept beside the `built` test rather than folded into it so the pill can
+       go on telling a first read from a re-read.
+       A book drops off this list the moment it is attempted, so a read that
+       fails cannot loop. */
     function histPending(){
       var out=[];
       histEras().forEach(function(e){
         ['agg','rmx'].forEach(function(l){
           var st=e.lines[l];
-          if(st && st.linked && st.first && !HIST.done[e.id+'|'+l])
+          if(!st || !st.linked || HIST.done[e.id+'|'+l]) return;
+          if(st.first || (st.stale && !st.built))
             out.push({ era:e.id, label:e.label, line:l });
         });
       });
@@ -22955,6 +23106,33 @@ AMR.page('overview', {
        both KPI panels disappear entirely (no hint, no empty list). Any mix
        that includes a main-book market keeps today's behaviour. */
     var KPI_BOOK_OF = { sw:'main', north:'main', gta:'main', mb:'mbsk', sask:'mbsk' };
+
+    /* THE WORKBOOK COUNTS IN THOUSANDS AND THE CUBE COUNTS IN ONES.
+       ------------------------------------------------------------------------
+       Total Product Revenue and Total Sales Volume are k$ and kt on a plant
+       statement, and the arithmetic on the card proves it rather than assuming
+       it: the AGG CENTRAL year-to-date block reads 149,830 and 9,070, and
+       149,830 / 9,070 = 16.52, which is the $/t the SAME block carries in its
+       own $/t column and the number the ASP card prints. FMT.thou then divides
+       by a further 1,000 for the "(K)" label the cards wear.
+       The month cube counts plain tonnes and plain cubic metres, so a QlikView
+       figure has to be put on the workbook's scale FIRST or the two volume
+       cards would sit side by side three orders of magnitude apart. */
+    var KPI_UNIT_SCALE = 1000;
+
+    /* MANITOBA AND SASKATCHEWAN ARE A SECOND WORKBOOK, AND "CENTRAL CANADA"
+       DOES NOT REACH THEM.
+       ------------------------------------------------------------------------
+       KPI_BOOK_OF above is the whole of it: those two markets are statements in
+       the Manitoba / Saskatchewan EBITDA book and every other market is in the
+       main one. So NO region tab in the main book carries them - "AGG CENTRAL"
+       included, however much its name suggests otherwise - and the Ready-Mix
+       side only has them when that second book has been uploaded.
+       The strip named the tab ("AGG CENTRAL") and the page named the region
+       ("Central Canada") and neither said the two provinces were outside both. */
+    function mbskNote(text){
+      return '<p class="ov-foot" style="margin:10px 0 0">'+text+'</p>';
+    }
     function kpiHiddenForSelection(){
       if(isAll()) return false;
       var ks=selectedKeys(); if(!ks.length) return false;
@@ -22986,15 +23164,58 @@ AMR.page('overview', {
     function regSave(){
       try{ localStorage.setItem('ovKpiRegionMap', JSON.stringify({sig:REGMAP.sig, map:REGMAP.map})); }catch(e){}
     }
-    function regScopeKey(){ return isAll() ? 'ALL' : (selectedKeys()[0]||'ALL'); }
+    /* ONE SAVED REGION PER SELECTION, and a selection is now any number of
+       markets - so the key is the whole sorted set rather than its first
+       member, which two different multi-market picks would have shared. A
+       single-market key is that key on its own, so everything already saved
+       keeps working. */
+    function regScopeKey(){
+      if(isAll()) return 'ALL';
+      var ks=selectedKeys(); if(!ks.length) return 'ALL';
+      return ks.slice().sort().join('+');
+    }
     function akExtract(){
       if(!window.AmrKpi) return null;
       return AmrKpi.plant(VALS, AKPI.index[AKPI.sheet], STATE.period);
+    }
+    /* THE QLIKVIEW HALF OF THE STRIP IS THE SAME MONTH AS THE SAP HALF.
+       ------------------------------------------------------------------------
+       This strip only exists on a Prev-month pick now, and a Prev-month pick is
+       a WINDOW - so its Qlik companions come off the month cube for that exact
+       span rather than off getOverview, which answers for the anchor month, one
+       month later. Pairing a closed month's statement with the following
+       month's export is how two ASPs sat side by side on one card, both
+       correct, describing different months.
+       null whenever the cube cannot answer the span yet (blocks still landing)
+       or has no prior year for it - the card then says "Load market data" as it
+       always did, rather than printing a delta against a zero. */
+    function kpiQlik(line){
+      var t=cubeWinTotals(line);
+      if(!t || !t.present) return null;
+      if(t.cyVol==null || t.pyVol==null || t.cyAsp==null || t.pyAsp==null) return null;
+      return t;
+    }
+    /* Which region tab the strip is reading, and what that leaves out. A tab
+       from the main book is Central Canada WITHOUT Manitoba or Saskatchewan;
+       a tab from the MB/SK book is one of those two and says so instead. */
+    function aggMbskNote(){
+      var e=AKPI.index[AKPI.sheet];
+      if(!e) return '';
+      var other=(window.AmrKpi ? AmrKpi.bookLabel('mbsk') : 'Manitoba / Saskatchewan EBITDA');
+      return mbskNote(e.book==='mbsk'
+        ? 'This region tab is the '+esc(other)+' workbook’s.'
+        : 'Manitoba and Saskatchewan are <b>not</b> in these figures. They are statements in the '
+          +esc(other)+' workbook, so no region tab in the main book carries them — a '
+          +'<b>Central Canada</b> tab included.');
     }
     function renderAggKpis(){
       var body=$('aggKpiBody'), selWrap=$('aggKpiSelWrap'), meta=$('aggKpiMeta');
       if(!body) return;
       var panel=$('colAggKpi');
+      /* THE PICK COMES FIRST. These are the closed month's statement and the
+         closed month is what the Prev-month pair spans - see syncWinPanels(),
+         the outer gate, which tests the same thing after this has run. */
+      if(!isPrevPick()){ if(panel) panel.style.display='none'; return; }
       if(kpiHiddenForSelection()){ if(panel) panel.style.display='none'; return; }
       if(panel) panel.style.display='';
       if(!WB.loaded || !AKPI.sheets.length){
@@ -23014,28 +23235,34 @@ AMR.page('overview', {
       sel.innerHTML=AKPI.sheets.map(function(n){
         return '<option value="'+esc(n)+'"'+(n===AKPI.sheet?' selected':'')+'>'+esc(n)+'</option>';
       }).join('');
-      var scopeName = scopeKey==='ALL' ? 'All markets' : labelOf(scopeKey);
+      var scopeName = scopeLabel();      // 'All markets', one market, or the set
       meta.innerHTML = need
         ? '<span style="color:var(--neg);font-weight:700">Pick the region that matches '+esc(scopeName)+'</span>'
           +' · it will be remembered for this market'
         : esc(AKPI.sheet)+' · '+esc(kpiPeriodLabel());
       var x=akExtract();
       if(!x){ hidePanel('aggKpiBody'); return; }
-      var qv = (STATE.data && !(STATE.data.errors&&STATE.data.errors.pv)) ? aggTotals(selectedKeys()) : null;
+      var qv=kpiQlik('agg');
       var wait='<div style="font:500 11.5px Inter;color:var(--muted);margin-top:10px">Load market data to fill this card.</div>';
       body.innerHTML='<div style="display:flex;gap:12px;flex-wrap:wrap">'
         + simpleCard('ASP ($/T)','SAP / USGAAP', x.aspCy, x.aspPy, FMT.asp)
-        + ((qv&&qv.present) ? simpleCard('ASP ($/T)','QlikView', qv.cyAsp, qv.pyAsp, FMT.asp)
-                            : cardShell('ASP ($/T)','QlikView', wait))
-        + simpleCard('Total Sales \u2014 Product (K)','SAP / USGAAP', x.salesCy, x.salesPy, FMT.thou)
+        + (qv ? simpleCard('ASP ($/T)','QlikView', qv.cyAsp, qv.pyAsp, FMT.asp)
+              : cardShell('ASP ($/T)','QlikView', wait))
+        + simpleCard('Total Sales — Product (K)','SAP / USGAAP', x.salesCy, x.salesPy, FMT.thou)
         + simpleCard('Total Volumes (K)','SAP / USGAAP', x.volCy, x.volPy, FMT.thou)
-        + ((qv&&qv.present)
-            ? cardShell('PPI \u2014 CY Revenue','QlikView',
+        /* The QlikView volume, beside the SAP one and ON THE SAP ONE'S SCALE.
+           The workbook counts thousands and the cube counts ones - see
+           KPI_UNIT_SCALE, which carries the arithmetic that proves it. */
+        + (qv ? simpleCard('Total Volumes (K)','QlikView',
+                           qv.cyVol/KPI_UNIT_SCALE, qv.pyVol/KPI_UNIT_SCALE, FMT.thou)
+              : cardShell('Total Volumes (K)','QlikView', wait))
+        + ((qv && qv.ppi!=null)
+            ? cardShell('PPI — CY Revenue','QlikView',
                 '<div style="margin:5px 0 2px"><span style="font:800 22px Archivo,Arial;color:var(--blue-100)">'+(qv.ppi*100).toFixed(1)+'</span><span style="font:700 12px Inter;color:var(--blue-100)"> %</span></div>'
                +'<div style="font:700 10.5px Inter;color:var(--ink)">Price / Product Index</div>')
-            : cardShell('PPI \u2014 CY Revenue','QlikView', wait))
+            : cardShell('PPI — CY Revenue','QlikView', wait))
         +'</div>'
-        + (xfActive() ? '<p class="xf-note">These cards read the EBITDA workbook — market &amp; period only, not affected by the cross-filters.</p>' : '');
+        + aggMbskNote();
     }
     $('aggKpiSheet').addEventListener('change', function(){
       AKPI.sheet=this.value;
@@ -23088,6 +23315,10 @@ AMR.page('overview', {
       var body=$('rmxKpiBody'), meta=$('rmxKpiMeta');
       if(!body) return;
       var panel=$('colRmxKpi');
+      /* same gate, same reason as renderAggKpis: the RMX Summary blocks are the
+         closed month's statement too, and this side was wrong in exactly the
+         same direction */
+      if(!isPrevPick()){ if(panel) panel.style.display='none'; return; }
       if(kpiHiddenForSelection()){ if(panel) panel.style.display='none'; return; }
       if(panel) panel.style.display='';
       if(!WB.loaded){
@@ -23124,15 +23355,39 @@ AMR.page('overview', {
       }
       meta.textContent = got.map(function(g){ return labelOf(g.key); }).join(', ')
         +' · '+kpiPeriodLabel();
+      var qv=kpiQlik('rmx');
+      var wait='<div style="font:500 11.5px Inter;color:var(--muted);margin-top:10px">Load market data to fill this card.</div>';
       var h='';
       if(m.units) h+=rkUnitsCard(m.units);
+      /* the QlikView units, beside the SAP ones and on the SAP ones' scale.
+         Units Sold is already Km³ on the statement and the cube counts plain
+         m³ — see KPI_UNIT_SCALE. */
+      h += (qv ? simpleCard('Units Sold (Km³)','QlikView',
+                            qv.cyVol/KPI_UNIT_SCALE, qv.pyVol/KPI_UNIT_SCALE, FMT.units)
+               : cardShell('Units Sold (Km³)','QlikView', wait));
       if(m.rev)   h+=rkMoneyCard('Total Revenue', m.rev);
       if(m.conc)  h+=rkMoneyCard('Concrete Sales', m.conc);
       if(m.raw)   h+=rkMoneyCard('Total Raw Materials', m.raw, true);
       body.innerHTML='<div style="display:flex;gap:12px;flex-wrap:wrap">'+h+'</div>'
         +(missing.length
             ? '<p class="ov-foot" style="margin:10px 0 0">'+missing.map(labelOf).map(esc).join(', ')+' not included</p>'
-            : '');
+            : '')
+        + rmxMbskNote(got);
+    }
+    /* The Ready-Mix twin of aggMbskNote(). Here the blocks ARE per market, so
+       what has to be said is where the two provinces' blocks live — and that a
+       selection reading "Central Canada" is only ever the markets named above
+       it, never those two by implication. */
+    function rmxMbskNote(got){
+      var other=(window.AmrKpi ? AmrKpi.bookLabel('mbsk') : 'Manitoba / Saskatchewan EBITDA');
+      var have={}; (got||[]).forEach(function(g){ have[g.key]=1; });
+      var inScope=['mb','sask'].filter(function(k){ return have[k]; }).map(labelOf);
+      return mbskNote(inScope.length
+        ? esc(inScope.join(' and '))+(inScope.length>1?' are':' is')+' read from the '+esc(other)
+          +' workbook; every other market above comes from the main one. These cards are the markets '
+          +'named above and nothing else \u2014 there is no <b>Central Canada</b> block that adds any of them in.'
+        : 'Manitoba and Saskatchewan are <b>not</b> in these figures. They are blocks in the '
+          +esc(other)+' workbook, and a selection reading <b>Central Canada</b> does not reach them.');
     }
 
     /* the shared KPI numbers uploaded on the PV / Segment pages */
