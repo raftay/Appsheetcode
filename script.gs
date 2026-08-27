@@ -6710,8 +6710,17 @@ function getRawEnriched_(upToken) {
     });
     enriched.forEach(function (r) {
       var b = r.lkey ? kb[r.lkey] : null; if (!b) return;
-      r.pyFsc = b.pv ? b.pf * r.pyVol / b.pv : 0;
-      r.cyFsc = b.cv ? b.cf * r.cyVol / b.cv : 0;
+      /* A KEY WITH NO TONNES KEEPS ITS DOLLARS WHERE THEY ARE. `? : 0` spread a
+         zero-volume key's surcharge over nothing and wrote the zero back, so the
+         money left the page: every PV-derived view (the customer panels, the
+         cross-filter report, the month cube and therefore the by-market card
+         once it became cube-fed) came in under the Fuel Surcharge page, which
+         reads the raw column and never re-spreads. It is a small number - $28
+         of $1.73m on the July file, one key - and small is exactly why nothing
+         caught it. There is no proportional split to make when the denominator
+         is zero, so the row's own figure stands. */
+      if (b.pv) r.pyFsc = b.pf * r.pyVol / b.pv;
+      if (b.cv) r.cyFsc = b.cf * r.cyVol / b.cv;
     });
   }
 
