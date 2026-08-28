@@ -5019,6 +5019,19 @@ window.AmrKpi = (function(){
     return (Number(m) > now.getMonth() + 1) ? now.getFullYear() - 1 : now.getFullYear();
   }
 
+  /* THE MONTH EVERY KPI STRIP IS FOR: THE CLOSED MONTH, i.e. this calendar
+     month minus one - December when it is January.
+     -----------------------------------------------------------------------
+     The EBITDA workbook is a closed-month statement and it arrives DURING the
+     month after the one it covers, so a KPI card is never "this month",
+     however a page's own Report-month picker happens to be set. The Overview
+     already reads the cards that way (its kpiMonth, one back from the anchor);
+     these two give the pages that upload the workbook the same answer without
+     a third copy of the calendar rule, and they are what the file-name check
+     below is run against on those pages. */
+  function closedMonth(){ var m = (new Date()).getMonth(); return m ? m : 12; }
+  function closedLabel(){ var m = closedMonth(); return KPI_MON[m-1] + ' ' + yearOf(m); }
+
   /* THE CAUTION, for whichever page knows what month it is asking about.
      Answers per uploaded workbook, and the three states are kept apart
      because they are fixed by different things:
@@ -5208,6 +5221,9 @@ window.AmrKpi = (function(){
        check the two against each other; nothing else can. */
     monthOfName: monthOfName,
     yearOf: yearOf,
+    /* The closed month the cards always report, and its name. */
+    closedMonth: closedMonth,
+    closedLabel: closedLabel,
     monthCheck: monthCheck,
     monthProblems: monthProblems,
     monthSentence: monthSentence,
@@ -15302,6 +15318,11 @@ MB Submarket, plus Region&rarr;Country.<br>
 
   function kpiLabel(){ return (KPI.sheet || '').trim(); }
 
+  /* The closed month, spelled for the strip's meta line. */
+  function kpiMonthLabel(){
+    return (window.AmrKpi && AmrKpi.closedLabel) ? AmrKpi.closedLabel() : '';
+  }
+
   /* One mapping slot per page view (filter field + value). Land / Docks add
      their own slot on top, so Southwest, Southwest·Land and Southwest·Docks each
      remember a different Region sheet — and the plain Southwest slot everyone
@@ -15394,7 +15415,12 @@ MB Submarket, plus Region&rarr;Country.<br>
     strip.innerHTML = AmrKpi.stripHtml(html);
     AmrKpi.fitStrip(strip.firstChild);
     var m=document.getElementById('kpiMeta');
-    if(m) m.textContent = kpiLabel()+'\u00B7  '+(STATE.period==='YTD'?'year to date':'month to date');
+    /* THE STRIP NAMES ITS OWN MONTH. It is the closed month whatever the
+       Report-month picker above it says, and reading "month to date" beside a
+       page sitting on the running month is exactly how these cards got taken
+       for this month's. */
+    if(m) m.textContent = kpiLabel()+' \u00B7 '+kpiMonthLabel()
+        +' \u00B7 '+(STATE.period==='YTD'?'year to date':'month to date');
   }
 
   /* The strip, on its own, as a picture — for pasting into an email or a deck.
@@ -15446,10 +15472,19 @@ MB Submarket, plus Region&rarr;Country.<br>
       + kpiMonthNote(book);
   }
 
-  /* The report month this page is showing, 1-12. STATE.month is the picker;
-     0 means "follow the calendar", which the server has already resolved into
-     latestMonth. AmrKpi works the reporting YEAR out itself. */
-  function kpiReportMonth(){ return STATE.month || STATE.latestMonth || 0; }
+  /* THE MONTH THE KPI CARDS ARE FOR, AND IT IS NOT THE PICKER'S.
+     The EBITDA workbook is the CLOSED month's statement - this calendar month
+     minus one - and it says nothing about whichever month the Report-month
+     picker is on. It used to be checked against that picker (STATE.month ||
+     STATE.latestMonth), so on a page sitting on the running month a correct
+     July workbook was reported as the wrong file, and on a page pinned to a
+     back month a July workbook passed silently under that month's heading.
+     One rule now, the same one the Overview reads the cards by: AmrKpi's
+     closedMonth(). AmrKpi works the reporting YEAR out itself. */
+  function kpiReportMonth(){
+    return (window.AmrKpi && AmrKpi.closedMonth) ? AmrKpi.closedMonth()
+                                                 : (STATE.month || STATE.latestMonth || 0);
+  }
   function kpiMonthNote(book){
     if(!(window.AmrKpi && AmrKpi.monthProblems)) return '';
     var m = kpiReportMonth(); if(!m) return '';        // no month known: nothing to check against
@@ -15458,7 +15493,7 @@ MB Submarket, plus Region&rarr;Country.<br>
       AmrKpi.monthProblems(KPI.vals, m).forEach(function(r){ if(r.book===book) hit=r; });
     } catch(e){ return ''; }
     if(!hit) return '';
-    var want = PV_MONTH_NAMES[m-1] + ' ' + AmrKpi.yearOf(m);
+    var want = PV_MONTH_NAMES[m-1] + ' ' + AmrKpi.yearOf(m) + ' (the closed month)';
     return '<span class="dzstat warn" style="display:block;margin-top:3px">\u26A0 '
          + esc(AmrKpi.monthSentence(hit, want)) + '</span>';
   }
@@ -17867,7 +17902,14 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
     var meta=document.getElementById('segKpiMeta');
     if(meta){
       var x=segKpiExtract();
-      meta.textContent=(x&&x.tab?x.tab+' \u00B7 ':'')+(STATE.period==='YTD'?'year to date':'month to date');
+      /* THE STRIP NAMES ITS OWN MONTH, and it is NOT the Report month above it.
+         The RMX Summary blocks are the closed month's statement - this calendar
+         month minus one - so the cards are that month whatever the picker is
+         set to, and saying only "month to date" beside a page sitting on the
+         running month is what made them read as this month's. Same line, same
+         rule and same source as the Price & Volume strip. */
+      meta.textContent=(x&&x.tab?x.tab+' \u00B7 ':'')+segKpiMonthLabel()
+        +' \u00B7 '+(STATE.period==='YTD'?'year to date':'month to date');
     }
   }
 
@@ -17896,13 +17938,34 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
     renderPreview();
   }
 
+  /* The closed month these cards are for, spelled for a human. */
+  function segKpiMonth(){ return (window.AmrKpi && AmrKpi.closedMonth) ? AmrKpi.closedMonth() : 0; }
+  function segKpiMonthLabel(){ return (window.AmrKpi && AmrKpi.closedLabel) ? AmrKpi.closedLabel() : ''; }
+
+  /* THE FILE NAME IS THE ONLY THING THAT DATES AN EBITDA WORKBOOK - nothing
+     inside it says which month it covers, so June's export parses exactly like
+     July's and puts June's figures on these cards. This page had no check at
+     all; it is the same one Price & Volume and the Deck Builder make, run
+     against the CLOSED month, which is the month the cards are always for. */
+  function segKpiMonthNote(book){
+    if(!(window.AmrKpi && AmrKpi.monthProblems)) return '';
+    var m=segKpiMonth(); if(!m) return '';
+    var hit=null;
+    try { AmrKpi.monthProblems(SEGKPI.vals, m).forEach(function(r){ if(r.book===book) hit=r; }); }
+    catch(e){ return ''; }
+    if(!hit) return '';
+    return '<span class="dzstat warn" style="display:block;margin-top:3px">\u26A0 '
+         + esc(AmrKpi.monthSentence(hit, segKpiMonthLabel()+' (the closed month)')) + '</span>';
+  }
+
   /* the "in use by everyone" line + Remove link under each file input */
   function segKpiSaved(book, name){
     var el=document.getElementById(book==='main'?'segKpiSavedMain':'segKpiSavedMbsk'); if(!el) return;
     if(!name){ el.style.display='none'; el.innerHTML=''; return; }
     el.style.display=''; el.className='dzstat ok';
     el.innerHTML='\u2713 '+esc(name)+' \u00B7 in use by everyone &nbsp;'
-      +'<a href="#" data-kpiclear="'+book+'" style="color:var(--neg);font-weight:700;text-decoration:none">Remove</a>';
+      +'<a href="#" data-kpiclear="'+book+'" style="color:var(--neg);font-weight:700;text-decoration:none">Remove</a>'
+      + segKpiMonthNote(book);
   }
 
   function segKpiInit(){
