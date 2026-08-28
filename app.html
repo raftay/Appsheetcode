@@ -1680,6 +1680,7 @@ body[data-page="overview"] .ov-phead > .seg{flex:0 0 auto; flex-wrap:nowrap}
 body[data-page="overview"] .ov-phead > .xf-search{flex:0 1 240px}
 /* top filter dropdowns (controls panel) — searchable multi-select per dimension */
 body[data-page="overview"] .xf-drops{display:none; flex-wrap:wrap; gap:8px; margin-top:14px; padding-top:12px; border-top:1px dashed var(--line)}
+body[data-page="overview"] .ov-export[hidden]{display:none}
 body[data-page="overview"] .ov-export{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:14px; padding-top:12px; border-top:1px dashed var(--line)}
 body[data-page="overview"] .ov-export-note{font:500 11.5px Inter; color:var(--muted); line-height:1.5}
 body[data-page="overview"] .ov-export-note b{color:var(--ink); font-weight:700}
@@ -5856,6 +5857,12 @@ window.AmrCube = (function(){
    *
    * o = { line, cyMonths, pyMonths, filters, coverage } — the same arguments
    * query() takes, so a caller cannot hand the two different scopes.            */
+  /* The raw QlikView export spells its Month column "Sep", so this does too -
+     somebody reconciling the two should be matching values, not translating
+     them. Year-Month (2025-09) is the column to sort or pivot a timeline on;
+     this one is for reading. */
+  var EXP_MON = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   function exportRows(o){
     o = o || {};
     var line = (o.line === 'rmx') ? 'rmx' : 'agg';
@@ -6032,7 +6039,7 @@ window.AmrCube = (function(){
 
       r.push(Math.floor(a2.ym / 100) + '-' + ('0' + (a2.ym % 100)).slice(-2));
       r.push(Math.floor(a2.ym / 100));
-      r.push(a2.ym % 100);
+      r.push(EXP_MON[a2.ym % 100]);
       for (var w = 0; w < nd; w++) r.push(lbl(dims[w], c[w]));
       viaP.forEach(function(f){ r.push(viaPlant(f, pc)); });
       viaM.forEach(function(f){ r.push(viaMix(f, ic)); });
@@ -18718,7 +18725,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
          resolver the panels use. Not in the header bar - every control there
          costs width the bar has none of (see the AmrStamp note in A3). -->
     <div class="ov-export" id="ovExport">
-      <button class="ghost" id="expBtn">&#8615; Export rows</button>
+      <button class="dl" id="expBtn">&#8615; Export rows</button>
       <span class="ov-export-note" id="expNote"></span>
     </div>
   </div>
@@ -19072,8 +19079,8 @@ AMR.page('overview', {
 <h3>Exporting the rows</h3>
 <p><b>&#8615; Export rows</b>, under the controls, downloads a CSV of every row behind whatever you have selected &mdash; the same markets, cross-filters, Land&nbsp;/&nbsp;Docks refine and month window the panels are drawn from. One line per month per plant &times; material &times; customer combination, with all the raw columns, the looked-up ones (market, submarkets, revenue type) and both years side by side, so <b>Vol&nbsp;%</b>, <b>Rev&nbsp;%</b> and <b>ASP&nbsp;%&nbsp;inc</b> are on every line.</p>
 <p><b>PPI and CPI are not per-line numbers</b> and the file does not pretend they are: each line carries a <b>weight</b> and a <b>factor</b> instead, and the index for any slice is <b>SUM(factor) &divide; SUM(weight)</b>. Add that as a calculated field in your pivot and it matches this page exactly at any depth. Never average the &ldquo;pair ASP&nbsp;%&rdquo; columns &mdash; that is a different number and it is not PPI.</p>
-<p><b>Twelve months at most.</b> Each line compares its own month against the same month a year earlier, so the per-line figures are fine over any span &mdash; but the two indices pool, and pooling more than a year of prices into one index gives an average nobody charged. It is the same reason this page drops every ratio past twelve months. Drag the Months slider to twelve or fewer and the button comes back on; it says which it is when it is off.</p>
-<p>A line with no prior year leaves those cells <b>blank rather than zero</b>, so an absent comparison never reads as a &minus;100%. The first few lines of the file are a <b>#</b> header block recording the selection, the months, the coverage floors in force and where the rows came from &mdash; delete them before pivoting, or tell your tool to skip them.</p>
+<p><b>Twelve months at most</b>, which is why the button is not always there. Each line compares its own month against the same month a year earlier, so the per-line figures are fine over any span &mdash; but the two indices pool, and pooling more than a year of prices into one index gives an average nobody charged. It is the same reason this page drops every ratio past twelve months. Drag the Months slider to twelve or fewer and the button comes back.</p>
+<p>A line with no prior year leaves those cells <b>blank rather than zero</b>, so an absent comparison never reads as a &minus;100%. The <b>column headings are line 1</b> &mdash; nothing sits above them, so the file opens straight into a pivot. What it is (the selection, the months, the totals, and how many months had no prior year at all) is on the line beside the button when you download it, and the scope is in the filename.</p>
 <h3>Good to know</h3>
 <p>These are the same figures the full tools show — this page just brings the headlines together. For the full customer drill-down and slide exports, open the individual tools from the switcher (top-right). Numbers refresh when someone presses <b>&#8635; Update from source</b> on the Price &amp; Volume, RMX or Product Segment page.</p>`,
 
@@ -23646,26 +23653,25 @@ AMR.page('overview', {
       volPct:6, revPct:6, aspPct:6, ppiPairPct:6, cpiPairPct:6
     };
 
-    /* Can this selection be exported, and if not, what is the one sentence that
-       says why? Every branch is a real state of the page rather than a guard —
-       the button carries the reason as its own title, so nothing appears greyed
-       out with no explanation anywhere. */
+    /* Can this selection be exported? Every branch is a real state of the page,
+       and a false answer takes the whole control off the page rather than
+       greying it out — this page's own rule for something that cannot answer
+       for the current selection is that it is not there, and comes straight
+       back when the selection can answer it. */
     function exportScope(){
       var line = (STATE.tab === 'rmx') ? 'rmx' : 'agg';
       var C0 = cube();
-      if(!C0 || !C0.manifest(line) || !winReady())
-        return { ok:false, line:line, why:'The month history is still loading.' };
+      if(!C0 || !C0.manifest(line) || !winReady()) return { ok:false, line:line };
       var sp = winSpan();
-      if(!sp.length) return { ok:false, line:line, why:'No months are selected.' };
-      if(sp.length > EXPORT_MAX_MONTHS)
-        return { ok:false, line:line, span:sp.length,
-                 why:'Pick twelve months or fewer — this window is '+sp.length+'. Each line compares its own month against the same month a year before, but PPI and CPI pool across the whole file, and pooling more than a year of prices into one index is not a price anybody charged.' };
-      var cy = winCy(line);
-      if(!cy || !cy.length)
-        return { ok:false, line:line, why:'Waiting for these months and the year before them to finish loading.' };
+      if(!sp.length) return { ok:false, line:line };
+      /* Past twelve months the two indices would pool more than a year of
+         prices into one number, which is the same thing pyStale() refuses to
+         draw on the page itself. */
+      if(sp.length > EXPORT_MAX_MONTHS) return { ok:false, line:line, span:sp.length };
+      var cy = winCy(line);                       // null until the PY months land too
+      if(!cy || !cy.length) return { ok:false, line:line };
       var R = trendResolve(line, trendFilters(line));
-      if(!isAll() && !R.filters.market)
-        return { ok:false, line:line, why:'No market in this selection is in the month history yet.' };
+      if(!isAll() && !R.filters.market) return { ok:false, line:line };
       return { ok:true, line:line, cy:cy, py:cy.map(function(m){ return ymAdd(m,-12); }),
                filters:R.filters, dropped:R.dropped };
     }
@@ -23689,21 +23695,18 @@ AMR.page('overview', {
     }
 
     function syncExport(){
-      var btn = $('expBtn'), note = $('expNote');
-      if(!btn || !note) return;
+      var row = $('ovExport'), btn = $('expBtn'), note = $('expNote');
+      if(!row || !btn || !note) return;
       var sc = exportScope();
-      btn.disabled = !sc.ok;
-      btn.title = sc.ok
-        ? 'Download every row behind this selection — raw columns, looked-up columns, and both years side by side'
-        : sc.why;
-      /* The note is the SCOPE before a download and the RECONCILIATION after
+      row.hidden = !sc.ok;
+      if(!sc.ok) return;
+      btn.disabled = false;
+      /* The note is the SCOPE before a download and the file's own totals after
          one; a selection change puts it back to the scope, because a total from
          the previous selection sitting under a new one is the one thing this
          line must never do. */
-      note.className = 'ov-export-note' + (sc.ok ? '' : ' bad');
-      note.innerHTML = sc.ok
-        ? esc(exportScopeText())
-        : esc(sc.why);
+      note.className = 'ov-export-note';
+      note.innerHTML = esc(exportScopeText());
     }
 
     function csvCell(v){
@@ -23711,50 +23714,6 @@ AMR.page('overview', {
       var s = String(v);
       return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     }
-    function ymList(list){
-      if(!list.length) return '—';
-      return (list.length === 1) ? ymLong(list[0])
-                                 : (ymLong(list[0]) + ' – ' + ymLong(list[list.length-1]));
-    }
-
-    /* THE HEADER BLOCK IS NOT DECORATION. A spreadsheet outlives the page it
-       came off and the conversation that explained it, and somebody will
-       reconcile this against Qlik months from now. So the file says which
-       selection it is, which months, which coverage floors were in force, where
-       the rows came from and — the one line that decides whether the two index
-       columns are read correctly — how to turn them back into an index.
-       Every line is prefixed '#', and the column header is the first line
-       after the blank one. */
-    function exportHeaderBlock(sc, out){
-      var st = out.stats, cov = out.coverage || {};
-      var L = [];
-      L.push('# Amrize Commercial Suite — ' + (sc.line === 'rmx' ? 'Ready-Mix' : 'Aggregates') + ' row export');
-      L.push('# Selection: ' + exportScopeText());
-      L.push('# Months: ' + ymList(st.cyMonths) + '  (compared against ' + ymList(st.pyMonths) + ')');
-      if(st.pyMissing.length)
-        L.push('# No prior-year data exists for: ' + ymList(st.pyMissing)
-             + ' — those comparisons are blank because the months were never exported, not because they are zero.');
-      L.push('# Lines: ' + st.lines + '  (' + st.both + ' with both years, ' + st.cyOnly
-           + ' current year only, ' + st.pyOnly + ' prior year only)');
-      L.push('# One line per month per dimension tuple. A source row carries ONE year, so the two years of a tuple are two source rows joined here.');
-      L.push('# PPI and CPI are pooled indices, not line measures. For any slice: index = SUM(factor) / SUM(weight). Never average the pair % columns.');
-      L.push('# That holds for any grouping by plant, material or anything derived from them. Grouping by sold-to, customer, segment or month splits a pair and does not.');
-      L.push('# PPI: ' + st.ppi.covered + ' of ' + st.ppi.pairs + ' plant x material pairs covered'
-           + (st.ppi.index == null ? '' : ', index ' + (st.ppi.index * 100).toFixed(3) + '%'));
-      if(st.cpi)
-        L.push('# CPI: ' + st.cpi.covered + ' of ' + st.cpi.pairs + ' plant x sold-to x material pairs covered'
-             + (st.cpi.index == null ? '' : ', index ' + (st.cpi.index * 100).toFixed(3) + '%'));
-      else
-        L.push('# CPI: not reported — this line carries no sold-to.');
-      L.push('# Coverage floors in force: volume > ' + (cov.minVol || 0) + ', revenue > ' + (cov.minRev || 0)
-           + (cov.cpi ? ('; CPI also requires both years above $' + (cov.cpi.minAsp || 0) + ' per unit') : ''));
-      L.push('# Source: the Overview month cube. Lookups are resolved from the LIVE lookup tabs, so a lookup edit re-labels every year at once.');
-      L.push('# The fuel surcharge is the figure every page here shows — re-spread within its lookup key, Saskatchewan taken from the rates sheet — not the raw export column.');
-      L.push('# Generated: ' + new Date().toISOString());
-      L.push('');
-      return L;
-    }
-
     function exportCsv(){
       var sc = exportScope();
       if(!sc.ok) return;
@@ -23781,11 +23740,14 @@ AMR.page('overview', {
                                  : 'Nothing to export for this selection.';
           AMR.log('error', 'ov.exportCsv', 'export failed',
                   { line:sc.line, months:sc.cy.length, err:String(err && err.message || err) });
-          syncExport();
+          btn.disabled = false;
           return;
         }
-        var lines = exportHeaderBlock(sc, out);
-        lines.push(out.fields.map(function(f){ return csvCell(EXPORT_LABEL[f] || f); }).join(','));
+        /* THE COLUMN HEADER IS LINE 1 and there is nothing above it, so the
+           file opens straight into a pivot with no rows to skip. What the file
+           is - the selection, the months, the totals - is on the button's own
+           line and in the filename. */
+        var lines = [ out.fields.map(function(f){ return csvCell(EXPORT_LABEL[f] || f); }).join(',') ];
         var dp = out.fields.map(function(f){ return EXPORT_DP[f]; });
         for(var i = 0; i < out.rows.length; i++){
           var r = out.rows[i], cells = new Array(r.length);
@@ -23815,6 +23777,11 @@ AMR.page('overview', {
                      fMoneyFull(s.cyRev) + ' CY' ];
         if(s.ppi.index != null) bits.push('PPI ' + fPct(s.ppi.index));
         if(s.cpi && s.cpi.index != null) bits.push('CPI ' + fPct(s.cpi.index));
+        /* Absent is not late: the year before the oldest book was never
+           exported, so those comparisons are blank for a reason and saying so
+           is what stops it reading as a fault. */
+        if(s.pyMissing.length) bits.push('no prior year for ' + s.pyMissing.length
+                                         + (s.pyMissing.length === 1 ? ' month' : ' months'));
         AMR.log('info', 'ov.exportCsv', 'export built',
                 { line:sc.line, months:sc.cy.length, lines:s.lines,
                   bytes:blob.size, ms:Date.now() - t0 });
