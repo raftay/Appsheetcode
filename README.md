@@ -2125,16 +2125,18 @@ there with the input that moved.
   back exactly and `Σ factor ÷ Σ weight` is bit-for-bit `pool()`. The one thing a reader must
   not do is re-pool along a dimension that **splits** a pair — sold-to, customer, segment,
   month — because half a pair's weight against a whole pair's factor is not an index. Plant,
-  material and everything derived from either cannot split one. The file says so in its own
-  header block.
+  material and everything derived from either cannot split one.
 
   **Twelve months, and the cap is the point rather than a limit of the code.** Every line
   compares its own month against the same month a year earlier, so the per-line measures
   survive any span; the two indices do not, because they pool, and past twelve months a
   pooled ASP is not a price anyone charged. That is exactly what `pyStale()` already decides
   for the page, and an export is the worse place to get it wrong — a spreadsheet outlives the
-  sentence that explained it. So the button is off past twelve months and its `title` says
-  which span it is on.
+  sentence that explained it. So the control is **not there** past twelve months, which is this
+  page's own rule for anything that cannot answer for the current selection — no greyed-out
+  button, no box explaining itself, and it comes straight back when the slider does.
+  `.ov-export[hidden]` is load-bearing: the row is `display:flex`, which beats the `hidden`
+  attribute's own `display:none` without it.
 
   It reads `trendFilters()` / `trendResolve()` / `winCy()`, the same resolvers the cube-fed
   panels read, so there is no second copy of the filter rule to drift; a line with no prior
@@ -2142,6 +2144,16 @@ there with the input that moved.
   absent comparison into a −100%; and the note beside the button prints the file's own
   unrounded totals after a download, so the check that matters is one line rather than a
   pivot. Rounding is the FILE's and never the arithmetic's.
+
+  **The column headings are line 1 and nothing sits above them.** A `#` provenance block was
+  written there first and it cost the file its one job — Excel put thirteen comment rows in
+  column A and the headings landed on row 15, so nothing pivoted without deleting them by
+  hand. What the file is now travels beside the button (scope, months, line count, totals, and
+  how many months have no prior year at all) and in the filename.
+
+  **`.ghost` is the navy-header button and renders white-on-white on a light card.** The
+  export button is `.dl`, like every other download control here. Two comments in `app.html`
+  §P already warned about this and the button still shipped invisible once.
 
   Measured against the export workbook in the repo, Jan–Aug 2026 all markets: 28,571 lines
   out of 36,479 source rows — 7,908 with both years, 9,931 current-year only, 10,732
