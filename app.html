@@ -6732,6 +6732,14 @@ var AmrPvSlide = (function(){
       + body + '</div>';
   }
 
+  /* THE PLANT STATEMENT COUNTS THOUSANDS AND THE REPORT COUNTS ONES.
+     Total Sales Volume is kt on an EBITDA plant statement, and AmrKpi.plant
+     hands it over exactly as the workbook holds it; getReport's grand total is
+     plain tonnes. One divide puts the QlikView volume card on the same scale as
+     the SAP one beside it. The Overview's strip declares the same constant for
+     the same reason and carries the worked example - keep the two in step. */
+  var KPI_UNIT_SCALE = 1000;
+
   /* THE QLIKVIEW CARD READS A GRAND TOTAL, NOT THE FIRST TABLE'S.
      Every table getReport returns carries the SAME grand total - it is the
      market's, computed once and packed onto each one - so which table answers
@@ -6762,6 +6770,16 @@ var AmrPvSlide = (function(){
             : kpiCardShell('ASP ($/T)', 'QlikView', wait))
       + kpiCard('Total Sales \u2014 Product (K)', 'SAP / USGAAP', x.salesCy, x.salesPy, KPI_FMT.thou)
       + kpiCard('Total Volumes (K)', 'SAP / USGAAP', x.volCy, x.volPy, KPI_FMT.thou)
+      /* The QlikView volume, beside the SAP one and ON THE SAP ONE'S SCALE.
+         The plant statement counts THOUSANDS of tonnes and the report counts
+         plain tonnes - the Overview's strip carries the arithmetic that proves
+         it, above KPI_UNIT_SCALE - so the report's total is put on the
+         workbook's scale here and KPI_FMT.thou then divides by a further 1,000
+         for the "(K)" both cards wear. Without that division the two would sit
+         side by side three orders of magnitude apart. */
+      + (qv ? kpiCard('Total Volumes (K)', 'QlikView',
+                      qv.cyVol/KPI_UNIT_SCALE, qv.pyVol/KPI_UNIT_SCALE, KPI_FMT.thou)
+            : kpiCardShell('Total Volumes (K)', 'QlikView', wait))
       + ((ppi!=null)
           ? kpiCardShell('PPI \u2014 CY Revenue', 'Grand total',
               '<div style="margin:.5em 0 .2em;white-space:nowrap"><span style="font:800 2.2em Archivo,Arial;color:var(--blue-100)">'+(ppi*100).toFixed(1)+'</span><span style="font:700 1.2em Inter;color:var(--blue-100)"> %</span></div>'
@@ -9433,6 +9451,15 @@ var AmrSegSlide = (function(){
     c = c || {};
     return {
       data:      c.data || null,
+      /* THE PRODUCT CATEGORY TABLE'S OWN PAYLOAD, and deliberately not a field
+         of `data`. It comes from SB_getProductTable — the Slide Product tabs,
+         on the SEGMENT generation — while everything else here is the Ready-Mix
+         payload on the READY-MIX generation, and folding one into the other
+         would file both under a cache token that only tracks one of them.
+         null means the card is not offered AT ALL: the page passes it only when
+         the month on screen is the month those tabs are for, and the deck never
+         passes it. See tablesNow(). */
+      product:   c.product || null,
       market:    c.market || '',
       period:    c.period || 'MTD',
       /* {} = "no explicit choice", so every table falls back to its default */
@@ -9473,7 +9500,10 @@ var AmrSegSlide = (function(){
   var MARKET_LABEL = { '__ALL__':'Central Canada', HNS_SW:'HNS', Innocon:'Innocon',
                        Manitoba:'Manitoba', North:'North', Saskatchewan:'Saskatchewan' };
 
-  var EXPORT_DEFAULT_OFF = { 'seg:byType':1, 'seg:detail':1 };
+  /* 'seg:product' is off here and ON on the page. The deck never loads the
+     Slide Product tabs, so a deck row that inherited it ON would ask for a card
+     tablesNow() then removes — off is the honest default for this side. */
+  var EXPORT_DEFAULT_OFF = { 'seg:product':1, 'seg:byType':1, 'seg:detail':1 };
 
   var SEGKPI_FMT = {
     units:{ v:function(n){return (n==null?0:n).toLocaleString('en-CA',{minimumFractionDigits:2,maximumFractionDigits:2});},
@@ -9485,11 +9515,23 @@ var AmrSegSlide = (function(){
   var TABLES = [
     { key:'seg:segment', eb:'Main Raw Data',  title:'Segment',              cap:'Segment',
       build:function(d){ return segmentTable(d); } },
+    /* Reads CTX.product, not the payload it is handed: this one table is not
+       from the Ready-Mix workbook. */
+    { key:'seg:product', eb:'Slide Product',  title:'Product category',     cap:'Product category',
+      build:function(){ return productTable(CTX.product); } },
     { key:'seg:byType',  eb:'Summary',        title:'By extra type',        cap:'By extra type',
       build:function(d){ return extrasTypeTable(d); } },
     { key:'seg:detail',  eb:'EXTRAS LOOKUP',  title:'Extras & VAP detail',  cap:'Extras & VAP detail',
       build:function(d){ return extrasDetailTable(d); } }
   ];
+
+  /* WHICH CARDS EXIST FOR THIS CTX. Product Category exists only when its
+     payload does — the page withholds it under any month but the one the Slide
+     Product tabs are for, and the deck never has it. Every reader of TABLES
+     goes through here so no caller can offer a card there are no rows for. */
+  function tablesNow(){
+    return TABLES.filter(function(T){ return T.key !== 'seg:product' || !!CTX.product; });
+  }
 
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
@@ -9668,6 +9710,47 @@ var AmrSegSlide = (function(){
              groups:{ 2:'gV', 3:'gV', 4:'gV', 5:'gV', 6:'gV', 7:'gA', 8:'gA', 9:'gA', 10:'gB', 11:'gB', 12:'gB' } };
   }
 
+  /* ---- PRODUCT CATEGORY — the SECOND card on screen, defined last ----
+     THE OLD "Slide Product <Market> MTD / YTD" TABLE, BACK ON THE PAGE. It is
+     the one thing here that is NOT computed from the Ready-Mix raw tabs, and it
+     cannot be: QlikView hands those tabs over already summed to Type x
+     Category, and Main Raw Data carries no product-category column to rebuild
+     them from. So it is read as it always was - SB.getProductTable in
+     script.gs, which also merges the five market tabs for Central Canada on
+     volume-weighted sums, because there is no Central tab and never will be.
+
+     AND IT IS ONLY EVER LAST CLOSED MONTH'S. Those tabs have no month column at
+     all, so that is the only month they can be for; the page withholds the card
+     under any other month rather than print July's figures below an August
+     heading. That gate is productShown() on the page, and `product` being null
+     in the ctx here.
+
+     CM2 is the tab's own contribution margin per m3; the volume-weighted sums
+     are what make a merged market's ASP and CM2 the weighted ones rather than
+     an average of averages. */
+  function productTable(P){
+    if(!P || !P.ok || !P.types || !P.types.length) return null;
+    var header = ['Type','Product Category','CY Vol','CY Vol %','PY Vol','PY Vol %','\u0394 YOY %',
+                  'CY ASP','PY ASP','\u0394 ASP %','CY CM2','PY CM2','\u0394 CM2 %'];
+    function cells(type, r){
+      return [ type, r.label, fInt(r.cyVol), pct0(r.cyShare), fInt(r.pyVol), pct0(r.pyShare),
+               pct0(r.volPct), f$(r.aspCY), f$(r.aspPY), pct1(r.aspPct),
+               f$(r.cm2CY), f$(r.cm2PY), pct1(r.cm2Pct) ];
+    }
+    var rows = [];
+    /* Grand total first, exactly as the Segment table above does it - the two
+       are read together and a total that moves between them reads as a
+       different kind of number. */
+    if(P.total) rows.push({ total:true, grand:true, cells:cells('', P.total) });
+    P.types.forEach(function(T){
+      (T.rows||[]).forEach(function(r,i){ rows.push({ cells:cells(i===0?T.name:'', r) }); });
+      if(T.total) rows.push({ total:true, cells:cells('', T.total) });
+    });
+    return { header:header, rows:rows, leftCols:2, signed:[6,9,12],
+             groups:{ 2:'gV', 3:'gV', 4:'gV', 5:'gV', 6:'gV', 7:'gA', 8:'gA', 9:'gA',
+                      10:'gB', 11:'gB', 12:'gB' } };
+  }
+
   function segKpiExtract(market){
     if(!window.AmrKpi) return null;
     return AmrKpi.rmx(CTX.kpi.vals, market || CTX.market, CTX.period);
@@ -9743,7 +9826,7 @@ var AmrSegSlide = (function(){
      disagree with each other. ctx.tableOrder is how it says so; absent, this
      is exactly the filter it replaced. */
   function pickedTables(){
-    var on = TABLES.filter(function(T){ return isOn(T.key); });
+    var on = tablesNow().filter(function(T){ return isOn(T.key); });
     var want = CTX.tableOrder;
     if(!(want && want.length)) return on;
     var out = [], seen = {};
@@ -10023,8 +10106,9 @@ var AmrSegSlide = (function(){
     marketLabel: function(m){ return marketLabel(m); },
     tableHtml: function(key, ctx){
       return withCtx(ctx, function(){
-        for(var i=0;i<TABLES.length;i++){
-          if(TABLES[i].key === key) return TABLES[i].build(CTX.data);
+        var list = tablesNow();
+        for(var i=0;i<list.length;i++){
+          if(list[i].key === key) return list[i].build(CTX.data);
         }
         return null;
       });
@@ -10863,7 +10947,8 @@ var AmrRmxSlide = (function(){
       <div class="tag">Ready-Mix slide</div>
       <h2>Commercial Product Segment</h2>
       <p>Builds a finished 16:9 RMX commercial slide as a PNG, with adjustable blank bands for comments.
-         Reads the <code>Slide Segment / Product</code> tabs.</p>
+         Reads the <code>Main / Extra / Associate Raw Data</code> tabs, plus <code>Slide Product</code> for the
+         Product category table.</p>
       <span class="go">Open &rarr;</span>
     </a>
     <a class="land-card" data-page-link="fuelsurcharge" target="_top">
@@ -14437,7 +14522,19 @@ MB Submarket, plus Region&rarr;Country.<br>
     document.getElementById('tableMeta').textContent = (d.rowCount||0).toLocaleString('en-CA')+' lines';
     renderCharts(d);
     renderTables(d);
-    if(window.renderKpis) renderKpis();
+    /* NOT `if(window.renderKpis)`. On Page_PriceVolume.html every function was
+       declared at file scope, so that guard was a page function asking whether
+       it existed and the answer was always yes. In here the page is a module:
+       window.renderKpis is undefined, the guard never passed, and the KPI strip
+       was never redrawn when market data landed. Whenever the shared EBITDA
+       figures arrived FIRST - which is the common case, because they are read
+       from this device while getReport is still out - the strip was built with
+       no report behind it and the two QlikView cards printed "Load market data
+       to fill this card" and stayed that way. Touching the Region dropdown was
+       the only thing left that called this, which is exactly how it was
+       reported: reselect the region and the number appears. Same bug, same
+       cause and same fix as the paintImpact() one on the Ready-Mix page. */
+    renderKpis();
     if(STATE.view==='markets') setTimeout(renderSlidePreview, 0);
     if(!warmed){ warmed = true; setTimeout(warmCaches, 600); }
   }
@@ -14966,7 +15063,7 @@ MB Submarket, plus Region&rarr;Country.<br>
            p:function(n){return Math.round(n*100)+'%';} }
   };
 
-  /* the five cards as one html string ('' when no workbook / no usable tab) */
+  /* the six cards as one html string ('' when no workbook / no usable tab) */
   function kpiCardsHtml(){ return AmrPvSlide.kpiCardsHtml(pvCtx()); }
 
   function renderKpis(){
@@ -16762,7 +16859,8 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
   <button class="ghost" data-act="help" title="How to use this page">? Help</button>
   <button class="ghost" data-act="settings" title="Change the Google Sheet this app reads from">&#9881; Data sheet</button>
   <div class="spacer"></div>
-  <!-- the Ready-Mix raw tabs, not the old Slide Segment / Slide Product ones -->
+  <!-- the Ready-Mix raw tabs; the Slide Product tabs feed the one Product
+       category card, and nothing reads Slide Segment any more -->
   <button class="ghost" id="syncBtn" title="Re-read the Google Sheet and rebuild this page for every user">&#8635; Update from source</button>
   <button class="ghost primary" id="exportBtn">Download slide PNG</button>
 
@@ -16846,6 +16944,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
       <p class="hint" style="margin-bottom:6px">Tap the <b>?</b> for the exact column layout each tab needs:</p>
       <div class="hint" style="display:flex;flex-direction:column;gap:7px">
         <span><b>Main Raw Data</b> <button type="button" class="amr-qm" data-amr-hint="sb_main" title="Source layout for the segment table">?</button> <span style="color:var(--muted)">— the Segment table</span></span>
+        <span><b>Slide Product &lt;Market&gt; MTD / YTD</b> <span style="color:var(--muted)">— the Product category table, from the Product Segment workbook · previous month only</span></span>
         <span><b>Extra Raw Data</b> / <b>Associate Raw Data</b> <button type="button" class="amr-qm" data-amr-hint="sb_extras" title="Source layout for the Extras / VAP tables">?</button> <span style="color:var(--muted)">— the two Extras &amp; VAP tables</span></span>
       </div>
       <!-- NOTE — MONTH FORMAT.
@@ -16868,7 +16967,7 @@ set the <b>blank-space</b> bands, then <b>Download slide PNG</b> — or <b>Expan
 
     <div class="section-head">
       <h2>2 · Tables</h2>
-      <span class="meta">Tick a table to put it on the slide below · the first two are on by default</span>
+      <span class="meta">Tick a table to put it on the slide below · the Extras &amp; VAP detail table is the only one off by default</span>
     </div>
     <div class="tbl-stack" id="tablesHost"><div class="card"><div class="empty">Loading the Ready-Mix data…</div></div></div>
 
@@ -16926,12 +17025,18 @@ AMR.page('segment', {
      uploaded raw exports. No Chart.js — this page is tables and a KPI strip. */
   libs: ['html2canvas', 'xlsx'],
   help: `<h3>What this page does</h3>
-<p>Turns the Ready-Mix figures into a finished 16:9 commercial slide you can download as a PNG. It reads the
-<b>same raw tabs as RMX &middot; Price &amp; Volume</b> &mdash; Main, Extra and Associate Raw Data &mdash; so the slide
-and that page can never disagree, and there are no Slide Segment / Slide Product tabs to export any more.</p>
-<h3>The three tables</h3>
+<p>Turns the Ready-Mix figures into a finished 16:9 commercial slide you can download as a PNG. The Segment and
+Extras tables read the <b>same raw tabs as RMX &middot; Price &amp; Volume</b> &mdash; Main, Extra and Associate Raw
+Data &mdash; so the slide and that page can never disagree. The <b>Product category</b> table is the exception: it is
+the old pre-summed <b>Slide Product</b> export, which is why it only appears for the previous month.</p>
+<h3>The tables</h3>
 <p><b>Segment</b> &mdash; Major Project Segment: volume, mix share, YoY and <b>ASP Inc VA</b>, which is
 (base concrete revenue + Extras + VAP) &divide; that segment&rsquo;s concrete m&sup3;.<br>
+<b>Product category</b> &mdash; the old <b>Slide Product</b> table: VAP and Conventional volume, ASP and CM2 by
+product category. It is the one table here that is <b>not</b> computed from the raw tabs &mdash; it is read from the
+<code>Slide Product &lt;Market&gt; MTD / YTD</code> tabs, which QlikView exports already summed. Those tabs carry no
+month, so they can only be the <b>last closed month</b>: the card appears for that report month and no other, and
+Central Canada is the five market tabs added together.<br>
 <b>By extra type</b> &mdash; the EXTRAS and VAP streams by <b>Type</b>, priced on total concrete m&sup3; so the rows add to the Total.<br>
 <b>Extras &amp; VAP detail</b> &mdash; the same Types priced on <b>applied</b> m&sup3;, with volume applied and penetration rate next to it.
 Its totals show <b>revenue only</b>: applied volume can&rsquo;t be added across types, because the same m&sup3; is counted once per extra it carries.</p>
@@ -16941,12 +17046,14 @@ Its totals show <b>revenue only</b>: applied volume can&rsquo;t be added across 
 2. Pick the <b>Market</b>. 3. Pick the <b>Report month</b> &mdash; it now slices the data, and only offers months the workbook holds.
 4. Pick the <b>Period</b>: <b>MTD</b> is that month alone, <b>YTD</b> is January through it &mdash; each makes its own slide, so download
 one, switch the period, and download the other. 5. Read the tables in <b>2 &middot; Tables</b> and <b>tick the ones you want on the slide</b> &mdash;
-Segment and By extra type start ticked, the detail table starts off; the preview underneath follows your ticks straight away.
+Segment, Product category and By extra type start ticked, the detail table starts off; the preview underneath follows your ticks straight away.
 6. Press <b>&#8635; Update from source</b> after the sheet is updated. 7. Adjust the <b>blank-space</b> sliders for comment bands.
 8. <b>Download slide PNG</b>, or <b>Expand slide</b> to show it full screen without downloading anything.</p>
 <h3>Tabs it reads</h3>
 <p><code>Main Raw Data</code>, <code>Extra Raw Data</code>, <code>Associate Raw Data</code>, plus the
-<code>PLANT LOOKUP</code>, <code>PRODUCT MASTER</code> and <code>EXTRAS LOOKUP</code> tabs. To point this page at a
+<code>PLANT LOOKUP</code>, <code>PRODUCT MASTER</code> and <code>EXTRAS LOOKUP</code> tabs &mdash; and, for the
+Product category table alone, the <code>Slide Product &lt;Market&gt; MTD / YTD</code> tabs of the Product Segment
+workbook. To point this page at a
 different workbook, use &#9881; <b>Data sheet</b> &mdash; it is the same setting the Ready-Mix page uses, so changing it
 changes both.</p>
 <h3>Month format</h3>
@@ -16974,19 +17081,31 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
    * ---------------------------------------------------------------------------
    * This page used to read two pre-summed QlikView tabs of its own — "Slide
    * Segment MTD / YTD" for the segment table and "Slide Product <Market> MTD /
-   * YTD" for the product table. It doesn't any more. Everything on the slide is
-   * computed from the READY-MIX RAW TABS (Main / Extra / Associate Raw Data),
-   * through RMX_getSlideTables in RMX_Backend.gs — one call per market + period +
-   * month, returning the segment table AND both Extras tables together.
+   * YTD" for the product table. THE SEGMENT HALF OF THAT IS GONE: the segment
+   * table and both Extras tables are computed from the READY-MIX RAW TABS (Main
+   * / Extra / Associate Raw Data), through RMX_getSlideTables in script.gs —
+   * one call per market + period + month, returning all three together.
    *
    * What that buys: the slide and the RMX · Price & Volume page can no longer
    * disagree, the market list is the real PLANT LOOKUP one, the Report month
-   * actually slices the data, and there are two fewer QlikView exports to run
+   * actually slices the data, and there is one fewer QlikView export to run
    * every month.
    *
-   * THE PRODUCT TABLE IS GONE. In its place are the two Extras tables the RMX
-   * page carries: BY EXTRA TYPE and EXTRAS & VAP DETAIL. Both group on the
-   * EXTRAS LOOKUP category — the one classification both tables read.
+   * THE PRODUCT TABLE IS BACK, AND IT IS STILL THE OLD SOURCE. It cannot be
+   * anything else: Main Raw Data carries no product-category column, so there is
+   * nothing to recompute it from. It comes from the "Slide Product <Market> MTD
+   * / YTD" tabs through SB_getProductTable — a SECOND call, on the SEGMENT
+   * generation rather than the Ready-Mix one, because those two workbooks are
+   * synced separately and one cache token cannot honestly track both.
+   *
+   * AND THOSE TABS ARE ALWAYS LAST CLOSED MONTH'S. They arrive already summed
+   * and already split into MTD / YTD, with no month column at all, so the card
+   * is offered for that one report month and withheld under every other rather
+   * than printing July's figures below an August heading. See productShown().
+   *
+   * Beside it are the two Extras tables the RMX page carries: BY EXTRA TYPE and
+   * EXTRAS & VAP DETAIL. Both group on the EXTRAS LOOKUP category — the one
+   * classification both tables read.
    *
    * The 1600x900 slide frame, the comment-band sliders and the PNG export all
    * live in the shared SlideExport.html (AmrSlide). This page only builds the
@@ -17030,6 +17149,25 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
 
   var DATA  = null;   // the payload the tables are drawn from
   var CACHE = {};     // in-memory, per market|period|month
+
+  /* THE PRODUCT CATEGORY TABLE'S OWN PAYLOAD, AND ITS OWN CALL.
+     -------------------------------------------------------------------------
+     It is the one table here that does not come out of the Ready-Mix workbook:
+     it is read off the "Slide Product <Market> MTD / YTD" tabs, through
+     SB_getProductTable, and is version-cached on the SEGMENT generation rather
+     than the Ready-Mix one every other payload on this page rides. That is the
+     whole reason it is a second call and not another field of the first: one
+     cache token cannot honestly track two workbooks, and the device cache this
+     page keeps is stamped with the Ready-Mix pair.
+     PRODUCT is what is on screen; PCACHE is per market|period, because those
+     tabs carry no month to key on. */
+  var PRODUCT = null;
+  var PCACHE  = {};
+  /* One-shot: "Update from source" sets it, the next fetch spends it. The
+     segment generation is the workbook's modified time and that is memoised
+     server-side, so without this the button can re-read three tables and quietly
+     hand back the fourth from before the sync. */
+  var PFORCE  = false;
 
   /* ======================= HELPERS ======================= */
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){
@@ -17081,16 +17219,36 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
              groups:{ 6:'gB', 7:'gB', 8:'gB' } };
   }
 
-  /* The three on-page card headings, and the keys the tick boxes are stored
-     under. Order is the order they appear, on the page AND on the slide. */
+  /* The on-page card headings, and the keys the tick boxes are stored under.
+     Order is the order they appear, on the page AND on the slide.
+
+     PRODUCT CATEGORY IS CONDITIONAL, and it is the only one that is: `when`
+     decides whether the card exists at all, not whether it has rows. It is off
+     the Slide Product tabs, which are always last closed month's, so under any
+     other report month there is no card, no tick box and nothing on the slide -
+     see productShown(). Everything without a `when` is always offered. */
   var TABLES = [
     { key:'seg:segment', eb:'Main Raw Data',  title:'Segment',              cap:'Segment',
       build:function(d){ return segmentTable(d); } },
+    { key:'seg:product', eb:'Slide Product',  title:'Product category',     cap:'Product category',
+      build:function(){ return productTable(PRODUCT); }, when:productShown,
+      /* A ROLL-UP THAT IS SHORT A TAB MUST SAY SO. Central Canada is the five
+         market tabs added together; a market whose tab has not been exported
+         yet is simply absent from the total, and nothing in the figures would
+         show it. `missing` is the backend's list of exactly those. */
+      note:function(){
+        var m = (PRODUCT && PRODUCT.missing) || [];
+        if(!m.length) return '';
+        return 'No <b>Slide Product</b> tab for ' + esc(m.join(', '))
+             + ' — ' + (m.length>1?'those markets are':'that market is')
+             + ' not in these figures.';
+      } },
     { key:'seg:byType',  eb:'Summary',        title:'By extra type',        cap:'By extra type',
       build:function(d){ return extrasTypeTable(d); } },
     { key:'seg:detail',  eb:'EXTRAS LOOKUP',  title:'Extras & VAP detail',  cap:'Extras & VAP detail',
       build:function(d){ return extrasDetailTable(d); } }
   ];
+  function tablesNow(){ return TABLES.filter(function(T){ return !T.when || T.when(); }); }
 
   /* ---- 2. BY EXTRA TYPE ----
      The EXTRAS and VAP streams, each with its own subtotal, then a grand total.
@@ -17157,6 +17315,93 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
     block(e.vap,    'VAP');
     return { header:header, rows:rows, leftCols:2, signed:[6,9,12],
              groups:{ 2:'gV', 3:'gV', 4:'gV', 5:'gV', 6:'gV', 7:'gA', 8:'gA', 9:'gA', 10:'gB', 11:'gB', 12:'gB' } };
+  }
+
+  /* ---- WHEN THE PRODUCT CATEGORY CARD EXISTS ----
+     ONLY FOR THE PREVIOUS CALENDAR MONTH. The Slide Product tabs arrive from
+     QlikView already summed and already split into MTD and YTD, with no month
+     column on them at all, so the only month they can be for is the last closed
+     one - and in August that is July. Showing them under any other report month
+     puts July's figures beneath an August heading, which is the specific-looking
+     kind of wrong, so the card is not offered at all instead.
+
+     TWO CHECKS, AND THEY ARE NOT THE SAME ONE TWICE. prevCalendarMonth() is the
+     browser's clock and exists only so a month that cannot possibly match never
+     costs a round trip; monthIdx on the payload is the SERVER's answer (the
+     script timezone's last closed month, the same rule ovSegMonth_ and
+     reportMonth_ follow) and is what actually decides. A device whose clock has
+     rolled over before the script's cannot draw the card early. */
+  function prevCalendarMonth(){ var m=(new Date()).getMonth(); return m ? m : 12; }
+  function productMonthCouldFit(){ return !!STATE.month && STATE.month === prevCalendarMonth(); }
+  function productShown(){
+    return !!(PRODUCT && PRODUCT.ok && STATE.month && PRODUCT.monthIdx === STATE.month);
+  }
+
+  /* Fetch this market + period's Slide Product rows, once. Called from
+     applyData - i.e. after the month picker has been pinned - and never from
+     renderPreview, which is what the success handler calls back into. */
+  function loadProduct(){
+    if(!productMonthCouldFit()){ PRODUCT=null; return; }
+    var pk = STATE.market+'|'+STATE.period;
+    if(!PFORCE && PCACHE[pk] !== undefined){ PRODUCT = PCACHE[pk]; return; }
+    PRODUCT = null;
+    if(!IS_LIVE) return;
+    var force = PFORCE; PFORCE = false;
+    google.script.run
+      .withSuccessHandler(function(res){
+        PCACHE[pk] = res || null;
+        /* the picker may have moved on while this was out */
+        if(pk !== STATE.market+'|'+STATE.period) return;
+        PRODUCT = PCACHE[pk];
+        renderPreview();
+      })
+      /* SILENT: a Product Segment sheet that is unset or missing a market's tab
+         is a card that does not appear, not an error over three tables that
+         loaded perfectly well. `missing` on the payload says which markets had
+         no tab; the card's own caption is where that is worth reading. */
+      .withFailureHandler(function(){ PCACHE[pk] = null; })
+      .SB_getProductTable({ market:STATE.market, period:STATE.period, force:force });
+  }
+
+  /* ---- PRODUCT CATEGORY — the SECOND card on screen, defined last ----
+     THE OLD "Slide Product <Market> MTD / YTD" TABLE, BACK ON THE PAGE. It is
+     the one thing here that is NOT computed from the Ready-Mix raw tabs, and it
+     cannot be: QlikView hands those tabs over already summed to Type x
+     Category, and Main Raw Data carries no product-category column to rebuild
+     them from. So it is read as it always was - SB.getProductTable in
+     script.gs, which also merges the five market tabs for Central Canada on
+     volume-weighted sums, because there is no Central tab and never will be.
+
+     AND IT IS ONLY EVER LAST CLOSED MONTH'S. Those tabs have no month column at
+     all, so that is the only month they can be for; the page withholds the card
+     under any other month rather than print July's figures below an August
+     heading. That gate is productShown() on the page, and `product` being null
+     in the ctx here.
+
+     CM2 is the tab's own contribution margin per m3; the volume-weighted sums
+     are what make a merged market's ASP and CM2 the weighted ones rather than
+     an average of averages. */
+  function productTable(P){
+    if(!P || !P.ok || !P.types || !P.types.length) return null;
+    var header = ['Type','Product Category','CY Vol','CY Vol %','PY Vol','PY Vol %','\u0394 YOY %',
+                  'CY ASP','PY ASP','\u0394 ASP %','CY CM2','PY CM2','\u0394 CM2 %'];
+    function cells(type, r){
+      return [ type, r.label, fInt(r.cyVol), pct0(r.cyShare), fInt(r.pyVol), pct0(r.pyShare),
+               pct0(r.volPct), f$(r.aspCY), f$(r.aspPY), pct1(r.aspPct),
+               f$(r.cm2CY), f$(r.cm2PY), pct1(r.cm2Pct) ];
+    }
+    var rows = [];
+    /* Grand total first, exactly as the Segment table above does it - the two
+       are read together and a total that moves between them reads as a
+       different kind of number. */
+    if(P.total) rows.push({ total:true, grand:true, cells:cells('', P.total) });
+    P.types.forEach(function(T){
+      (T.rows||[]).forEach(function(r,i){ rows.push({ cells:cells(i===0?T.name:'', r) }); });
+      if(T.total) rows.push({ total:true, cells:cells('', T.total) });
+    });
+    return { header:header, rows:rows, leftCols:2, signed:[6,9,12],
+             groups:{ 2:'gV', 3:'gV', 4:'gV', 5:'gV', 6:'gV', 7:'gA', 8:'gA', 9:'gA',
+                      10:'gB', 11:'gB', 12:'gB' } };
   }
 
   /* ======================= THE RENDERER =======================
@@ -17286,8 +17531,12 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
       market: STATE.market,
       period: STATE.period,
       exportSel: { 'seg:segment': isOn('seg:segment'),
+                   'seg:product': isOn('seg:product'),
                    'seg:byType':  isOn('seg:byType'),
                    'seg:detail':  isOn('seg:detail') },
+      /* null under every month but the Slide Product tabs' own, which is how
+         the module drops the card from the slide as well as from the page. */
+      product: productShown() ? PRODUCT : null,
       kpi: { vals: SEGKPI.vals, sheet:'', index:{}, sheets:[], map:{} }
     };
   }
@@ -17403,12 +17652,14 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
     var host=document.getElementById('tablesHost'); if(!host) return;
     if(!DATA){ host.innerHTML='<div class="card"><div class="empty">Loading the Ready-Mix data…</div></div>'; return; }
     var ml=marketLabel(STATE.market);
-    host.innerHTML = TABLES.map(function(T){
+    host.innerHTML = tablesNow().map(function(T){
       var t=null; try{ t=T.build(DATA); }catch(e){ t=null; }
+      var note = T.note ? T.note() : '';
       return '<div class="card">'
         +'<div class="card-head">'+cbHtml(T.key)
         +'<div><span class="eb">'+esc(T.eb)+'</span>'
         +'<h3>'+esc(T.title)+' — '+esc(ml)+' ('+esc(STATE.period)+')</h3></div></div>'
+        + (note ? '<p class="hint" style="padding:0 16px 8px;margin:0">'+note+'</p>' : '')
         + (t ? renderPageTable(t)
              : '<div class="empty">No data for this market and period.</div>')
         +'</div>';
@@ -17483,7 +17734,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
      it only remounts when the value actually needs to change. */
   function syncWs(){
     if(WS.touched || !document.getElementById('sbWs')) return;
-    var n = TABLES.filter(function(T){ return isOn(T.key); }).length;
+    var n = tablesNow().filter(function(T){ return isOn(T.key); }).length;
     var want = segKpiCardsHtml() ? WS_TOP.withKpi : (WS_TOP.withoutKpi[n] || 60);
     if(want === WS.top) return;
     WS.top = want;
@@ -17523,11 +17774,17 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
    * markets and periods is instant once they have been seen.
    *
    * THE DEVICE CACHE IS GATED ON THE READY-MIX VERSION, not this page's own.
-   * AmrCache.boot() would ask for the 'segment' data version — the version of the
-   * Product Segment tabs this page no longer reads. The Ready-Mix generation and
-   * build stamp come back with every payload instead, exactly as the RMX page
-   * does it, so a re-sync or a backend change clears this device on its next
-   * visit and a stale slide can't survive one.
+   * AmrCache.boot() would ask for the 'segment' data version — which covers the
+   * Slide Product tabs behind the Product category card and NOTHING ELSE on this
+   * page. The Ready-Mix generation and build stamp come back with every payload
+   * instead, exactly as the RMX page does it, so a re-sync or a backend change
+   * clears this device on its next visit and a stale slide can't survive one.
+   *
+   * WHICH IS WHY THE PRODUCT CATEGORY ROWS ARE NOT IN THIS STORE AT ALL. They
+   * are version-cached on the SERVER, on the segment generation (see
+   * SB_getProductTable), and held in memory here for the session only — filing
+   * them on the device under a Ready-Mix token would mean a SEG sync could not
+   * clear them.
    */
   function cacheToken_(d){
     return String((d && d.generation != null) ? d.generation : '')
@@ -17601,8 +17858,10 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
      alternative is throwing away a page that is already usable because one small
      call did not come back, and the next open asks again. Note what this page
      does NOT have: AmrFresh is never started here, because it would watch
-     getDataVersion('segment') - the Product Segment tabs this page stopped reading
-     - so there is no background poll to fall back on. The button is. */
+     getDataVersion('segment') - which now covers ONE of this page's four tables
+     (Product category, off the Slide Product tabs) and none of the other three.
+     A poll on the wrong generation is worse than no poll, so there is no
+     background poll to fall back on. The button is; it clears PCACHE too. */
   function bootLoad(){
     var st=document.getElementById('loadStat');
     if(!IS_LIVE){ setStat(st,false,'This page only reads data inside the live Apps Script web app.'); return; }
@@ -17756,6 +18015,10 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
         +' \u00B7 '+segN+' segments \u00B7 '+exN+' extras / '+vpN+' VAP types'
         +(STATE.upload?' \u00B7 from your uploaded files':''));
     }
+    /* AFTER the month has been pinned above, and before the render that draws
+       the card: the gate is a month comparison and there is no month to compare
+       until d.month has landed. */
+    loadProduct();
     autoTitle(); autoSub();
     renderPreview();
   }
@@ -17779,6 +18042,10 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
     var btn=document.getElementById('syncBtn');
     showLoading('Re-reading the Google Sheet');   // the same one screen, not a second
     CACHE={};
+    /* The Slide Product tabs are on their own generation, so the server answer
+       self-invalidates - but this device's copy of it does not, and "Update from
+       source" has to mean the whole page. */
+    PCACHE={}; PRODUCT=null; PFORCE=true;
     STATE.titleDirty=false; STATE.month=0;
     google.script.run
       .withSuccessHandler(function(res){
@@ -18156,9 +18423,10 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
     </div>
 
     <!-- Market summary (Aggregates) — one row per market with its submarkets
-         underneath, for whatever Period is on. It sits ABOVE Month by month
-         because it is the same numbers the strip above reports, opened out by
-         market: the shape of the period before its shape over time. -->
+         underneath, for whatever Period is on. It leads the tab because it is
+         the same numbers the strip above reports, opened out by market: the
+         shape of the period before its shape over time. The SAP / USGAAP KPI
+         card follows it, and the charts follow that. -->
     <div class="ov-panel" id="colMktSum">
       <div class="ov-phead">
         <div class="ph-t">
@@ -18169,23 +18437,13 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
       <div id="mktSumBody"><div class="ov-mini">Loading…</div></div>
     </div>
 
-    <!-- Month by month (Aggregates) — sits directly under the KPIs; the window
-         is set by the Months slider in the top controls. -->
-    <div class="ov-panel" id="colAggTrend">
-      <div class="ov-phead">
-        <div class="ph-t">
-          <h3>Month by month</h3>
-          <p class="sub" id="aggTrendSub">Volume, ASP and PPI by month, each month against the same month last year.</p>
-        </div>
-        <div class="seg pills" id="aggGrainSeg" role="group" aria-label="Trend grain">
-          <button data-grain="M" aria-pressed="true">Month</button>
-          <button data-grain="Q" aria-pressed="false">Quarter</button>
-        </div>
-      </div>
-      <div id="aggTrendBody"><div class="ov-mini">Loading…</div></div>
-    </div>
-
-    <!-- SAP / USGAAP KPI cards from the uploaded EBITDA workbook (Aggregates statements) -->
+    <!-- SAP / USGAAP KPI cards from the uploaded EBITDA workbook (Aggregates
+         statements). It sits between the Market summary and the charts on
+         purpose: the summary is the selection opened out by market, this is the
+         same closed month as the statement reports it, and everything below is
+         the breakdown of that. It only appears on a Prev-month pick — see
+         renderAggKpis — so the two panels either side of it are what the tab
+         looks like the rest of the time. -->
     <div class="ov-panel" id="colAggKpi">
       <div class="ov-kpihead">
         <div>
@@ -18198,6 +18456,22 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
         </div>
       </div>
       <div id="aggKpiBody"></div>
+    </div>
+
+    <!-- Month by month (Aggregates) — under the Market summary and the KPI
+         strip; the window is set by the Months slider in the top controls. -->
+    <div class="ov-panel" id="colAggTrend">
+      <div class="ov-phead">
+        <div class="ph-t">
+          <h3>Month by month</h3>
+          <p class="sub" id="aggTrendSub">Volume, ASP and PPI by month, each month against the same month last year.</p>
+        </div>
+        <div class="seg pills" id="aggGrainSeg" role="group" aria-label="Trend grain">
+          <button data-grain="M" aria-pressed="true">Month</button>
+          <button data-grain="Q" aria-pressed="false">Quarter</button>
+        </div>
+      </div>
+      <div id="aggTrendBody"><div class="ov-mini">Loading…</div></div>
     </div>
 
     <div class="ov-panel" id="colAgg">
@@ -18316,6 +18590,20 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
       <div id="rmxMktSumBody"><div class="ov-mini">Loading…</div></div>
     </div>
 
+    <!-- SAP / USGAAP KPI cards from the uploaded EBITDA workbook (RMX Summary
+         blocks). Same position as the Aggregates tab's, for the same reason —
+         these two tabs are the same screen on different numbers, so a panel
+         that moves on one moves on both. -->
+    <div class="ov-panel" id="colRmxKpi">
+      <div class="ov-kpihead">
+        <div>
+          <h3>KPIs — SAP / USGAAP</h3>
+          <p class="sub" id="rmxKpiMeta">From the RMX Summary tab of the EBITDA workbook · Ready-Mix (m³)</p>
+        </div>
+      </div>
+      <div id="rmxKpiBody"></div>
+    </div>
+
     <!-- Month by month (Ready-Mix) — same renderer as the Aggregates tab, plus
          the Extras / VAP build-up wherever the live cross-report covers the
          month. Window comes from the Months slider in the top controls. -->
@@ -18331,17 +18619,6 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
         </div>
       </div>
       <div id="rmxTrendBody"><div class="ov-mini">Loading…</div></div>
-    </div>
-
-    <!-- SAP / USGAAP KPI cards from the uploaded EBITDA workbook (RMX Summary blocks) -->
-    <div class="ov-panel" id="colRmxKpi">
-      <div class="ov-kpihead">
-        <div>
-          <h3>KPIs — SAP / USGAAP</h3>
-          <p class="sub" id="rmxKpiMeta">From the RMX Summary tab of the EBITDA workbook · Ready-Mix (m³)</p>
-        </div>
-      </div>
-      <div id="rmxKpiBody"></div>
     </div>
 
     <div class="ov-panel" id="colRmx">
@@ -18764,8 +19041,8 @@ AMR.page('overview', {
     };
     /* the cards on each tab, so a repaint can put everything back before the
        painters decide again what has nothing to show */
-    var AGG_PANELS = ['colMktSum','colAggTrend','colAggKpi','colAgg','colDims','colBridge','colExplore','colCust','colFsc','colFscCust'];
-    var RMX_PANELS = ['colRmxMktSum','colRmxTrend','colRmxKpi','colRmx','colRmxDims','colProdCat','colRmxAsp','colRmxFuel','colExtras'];
+    var AGG_PANELS = ['colMktSum','colAggKpi','colAggTrend','colAgg','colDims','colBridge','colExplore','colCust','colFsc','colFscCust'];
+    var RMX_PANELS = ['colRmxMktSum','colRmxKpi','colRmxTrend','colRmx','colRmxDims','colProdCat','colRmxAsp','colRmxFuel','colExtras'];
 
     function panelShow(colId, on){
       var p=$(colId); if(!p) return;
@@ -21357,6 +21634,10 @@ AMR.page('overview', {
     });
 
     /* ===================== RMX: PRODUCT CATEGORY ===================== */
+    /* The same reading order the Product Segment page's Product category table
+       uses — OVPROD_TYPE_ORDER / OVPROD_CAT_ORDER in script.gs, which sorts
+       server-side because that page is handed a finished table while this panel
+       merges its markets here. Two readers, one order: change both. */
     var TYPE_ORDER=['vap','conventional'];
     var PROD_ORDER=['performance','decorative','sustainable others','applications','special properties',
                     'general purpose','prescribed','no category'];
