@@ -14942,7 +14942,7 @@ MB Submarket, plus Region&rarr;Country.<br>
              cust:STATE.cust, custSecondary:STATE.custSecondary,
              custSort:STATE.custSort, custDir:STATE.custDir,
              custTopN:STATE.custTopN, custSearch:STATE.custSearch,
-             collapsed:STATE.collapsed, kpi:KPI };
+             collapsed:STATE.collapsed, kpi:kpiCtx() };
   }
   function tableInnerHtml(tb){ return AmrPvSlide.tableInnerHtml(tb); }
 
@@ -15318,9 +15318,28 @@ MB Submarket, plus Region&rarr;Country.<br>
 
   function kpiLabel(){ return (KPI.sheet || '').trim(); }
 
-  /* The closed month, spelled for the strip's meta line. */
-  function kpiMonthLabel(){
-    return (window.AmrKpi && AmrKpi.closedLabel) ? AmrKpi.closedLabel() : '';
+  /* THE KPI STRIP IS THE CLOSED MONTH'S OR IT IS NOT THERE.
+     -------------------------------------------------------------------------
+     The EBITDA workbook is a closed-month statement - this calendar month minus
+     one - and nothing inside it says so, so a strip drawn beside a Report month
+     that is NOT that month puts one month's figures under another month's
+     heading. The Overview has always answered this by hiding the cards outright
+     on any pick but its Prev-month pair; this is the same answer on the page
+     that uploads the workbook, through the ctx switch the slide builder already
+     has (CTX.kpi.off), so the on-page strip and the slide's own strip go
+     together and neither can be exported alone.
+     A month that is not resolved yet (0, before the first payload lands) is not
+     a disagreement - the server's own default IS the closed month. */
+  function kpiOnClosedMonth(){
+    if(!(window.AmrKpi && AmrKpi.closedMonth)) return true;
+    var m = STATE.month || STATE.latestMonth || 0;
+    return !m || m === AmrKpi.closedMonth();
+  }
+  /* KPI plus that switch. A copy rather than the object itself: `off` is a
+     property of this render, not of the page's workbook state. */
+  function kpiCtx(){
+    return { vals:KPI.vals, sheet:KPI.sheet, sheets:KPI.sheets, index:KPI.index,
+             names:KPI.names, map:KPI.map, off: !kpiOnClosedMonth() };
   }
 
   /* One mapping slot per page view (filter field + value). Land / Docks add
@@ -15404,7 +15423,7 @@ MB Submarket, plus Region&rarr;Country.<br>
     if(!sec || !strip) return;
     /* the Region picker follows the same rule as the section */
     var field=document.getElementById('kpiSheetField');
-    if(field) field.style.display = (!kpiMissingBook() && KPI.sheets.length) ? '' : 'none';
+    if(field) field.style.display = (kpiOnClosedMonth() && !kpiMissingBook() && KPI.sheets.length) ? '' : 'none';
     var html=kpiCardsHtml();
     if(!html){ sec.style.display='none'; return; }
     sec.style.display='';
@@ -15415,12 +15434,7 @@ MB Submarket, plus Region&rarr;Country.<br>
     strip.innerHTML = AmrKpi.stripHtml(html);
     AmrKpi.fitStrip(strip.firstChild);
     var m=document.getElementById('kpiMeta');
-    /* THE STRIP NAMES ITS OWN MONTH. It is the closed month whatever the
-       Report-month picker above it says, and reading "month to date" beside a
-       page sitting on the running month is exactly how these cards got taken
-       for this month's. */
-    if(m) m.textContent = kpiLabel()+' \u00B7 '+kpiMonthLabel()
-        +' \u00B7 '+(STATE.period==='YTD'?'year to date':'month to date');
+    if(m) m.textContent = kpiLabel()+'\u00B7  '+(STATE.period==='YTD'?'year to date':'month to date');
   }
 
   /* The strip, on its own, as a picture — for pasting into an email or a deck.
@@ -17883,8 +17897,26 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
       /* null under every month but the Slide Product tabs' own, which is how
          the module drops the card from the slide as well as from the page. */
       product: productShown() ? PRODUCT : null,
-      kpi: { vals: SEGKPI.vals, sheet:'', index:{}, sheets:[], map:{} }
+      /* THE KPI STRIP IS THE CLOSED MONTH'S OR IT IS NOT THERE - see
+         segKpiOnClosedMonth below. `off` is the switch AmrSegSlide already has,
+         so the page's strip and the slide's own go together. */
+      kpi: { vals: SEGKPI.vals, sheet:'', index:{}, sheets:[], map:{},
+             off: !segKpiOnClosedMonth() }
     };
+  }
+
+  /* THE RMX SUMMARY BLOCKS ARE A CLOSED-MONTH STATEMENT - this calendar month
+     minus one - and nothing inside the workbook says so, so the cards drawn
+     beside any OTHER Report month are one month's figures under another
+     month's heading. They are not shown there at all, which is the answer the
+     Overview has always given (its Prev-month pair is the only pick its SAP /
+     USGAAP panels appear on). A month that is not resolved yet (0, before the
+     first payload lands) is not a disagreement - the backend's own default IS
+     the closed month. */
+  function segKpiOnClosedMonth(){
+    if(!(window.AmrKpi && AmrKpi.closedMonth)) return true;
+    var m = STATE.month || STATE.latestMonth || 0;
+    return !m || m === AmrKpi.closedMonth();
   }
   function segKpiCardsHtml(){ return AmrSegSlide.kpiCardsHtml(segCtx()); }
   /* on-page strip above the preview — mirrors the Price & Volume KPI section */
@@ -17902,14 +17934,7 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
     var meta=document.getElementById('segKpiMeta');
     if(meta){
       var x=segKpiExtract();
-      /* THE STRIP NAMES ITS OWN MONTH, and it is NOT the Report month above it.
-         The RMX Summary blocks are the closed month's statement - this calendar
-         month minus one - so the cards are that month whatever the picker is
-         set to, and saying only "month to date" beside a page sitting on the
-         running month is what made them read as this month's. Same line, same
-         rule and same source as the Price & Volume strip. */
-      meta.textContent=(x&&x.tab?x.tab+' \u00B7 ':'')+segKpiMonthLabel()
-        +' \u00B7 '+(STATE.period==='YTD'?'year to date':'month to date');
+      meta.textContent=(x&&x.tab?x.tab+' \u00B7 ':'')+(STATE.period==='YTD'?'year to date':'month to date');
     }
   }
 
