@@ -2665,6 +2665,14 @@ function getSourceTimes(page) {
  * APP_CONFIG.PAGES.segment in Config.gs (SHEETS, MARKETS, MARKET_LABEL,
  * defaultSpreadsheetId) — nothing in this file needs to change.
  * ====================================================================== */
+/* "EVERY MARKET", SPELLED THE SAME IN THREE PLACES AND DECLARED HERE.
+   The Ready-Mix backend's ALL_MARKETS is a LOCAL of the RMX IIFE — it is not a
+   global and nothing outside that closure can read it — and the Product Segment
+   page has its own ALL_MKT for the same sentinel. This is the third, and the
+   three must agree: it is what the page sends for Central Canada and what
+   SB.getProductTable reads as "roll the five market tabs up". */
+var SB_ALL_MARKET = '__ALL__';
+
 var SB = (function () {
 
   // All Product Segment config (tabs, markets, labels, sheet) lives in Config.gs.
@@ -2748,7 +2756,161 @@ var SB = (function () {
     return out;
   }
 
-  return { getSlideData: getSlideData };
+  /* ======================= THE PRODUCT CATEGORY TABLE =======================
+   * One "Slide Product <Market> <period>" tab, compacted into the rows the
+   * Product Segment page draws. This is the table that used to sit beside the
+   * Segment one and went when the page moved onto the Ready-Mix raw tabs; the
+   * Segment table is still computed from those and is not touched here.
+   *
+   * CENTRAL CANADA IS A ROLL-UP, NOT A TAB. There is no "Slide Product Central"
+   * to create or maintain (APP_CONFIG.PAGES.segment says so and this is the
+   * code that relies on it): the five markets are merged HERE, on the
+   * volume-weighted revenue and CM2 sums ovProdRows_ carries for exactly that
+   * purpose — so a merged ASP is the weighted one, not an average of averages.
+   *
+   * THE COLUMN DETECTION IS ovProdRows_ IN §8, NOT A SECOND COPY. It was ported
+   * out of this page when the Overview grew its own Product Category panel, and
+   * both readers go through it now, which is what stops the panel and this
+   * table reading one grid two different ways.
+   *
+   * THE MONTH IS THE CALENDAR'S, NOT THE DATA'S. These tabs arrive pre-summed
+   * and pre-split with no month column at all, so "last closed month" is the
+   * only thing that can be said about them — the rule reportMonth_ above and
+   * ovSegMonth_ in §8 both already follow. It goes back as `monthIdx` so the
+   * page can REFUSE to draw the table under any other month's heading rather
+   * than print July's figures below an August one.
+   * ======================================================================= */
+  function pnorm_(x){ return String(x == null ? '' : x).trim().toLowerCase().replace(/[^a-z0-9]/g, ''); }
+
+  function prodAcc_(label){
+    return { label: label, cyVol: 0, pyVol: 0, cyRev: 0, pyRev: 0, cyCm2W: 0, pyCm2W: 0 };
+  }
+  function prodAdd_(a, r){
+    a.cyVol += r.cyVol || 0; a.pyVol += r.pyVol || 0;
+    a.cyRev += r.cyRev || 0; a.pyRev += r.pyRev || 0;
+    a.cyCm2W += r.cyCm2W || 0; a.pyCm2W += r.pyCm2W || 0;
+    return a;
+  }
+  function prodEmpty_(a){ return !a.cyVol && !a.pyVol && !a.cyRev && !a.pyRev; }
+
+  /* A missing denominator is null, never 0 — a zero here would print as $0.00
+     and read as a real price. The page's f$ / pct1 turn null into a dash. */
+  function prodMetrics_(a, grand){
+    var cyAsp = a.cyVol ? a.cyRev / a.cyVol : null;
+    var pyAsp = a.pyVol ? a.pyRev / a.pyVol : null;
+    var cyCm2 = a.cyVol ? a.cyCm2W / a.cyVol : null;
+    var pyCm2 = a.pyVol ? a.pyCm2W / a.pyVol : null;
+    return {
+      label:  a.label,
+      cyVol:  a.cyVol,  pyVol: a.pyVol,
+      cyShare: (grand && grand.cyVol) ? a.cyVol / grand.cyVol : null,
+      pyShare: (grand && grand.pyVol) ? a.pyVol / grand.pyVol : null,
+      volPct: a.pyVol ? (a.cyVol - a.pyVol) / a.pyVol : null,
+      aspCY:  cyAsp, aspPY: pyAsp,
+      aspPct: (cyAsp != null && pyAsp) ? (cyAsp - pyAsp) / pyAsp : null,
+      cm2CY:  cyCm2, cm2PY: pyCm2,
+      cm2Pct: (cyCm2 != null && pyCm2) ? (cyCm2 - pyCm2) / pyCm2 : null
+    };
+  }
+
+  function getProductTable(market, period) {
+    var p       = (period === 'YTD') ? 'YTD' : 'MTD';
+    var all     = cfg_().MARKETS || [];
+    var labels  = cfg_().MARKET_LABEL || {};
+    var out = { ok: false, market: market || SB_ALL_MARKET, period: p,
+                monthIdx: ovSegMonth_(), types: [], total: null, missing: [] };
+
+    /* The page's market list is the READY-MIX one (PLANT LOOKUP), and the tabs
+       are named from the Product Segment config's. Match the two the way
+       ovProdCat_ does — on the squashed spelling — so 'HNS_SW' finds 'HNS_SW'
+       however either list happens to punctuate it. */
+    var want = [];
+    if (!market || market === SB_ALL_MARKET) { want = all.slice(); }
+    else {
+      for (var i = 0; i < all.length; i++) { if (pnorm_(all[i]) === pnorm_(market)) { want.push(all[i]); break; } }
+      if (!want.length) { out.missing.push(String(market)); return out; }
+    }
+
+    /* ONE MARKET AT A TIME, AND EACH MARKET'S TOTAL RESOLVED BEFORE IT IS
+       FOLDED IN. A tab states its own per-type Total row and that is the number
+       QlikView reports, so it is preferred — but only for the market that
+       states it. A market whose tab has no Total row contributes the sum of its
+       own categories instead, which is the only other honest answer. Resolving
+       that per market is what stops a five-market roll-up printing one market's
+       Total beside five markets' rows. */
+    var byType = {}, typeSeen = [], found = 0;
+    function typeOf_(tk, name){
+      var T = byType[tk];
+      if (!T) { T = byType[tk] = { name: name, tk: tk, cats: {}, seen: [], tot: prodAcc_('') };
+                typeSeen.push(tk); }
+      return T;
+    }
+    want.forEach(function (m) {
+      var grid = readTab_(productTabName_(m, p), false);
+      var recs = (grid && grid.length > 1) ? ovProdRows_(grid, m, labels[m]) : [];
+      if (!recs.length) { out.missing.push(labels[m] || m); return; }
+      found++;
+
+      /* this market's own blocks first */
+      var mine = {}, mineSeen = [];
+      recs.forEach(function (r) {
+        var tk = r.tk || '(blank)';
+        var B  = mine[tk];
+        if (!B) { B = mine[tk] = { name: r.typ || '(blank)', cats: {}, seen: [], tot: null };
+                  mineSeen.push(tk); }
+        if (r.total) { B.tot = prodAdd_(B.tot || prodAcc_(''), r); return; }
+        var c = B.cats[r.ck];
+        if (!c) { c = B.cats[r.ck] = prodAcc_(r.cat); B.seen.push(r.ck); }
+        prodAdd_(c, r);
+      });
+
+      /* ...then folded into the merged ones */
+      mineSeen.forEach(function (tk) {
+        var B = mine[tk], T = typeOf_(tk, B.name);
+        B.seen.forEach(function (ck) {
+          var c = T.cats[ck];
+          if (!c) { c = T.cats[ck] = prodAcc_(B.cats[ck].label); T.seen.push(ck); }
+          prodAdd_(c, B.cats[ck]);
+        });
+        if (B.tot && !prodEmpty_(B.tot)) { prodAdd_(T.tot, B.tot); }
+        else { B.seen.forEach(function (ck) { prodAdd_(T.tot, B.cats[ck]); }); }
+      });
+    });
+    if (!found) return out;
+
+    /* The grand total is the sum of the type totals — never a row of its own,
+       because these tabs do not carry one and a made-up grand that disagreed
+       with the blocks above it would be the worst of both. */
+    var grand = prodAcc_('Total');
+    typeSeen.forEach(function (tk) {
+      var T = byType[tk];
+      T.tot.label = T.name + ' Total';
+      prodAdd_(grand, T.tot);
+    });
+
+    /* Sort a COPY, and rank ties by the position in the original — sorting
+       typeSeen in place would move the array the tie-breaker is reading. */
+    var typeOrder = typeSeen.slice().sort(function (a, b) {
+      var d = ovProdTypeRank_(a) - ovProdTypeRank_(b);
+      return d !== 0 ? d : (typeSeen.indexOf(a) - typeSeen.indexOf(b));
+    });
+
+    out.types = typeOrder.map(function (tk) {
+      var T = byType[tk];
+      var order = T.seen.slice().sort(function (a, b) {
+        var d = ovProdCatRank_(a) - ovProdCatRank_(b);
+        return d !== 0 ? d : (T.seen.indexOf(a) - T.seen.indexOf(b));
+      });
+      return { name: T.name,
+               rows: order.map(function (ck) { return prodMetrics_(T.cats[ck], grand); }),
+               total: prodMetrics_(T.tot, grand) };
+    });
+    out.total = prodMetrics_(grand, grand);
+    out.ok    = true;
+    return out;
+  }
+
+  return { getSlideData: getSlideData, getProductTable: getProductTable };
 })();
 
 // Top-level wrappers the Segment Product page calls via google.script.run.
@@ -2759,6 +2921,35 @@ function getSlideData() {
   var hit = APP_cacheGet_(key);
   if (hit && (hit.segMTD || hit.segYTD)) return hit;      // ignore the old single-tab shape
   var out = SB.getSlideData();
+  out.generation = APP_getGen_('segment');
+  APP_cachePut_(key, out);
+  return out;
+}
+
+/* The Product Category table, one market x one period, for the Product Segment
+   page's second card.
+
+   VERSION-CACHED ON THE **SEGMENT** GENERATION, which is the one the QlikView
+   sync bumps when it rewrites the Slide Product tabs. Everything else on that
+   page runs on the READY-MIX generation, because that is where its other three
+   tables come from — the two must not be confused, and that is exactly why this
+   is its own call rather than another field on RMX_getSlideTables. A payload
+   here is a few dozen rows, so every market x period the page can ask for fits
+   in the cache with room to spare. */
+function SB_getProductTable(opts) {
+  opts = opts || {};
+  var period = (opts.period === 'YTD') ? 'YTD' : 'MTD';
+  var market = String(opts.market || SB_ALL_MARKET);
+  /* `force` is "Update from source" on the page. The generation IS the source
+     sheet's modified time, and that time is memoised for APP_STAMP_TTL_S — so
+     after a SEG sync the generation can still read as the old one for a while
+     and the cache below would answer with rows from before it. Forgetting the
+     stamp is what makes the button mean the Product Segment workbook too. */
+  if (opts.force) APP_bumpGen_('segment');
+  var key = 'sb|g' + APP_getGen_('segment') + '|prod|' + market + '|' + period;
+  var hit = opts.force ? null : APP_cacheGet_(key);
+  if (hit && hit.period === period) return hit;
+  var out = SB.getProductTable(market, period);
   out.generation = APP_getGen_('segment');
   APP_cachePut_(key, out);
   return out;
@@ -13847,6 +14038,21 @@ function ovSegMonth_(){
   return m ? m : 12;                             // in January, December
 }
 
+/* THE READING ORDER OF THE PRODUCT CATEGORY TABLE — type first, then category
+   inside it, each type's own Total last. Anything the lists do not name keeps
+   its place BEHIND what they do, rather than being dropped: a new category
+   appears at the bottom of its type instead of vanishing.
+
+   The Overview holds the same two lists client-side (TYPE_ORDER / PROD_ORDER in
+   §P overview) because it merges its markets in the browser and sorts them
+   there; SB.getProductTable sorts on the server because the Product Segment
+   page is handed a finished table. Two readers, one order — change both. */
+var OVPROD_TYPE_ORDER = ['vap', 'conventional'];
+var OVPROD_CAT_ORDER  = ['performance', 'decorative', 'sustainable others', 'applications',
+                         'special properties', 'general purpose', 'prescribed', 'no category'];
+function ovProdTypeRank_(tk){ var i = OVPROD_TYPE_ORDER.indexOf(tk); return i < 0 ? 99 : i; }
+function ovProdCatRank_(ck){ var i = OVPROD_CAT_ORDER.indexOf(ck);  return i < 0 ? 500 : i; }
+
 function ovProdCat_(sd, period, markets){
   var out = { ok:false, markets:{}, missing:[], monthIdx: ovSegMonth_() };
   if (!sd || !sd.prod) return out;
@@ -13866,7 +14072,7 @@ function ovProdCat_(sd, period, markets){
   });
   return out;
 }
-function ovProdRows_(grid, marketName){
+function ovProdRows_(grid, marketName, altName){
   var hdr = grid[0] || [];
   function colFind(re){ for (var i = 0; i < hdr.length; i++){ if (re.test(String(hdr[i] || ''))) return i; } return -1; }
   function colsAll(test){ var a = []; hdr.forEach(function(h, i){ if (test(String(h || ''))) a.push(i); }); return a; }
@@ -13890,7 +14096,16 @@ function ovProdRows_(grid, marketName){
 
   var dataRows = grid.slice(1);
   if (cMkt >= 0){
-    dataRows = dataRows.filter(function(r){ return pnorm(r[cMkt]) === pnorm(marketName); });
+    /* The tab is per market already, so this column is a safety net rather than
+       a filter that has to fire - which is why it accepts TWO spellings. The
+       export names its tabs by market KEY ("HNS_SW MTD") and the workbook names
+       them by LABEL ("Slide Product HNS MTD"), so a Market column carrying the
+       label would empty a grid the caller passed the key for, silently. The
+       Overview passes one name and behaves exactly as it did. */
+    dataRows = dataRows.filter(function(r){
+      var v = pnorm(r[cMkt]);
+      return v === pnorm(marketName) || (altName ? v === pnorm(altName) : false);
+    });
   }
   var recs = [];
   dataRows.forEach(function(r){
