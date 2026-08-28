@@ -1680,6 +1680,11 @@ body[data-page="overview"] .ov-phead > .seg{flex:0 0 auto; flex-wrap:nowrap}
 body[data-page="overview"] .ov-phead > .xf-search{flex:0 1 240px}
 /* top filter dropdowns (controls panel) — searchable multi-select per dimension */
 body[data-page="overview"] .xf-drops{display:none; flex-wrap:wrap; gap:8px; margin-top:14px; padding-top:12px; border-top:1px dashed var(--line)}
+body[data-page="overview"] .ov-export{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:14px; padding-top:12px; border-top:1px dashed var(--line)}
+body[data-page="overview"] .ov-export-note{font:500 11.5px Inter; color:var(--muted); line-height:1.5}
+body[data-page="overview"] .ov-export-note b{color:var(--ink); font-weight:700}
+body[data-page="overview"] .ov-export-note.bad{color:var(--neg)}
+body[data-page="overview"] #expBtn[disabled]{opacity:.45; cursor:not-allowed}
 body[data-page="overview"] .xf-drops.show{display:flex}
 body[data-page="overview"] .xf-dd{position:relative}
 body[data-page="overview"] .xf-dd .trig{display:inline-flex; align-items:center; gap:7px; border:1px solid var(--line); background:#fff; border-radius:9px;
@@ -5802,6 +5807,301 @@ window.AmrCube = (function(){
     return groupBy ? rows : (rows[0] || null);
   }
 
+  /* --------------------------------------------------------- export rows -- */
+  /* ONE LINE PER (month × dimension tuple), CY BESIDE PY.
+   * ---------------------------------------------------------------------------
+   * query() answers a question; this answers none. It hands back the fact table
+   * itself, in the one shape a person can open in Excel and pivot — which is a
+   * different shape from the one the cube stores it in, for a reason worth
+   * writing down.
+   *
+   * A ROW OF THE SOURCE CARRIES ONE YEAR. That is §7's rule and it is why this
+   * cannot simply dump the blocks: a 2025 row and the 2026 row beside it are two
+   * different rows of the export, sharing a dimension tuple and a month, and
+   * neither one carries the other's figures. So "Vol % on a per-row basis" has no
+   * answer at that grain — every current-year line would divide by a zero prior
+   * year. This joins the two on (dimension tuple × month) and emits ONE line
+   * carrying both, which is the finest grain at which the four comparison
+   * measures exist at all.
+   *
+   * IT COSTS NOTHING. The source rows are already unique on (dims + year +
+   * month), so the join pairs one row with one row and aggregates nothing away.
+   * Every source row survives it; the file is still one line per row in every
+   * sense a reader cares about.
+   *
+   * PPI AND CPI ARE NOT LINE MEASURES, AND THIS DOES NOT PRETEND THEY ARE.
+   * Both are pooled over pairs — plant × material, and plant × sold-to ×
+   * material — and there are a few hundred PPI pairs behind tens of thousands of
+   * lines. A "PPI" column on a line could only be its pair's index repeated, and
+   * the moment anybody averages that column they have a number the page will not
+   * agree with. So each line carries the two figures the index is made of
+   * instead, exactly as the Ready-Mix reports already expose rfiBase / facBase:
+   *
+   *     weight = the line's OWN cy revenue, on a covered pair, else 0
+   *     factor = that weight × the PAIR's ASP move
+   *     PPI for any slice = Σ factor ÷ Σ weight
+   *
+   * Summing a pair's lines gives back the pair's own revenue and the pair's own
+   * factor, so that sum is bit-for-bit pool() above — no apportioning arithmetic
+   * is needed and none is done. What the reader must not do is re-pool along a
+   * dimension that SPLITS a pair (sold-to, customer, segment, month): half a
+   * pair's weight against a whole pair's factor is not an index. Plant, material
+   * and everything derived from either — market, submarket, plant type, material
+   * family, product class, application — cannot split one, because a pair has
+   * exactly one of each. The caller writes that distinction into the file.
+   *
+   * THE PAIRS ARE POOLED OVER THE WHOLE SELECTION, not per line and not per
+   * month, which is the same thing query() does for the totals row and the same
+   * thing the Market summary means by "re-pooled on the span".
+   *
+   * o = { line, cyMonths, pyMonths, filters, coverage } — the same arguments
+   * query() takes, so a caller cannot hand the two different scopes.            */
+  function exportRows(o){
+    o = o || {};
+    var line = (o.line === 'rmx') ? 'rmx' : 'agg';
+    var st = S[line], man = st.man;
+    if (!man || !st.cols) return null;
+
+    var isAgg = (line === 'agg');
+    var cyList = o.cyMonths || [], pyList = o.pyMonths || [];
+    if (!cyList.length) return null;
+
+    /* Index-aligned exactly as in query(): pyMonths[i] is the month cyMonths[i]
+       is compared against, and both roles land on the CY month so the two halves
+       of one comparison meet on one line. */
+    var cySlot = {}, pySlot = {};
+    cyList.forEach(function(m){ cySlot[m] = m; });
+    pyList.forEach(function(m, i){ pySlot[m] = (cyList[i] !== undefined) ? cyList[i] : m; });
+
+    var masks = buildMasks(line, o.filters);
+    var cov = o.coverage || man.coverage || { minVol:0, minRev:0 };
+    var mv = cov.minVol || 0, mr = cov.minRev || 0;
+    var cpiCov = (cov && cov.cpi) ? cov.cpi : null;
+    var soldToCol = (isAgg && man.dims.indexOf('soldTo') !== -1) ? 'soldTo' : null;
+    var itemDim = isAgg ? 'material' : 'mix';
+
+    var dims = man.dims, nd = dims.length;
+    var L = {}, order = [], pairs = {}, cpairs = {};
+
+    /* The line a (month, tuple) belongs to, created on first sight. The dimension
+       codes are copied from whichever side arrives first — the two sides share
+       the tuple by construction, which is what made them one line. */
+    function lineOf(slot, tail, v, i, pkey, ckey){
+      var k = slot + tail, a = L[k];
+      if (!a){
+        var codes = new Array(nd);
+        for (var q = 0; q < nd; q++) codes[q] = v[dims[q]][i];
+        a = L[k] = { ym: slot, codes: codes, pk: pkey, ck: ckey,
+                     cyVol:0, pyVol:0, cyRev:0, pyRev:0,
+                     cyFsc:0, pyFsc:0, cyFv:0, pyFv:0,
+                     cyEx:0,  pyEx:0,  cyVa:0, pyVa:0 };
+        order.push(k);
+      }
+      return a;
+    }
+
+    eachBlock(line, function(v, n){
+      var vv = v[man.vals[0]], vr = v[man.vals[1]];
+      var vf  = isAgg ? (v.fsc || null) : null;
+      var vfv = isAgg ? (v.fv  || null) : null;
+      var vex = isAgg ? null : (v.ex || null);
+      var vva = isAgg ? null : (v.va || null);
+      var itemCol = v[itemDim];
+      for (var i = 0; i < n; i++){
+        var ym = v.ym[i];
+        var cSlot = cySlot[ym], pSlot = pySlot[ym];
+        if (cSlot === undefined && pSlot === undefined) continue;
+
+        /* The same mask pass as query(), in the same order. A second copy of the
+           filter rule is how a file and the screen it came from drift apart with
+           every check still passing. */
+        var p = v.plant[i];
+        if (masks.plant && !masks.plant[p]) continue;
+        if (masks.mix && !masks.mix[v.mix[i]]) continue;
+        if (masks.extra && v.extra && !masks.extra[v.extra[i]]) continue;
+        var skip = false;
+        for (var d in masks.direct){ if (!masks.direct[d][v[d][i]]){ skip = true; break; } }
+        if (skip) continue;
+
+        var pkey = p + '|' + itemCol[i];
+        var ckey = soldToCol ? (p + '|' + v[soldToCol][i] + '|' + itemCol[i]) : null;
+        var tail = '', j;
+        for (j = 0; j < nd; j++) tail += '\u0001' + v[dims[j]][i];
+
+        if (cSlot !== undefined){
+          var a = lineOf(cSlot, tail, v, i, pkey, ckey);
+          a.cyVol += vv[i]; a.cyRev += vr[i];
+          if (vf)  a.cyFsc += vf[i];
+          if (vfv) a.cyFv  += vfv[i];
+          if (vex) a.cyEx  += vex[i];
+          if (vva) a.cyVa  += vva[i];
+          var pa = pairs[pkey] || (pairs[pkey] = [0, 0, 0, 0]);
+          pa[0] += vv[i]; pa[2] += vr[i];
+          if (ckey){ var ca = cpairs[ckey] || (cpairs[ckey] = [0, 0, 0, 0]); ca[0] += vv[i]; ca[2] += vr[i]; }
+        }
+        if (pSlot !== undefined){
+          var b = lineOf(pSlot, tail, v, i, pkey, ckey);
+          b.pyVol += vv[i]; b.pyRev += vr[i];
+          if (vf)  b.pyFsc += vf[i];
+          if (vfv) b.pyFv  += vfv[i];
+          if (vex) b.pyEx  += vex[i];
+          if (vva) b.pyVa  += vva[i];
+          var pb = pairs[pkey] || (pairs[pkey] = [0, 0, 0, 0]);
+          pb[1] += vv[i]; pb[3] += vr[i];
+          if (ckey){ var cb = cpairs[ckey] || (cpairs[ckey] = [0, 0, 0, 0]); cb[1] += vv[i]; cb[3] += vr[i]; }
+        }
+      }
+    });
+
+    /* ONE VERDICT PER PAIR, not per line — the gates are pool()'s own, in
+       pool()'s own order, and the reason a pair failed is kept because "no PPI
+       on this line" and "this pair was excluded for pricing at 0.3 cents a tonne"
+       are different facts and only one of them is a data-quality question. */
+    function verdicts(index, extra){
+      var xv = extra ? (extra.minVol || 0) : 0,
+          xr = extra ? (extra.minRev || 0) : 0,
+          xa = extra ? (extra.minAsp || 0) : 0;
+      var out = {}, keys = Object.keys(index), nCov = 0, W = 0, F = 0;
+      for (var q = 0; q < keys.length; q++){
+        var pr = index[keys[q]], why = '', pct = null, cyAsp, pyAsp;
+        if      (!(pr[0] > 0 && pr[2] > 0)) why = 'no current year';
+        else if (!(pr[1] > 0 && pr[3] > 0)) why = 'no prior year';
+        else {
+          cyAsp = pr[2] / pr[0]; pyAsp = pr[3] / pr[1];
+          pct = (cyAsp - pyAsp) / pyAsp;
+          if      (!(pr[0] > mv && pr[1] > mv && pr[2] > mr && pr[3] > mr)) why = 'below the line floor';
+          else if (!(pr[0] > xv && pr[1] > xv && pr[2] > xr && pr[3] > xr)) why = 'below the index floor';
+          else if (xa > 0 && !(cyAsp > xa && pyAsp > xa)) why = 'ASP under ' + xa;
+        }
+        if (!why){ nCov++; W += pr[2]; F += pr[2] * pct; }
+        out[keys[q]] = { ok: !why, why: why, pct: pct };
+      }
+      return { v: out, pairs: keys.length, covered: nCov, w: W, f: F };
+    }
+    var P = verdicts(pairs, null);
+    var C = (soldToCol && cpiCov) ? verdicts(cpairs, cpiCov) : null;
+
+    /* ---- the label side-tables, in the order they are written out ---- */
+    var viaP = isAgg ? ['market', 'sm1', 'sm2', 'mb'] : ['market', 'submarket'];
+    var viaM = isAgg ? [] : ['strength', 'cls', 'app'];
+    var viaX = isAgg ? [] : ['extraType'];
+    function lbl(field, code){
+      var d = man.dict[field] || [];
+      var s = d[code];
+      return (s === undefined || s === null) ? '' : s;
+    }
+    function viaPlant(field, plantCode){
+      var m = man.plantMap && man.plantMap[field];
+      return m ? lbl(field, m[plantCode]) : '';
+    }
+    function viaMix(field, mixCode){
+      var m = man.mixMap && man.mixMap[field];
+      return m ? lbl(field, m[mixCode]) : '';
+    }
+    function viaExtra(field, exCode){
+      var m = man.extraMap && man.extraMap[field];
+      return m ? lbl(field, m[exCode]) : '';
+    }
+
+    var fields = ['ym', 'year', 'month'].concat(dims).concat(viaP).concat(viaM).concat(viaX);
+    if (isAgg) fields.push('revType');
+    fields = fields.concat(['cyVol', 'pyVol', 'volPct', 'cyRev', 'pyRev', 'revPct',
+                            'cyAsp', 'pyAsp', 'aspPct', 'cyPresent', 'pyPresent']);
+    fields = fields.concat(isAgg ? ['cyFsc', 'pyFsc', 'cyFv', 'pyFv']
+                                 : ['cyEx', 'pyEx', 'cyVa', 'pyVa']);
+    fields = fields.concat(['ppiPair', 'ppiCovered', 'ppiWeight', 'ppiFactor', 'ppiPairPct']);
+    if (C) fields = fields.concat(['cpiPair', 'cpiCovered', 'cpiWeight', 'cpiFactor', 'cpiPairPct']);
+
+    var iPlant = dims.indexOf('plant'), iItem = dims.indexOf(itemDim),
+        iExtra = dims.indexOf('extra'), iSold = dims.indexOf('soldTo');
+    var rows = [], T = { cyVol:0, pyVol:0, cyRev:0, pyRev:0, cyOnly:0, pyOnly:0, both:0 };
+
+    order.sort();
+    for (var z = 0; z < order.length; z++){
+      var a2 = L[order[z]], c = a2.codes, r = [];
+      var pc = c[iPlant], ic = c[iItem];
+      /* PRESENT MEANS THE SOURCE HAD A ROW, not that it carried volume. A
+         Ready-Mix extras row has no volume and no base revenue at all - its
+         charge is per load and lands in ex / va - and an Aggregates row can
+         carry a surcharge and nothing else. Testing volume and base revenue
+         alone blanked both, which reads as "this tuple did not trade". */
+      var hasCy = !!(a2.cyVol || a2.cyRev || a2.cyFsc || a2.cyEx || a2.cyVa),
+          hasPy = !!(a2.pyVol || a2.pyRev || a2.pyFsc || a2.pyEx || a2.pyVa);
+      if (hasCy && hasPy) T.both++; else if (hasCy) T.cyOnly++; else if (hasPy) T.pyOnly++;
+      T.cyVol += a2.cyVol; T.pyVol += a2.pyVol; T.cyRev += a2.cyRev; T.pyRev += a2.pyRev;
+
+      r.push(Math.floor(a2.ym / 100) + '-' + ('0' + (a2.ym % 100)).slice(-2));
+      r.push(Math.floor(a2.ym / 100));
+      r.push(a2.ym % 100);
+      for (var w = 0; w < nd; w++) r.push(lbl(dims[w], c[w]));
+      viaP.forEach(function(f){ r.push(viaPlant(f, pc)); });
+      viaM.forEach(function(f){ r.push(viaMix(f, ic)); });
+      viaX.forEach(function(f){ r.push(viaExtra(f, c[iExtra])); });
+      if (isAgg){
+        var rtIdx = man.revType ? man.revType[pc + '|' + ic] : undefined;
+        r.push(rtIdx === undefined ? '' : lbl('revType', rtIdx));
+      }
+
+      /* BLANK, NEVER ZERO, ON A SIDE THAT IS NOT THERE. A zero prior year reads
+         as a real figure and turns every absent comparison into a -100%. */
+      var cyAsp2 = a2.cyVol ? a2.cyRev / a2.cyVol : null;
+      var pyAsp2 = a2.pyVol ? a2.pyRev / a2.pyVol : null;
+      r.push(hasCy ? a2.cyVol : null);
+      r.push(hasPy ? a2.pyVol : null);
+      r.push((hasCy && a2.pyVol) ? (a2.cyVol - a2.pyVol) / a2.pyVol : null);
+      r.push(hasCy ? a2.cyRev : null);
+      r.push(hasPy ? a2.pyRev : null);
+      r.push((hasCy && a2.pyRev) ? (a2.cyRev - a2.pyRev) / a2.pyRev : null);
+      r.push(cyAsp2);
+      r.push(pyAsp2);
+      r.push((cyAsp2 != null && pyAsp2) ? (cyAsp2 - pyAsp2) / pyAsp2 : null);
+      r.push(hasCy ? 1 : 0);
+      r.push(hasPy ? 1 : 0);
+      if (isAgg){ r.push(a2.cyFsc); r.push(a2.pyFsc); r.push(a2.cyFv); r.push(a2.pyFv); }
+      else      { r.push(a2.cyEx);  r.push(a2.pyEx);  r.push(a2.cyVa); r.push(a2.pyVa); }
+
+      /* weight is the line's OWN cy revenue on a covered pair — see the banner.
+         Σ over the pair's lines gives the pair back exactly. */
+      var pv = P.v[a2.pk] || { ok:false, why:'no pair', pct:null };
+      r.push(lbl('plant', pc) + ' | ' + lbl(itemDim, ic));
+      r.push(pv.ok ? 'yes' : pv.why);
+      r.push(pv.ok ? a2.cyRev : 0);
+      r.push(pv.ok ? a2.cyRev * pv.pct : 0);
+      r.push(pv.pct);
+      if (C){
+        var cv = a2.ck ? (C.v[a2.ck] || { ok:false, why:'no pair', pct:null })
+                       : { ok:false, why:'no sold-to', pct:null };
+        r.push(a2.ck ? (lbl('plant', pc) + ' | ' + lbl('soldTo', c[iSold]) + ' | ' + lbl(itemDim, ic)) : '');
+        r.push(cv.ok ? 'yes' : cv.why);
+        r.push(cv.ok ? a2.cyRev : 0);
+        r.push(cv.ok ? a2.cyRev * cv.pct : 0);
+        r.push(cv.pct);
+      }
+      rows.push(r);
+    }
+
+    /* WHICH PRIOR-YEAR MONTHS THE DATA DOES NOT HAVE AT ALL. Absent is not the
+       same as late — the year before the oldest book was never exported — and a
+       file whose comparison columns are empty for that reason has to say so
+       rather than leave the reader to guess at a data fault. */
+    var have = {}; (man.ym || []).forEach(function(m){ have[m] = 1; });
+    var pyMissing = pyList.filter(function(m){ return !have[m]; });
+
+    return {
+      ok: true, line: line, fields: fields, rows: rows,
+      stats: {
+        lines: rows.length, both: T.both, cyOnly: T.cyOnly, pyOnly: T.pyOnly,
+        cyVol: T.cyVol, pyVol: T.pyVol, cyRev: T.cyRev, pyRev: T.pyRev,
+        cyMonths: cyList.slice(), pyMonths: pyList.slice(), pyMissing: pyMissing,
+        ppi: { pairs: P.pairs, covered: P.covered, weight: P.w, factor: P.f,
+               index: P.w ? P.f / P.w : null },
+        cpi: C ? { pairs: C.pairs, covered: C.covered, weight: C.w, factor: C.f,
+                   index: C.w ? C.f / C.w : null } : null
+      },
+      coverage: cov
+    };
+  }
+
   /* ---------------------------------------------------------------- load -- */
   function call(fn, arg){
     return new Promise(function(res, rej){
@@ -6167,6 +6467,10 @@ window.AmrCube = (function(){
        next page registers its own. */
     detach: function(){ listeners = []; },
     query: query,
+    /* The fact table itself, one line per (month x dimension tuple) with CY
+       beside PY, for the Overview's row export. Takes the SAME arguments as
+       query() so the two can never be handed different scopes. */
+    exportRows: exportRows,
     months: months,
     has: has,
     manifest: function(line){ return S[line] ? S[line].man : null; },
@@ -18408,6 +18712,15 @@ silently drops rows from the sheet&rsquo;s own SUMIFS joins &mdash; see the note
     <!-- top filter dropdowns: the same cross-filters, reachable without scrolling -->
     <div class="xf-drops" id="xfDrops"></div>
   <div class="xf-drops" id="rxfDrops"></div>
+    <!-- The row export. It lives HERE, under the controls, because the controls
+         are what it exports: the markets, the cross-filters, the Land / Docks
+         refine and the month window are its scope, read through the same
+         resolver the panels use. Not in the header bar - every control there
+         costs width the bar has none of (see the AmrStamp note in A3). -->
+    <div class="ov-export" id="ovExport">
+      <button class="ghost" id="expBtn">&#8615; Export rows</button>
+      <span class="ov-export-note" id="expNote"></span>
+    </div>
   </div>
 
   <!-- Active cross-filters (Aggregates tab) — appears once anything is clicked -->
@@ -18756,6 +19069,11 @@ AMR.page('overview', {
 <p>Pick a single market and the breakdown panels pivot to <b>submarkets</b> inside it. The Aggregates tab adds <b>Plant Type / Product Class / Material Family</b> views and a <b>Plants &amp; materials</b> search where you can compare individual plants or materials against the total. The Ready-Mix tab adds <b>Submarket / Project Segment / Strength Class / Product Class / Plant</b> breakdown tables, the <b>ASP build-up</b>, the <b>Extras &amp; VAP</b> tables and the <b>Product Category</b> view. Every drill-down shows volume change, ASP % inc and — where the source carries it — PPI.</p>
 <h3>Cross-filtering (Aggregates tab)</h3>
 <p><b>Click any value</b> — a submarket, plant type, product class, plant, material, or customer, in a table row, pie slice, bar or legend — and <b>every panel filters by it</b>, including the panel you clicked in. Your active filters appear as chips in a bar under the controls; remove one with its ×, or press <b>Clear filters</b>. To combine values within the same dimension (say, two plant types), use the <b>search box on that panel</b> — it lists everything that would be available if that dimension's own filter were lifted, so you can add a second value after the panel has collapsed to your first pick. The <b>Land / Docks</b> toggle appears beside the markets when <b>Southwest</b> is selected — pick Land or Docks to narrow to it (none selected = both). The <b>SAP/USGAAP cards are deliberately exempt</b> — they are the closed month’s statement and always show the unfiltered scope. Both <b>Fuel Surcharge panels follow the filters on every pick</b>: the by-market card is computed here from the month fact table, and falls back to the Fuel Surcharge workbook’s own unfiltered summary only while those months are still loading. Under filters, PPI everywhere uses the customer-report method (Plant + Material coverage), which stays exact at any slice depth.</p>
+<h3>Exporting the rows</h3>
+<p><b>&#8615; Export rows</b>, under the controls, downloads a CSV of every row behind whatever you have selected &mdash; the same markets, cross-filters, Land&nbsp;/&nbsp;Docks refine and month window the panels are drawn from. One line per month per plant &times; material &times; customer combination, with all the raw columns, the looked-up ones (market, submarkets, revenue type) and both years side by side, so <b>Vol&nbsp;%</b>, <b>Rev&nbsp;%</b> and <b>ASP&nbsp;%&nbsp;inc</b> are on every line.</p>
+<p><b>PPI and CPI are not per-line numbers</b> and the file does not pretend they are: each line carries a <b>weight</b> and a <b>factor</b> instead, and the index for any slice is <b>SUM(factor) &divide; SUM(weight)</b>. Add that as a calculated field in your pivot and it matches this page exactly at any depth. Never average the &ldquo;pair ASP&nbsp;%&rdquo; columns &mdash; that is a different number and it is not PPI.</p>
+<p><b>Twelve months at most.</b> Each line compares its own month against the same month a year earlier, so the per-line figures are fine over any span &mdash; but the two indices pool, and pooling more than a year of prices into one index gives an average nobody charged. It is the same reason this page drops every ratio past twelve months. Drag the Months slider to twelve or fewer and the button comes back on; it says which it is when it is off.</p>
+<p>A line with no prior year leaves those cells <b>blank rather than zero</b>, so an absent comparison never reads as a &minus;100%. The first few lines of the file are a <b>#</b> header block recording the selection, the months, the coverage floors in force and where the rows came from &mdash; delete them before pivoting, or tell your tool to skip them.</p>
 <h3>Good to know</h3>
 <p>These are the same figures the full tools show — this page just brings the headlines together. For the full customer drill-down and slide exports, open the individual tools from the switcher (top-right). Numbers refresh when someone presses <b>&#8635; Update from source</b> on the Price &amp; Volume, RMX or Product Segment page.</p>`,
 
@@ -19213,7 +19531,7 @@ AMR.page('overview', {
       XREF.values=[];
       xfChanged();
     }
-    function xfChanged(){ renderXfBar(); renderTab(); }
+    function xfChanged(){ renderXfBar(); renderTab(); syncExport(); }
     function selectMarketByPvName(nm){
       var m=markets().filter(function(x){ return x.pvName===nm; })[0];
       if(!m) return;
@@ -20438,6 +20756,7 @@ AMR.page('overview', {
          behind a page you can read. Not AmrBoot.done(): the steps are still
          outstanding and still named, and this says nothing about them. */
       if(window.AmrBoot && STATE.data) AmrBoot.painted();
+      syncExport();
     }
     function renderTab(){
       if(!STATE.data) return;
@@ -21837,7 +22156,7 @@ AMR.page('overview', {
       rxfChanged();
     }
     function clearRxf(){ RXF_FIELDS.forEach(function(f){ RXF[f]=[]; }); rxfChanged(); }
-    function rxfChanged(){ renderRxfBar(); renderTab(); }
+    function rxfChanged(){ renderRxfBar(); renderTab(); syncExport(); }
     function rxfData(){ return RXF_CACHE[rxfSig()]||null; }
     function rxfTableOf(d,key){ return ((d&&d.tables)||[]).filter(function(t){ return t.key===key; })[0]||null; }
     function rxfMixFiltered(){ return RXF.STRENGTH.length>0 || RXF.CLASS.length>0; }
@@ -22896,7 +23215,7 @@ AMR.page('overview', {
       var grew=(ms.length!==WIN.months.length) || (ms.length && WIN.months.length && ms[0]!==WIN.months[0]);
       WIN.months=ms;
       if(!wrap) return;
-      if(ms.length<2){ wrap.classList.add('pending'); $('winVal').textContent='—'; syncPeriodSeg(); return; }
+      if(ms.length<2){ wrap.classList.add('pending'); $('winVal').textContent='—'; syncPeriodSeg(); syncExport(); return; }
       wrap.classList.remove('pending');
 
       var first=ms[0], last=ms[ms.length-1];
@@ -22931,6 +23250,8 @@ AMR.page('overview', {
       $('winHi').textContent=ymShort(last);
       paintWindow();
       syncPeriodSeg();
+      /* the span and what has LANDED both just moved, and both gate the export */
+      syncExport();
     }
     /* label + filled track + quick-pick states; no data work, so it can run on
        every drag frame */
@@ -23021,6 +23342,7 @@ AMR.page('overview', {
        Period comes back on and the server panels are loaded for it; otherwise
        this is a custom window and the cube takes over. */
     function applyWindowChange(){
+      syncExport();                 // before the branches: two of the three return early
       var p=windowPeriod();
       var wasWin=STATE.win, wasPeriod=STATE.period, wasPick=STATE.pick;
       STATE.pick=p;
@@ -23261,6 +23583,249 @@ AMR.page('overview', {
       if(!isAll() && !R.filters.market) return null;
       return cube().query({ line:line, cyMonths:cy, pyMonths:cy.map(function(m){ return ymAdd(m,-12); }),
                             filters:R.filters });
+    }
+
+    /* ===================== THE ROW EXPORT =====================================
+       The fact table this page is drawn from, as a CSV, at the finest grain the
+       comparison measures exist at: one line per (month x dimension tuple), CY
+       beside PY, with the looked-up columns resolved and the two price indices
+       shipped as the figures they are pooled from. AmrCube.exportRows does the
+       arithmetic; everything here is scope, wording and the file.
+
+       IT EXPORTS WHAT IS ON SCREEN, and that is not a slogan — it reads the same
+       trendFilters() / trendResolve() / winCy() the cube-fed panels read, so the
+       file and the Market summary above it cannot disagree. There is no second
+       copy of the filter rule anywhere in this block.
+
+       TWELVE MONTHS, and the cap is the point rather than a limitation of the
+       code. Every line compares its own month against the same month a year
+       earlier, so the per-line measures are fine at any span; the two INDICES
+       are not, because they pool. Past twelve months a pooled ASP stops being a
+       price anyone charged — which is exactly why pyStale() drops every ratio on
+       the page itself — and an export is worse than a panel here, because a
+       spreadsheet outlives the sentence that explained it. So the span is capped
+       where the page's own rule caps it and the button says so.               */
+    var EXPORT_MAX_MONTHS = 12;
+
+    /* Cube field -> the heading a reader expects. Where the raw QlikView export
+       has a name for the column, that name is used verbatim — somebody
+       reconciling this file against the workbook should be matching headings,
+       not translating them. */
+    var EXPORT_LABEL = {
+      ym:'Year-Month', year:'Year', month:'Month',
+      plant:'Plant', plantType:'Plant Type', material:'Material', matFam:'Material Family',
+      prodClass:'Product Class [Rock]', prodApp:'Product Application',
+      custSeg:'Cust Segment [Rock]', custParent:'Customer Parent', soldTo:'Sold To',
+      market:'Market', sm1:'Submarket 1', sm2:'Submarket 2', mb:'MB Submarket',
+      revType:'Revenue Type',
+      mix:'Product Mix', segment:'Major Project Segment', extra:'Material (mat_descr)',
+      submarket:'Submarket', strength:'Strength Class', cls:'Product Class',
+      app:'Product Application', extraType:'Extra Type',
+      cyVol:'Vol CY', pyVol:'Vol PY', volPct:'Vol %',
+      cyRev:'Rev CY', pyRev:'Rev PY', revPct:'Rev %',
+      cyAsp:'ASP CY', pyAsp:'ASP PY', aspPct:'ASP % inc',
+      cyPresent:'CY present', pyPresent:'PY present',
+      cyFsc:'Fuel Surcharge CY', pyFsc:'Fuel Surcharge PY',
+      cyFv:'Surcharged Volume CY', pyFv:'Surcharged Volume PY',
+      cyEx:'Extras Rev CY', pyEx:'Extras Rev PY', cyVa:'VAP Rev CY', pyVa:'VAP Rev PY',
+      ppiPair:'PPI pair', ppiCovered:'PPI covered', ppiWeight:'PPI weight',
+      ppiFactor:'PPI factor', ppiPairPct:'PPI pair ASP %',
+      cpiPair:'CPI pair', cpiCovered:'CPI covered', cpiWeight:'CPI weight',
+      cpiFactor:'CPI factor', cpiPairPct:'CPI pair ASP %'
+    };
+    /* Decimal places per field. A raw double writes 6.600406504065041 into a
+       cell, which is noise in a file people read — but the rounding is the FILE's
+       and never the arithmetic's: the totals reported beside the button are the
+       unrounded ones, so the reconciliation line cannot be made to agree by
+       rounding. */
+    var EXPORT_DP = {
+      cyVol:3, pyVol:3, cyFv:3, pyFv:3,
+      cyRev:2, pyRev:2, cyFsc:2, pyFsc:2, cyEx:2, pyEx:2, cyVa:2, pyVa:2,
+      ppiWeight:2, ppiFactor:4, cpiWeight:2, cpiFactor:4,
+      cyAsp:4, pyAsp:4,
+      volPct:6, revPct:6, aspPct:6, ppiPairPct:6, cpiPairPct:6
+    };
+
+    /* Can this selection be exported, and if not, what is the one sentence that
+       says why? Every branch is a real state of the page rather than a guard —
+       the button carries the reason as its own title, so nothing appears greyed
+       out with no explanation anywhere. */
+    function exportScope(){
+      var line = (STATE.tab === 'rmx') ? 'rmx' : 'agg';
+      var C0 = cube();
+      if(!C0 || !C0.manifest(line) || !winReady())
+        return { ok:false, line:line, why:'The month history is still loading.' };
+      var sp = winSpan();
+      if(!sp.length) return { ok:false, line:line, why:'No months are selected.' };
+      if(sp.length > EXPORT_MAX_MONTHS)
+        return { ok:false, line:line, span:sp.length,
+                 why:'Pick twelve months or fewer — this window is '+sp.length+'. Each line compares its own month against the same month a year before, but PPI and CPI pool across the whole file, and pooling more than a year of prices into one index is not a price anybody charged.' };
+      var cy = winCy(line);
+      if(!cy || !cy.length)
+        return { ok:false, line:line, why:'Waiting for these months and the year before them to finish loading.' };
+      var R = trendResolve(line, trendFilters(line));
+      if(!isAll() && !R.filters.market)
+        return { ok:false, line:line, why:'No market in this selection is in the month history yet.' };
+      return { ok:true, line:line, cy:cy, py:cy.map(function(m){ return ymAdd(m,-12); }),
+               filters:R.filters, dropped:R.dropped };
+    }
+
+    /* The scope in the page's own words, for the note, the file and the
+       filename. It reuses the cross-filter bar's own label so the three can
+       never describe the selection differently. */
+    function exportScopeText(){
+      var base = (STATE.tab === 'rmx') ? rxfLabel() : xfLabel();
+      return base + ' · ' + (winLabel() || '—');
+    }
+    function exportFileName(sc){
+      var span = winReady()
+        ? (ymShort(WIN.from).replace(' ','') + '_' + ymShort(WIN.to).replace(' ',''))
+        : 'window';
+      var who = isAll() ? 'all-markets' : selectedKeys().join('-');
+      var xf  = (STATE.tab === 'rmx') ? rxfActive() : xfActive();
+      var nm  = (sc.line === 'rmx' ? 'RMX' : 'AGG') + '_rows_' + span + '_' + who
+              + (xf ? '_filtered' : '');
+      return nm.replace(/[^A-Za-z0-9_\-]+/g, '-') + '.csv';
+    }
+
+    function syncExport(){
+      var btn = $('expBtn'), note = $('expNote');
+      if(!btn || !note) return;
+      var sc = exportScope();
+      btn.disabled = !sc.ok;
+      btn.title = sc.ok
+        ? 'Download every row behind this selection — raw columns, looked-up columns, and both years side by side'
+        : sc.why;
+      /* The note is the SCOPE before a download and the RECONCILIATION after
+         one; a selection change puts it back to the scope, because a total from
+         the previous selection sitting under a new one is the one thing this
+         line must never do. */
+      note.className = 'ov-export-note' + (sc.ok ? '' : ' bad');
+      note.innerHTML = sc.ok
+        ? esc(exportScopeText())
+        : esc(sc.why);
+    }
+
+    function csvCell(v){
+      if(v === null || v === undefined) return '';
+      var s = String(v);
+      return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+    function ymList(list){
+      if(!list.length) return '—';
+      return (list.length === 1) ? ymLong(list[0])
+                                 : (ymLong(list[0]) + ' – ' + ymLong(list[list.length-1]));
+    }
+
+    /* THE HEADER BLOCK IS NOT DECORATION. A spreadsheet outlives the page it
+       came off and the conversation that explained it, and somebody will
+       reconcile this against Qlik months from now. So the file says which
+       selection it is, which months, which coverage floors were in force, where
+       the rows came from and — the one line that decides whether the two index
+       columns are read correctly — how to turn them back into an index.
+       Every line is prefixed '#', and the column header is the first line
+       after the blank one. */
+    function exportHeaderBlock(sc, out){
+      var st = out.stats, cov = out.coverage || {};
+      var L = [];
+      L.push('# Amrize Commercial Suite — ' + (sc.line === 'rmx' ? 'Ready-Mix' : 'Aggregates') + ' row export');
+      L.push('# Selection: ' + exportScopeText());
+      L.push('# Months: ' + ymList(st.cyMonths) + '  (compared against ' + ymList(st.pyMonths) + ')');
+      if(st.pyMissing.length)
+        L.push('# No prior-year data exists for: ' + ymList(st.pyMissing)
+             + ' — those comparisons are blank because the months were never exported, not because they are zero.');
+      L.push('# Lines: ' + st.lines + '  (' + st.both + ' with both years, ' + st.cyOnly
+           + ' current year only, ' + st.pyOnly + ' prior year only)');
+      L.push('# One line per month per dimension tuple. A source row carries ONE year, so the two years of a tuple are two source rows joined here.');
+      L.push('# PPI and CPI are pooled indices, not line measures. For any slice: index = SUM(factor) / SUM(weight). Never average the pair % columns.');
+      L.push('# That holds for any grouping by plant, material or anything derived from them. Grouping by sold-to, customer, segment or month splits a pair and does not.');
+      L.push('# PPI: ' + st.ppi.covered + ' of ' + st.ppi.pairs + ' plant x material pairs covered'
+           + (st.ppi.index == null ? '' : ', index ' + (st.ppi.index * 100).toFixed(3) + '%'));
+      if(st.cpi)
+        L.push('# CPI: ' + st.cpi.covered + ' of ' + st.cpi.pairs + ' plant x sold-to x material pairs covered'
+             + (st.cpi.index == null ? '' : ', index ' + (st.cpi.index * 100).toFixed(3) + '%'));
+      else
+        L.push('# CPI: not reported — this line carries no sold-to.');
+      L.push('# Coverage floors in force: volume > ' + (cov.minVol || 0) + ', revenue > ' + (cov.minRev || 0)
+           + (cov.cpi ? ('; CPI also requires both years above $' + (cov.cpi.minAsp || 0) + ' per unit') : ''));
+      L.push('# Source: the Overview month cube. Lookups are resolved from the LIVE lookup tabs, so a lookup edit re-labels every year at once.');
+      L.push('# The fuel surcharge is the figure every page here shows — re-spread within its lookup key, Saskatchewan taken from the rates sheet — not the raw export column.');
+      L.push('# Generated: ' + new Date().toISOString());
+      L.push('');
+      return L;
+    }
+
+    function exportCsv(){
+      var sc = exportScope();
+      if(!sc.ok) return;
+      var note = $('expNote'), btn = $('expBtn');
+      /* THE SELECTION AS IT WAS WHEN THE BUTTON WAS PRESSED. The build takes a
+         second over tens of thousands of lines and the page stays live through
+         it, so a chip clicked meanwhile would leave the previous selection's
+         totals sitting under the new one — which is the one thing this note
+         must never do. */
+      var sig = exportScopeText();
+      note.className = 'ov-export-note';
+      note.textContent = 'Building…';
+      btn.disabled = true;
+      /* Off the click, so the button repaints before a pass over tens of
+         thousands of rows takes the main thread. */
+      setTimeout(function(){
+        var t0 = Date.now(), out = null, err = null;
+        try{
+          out = cube().exportRows({ line:sc.line, cyMonths:sc.cy, pyMonths:sc.py, filters:sc.filters });
+        }catch(e){ err = e; }
+        if(err || !out || !out.rows.length){
+          note.className = 'ov-export-note bad';
+          note.textContent = err ? ('Could not build the export: ' + (err.message || err))
+                                 : 'Nothing to export for this selection.';
+          AMR.log('error', 'ov.exportCsv', 'export failed',
+                  { line:sc.line, months:sc.cy.length, err:String(err && err.message || err) });
+          syncExport();
+          return;
+        }
+        var lines = exportHeaderBlock(sc, out);
+        lines.push(out.fields.map(function(f){ return csvCell(EXPORT_LABEL[f] || f); }).join(','));
+        var dp = out.fields.map(function(f){ return EXPORT_DP[f]; });
+        for(var i = 0; i < out.rows.length; i++){
+          var r = out.rows[i], cells = new Array(r.length);
+          for(var j = 0; j < r.length; j++){
+            var v = r[j];
+            if(v !== null && v !== undefined && dp[j] !== undefined && typeof v === 'number')
+              v = Number(v.toFixed(dp[j]));
+            cells[j] = csvCell(v);
+          }
+          lines.push(cells.join(','));
+        }
+        var blob = new Blob(['\ufeff' + lines.join('\r\n') + '\r\n'],
+                            { type:'text/csv;charset=utf-8' });
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = exportFileName(sc);
+        document.body.appendChild(a); a.click();
+        setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 0);
+
+        /* THE RECONCILIATION LINE. The file's own totals, unrounded, in the same
+           words the panels above use — so the one check that matters (does this
+           file say what the page says) is done by reading one line rather than
+           by building a pivot. */
+        var s = out.stats, unit = (sc.line === 'rmx') ? 'm³' : 't';
+        var bits = [ '<b>' + fInt(s.lines) + '</b> lines',
+                     fInt(s.cyVol) + ' ' + unit + ' CY',
+                     fMoneyFull(s.cyRev) + ' CY' ];
+        if(s.ppi.index != null) bits.push('PPI ' + fPct(s.ppi.index));
+        if(s.cpi && s.cpi.index != null) bits.push('CPI ' + fPct(s.cpi.index));
+        AMR.log('info', 'ov.exportCsv', 'export built',
+                { line:sc.line, months:sc.cy.length, lines:s.lines,
+                  bytes:blob.size, ms:Date.now() - t0 });
+        /* The file is downloaded either way; only the note is withheld, because
+           it would be describing a selection that is no longer on screen. */
+        if(exportScopeText() !== sig){ syncExport(); return; }
+        note.className = 'ov-export-note';
+        note.innerHTML = '✓ ' + bits.join(' · ')
+          + ' — the same figures as Market summary for this selection.';
+        btn.disabled = false;
+      }, 0);
     }
     /* Does this line's LOADED manifest carry that dimension? A cube built before
        a dim existed answers a groupBy on it with the '\u0001all' sentinel, which
@@ -24809,6 +25374,11 @@ AMR.page('overview', {
     /* ---- Month window (both tabs). The history pill is wired in boot(),
            once AmrProgress is known to exist. ---- */
     wireWindow();
+
+    /* ---- The row export. syncExport() is called from every repaint path as
+           well, so the button's reason is never one selection behind. ---- */
+    $('expBtn').addEventListener('click', exportCsv);
+    syncExport();
 
     /* ===================== DATA QUALITY =====================
        The same question the RMX and Price & Volume pages ask, for both lines at
